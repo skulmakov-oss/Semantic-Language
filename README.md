@@ -1,3 +1,4 @@
+<img width="1536" height="1024" alt="ChatGPT Image 19 февр  2026 г , 03_13_05" src="https://github.com/user-attachments/assets/b7653b92-1dd9-4257-881f-4f24417b6ef4" />
 # EXOcode
 
 **EXOcode** is a deterministic compiler toolchain and virtual machine runtime for a quad-logic language (N/F/T/S), supporting both a Rust-like syntax and a LogosIndent DSL, targeting a versioned and verifiable EXObyte execution contract.
