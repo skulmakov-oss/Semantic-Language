@@ -1,4 +1,4 @@
-EXOcode
+# EXOcode
 
 **EXOcode** is a deterministic compiler toolchain and virtual machine runtime for a quad-logic language (N/F/T/S), supporting both a Rust-like syntax and a LogosIndent DSL, targeting a versioned and verifiable EXObyte execution contract.
 
@@ -301,10 +301,3 @@ Architectural boundaries are protected by dedicated guard tests.
 * IR and EXObyte contracts are beta-stable within the v1.1.x line.
 * Optimization and incremental internals may evolve without external API guarantees.
 * `W0241` remains hint-only; actual rewriting is IR-pass based.
-
----
-
-If хочешь, следующим шагом я могу:
-
-* сделать ещё более “формальный” вариант (почти спецификацию),
-* или наоборот — сделать версию с чуть более выраженной narrative частью для GitHub-первой страницы.
