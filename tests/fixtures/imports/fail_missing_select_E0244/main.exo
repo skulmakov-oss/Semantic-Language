@@ -1,0 +1,3 @@
+Import "dep.exo" { MissingSymbol }
+Law "Root" [priority 1]:
+    When true -> System.recovery()

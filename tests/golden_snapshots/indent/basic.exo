@@ -1,0 +1,6 @@
+Entity Sensor:
+    state val: quad
+
+Law "L":
+    When Sensor.val == T ->
+        Log.emit("ok")

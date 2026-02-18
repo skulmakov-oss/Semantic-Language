@@ -1,0 +1,15 @@
+[package]
+name = "exo-frontend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["alloc", "exo-core/std"]
+alloc = ["exo-core/alloc"]
+
+[dependencies]
+exo-core = { path = "../exo-core", default-features = false, features = ["alloc"] }

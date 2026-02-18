@@ -55,6 +55,8 @@ fn main: code=25 bytes, strings=2
 ## CLI reference
 - `exoc compile <input.exo> -o <out.exb>`
   - Parses, type-checks, lowers, validates IR, emits EXObyte file.
+- `exoc features`
+  - Prints compile-time feature flags baked into this binary.
 - `exoc run <input.exo>`
   - Compiles source in memory and executes `main` in VM.
 - `exoc runb <input.exb>`
@@ -96,6 +98,27 @@ cargo fmt --check
 cargo test
 cargo test --test golden_exobyte
 ```
+
+## no_std smoke-check
+Core library supports `no_std` mode. Run:
+
+```powershell
+cargo check --no-default-features
+```
+
+Reference matrix: `docs/NO_STD.md`.
+
+## Compile-Time Feature Flags
+
+Default build enables:
+- `std`
+- `profile-rust`
+- `profile-logos`
+- `debug-symbols`
+
+Optional:
+- `simd`
+- `bench`
 
 ## Repository layout
 - `src/frontend.rs` - lexer/parser/type-checker/lowering/IR validation/emitter.

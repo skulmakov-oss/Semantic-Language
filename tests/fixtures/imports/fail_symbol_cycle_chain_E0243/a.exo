@@ -1,0 +1,5 @@
+Import pub "b.exo"
+
+Law "A" [priority 1]:
+    When true ->
+        System.recovery()

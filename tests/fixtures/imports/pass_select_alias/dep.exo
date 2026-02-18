@@ -1,0 +1,5 @@
+Entity Sensor:
+    state x: quad
+
+Law "CheckLaw" [priority 1]:
+    When true -> System.recovery()

@@ -1,0 +1,312 @@
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::ToString;
+use crate::*;
+
+pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
+    if program.functions.len() != 1 {
+        return Err(FrontendError {
+            pos: 0,
+            message: "type_check_function expects exactly one function in program".to_string(),
+        });
+    }
+    let mut table = BTreeMap::new();
+    let func = &program.functions[0];
+    table.insert(
+        func.name,
+        FnSig {
+            params: func.params.iter().map(|(_, t)| *t).collect(),
+            ret: func.ret,
+        },
+    );
+    type_check_function_with_table(func, &program.arena, &table)
+}
+
+pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
+    let table = build_fn_table(p)?;
+    let main_id = p
+        .arena
+        .symbol_to_id
+        .get("main")
+        .copied()
+        .ok_or(FrontendError {
+            pos: 0,
+            message: "program must define fn main()".to_string(),
+        })?;
+    let main_sig = table.get(&main_id).ok_or(FrontendError {
+        pos: 0,
+        message: "program must define fn main()".to_string(),
+    })?;
+    if !main_sig.params.is_empty() || main_sig.ret != Type::Unit {
+        return Err(FrontendError {
+            pos: 0,
+            message: "main must have signature fn main()".to_string(),
+        });
+    }
+    for f in &p.functions {
+        type_check_function_with_table(f, &p.arena, &table)?;
+    }
+    Ok(())
+}
+
+pub fn type_check_function_with_table(
+    func: &Function,
+    arena: &AstArena,
+    table: &FnTable,
+) -> Result<(), FrontendError> {
+    let mut env = ScopeEnv::with_params(&func.params);
+    for stmt in &func.body {
+        check_stmt(*stmt, arena, &mut env, func.ret, table)?;
+    }
+    Ok(())
+}
+
+fn check_stmt(
+    stmt_id: StmtId,
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    table: &FnTable,
+) -> Result<(), FrontendError> {
+    let stmt = arena.stmt(stmt_id);
+    match stmt {
+        Stmt::Let { name, ty, value } => {
+            let vt = infer_expr_type(*value, arena, env, table)?;
+            let final_ty = if let Some(ann) = ty {
+                if *ann != vt {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "type mismatch in let '{}': {:?} vs {:?}",
+                            resolve_symbol_name(arena, *name)?,
+                            ann,
+                            vt
+                        ),
+                    });
+                }
+                *ann
+            } else {
+                vt
+            };
+            env.insert(*name, final_ty);
+            Ok(())
+        }
+        Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            let ct = infer_expr_type(*condition, arena, env, table)?;
+            if ct != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "if condition must be bool; explicit compare is required for quad"
+                        .to_string(),
+                });
+            }
+
+            let mut then_env = env.clone();
+            then_env.push_scope();
+            for s in then_block {
+                check_stmt(*s, arena, &mut then_env, ret_ty, table)?;
+            }
+            then_env.pop_scope();
+
+            let mut else_env = env.clone();
+            else_env.push_scope();
+            for s in else_block {
+                check_stmt(*s, arena, &mut else_env, ret_ty, table)?;
+            }
+            else_env.pop_scope();
+            Ok(())
+        }
+        Stmt::Match {
+            scrutinee,
+            arms,
+            default,
+        } => {
+            let st = infer_expr_type(*scrutinee, arena, env, table)?;
+            if st != Type::Quad {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match is allowed only for quad scrutinee".to_string(),
+                });
+            }
+            if default.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match requires default arm '_'".to_string(),
+                });
+            }
+
+            for arm in arms {
+                let mut arm_env = env.clone();
+                arm_env.push_scope();
+                for s in &arm.block {
+                    check_stmt(*s, arena, &mut arm_env, ret_ty, table)?;
+                }
+                arm_env.pop_scope();
+            }
+
+            let mut def_env = env.clone();
+            def_env.push_scope();
+            for s in default {
+                check_stmt(*s, arena, &mut def_env, ret_ty, table)?;
+            }
+            def_env.pop_scope();
+            Ok(())
+        }
+        Stmt::Return(v) => {
+            let got = if let Some(e) = v {
+                infer_expr_type(*e, arena, env, table)?
+            } else {
+                Type::Unit
+            };
+            if got != ret_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!("return type mismatch: expected {:?}, got {:?}", ret_ty, got),
+                });
+            }
+            Ok(())
+        }
+        Stmt::Expr(e) => {
+            let _ = infer_expr_type(*e, arena, env, table)?;
+            Ok(())
+        }
+    }
+}
+
+fn infer_expr_type(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+) -> Result<Type, FrontendError> {
+    let expr = arena.expr(expr_id);
+    match expr {
+        Expr::QuadLiteral(_) => Ok(Type::Quad),
+        Expr::BoolLiteral(_) => Ok(Type::Bool),
+        Expr::Num(_) => Ok(Type::I32),
+        Expr::Float(_) => Ok(Type::F64),
+        Expr::Var(v) => env.get(*v).ok_or(FrontendError {
+            pos: 0,
+            message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+        }),
+        Expr::Call(name, args) => {
+            let sig = if let Some(s) = table.get(name) {
+                s.clone()
+            } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
+                s
+            } else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!("unknown function '{}'", resolve_symbol_name(arena, *name)?),
+                });
+            };
+            if sig.params.len() != args.len() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "function '{}' expects {} args, got {}",
+                        resolve_symbol_name(arena, *name)?,
+                        sig.params.len(),
+                        args.len()
+                    ),
+                });
+            }
+            for (i, arg) in args.iter().enumerate() {
+                let at = infer_expr_type(*arg, arena, env, table)?;
+                if at != sig.params[i] {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "arg {} for '{}' has type {:?}, expected {:?}",
+                            i,
+                            resolve_symbol_name(arena, *name)?,
+                            at,
+                            sig.params[i]
+                        ),
+                    });
+                }
+            }
+            Ok(sig.ret)
+        }
+        Expr::Unary(op, inner) => {
+            let t = infer_expr_type(*inner, arena, env, table)?;
+            match op {
+                UnaryOp::Not => match t {
+                    Type::Quad | Type::Bool => Ok(t),
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message: format!("operator ! unsupported for {:?}", t),
+                    }),
+                },
+                UnaryOp::Pos | UnaryOp::Neg => {
+                    if t == Type::F64 {
+                        Ok(Type::F64)
+                    } else {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: format!("operator +/- unsupported for {:?}", t),
+                        })
+                    }
+                }
+            }
+        }
+        Expr::Binary(l, op, r) => {
+            let lt = infer_expr_type(*l, arena, env, table)?;
+            let rt = infer_expr_type(*r, arena, env, table)?;
+            match op {
+                BinaryOp::Eq | BinaryOp::Ne => {
+                    if lt == rt {
+                        Ok(Type::Bool)
+                    } else {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: format!("cannot compare {:?} and {:?}", lt, rt),
+                        })
+                    }
+                }
+                BinaryOp::AndAnd | BinaryOp::OrOr => {
+                    if lt != rt {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!("operator type mismatch: {:?} vs {:?}", lt, rt),
+                        });
+                    }
+                    match lt {
+                        Type::Quad | Type::Bool => Ok(lt),
+                        _ => Err(FrontendError {
+                            pos: 0,
+                            message: format!("operator unsupported for {:?}", lt),
+                        }),
+                    }
+                }
+                BinaryOp::Implies => {
+                    if lt == Type::Quad && rt == Type::Quad {
+                        Ok(Type::Quad)
+                    } else {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: "operator '->' is allowed only for quad".to_string(),
+                        })
+                    }
+                }
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    if lt == Type::F64 && rt == Type::F64 {
+                        Ok(Type::F64)
+                    } else {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "f64 arithmetic requires f64 operands, got {:?} and {:?}",
+                                lt, rt
+                            ),
+                        })
+                    }
+                }
+            }
+        }
+    }
+}

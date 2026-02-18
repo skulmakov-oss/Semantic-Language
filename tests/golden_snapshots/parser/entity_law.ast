@@ -1,0 +1,66 @@
+LogosProgram {
+    system: None,
+    entities: [
+        LogosEntity {
+            name: "Sensor",
+            fields: [
+                LogosEntityField {
+                    kind: State,
+                    name: "val",
+                    ty: Quad,
+                    mark: SourceMark {
+                        line: 2,
+                        col: 5,
+                        file_id: 0,
+                    },
+                },
+                LogosEntityField {
+                    kind: Prop,
+                    name: "active",
+                    ty: Bool,
+                    mark: SourceMark {
+                        line: 3,
+                        col: 5,
+                        file_id: 0,
+                    },
+                },
+            ],
+            mark: SourceMark {
+                line: 1,
+                col: 1,
+                file_id: 0,
+            },
+        },
+    ],
+    laws: [
+        LogosLaw {
+            name: "CheckSignal",
+            priority: 10,
+            whens: [
+                LogosWhen {
+                    condition: "Sensor . val == T",
+                    effect: "Log . emit ( \"Signal OK\" )",
+                    mark: SourceMark {
+                        line: 6,
+                        col: 5,
+                        file_id: 0,
+                    },
+                },
+                LogosWhen {
+                    condition: "Sensor . val == S",
+                    effect: "System . recovery ( )",
+                    mark: SourceMark {
+                        line: 8,
+                        col: 5,
+                        file_id: 0,
+                    },
+                },
+            ],
+            mark: SourceMark {
+                line: 5,
+                col: 1,
+                file_id: 0,
+            },
+        },
+    ],
+}

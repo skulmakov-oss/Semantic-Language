@@ -1,7 +1,28 @@
-use exocode_core::exobyte_vm::{disasm_exobyte, run_exobyte};
-use exocode_core::frontend::compile_program_to_exobyte;
+use exo_core::diagnostics::diagnostic_catalog;
+use exo_emit::{
+    compile_program_to_exobyte, compile_program_to_exobyte_with_options_debug,
+    CompileProfile, OptLevel,
+};
+use exo_frontend::{lex, parse_logos_program, parse_program};
+use exo_ir::{compile_program_to_ir_with_options, lower_logos_laws_to_ir};
+use exo_semantics::{check_file_with_provider, check_source, ModuleProvider};
+use exo_vm::{disasm_exobyte, run_exobyte};
+use std::collections::{HashMap, HashSet};
 use std::env;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::process::ExitCode;
+use std::thread;
+use std::time::{Duration, Instant};
+
+struct CliFsModuleProvider;
+
+impl ModuleProvider for CliFsModuleProvider {
+    fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
+        std::fs::read(module_id).map_err(|e| e.to_string())
+    }
+}
 
 fn main() -> ExitCode {
     match run(env::args().skip(1).collect()) {
@@ -19,6 +40,19 @@ fn run(args: Vec<String>) -> Result<(), String> {
     }
     match args[0].as_str() {
         "compile" => cmd_compile(&args[1..]),
+        "check" => cmd_check(&args[1..]),
+        "lint" => cmd_lint(&args[1..]),
+        "watch" => cmd_watch(&args[1..]),
+        "dump-ast" => cmd_dump_ast(&args[1..]),
+        "dump-ir" => cmd_dump_ir(&args[1..]),
+        "dump-bytecode" => cmd_dump_bytecode(&args[1..]),
+        "hash-ast" => cmd_hash_ast(&args[1..]),
+        "hash-ir" => cmd_hash_ir(&args[1..]),
+        "hash-exb" => cmd_hash_exb(&args[1..]),
+        "snapshots" => cmd_snapshots(&args[1..]),
+        "features" => cmd_features(&args[1..]),
+        "explain" => cmd_explain(&args[1..]),
+        "repl" => cmd_repl(&args[1..]),
         "run" => cmd_run(&args[1..]),
         "runb" => cmd_runb(&args[1..]),
         "disasm" => cmd_disasm(&args[1..]),
@@ -29,10 +63,17 @@ fn run(args: Vec<String>) -> Result<(), String> {
 
 fn cmd_compile(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
-        return Err("usage: exoc compile <input.exo> -o <out.exb>".to_string());
+        return Err(
+            "usage: exoc compile <input.exo> -o <out.exb> [--profile auto|rust|logos] [--opt-level O0|O1] [--debug-symbols] [--metrics]"
+                .to_string(),
+        );
     }
     let input = args[0].as_str();
     let mut out: Option<&str> = None;
+    let mut metrics = false;
+    let mut profile = CompileProfile::Auto;
+    let mut opt = OptLevel::O0;
+    let mut debug_symbols = false;
     let mut i = 1usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -40,17 +81,2011 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
                 i += 1;
                 out = args.get(i).map(|s| s.as_str());
             }
+            "--profile" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --profile".to_string())?;
+                profile = parse_compile_profile(v)?;
+            }
+            "--opt-level" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --opt-level".to_string())?;
+                opt = parse_opt_level(v)?;
+            }
+            "--opt" => {
+                opt = OptLevel::O1;
+            }
+            "--debug-symbols" => {
+                debug_symbols = true;
+            }
+            "--metrics" => {
+                metrics = true;
+            }
             other => return Err(format!("unknown flag '{}'", other)),
         }
         i += 1;
     }
     let out = out.ok_or_else(|| "missing -o <out.exb>".to_string())?;
+    let t0 = Instant::now();
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
-    let bytes = compile_program_to_exobyte(&src).map_err(|e| e.to_string())?;
+    let t_read = Instant::now();
+    let bytes = compile_program_to_exobyte_with_options_debug(&src, profile, opt, debug_symbols)
+        .map_err(|e| e.to_string())?;
+    let t_compile = Instant::now();
     std::fs::write(out, &bytes).map_err(|e| format!("failed to write '{}': {}", out, e))?;
+    let t_write = Instant::now();
     println!("compiled '{}' -> '{}' ({} bytes)", input, out, bytes.len());
+    if debug_symbols {
+        println!("note: --debug-symbols requested (debug section emission reserved for next revision)");
+    }
+    if metrics {
+        let token_count = lex(&src).map(|t| t.len()).unwrap_or(0);
+        let mut fn_count = 0usize;
+        let mut expr_count = 0usize;
+        let mut stmt_count = 0usize;
+        let mut symbol_count = 0usize;
+        if let Ok(p) = parse_program(&src) {
+            fn_count = p.functions.len();
+            expr_count = p.arena.expr_count();
+            stmt_count = p.arena.stmt_count();
+            symbol_count = p.arena.symbol_count();
+        }
+        let mut ir_func_count = 0usize;
+        let mut ir_instr_count = 0usize;
+        if let Ok(ir) = compile_program_to_ir_with_options(&src, profile, opt) {
+            ir_func_count = ir.len();
+            ir_instr_count = ir.iter().map(|f| f.instrs.len()).sum();
+        }
+        println!(
+            "metrics: read={}ms compile={}ms write={}ms total={}ms tokens={} fns={} exprs={} stmts={} symbols={} ir_funcs={} ir_instrs={} exb_bytes={} hash={:016x}",
+            (t_read - t0).as_millis(),
+            (t_compile - t_read).as_millis(),
+            (t_write - t_compile).as_millis(),
+            (t_write - t0).as_millis(),
+            token_count,
+            fn_count,
+            expr_count,
+            stmt_count,
+            symbol_count,
+            ir_func_count,
+            ir_instr_count,
+            bytes.len(),
+            fnv1a64(&bytes)
+        );
+    }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Auto,
+    Always,
+    Never,
+}
+
+fn parse_color_mode(v: &str) -> Result<ColorMode, String> {
+    match v.to_ascii_lowercase().as_str() {
+        "auto" => Ok(ColorMode::Auto),
+        "always" => Ok(ColorMode::Always),
+        "never" => Ok(ColorMode::Never),
+        _ => Err(format!(
+            "invalid --color '{}', expected auto|always|never",
+            v
+        )),
+    }
+}
+
+fn resolve_color_mode(mode: ColorMode) -> bool {
+    match mode {
+        ColorMode::Always => true,
+        ColorMode::Never => false,
+        ColorMode::Auto => env::var("NO_COLOR").is_err(),
+    }
+}
+
+fn color_wrap(enabled: bool, s: &str, code: &str) -> String {
+    if enabled {
+        format!("\x1b[{}m{}\x1b[0m", code, s)
+    } else {
+        s.to_string()
+    }
+}
+
+fn print_diag_colored(enabled: bool, text: &str) {
+    let mut out = text.to_string();
+    out = out.replace("Error [", &format!("{}[", color_wrap(enabled, "Error", "31;1")));
+    out = out.replace("Warning [", &format!("{}[", color_wrap(enabled, "Warning", "33;1")));
+    out = out.replace("help:", &format!("{}:", color_wrap(enabled, "help", "36;1")));
+    eprintln!("{}", out.trim_end());
+}
+
+fn cmd_check(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err(
+            "usage: exoc check <input.exo> [--no-cache] [--trace-cache] [--metrics] [--deny warnings|<CODE>]"
+                .to_string(),
+        );
+    }
+    let input = args[0].as_str();
+    let root = PathBuf::from(input);
+    let mut no_cache = false;
+    let mut metrics = false;
+    let mut trace_cache_enabled = false;
+    let mut color = ColorMode::Auto;
+    let mut deny = DenyPolicy::default();
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--no-cache" => no_cache = true,
+            "--metrics" => metrics = true,
+            "--trace-cache" => trace_cache_enabled = true,
+            "--color" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --color".to_string())?;
+                color = parse_color_mode(v)?;
+            }
+            "--deny" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --deny".to_string())?;
+                parse_deny_value(v, &mut deny);
+            }
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    if deny.has_rules() {
+        no_cache = true;
+        trace_cache(
+            trace_cache_enabled,
+            CacheEvent::Invalidate,
+            CacheReason::DenyPolicy,
+            &root,
+            "SEMP",
+            "",
+        );
+    }
+    let t0 = Instant::now();
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let t_read = Instant::now();
+    let prev_graph_hash = read_graph_hash();
+    let mut graph_hash_now = None;
+    if let Ok(nodes) = module_graph_nodes(&root) {
+        let blob = encode_graph(&nodes);
+        graph_hash_now = Some(fnv1a64(&blob));
+        let _ = write_graph_bin(&nodes);
+    }
+    if !no_cache {
+        if let Ok(fp) = module_graph_fingerprint(&root) {
+            let cache_path = cache_file_for_root(&root)?;
+            match load_cache_entry_ex(&cache_path, fp) {
+                Ok(CacheLookup::Hit(cached)) => {
+                    let key = format!("{:016x}", fp);
+                    trace_cache(
+                        trace_cache_enabled,
+                        CacheEvent::Hit,
+                        CacheReason::Reused,
+                        &root,
+                        "SEMP",
+                        &key,
+                    );
+                    println!(
+                        "semantic check passed (cached): {} warning(s), {} scheduled law(s)",
+                        cached.warning_count, cached.law_count
+                    );
+                    for w in cached.warnings {
+                        eprintln!("{}", w.trim_end());
+                    }
+                    if metrics {
+                        let t1 = Instant::now();
+                        let token_count = lex(&src).map(|t| t.len()).unwrap_or(0);
+                        println!(
+                            "metrics: read={}ms check={}ms total={}ms cached=1 tokens={}",
+                            (t_read - t0).as_millis(),
+                            (t1 - t_read).as_millis(),
+                            (t1 - t0).as_millis(),
+                            token_count
+                        );
+                    }
+                    return Ok(());
+                }
+                Ok(CacheLookup::Miss(reason)) => {
+                    let key = format!("{:016x}", fp);
+                    trace_cache(
+                        trace_cache_enabled,
+                        CacheEvent::Miss,
+                        reason,
+                        &root,
+                        "SEMP",
+                        &key,
+                    );
+                }
+                Err(_) => {}
+            }
+        }
+    } else {
+        trace_cache(
+            trace_cache_enabled,
+            CacheEvent::Miss,
+            CacheReason::CacheDisabled,
+            &root,
+            "SEMP",
+            "",
+        );
+    }
+
+    let provider = CliFsModuleProvider;
+    let root_canon = Path::new(input)
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve '{}': {}", input, e))?;
+    let report = check_file_with_provider(&root_canon, &provider)
+        .or_else(|_| check_source(&src))
+        .map_err(|e| e.to_string())?;
+    let t_check = Instant::now();
+    let color_enabled = resolve_color_mode(color);
+    for w in &report.warnings {
+        print_diag_colored(color_enabled, &w.rendered);
+    }
+    println!(
+        "semantic check passed: {} warning(s), {} scheduled law(s)",
+        report.warnings.len(),
+        report.scheduled_laws.len()
+    );
+    if !no_cache {
+        if let Ok(fp) = module_graph_fingerprint(&root) {
+            let cache_path = cache_file_for_root(&root)?;
+            let entry = CacheEntry {
+                fingerprint: fp,
+                warning_count: report.warnings.len(),
+                law_count: report.scheduled_laws.len(),
+                warnings: report.warnings.iter().map(|w| w.rendered.clone()).collect(),
+            };
+            let _ = save_cache_entry(&cache_path, &entry);
+            let mc = module_graph_module_count(&root).unwrap_or(1);
+            let _ = update_cache_index(&root, fp, graph_hash_now, mc);
+            if trace_cache_enabled {
+                if prev_graph_hash != graph_hash_now {
+                    trace_cache(
+                        true,
+                        CacheEvent::Invalidate,
+                        CacheReason::GraphChanged,
+                        &root,
+                        "GRAPH",
+                        &format!("{:016x}", fp),
+                    );
+                }
+            }
+        }
+    }
+    if metrics {
+        let t_end = Instant::now();
+        let token_count = lex(&src).map(|t| t.len()).unwrap_or(0);
+        let module_count = module_graph_module_count(&root).unwrap_or(1);
+        println!(
+            "metrics: read={}ms check={}ms cache_write={}ms total={}ms cached=0 tokens={} modules={} warnings={} scheduled_laws={} arena_nodes={}",
+            (t_read - t0).as_millis(),
+            (t_check - t_read).as_millis(),
+            (t_end - t_check).as_millis(),
+            (t_end - t0).as_millis(),
+            token_count,
+            module_count,
+            report.warnings.len(),
+            report.scheduled_laws.len(),
+            report.arena_nodes
+        );
+    }
+    let denied = collect_denied_warning_lines(&report, &deny);
+    if !denied.is_empty() {
+        return Err(format!(
+            "check failed by deny policy ({}):\n{}",
+            denied.len(),
+            denied.join("\n")
+        ));
+    }
+    Ok(())
+}
+
+fn cmd_watch(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: exoc watch <input.exo> [--metrics] [--color auto|always|never]".to_string());
+    }
+    let root = PathBuf::from(&args[0]);
+    let mut metrics = false;
+    let mut color = ColorMode::Auto;
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--metrics" => metrics = true,
+            "--color" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --color".to_string())?;
+                color = parse_color_mode(v)?;
+            }
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    let color_enabled = resolve_color_mode(color);
+    println!("watching '{}'", root.display());
+    let mut last_fp: Option<u64> = None;
+    let mut last_snapshot: Option<String> = None;
+    loop {
+        match module_graph_fingerprint(&root) {
+            Ok(fp) => {
+                if last_fp != Some(fp) {
+                    let t0 = Instant::now();
+                    last_fp = Some(fp);
+                    let src = match std::fs::read_to_string(&root) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let snap = format!("error: failed to read '{}': {}", root.display(), e);
+                            let changed = last_snapshot
+                                .as_ref()
+                                .map(|prev| prev != &snap)
+                                .unwrap_or(true);
+                            if changed {
+                                println!("{snap}");
+                                last_snapshot = Some(snap);
+                            } else {
+                                println!("change detected, semantic output unchanged");
+                            }
+                            thread::sleep(Duration::from_millis(600));
+                            continue;
+                        }
+                    };
+                    let provider = CliFsModuleProvider;
+                    let snapshot = match root
+                        .canonicalize()
+                        .map_err(|e| e.to_string())
+                        .and_then(|p| check_file_with_provider(&p, &provider).map_err(|e| e.to_string()))
+                        .or_else(|_| check_source(&src).map_err(|e| e.to_string()))
+                    {
+                        Ok(report) => {
+                            let mut out = String::new();
+                            for w in &report.warnings {
+                                out.push_str(w.rendered.trim_end());
+                                out.push('\n');
+                            }
+                            out.push_str(&format!(
+                                "ok: {} warning(s), {} scheduled law(s)",
+                                report.warnings.len(),
+                                report.scheduled_laws.len()
+                            ));
+                            out
+                        }
+                        Err(e) => format!("{e}"),
+                    };
+                    let changed = last_snapshot
+                        .as_ref()
+                        .map(|prev| prev != &snapshot)
+                        .unwrap_or(true);
+                    if changed {
+                        if snapshot.starts_with("Error [") || snapshot.starts_with("Warning [") {
+                            print_diag_colored(color_enabled, &snapshot);
+                        } else {
+                            println!("{snapshot}");
+                        }
+                        last_snapshot = Some(snapshot);
+                        if metrics {
+                            let t1 = Instant::now();
+                            let token_count = lex(&src).map(|t| t.len()).unwrap_or(0);
+                            let modules = module_graph_module_count(&root).unwrap_or(1);
+                            println!(
+                                "metrics: total={}ms tokens={} modules={} fingerprint={:016x}",
+                                (t1 - t0).as_millis(),
+                                token_count,
+                                modules,
+                                fp
+                            );
+                        }
+                    } else {
+                        println!("change detected, semantic output unchanged");
+                    }
+                }
+            }
+            Err(e) => eprintln!("{e}"),
+        }
+        thread::sleep(Duration::from_millis(600));
+    }
+}
+
+fn cmd_lint(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: exoc lint <input.exo> [--no-cache] [--trace-cache] [--deny warnings|<CODE>] [--color auto|always|never]".to_string());
+    }
+    let input = args[0].as_str();
+    let mut no_cache = false;
+    let mut trace_cache_enabled = false;
+    let mut color = ColorMode::Auto;
+    let mut deny = DenyPolicy::default();
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--no-cache" => no_cache = true,
+            "--trace-cache" => trace_cache_enabled = true,
+            "--color" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --color".to_string())?;
+                color = parse_color_mode(v)?;
+            }
+            "--deny" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --deny".to_string())?;
+                parse_deny_value(v, &mut deny);
+            }
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    if !deny.has_rules() {
+        deny.deny_all_warnings = true;
+    }
+    if !deny.deny_codes.is_empty() {
+        no_cache = true;
+        trace_cache(
+            trace_cache_enabled,
+            CacheEvent::Invalidate,
+            CacheReason::DenyPolicy,
+            &PathBuf::from(input),
+            "SEMP",
+            "",
+        );
+    }
+    let root = PathBuf::from(input);
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    if let Ok(nodes) = module_graph_nodes(&root) {
+        let _ = write_graph_bin(&nodes);
+    }
+    if !no_cache && deny.deny_all_warnings {
+        if let Ok(fp) = module_graph_fingerprint(&root) {
+            let cache_path = cache_file_for_root(&root)?;
+            match load_cache_entry_ex(&cache_path, fp) {
+                Ok(CacheLookup::Hit(cached)) => {
+                    trace_cache(
+                        trace_cache_enabled,
+                        CacheEvent::Hit,
+                        CacheReason::Reused,
+                        &root,
+                        "SEMP",
+                        &format!("{:016x}", fp),
+                    );
+                    let color_enabled = resolve_color_mode(color);
+                    for w in &cached.warnings {
+                        print_diag_colored(color_enabled, w);
+                    }
+                    if cached.warning_count == 0 {
+                        println!("lint passed: no warnings");
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "lint failed by deny policy ({}):\n{}\nfile: {}",
+                        cached.warning_count,
+                        cached
+                            .warnings
+                            .iter()
+                            .take(16)
+                            .map(|w| w.lines().next().unwrap_or(""))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        root.display()
+                    ));
+                }
+                Ok(CacheLookup::Miss(reason)) => {
+                    trace_cache(
+                        trace_cache_enabled,
+                        CacheEvent::Miss,
+                        reason,
+                        &root,
+                        "SEMP",
+                        &format!("{:016x}", fp),
+                    );
+                }
+                Err(_) => {}
+            }
+        }
+    } else if no_cache {
+        trace_cache(
+            trace_cache_enabled,
+            CacheEvent::Miss,
+            CacheReason::CacheDisabled,
+            &root,
+            "SEMP",
+            "",
+        );
+    }
+
+    let provider = CliFsModuleProvider;
+    let report = if !no_cache {
+        Path::new(input)
+            .canonicalize()
+            .map_err(|e| format!("failed to resolve '{}': {}", input, e))
+            .and_then(|p| check_file_with_provider(&p, &provider).map_err(|e| e.to_string()))
+            .or_else(|_| check_source(&src))
+            .map_err(|e| e.to_string())?
+    } else {
+        check_source(&src).map_err(|e| e.to_string())?
+    };
+
+    let color_enabled = resolve_color_mode(color);
+    for w in &report.warnings {
+        print_diag_colored(color_enabled, &w.rendered);
+    }
+    let denied = collect_denied_warning_lines(&report, &deny);
+    if denied.is_empty() {
+        println!("lint passed: no warnings");
+        Ok(())
+    } else {
+        Err(format!(
+            "lint failed by deny policy ({}):\n{}\nfile: {}",
+            denied.len(),
+            denied.join("\n"),
+            root.display()
+        ))
+    }
+}
+
+fn cmd_explain(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 {
+        return Err("usage: exoc explain <error-code|--list>".to_string());
+    }
+    if args[0] == "--list" {
+        for (code, text) in diagnostic_catalog() {
+            println!("{}: {}", code, text);
+        }
+        return Ok(());
+    }
+    let code = args[0].trim().to_ascii_uppercase();
+    let Some((_, text)) = diagnostic_catalog().iter().find(|(c, _)| *c == code) else {
+        if let Some(s) = suggest_code(&code, diagnostic_catalog()) {
+            return Err(format!(
+                "unknown diagnostic code '{}'\nhelp: did you mean '{}'?",
+                code, s
+            ));
+        }
+        return Err(format!("unknown diagnostic code '{}'", code));
+    };
+    println!("{}: {}", code, text);
+    Ok(())
+}
+
+fn suggest_code(input: &str, candidates: &[(&str, &str)]) -> Option<String> {
+    let mut best: Option<(&str, usize)> = None;
+    for (c, _) in candidates {
+        let d = edit_distance(input, c);
+        if d <= 2 {
+            match best {
+                Some((_, bd)) if d >= bd => {}
+                _ => best = Some((c, d)),
+            }
+        }
+    }
+    best.map(|(c, _)| c.to_string())
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let aa: Vec<char> = a.chars().collect();
+    let bb: Vec<char> = b.chars().collect();
+    let mut dp: Vec<usize> = (0..=bb.len()).collect();
+    for (i, ca) in aa.iter().enumerate() {
+        let mut prev = dp[0];
+        dp[0] = i + 1;
+        for (j, cb) in bb.iter().enumerate() {
+            let tmp = dp[j + 1];
+            let cost = if ca == cb { 0 } else { 1 };
+            dp[j + 1] = (dp[j + 1] + 1).min(dp[j] + 1).min(prev + cost);
+            prev = tmp;
+        }
+    }
+    dp[bb.len()]
+}
+
+fn cmd_dump_ast(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 {
+        return Err("usage: exoc dump-ast <input.exo>".to_string());
+    }
+    let input = args[0].as_str();
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let ast_key = ast_pack_key(Path::new(input), &src)?;
+    let ast_pack = cache_ast_file_for_key(ast_key)?;
+    if let Some(cached) = load_text_pack(&ast_pack, PACK_KIND_AST)? {
+        println!("{}", cached);
+        return Ok(());
+    }
+    let rendered = if let Ok(logos) = parse_logos_program(&src) {
+        format!("{:#?}", logos)
+    } else {
+        format!("{:#?}", parse_program(&src).map_err(|e| e.to_string())?)
+    };
+    let _ = save_text_pack(&ast_pack, PACK_KIND_AST, &rendered);
+    println!("{}", rendered);
+    Ok(())
+}
+
+fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err(
+            "usage: exoc dump-ir <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt]"
+                .to_string(),
+        );
+    }
+    let input = args[0].as_str();
+    let mut profile = CompileProfile::Auto;
+    let mut opt = OptLevel::O0;
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --profile".to_string())?;
+                profile = parse_compile_profile(v)?;
+            }
+            "--opt-level" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --opt-level".to_string())?;
+                opt = parse_opt_level(v)?;
+            }
+            "--opt" => opt = OptLevel::O1,
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let ir_key = ir_pack_key(Path::new(input), &src, profile, opt)?;
+    let ir_pack = cache_ir_file_for_key(ir_key)?;
+    if let Some(cached) = load_text_pack(&ir_pack, PACK_KIND_IR)? {
+        println!("{}", cached);
+        return Ok(());
+    }
+    let rendered = match profile {
+        CompileProfile::Logos => {
+            let logos = parse_logos_program(&src).map_err(|e| e.to_string())?;
+            format!("{:#?}", lower_logos_laws_to_ir(&logos))
+        }
+        CompileProfile::RustLike => format!(
+            "{:#?}",
+            compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                .map_err(|e| e.to_string())?
+        ),
+        CompileProfile::Auto => {
+            if let Ok(logos) = parse_logos_program(&src) {
+                format!("{:#?}", lower_logos_laws_to_ir(&logos))
+            } else {
+                format!(
+                    "{:#?}",
+                    compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                        .map_err(|e| e.to_string())?
+                )
+            }
+        }
+    };
+    let _ = save_text_pack(&ir_pack, PACK_KIND_IR, &rendered);
+    println!("{}", rendered);
+    Ok(())
+}
+
+fn cmd_dump_bytecode(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err(
+            "usage: exoc dump-bytecode <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt] [--debug-symbols]"
+                .to_string(),
+        );
+    }
+    let input = args[0].as_str();
+    let mut profile = CompileProfile::Auto;
+    let mut opt = OptLevel::O0;
+    let mut debug_symbols = false;
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --profile".to_string())?;
+                profile = parse_compile_profile(v)?;
+            }
+            "--opt-level" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --opt-level".to_string())?;
+                opt = parse_opt_level(v)?;
+            }
+            "--opt" => opt = OptLevel::O1,
+            "--debug-symbols" => debug_symbols = true,
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let exb_key = exb_pack_key(Path::new(input), &src, profile, opt, debug_symbols)?;
+    let exb_pack = cache_exb_file_for_key(exb_key)?;
+    let bytes = if let Some(cached) = load_blob_pack(&exb_pack, PACK_KIND_EXB)? {
+        cached
+    } else {
+        let built = compile_program_to_exobyte_with_options_debug(&src, profile, opt, debug_symbols)
+            .map_err(|e| e.to_string())?;
+        let _ = save_blob_pack(&exb_pack, PACK_KIND_EXB, &built);
+        built
+    };
+    for (i, chunk) in bytes.chunks(16).enumerate() {
+        print!("{:04x}: ", i * 16);
+        for b in chunk {
+            print!("{:02x} ", b);
+        }
+        println!();
+    }
+    Ok(())
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn parse_import_specs(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with("//") || t.starts_with('#') {
+            continue;
+        }
+        if !t.starts_with("Import") {
+            continue;
+        }
+        let mut rest = t["Import".len()..].trim();
+        if rest.is_empty() {
+            continue;
+        }
+        if let Some(after_pub) = rest.strip_prefix("pub ") {
+            rest = after_pub.trim_start();
+        }
+        let spec = if let Some(stripped) = rest.strip_prefix('"') {
+            if let Some(end) = stripped.find('"') {
+                stripped[..end].to_string()
+            } else {
+                stripped.to_string()
+            }
+        } else {
+            rest.split_whitespace().next().unwrap_or("").to_string()
+        };
+        if !spec.is_empty() {
+            out.push(spec);
+        }
+    }
+    out
+}
+
+fn resolve_import(base: &Path, spec: &str) -> PathBuf {
+    let mut p = PathBuf::from(spec);
+    if p.extension().is_none() {
+        p.set_extension("exo");
+    }
+    if p.is_absolute() {
+        p
+    } else {
+        base.join(p)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ModuleGraphNode {
+    key: String,
+    deps: Vec<String>,
+    source_hash: u64,
+    exports_hash: u64,
+}
+
+fn canonical_module_key(canonical: &Path, root_base: &Path) -> String {
+    if let Ok(rel) = canonical.strip_prefix(root_base) {
+        let s = rel.to_string_lossy().replace('\\', "/");
+        if s.is_empty() {
+            ".".to_string()
+        } else {
+            s
+        }
+    } else {
+        canonical.to_string_lossy().replace('\\', "/")
+    }
+}
+
+fn collect_module_graph(
+    path: &Path,
+    root_base: &Path,
+    visiting: &mut HashSet<PathBuf>,
+    graph: &mut HashMap<PathBuf, (u64, Vec<PathBuf>)>,
+) -> Result<(), String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
+    if graph.contains_key(&canonical) {
+        return Ok(());
+    }
+    if !visiting.insert(canonical.clone()) {
+        return Err(format!("cyclic import while scanning '{}'", canonical.display()));
+    }
+    let src = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("read '{}': {}", canonical.display(), e))?;
+    let source_hash = fnv1a64(src.as_bytes());
+    let base = canonical.parent().unwrap_or_else(|| Path::new("."));
+    let mut deps = Vec::new();
+    for spec in parse_import_specs(&src) {
+        let child = resolve_import(base, &spec);
+        let child_canonical = child
+            .canonicalize()
+            .map_err(|e| format!("resolve '{}': {}", child.display(), e))?;
+        deps.push(child_canonical.clone());
+        collect_module_graph(&child_canonical, root_base, visiting, graph)?;
+    }
+    deps.sort();
+    deps.dedup();
+    let _ = root_base;
+    graph.insert(canonical.clone(), (source_hash, deps));
+    let _ = visiting.remove(&canonical);
+    Ok(())
+}
+
+fn module_graph_nodes(root: &Path) -> Result<Vec<ModuleGraphNode>, String> {
+    let root_canonical = root
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", root.display(), e))?;
+    let root_base = root_canonical.parent().unwrap_or_else(|| Path::new("."));
+    let mut visiting = HashSet::new();
+    let mut graph: HashMap<PathBuf, (u64, Vec<PathBuf>)> = HashMap::new();
+    collect_module_graph(&root_canonical, root_base, &mut visiting, &mut graph)?;
+    let mut items: Vec<(PathBuf, (u64, Vec<PathBuf>))> = graph.into_iter().collect();
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out = Vec::with_capacity(items.len());
+    for (path, (source_hash, deps)) in items {
+        let mut dep_keys: Vec<String> = deps
+            .iter()
+            .map(|d| canonical_module_key(d, root_base))
+            .collect();
+        dep_keys.sort();
+        let key = canonical_module_key(&path, root_base);
+        // v0.1: exports hash follows source hash; future pass can plug semantic exports hash.
+        out.push(ModuleGraphNode {
+            key,
+            deps: dep_keys,
+            source_hash,
+            exports_hash: source_hash,
+        });
+    }
+    Ok(out)
+}
+
+fn encode_graph(nodes: &[ModuleGraphNode]) -> Vec<u8> {
+    let mut blob = Vec::new();
+    blob.extend_from_slice(format!("EXOGRAPH {} {}\n", CACHE_SCHEMA_VERSION, nodes.len()).as_bytes());
+    for n in nodes {
+        blob.extend_from_slice(n.key.as_bytes());
+        blob.push(0);
+        blob.extend_from_slice(format!("{:016x}", n.source_hash).as_bytes());
+        blob.push(0);
+        blob.extend_from_slice(format!("{:016x}", n.exports_hash).as_bytes());
+        blob.push(0);
+        blob.extend_from_slice(n.deps.join(",").as_bytes());
+        blob.push(b'\n');
+    }
+    blob
+}
+
+fn write_graph_bin(nodes: &[ModuleGraphNode]) -> Result<(), String> {
+    ensure_cache_layout()?;
+    let blob = encode_graph(nodes);
+    std::fs::write(CACHE_GRAPH_FILE, blob)
+        .map_err(|e| format!("write cache graph '{}': {}", CACHE_GRAPH_FILE, e))
+}
+
+fn read_graph_hash() -> Option<u64> {
+    let bytes = std::fs::read(CACHE_GRAPH_FILE).ok()?;
+    Some(fnv1a64(&bytes))
+}
+
+fn module_graph_fingerprint(root: &Path) -> Result<u64, String> {
+    let nodes = module_graph_nodes(root)?;
+    let blob = encode_graph(&nodes);
+    Ok(fnv1a64(&blob))
+}
+
+fn module_graph_module_count(root: &Path) -> Result<usize, String> {
+    Ok(module_graph_nodes(root)?.len())
+}
+
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    fingerprint: u64,
+    warning_count: usize,
+    law_count: usize,
+    warnings: Vec<String>,
+}
+
+const CACHE_SCHEMA_VERSION: u32 = 2;
+const PACK_MAGIC: [u8; 4] = *b"EXOP";
+const PACK_KIND_SEM: [u8; 4] = *b"SEMP";
+const PACK_KIND_AST: [u8; 4] = *b"ASTP";
+const PACK_KIND_IR: [u8; 4] = *b"IRPK";
+const PACK_KIND_EXB: [u8; 4] = *b"EXBP";
+const CACHE_ROOT_DIR: &str = ".exo-cache";
+const CACHE_PACKS_SEM_DIR: &str = ".exo-cache/packs/sem";
+const CACHE_PACKS_AST_DIR: &str = ".exo-cache/packs/ast";
+const CACHE_PACKS_IR_DIR: &str = ".exo-cache/packs/ir";
+const CACHE_PACKS_EXB_DIR: &str = ".exo-cache/packs/exb";
+const CACHE_SCHEMA_FILE: &str = ".exo-cache/schema.json";
+const CACHE_INDEX_FILE: &str = ".exo-cache/index.bin";
+const CACHE_GRAPH_FILE: &str = ".exo-cache/graph.bin";
+
+#[derive(Debug, Clone, Default)]
+struct DenyPolicy {
+    deny_all_warnings: bool,
+    deny_codes: HashSet<String>,
+}
+
+impl DenyPolicy {
+    fn has_rules(&self) -> bool {
+        self.deny_all_warnings || !self.deny_codes.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CacheEvent {
+    Hit,
+    Miss,
+    Invalidate,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CacheReason {
+    Reused,
+    CacheDisabled,
+    NotFound,
+    HeaderInvalid,
+    KindMismatch,
+    VersionMismatch,
+    ToolchainMismatch,
+    FeatureMismatch,
+    CapsMismatch,
+    PayloadSizeMismatch,
+    ChecksumMismatch,
+    FingerprintMismatch,
+    GraphChanged,
+    DenyPolicy,
+}
+
+fn escape_json(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn trace_cache(
+    enabled: bool,
+    event: CacheEvent,
+    reason: CacheReason,
+    module: &Path,
+    pack_kind: &str,
+    key: &str,
+) {
+    if !enabled {
+        return;
+    }
+    let event_s = match event {
+        CacheEvent::Hit => "cache_hit",
+        CacheEvent::Miss => "cache_miss",
+        CacheEvent::Invalidate => "invalidate",
+    };
+    let reason_s = match reason {
+        CacheReason::Reused => "REUSED",
+        CacheReason::CacheDisabled => "CACHE_DISABLED",
+        CacheReason::NotFound => "NOT_FOUND",
+        CacheReason::HeaderInvalid => "HEADER_INVALID",
+        CacheReason::KindMismatch => "KIND_MISMATCH",
+        CacheReason::VersionMismatch => "SCHEMA_CHANGED",
+        CacheReason::ToolchainMismatch => "TOOLCHAIN_CHANGED",
+        CacheReason::FeatureMismatch => "FEATURES_CHANGED",
+        CacheReason::CapsMismatch => "CAPS_CHANGED",
+        CacheReason::PayloadSizeMismatch => "CORRUPT_PACK",
+        CacheReason::ChecksumMismatch => "CORRUPT_PACK",
+        CacheReason::FingerprintMismatch => "SOURCE_CHANGED",
+        CacheReason::GraphChanged => "DEP_CHANGED",
+        CacheReason::DenyPolicy => "DENY_POLICY",
+    };
+    eprintln!(
+        "{{\"event\":\"{}\",\"reason\":\"{}\",\"module\":\"{}\",\"pack_kind\":\"{}\",\"key\":\"{}\"}}",
+        event_s,
+        reason_s,
+        escape_json(&module.to_string_lossy()),
+        escape_json(pack_kind),
+        escape_json(key),
+    );
+}
+
+fn parse_deny_value(v: &str, policy: &mut DenyPolicy) {
+    if v.eq_ignore_ascii_case("warnings") || v.eq_ignore_ascii_case("all") {
+        policy.deny_all_warnings = true;
+    } else {
+        policy.deny_codes.insert(v.to_ascii_uppercase());
+    }
+}
+
+fn collect_denied_warning_lines(
+    report: &exo_semantics::SemanticReport,
+    policy: &DenyPolicy,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for w in &report.warnings {
+        if policy.deny_all_warnings || policy.deny_codes.contains(w.code) {
+            out.push(format!("{}: {}", w.code, w.message));
+        }
+    }
+    out
+}
+
+fn cache_file_for_root(root: &Path) -> Result<PathBuf, String> {
+    let canonical = root
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", root.display(), e))?;
+    let key = fnv1a64(canonical.to_string_lossy().as_bytes());
+    ensure_cache_layout()?;
+    Ok(PathBuf::from(CACHE_PACKS_SEM_DIR).join(format!("{:016x}.sempack", key)))
+}
+
+fn cache_ast_file_for_key(key: u64) -> Result<PathBuf, String> {
+    ensure_cache_layout()?;
+    Ok(PathBuf::from(CACHE_PACKS_AST_DIR).join(format!("{:016x}.astpack", key)))
+}
+
+fn cache_ir_file_for_key(key: u64) -> Result<PathBuf, String> {
+    ensure_cache_layout()?;
+    Ok(PathBuf::from(CACHE_PACKS_IR_DIR).join(format!("{:016x}.irpack", key)))
+}
+
+fn cache_exb_file_for_key(key: u64) -> Result<PathBuf, String> {
+    ensure_cache_layout()?;
+    Ok(PathBuf::from(CACHE_PACKS_EXB_DIR).join(format!("{:016x}.exbpack", key)))
+}
+
+fn ast_pack_key(path: &Path, source: &str) -> Result<u64, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
+    let mut blob = Vec::new();
+    blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(format!("{:016x}", fnv1a64(source.as_bytes())).as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(b"frontend-v1-auto");
+    Ok(fnv1a64(&blob))
+}
+
+fn ir_pack_key(path: &Path, source: &str, profile: CompileProfile, opt: OptLevel) -> Result<u64, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
+    let mut blob = Vec::new();
+    blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(format!("{:016x}", fnv1a64(source.as_bytes())).as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(format!("profile={:?};opt={:?};lowering=v1", profile, opt).as_bytes());
+    Ok(fnv1a64(&blob))
+}
+
+fn exb_pack_key(
+    path: &Path,
+    source: &str,
+    profile: CompileProfile,
+    opt: OptLevel,
+    debug_symbols: bool,
+) -> Result<u64, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
+    let mut blob = Vec::new();
+    blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(format!("{:016x}", fnv1a64(source.as_bytes())).as_bytes());
+    blob.push(0);
+    blob.extend_from_slice(
+        format!(
+            "profile={:?};opt={:?};debug={};emit=v1",
+            profile, opt, debug_symbols
+        )
+        .as_bytes(),
+    );
+    Ok(fnv1a64(&blob))
+}
+
+fn ensure_cache_layout() -> Result<(), String> {
+    std::fs::create_dir_all(CACHE_PACKS_SEM_DIR).map_err(|e| format!("create cache dir: {}", e))?;
+    std::fs::create_dir_all(CACHE_PACKS_AST_DIR).map_err(|e| format!("create cache dir: {}", e))?;
+    std::fs::create_dir_all(CACHE_PACKS_IR_DIR).map_err(|e| format!("create cache dir: {}", e))?;
+    std::fs::create_dir_all(CACHE_PACKS_EXB_DIR).map_err(|e| format!("create cache dir: {}", e))?;
+    if !Path::new(CACHE_SCHEMA_FILE).exists() {
+        let schema = format!(
+            "{{\"schema_version\":{},\"pack_magic\":\"EXOP\",\"layout\":\"v0.1\"}}\n",
+            CACHE_SCHEMA_VERSION
+        );
+        std::fs::write(CACHE_SCHEMA_FILE, schema)
+            .map_err(|e| format!("write cache schema '{}': {}", CACHE_SCHEMA_FILE, e))?;
+    }
+    if !Path::new(CACHE_INDEX_FILE).exists() {
+        std::fs::write(CACHE_INDEX_FILE, b"EXOIDX\n")
+            .map_err(|e| format!("write cache index '{}': {}", CACHE_INDEX_FILE, e))?;
+    }
+    if !Path::new(CACHE_GRAPH_FILE).exists() {
+        std::fs::write(CACHE_GRAPH_FILE, b"EXOGRAPH 2 0\n")
+            .map_err(|e| format!("write cache graph '{}': {}", CACHE_GRAPH_FILE, e))?;
+    }
+    let _ = CACHE_ROOT_DIR;
+    Ok(())
+}
+
+fn update_cache_index(
+    root: &Path,
+    fingerprint: u64,
+    graph_hash: Option<u64>,
+    module_count: usize,
+) -> Result<(), String> {
+    ensure_cache_layout()?;
+    let root_key = root
+        .canonicalize()
+        .map_err(|e| format!("resolve '{}': {}", root.display(), e))?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut entries = std::collections::BTreeMap::<String, String>::new();
+    if let Ok(text) = std::fs::read_to_string(CACHE_INDEX_FILE) {
+        for line in text.lines() {
+            if !line.starts_with("K ") {
+                continue;
+            }
+            if let Some((k, rest)) = line[2..].split_once('\t') {
+                entries.insert(k.to_string(), rest.to_string());
+            }
+        }
+    }
+    let gh = graph_hash.unwrap_or(0);
+    entries.insert(
+        root_key.clone(),
+        format!("FP={:016x}\tGH={:016x}\tMC={}", fingerprint, gh, module_count),
+    );
+    let mut out = String::from("EXOIDX v2\n");
+    for (k, v) in entries {
+        out.push_str("K ");
+        out.push_str(&k);
+        out.push('\t');
+        out.push_str(&v);
+        out.push('\n');
+    }
+    std::fs::write(CACHE_INDEX_FILE, out)
+        .map_err(|e| format!("write cache index '{}': {}", CACHE_INDEX_FILE, e))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PackHeader {
+    kind: [u8; 4],
+    schema_version: u32,
+    toolchain_hash: u64,
+    feature_hash: u64,
+    payload_len: u64,
+    payload_checksum: u64,
+}
+
+fn current_toolchain_hash() -> u64 {
+    if let Ok(v) = std::env::var("EXO_TOOLCHAIN_HASH") {
+        if let Ok(parsed) = u64::from_str_radix(v.trim(), 16).or_else(|_| v.trim().parse::<u64>()) {
+            return parsed;
+        }
+    }
+    let tag = format!("exoc-cli:{}", env!("CARGO_PKG_VERSION"));
+    fnv1a64(tag.as_bytes())
+}
+
+fn current_feature_hash() -> u64 {
+    if let Ok(v) = std::env::var("EXO_FEATURE_HASH") {
+        if let Ok(parsed) = u64::from_str_radix(v.trim(), 16).or_else(|_| v.trim().parse::<u64>()) {
+            return parsed;
+        }
+    }
+    let flags = format!(
+        "debug_assertions={};target_pointer_width={}",
+        cfg!(debug_assertions),
+        std::mem::size_of::<usize>() * 8
+    );
+    fnv1a64(flags.as_bytes())
+}
+
+fn current_cache_schema_version() -> u32 {
+    if let Ok(v) = std::env::var("EXO_CACHE_SCHEMA") {
+        if let Ok(parsed) = v.trim().parse::<u32>() {
+            return parsed;
+        }
+    }
+    CACHE_SCHEMA_VERSION
+}
+
+fn current_caps_hash() -> u64 {
+    if let Ok(v) = std::env::var("EXO_CAPS_HASH") {
+        if let Ok(parsed) = u64::from_str_radix(v.trim(), 16).or_else(|_| v.trim().parse::<u64>()) {
+            return parsed;
+        }
+    }
+    0
+}
+
+fn expected_feature_hash_for_kind(kind: [u8; 4]) -> u64 {
+    let base = current_feature_hash();
+    if kind == PACK_KIND_EXB {
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&base.to_le_bytes());
+        blob.extend_from_slice(&current_caps_hash().to_le_bytes());
+        fnv1a64(&blob)
+    } else {
+        base
+    }
+}
+
+fn encode_pack_header(header: &PackHeader) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 4 + 4 + 8 + 8 + 8 + 8);
+    out.extend_from_slice(&PACK_MAGIC);
+    out.extend_from_slice(&header.kind);
+    out.extend_from_slice(&header.schema_version.to_le_bytes());
+    out.extend_from_slice(&header.toolchain_hash.to_le_bytes());
+    out.extend_from_slice(&header.feature_hash.to_le_bytes());
+    out.extend_from_slice(&header.payload_len.to_le_bytes());
+    out.extend_from_slice(&header.payload_checksum.to_le_bytes());
+    out
+}
+
+fn decode_pack_header(bytes: &[u8]) -> Option<(PackHeader, usize)> {
+    let header_len = 44usize;
+    if bytes.len() < header_len {
+        return None;
+    }
+    if bytes[0..4] != PACK_MAGIC {
+        return None;
+    }
+    let kind = [bytes[4], bytes[5], bytes[6], bytes[7]];
+    let schema_version = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+    let toolchain_hash = u64::from_le_bytes([
+        bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19],
+    ]);
+    let feature_hash = u64::from_le_bytes([
+        bytes[20], bytes[21], bytes[22], bytes[23], bytes[24], bytes[25], bytes[26], bytes[27],
+    ]);
+    let payload_len = u64::from_le_bytes([
+        bytes[28], bytes[29], bytes[30], bytes[31], bytes[32], bytes[33], bytes[34], bytes[35],
+    ]);
+    let payload_checksum = u64::from_le_bytes([
+        bytes[36], bytes[37], bytes[38], bytes[39], bytes[40], bytes[41], bytes[42], bytes[43],
+    ]);
+    Some((
+        PackHeader {
+            kind,
+            schema_version,
+            toolchain_hash,
+            feature_hash,
+            payload_len,
+            payload_checksum,
+        },
+        header_len,
+    ))
+}
+
+fn save_text_pack(path: &Path, kind: [u8; 4], payload: &str) -> Result<(), String> {
+    let payload_bytes = payload.as_bytes();
+    let header = PackHeader {
+        kind,
+        schema_version: current_cache_schema_version(),
+        toolchain_hash: current_toolchain_hash(),
+        feature_hash: expected_feature_hash_for_kind(kind),
+        payload_len: payload_bytes.len() as u64,
+        payload_checksum: fnv1a64(payload_bytes),
+    };
+    let mut out = encode_pack_header(&header);
+    out.extend_from_slice(payload_bytes);
+    std::fs::write(path, out).map_err(|e| format!("write pack '{}': {}", path.display(), e))
+}
+
+fn load_text_pack(path: &Path, expected_kind: [u8; 4]) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
+    let (header, header_len) = match decode_pack_header(&bytes) {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    if header.kind != expected_kind {
+        return Ok(None);
+    }
+    if header.schema_version != current_cache_schema_version() {
+        return Ok(None);
+    }
+    if header.toolchain_hash != current_toolchain_hash() {
+        return Ok(None);
+    }
+    if header.feature_hash != expected_feature_hash_for_kind(expected_kind) {
+        return Ok(None);
+    }
+    if header.payload_len != (bytes.len().saturating_sub(header_len)) as u64 {
+        return Ok(None);
+    }
+    let payload = &bytes[header_len..];
+    if header.payload_checksum != fnv1a64(payload) {
+        return Ok(None);
+    }
+    String::from_utf8(payload.to_vec())
+        .map(Some)
+        .map_err(|_| format!("read pack '{}': payload is not valid utf-8", path.display()))
+}
+
+fn save_blob_pack(path: &Path, kind: [u8; 4], payload: &[u8]) -> Result<(), String> {
+    let header = PackHeader {
+        kind,
+        schema_version: current_cache_schema_version(),
+        toolchain_hash: current_toolchain_hash(),
+        feature_hash: expected_feature_hash_for_kind(kind),
+        payload_len: payload.len() as u64,
+        payload_checksum: fnv1a64(payload),
+    };
+    let mut out = encode_pack_header(&header);
+    out.extend_from_slice(payload);
+    std::fs::write(path, out).map_err(|e| format!("write pack '{}': {}", path.display(), e))
+}
+
+fn load_blob_pack(path: &Path, expected_kind: [u8; 4]) -> Result<Option<Vec<u8>>, String> {
+    match load_blob_pack_ex(path, expected_kind)? {
+        BlobPackLookup::Hit(bytes) => Ok(Some(bytes)),
+        BlobPackLookup::Miss(_) => Ok(None),
+    }
+}
+
+enum BlobPackLookup {
+    Hit(Vec<u8>),
+    Miss(CacheReason),
+}
+
+fn load_blob_pack_ex(path: &Path, expected_kind: [u8; 4]) -> Result<BlobPackLookup, String> {
+    if !path.exists() {
+        return Ok(BlobPackLookup::Miss(CacheReason::NotFound));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
+    let (header, header_len) = match decode_pack_header(&bytes) {
+        Some(v) => v,
+        None => return Ok(BlobPackLookup::Miss(CacheReason::HeaderInvalid)),
+    };
+    if header.kind != expected_kind {
+        return Ok(BlobPackLookup::Miss(CacheReason::KindMismatch));
+    }
+    if header.schema_version != current_cache_schema_version() {
+        return Ok(BlobPackLookup::Miss(CacheReason::VersionMismatch));
+    }
+    if header.toolchain_hash != current_toolchain_hash() {
+        return Ok(BlobPackLookup::Miss(CacheReason::ToolchainMismatch));
+    }
+    if header.feature_hash != expected_feature_hash_for_kind(expected_kind) {
+        if expected_kind == PACK_KIND_EXB && current_caps_hash() != 0 {
+            return Ok(BlobPackLookup::Miss(CacheReason::CapsMismatch));
+        }
+        return Ok(BlobPackLookup::Miss(CacheReason::FeatureMismatch));
+    }
+    if header.payload_len != (bytes.len().saturating_sub(header_len)) as u64 {
+        return Ok(BlobPackLookup::Miss(CacheReason::PayloadSizeMismatch));
+    }
+    let payload = &bytes[header_len..];
+    if header.payload_checksum != fnv1a64(payload) {
+        return Ok(BlobPackLookup::Miss(CacheReason::ChecksumMismatch));
+    }
+    Ok(BlobPackLookup::Hit(payload.to_vec()))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
+}
+
+fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
+    if !s.len().is_multiple_of(2) {
+        return Err("odd hex length".to_string());
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let hi = (bytes[i] as char)
+            .to_digit(16)
+            .ok_or_else(|| "invalid hex".to_string())?;
+        let lo = (bytes[i + 1] as char)
+            .to_digit(16)
+            .ok_or_else(|| "invalid hex".to_string())?;
+        out.push(((hi << 4) | lo) as u8);
+        i += 2;
+    }
+    Ok(out)
+}
+
+fn save_cache_entry(path: &Path, entry: &CacheEntry) -> Result<(), String> {
+    let mut payload = String::new();
+    payload.push_str(&format!("FP {:016x}\n", entry.fingerprint));
+    payload.push_str(&format!("WARN {}\n", entry.warning_count));
+    payload.push_str(&format!("LAW {}\n", entry.law_count));
+    let mut checksum_blob = Vec::new();
+    for w in &entry.warnings {
+        payload.push_str("W ");
+        payload.push_str(&hex_encode(w.as_bytes()));
+        payload.push('\n');
+        checksum_blob.extend_from_slice(w.as_bytes());
+        checksum_blob.push(0);
+    }
+    payload.push_str(&format!("WSUM {:016x}\n", fnv1a64(&checksum_blob)));
+    save_text_pack(path, PACK_KIND_SEM, &payload)
+}
+
+enum CacheLookup {
+    Hit(CacheEntry),
+    Miss(CacheReason),
+}
+
+fn load_cache_entry_ex(path: &Path, expected_fp: u64) -> Result<CacheLookup, String> {
+    if !path.exists() {
+        return Ok(CacheLookup::Miss(CacheReason::NotFound));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
+    let (header, header_len) = match decode_pack_header(&bytes) {
+        Some(v) => v,
+        None => return Ok(CacheLookup::Miss(CacheReason::HeaderInvalid)),
+    };
+    if header.kind != PACK_KIND_SEM {
+        return Ok(CacheLookup::Miss(CacheReason::KindMismatch));
+    }
+    if header.schema_version != current_cache_schema_version() {
+        return Ok(CacheLookup::Miss(CacheReason::VersionMismatch));
+    }
+    if header.toolchain_hash != current_toolchain_hash() {
+        return Ok(CacheLookup::Miss(CacheReason::ToolchainMismatch));
+    }
+    if header.feature_hash != current_feature_hash() {
+        return Ok(CacheLookup::Miss(CacheReason::FeatureMismatch));
+    }
+    if header.payload_len != (bytes.len().saturating_sub(header_len)) as u64 {
+        return Ok(CacheLookup::Miss(CacheReason::PayloadSizeMismatch));
+    }
+    let payload = &bytes[header_len..];
+    if header.payload_checksum != fnv1a64(payload) {
+        return Ok(CacheLookup::Miss(CacheReason::ChecksumMismatch));
+    }
+    let text = String::from_utf8(payload.to_vec())
+        .map_err(|_| format!("read pack '{}': payload is not valid utf-8", path.display()))?;
+
+    let mut fp = None;
+    let mut warn = 0usize;
+    let mut law = 0usize;
+    let mut wsum = None;
+    let mut warnings = Vec::new();
+    for line in text.lines() {
+        if let Some(v) = line.strip_prefix("FP ") {
+            fp = u64::from_str_radix(v.trim(), 16).ok();
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("WARN ") {
+            warn = v.trim().parse::<usize>().unwrap_or(0);
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("LAW ") {
+            law = v.trim().parse::<usize>().unwrap_or(0);
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("WSUM ") {
+            wsum = u64::from_str_radix(v.trim(), 16).ok();
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("W ") {
+            let raw = hex_decode(v.trim())?;
+            warnings.push(String::from_utf8_lossy(&raw).to_string());
+        }
+    }
+    if fp != Some(expected_fp) {
+        return Ok(CacheLookup::Miss(CacheReason::FingerprintMismatch));
+    }
+    if warn != warnings.len() {
+        return Ok(CacheLookup::Miss(CacheReason::ChecksumMismatch));
+    }
+    let mut checksum_blob = Vec::new();
+    for w in &warnings {
+        checksum_blob.extend_from_slice(w.as_bytes());
+        checksum_blob.push(0);
+    }
+    if wsum != Some(fnv1a64(&checksum_blob)) {
+        return Ok(CacheLookup::Miss(CacheReason::ChecksumMismatch));
+    }
+    Ok(CacheLookup::Hit(CacheEntry {
+        fingerprint: expected_fp,
+        warning_count: warn,
+        law_count: law,
+        warnings,
+    }))
+}
+
+#[cfg(test)]
+fn load_cache_entry(path: &Path, expected_fp: u64) -> Result<Option<CacheEntry>, String> {
+    match load_cache_entry_ex(path, expected_fp)? {
+        CacheLookup::Hit(v) => Ok(Some(v)),
+        CacheLookup::Miss(_) => Ok(None),
+    }
+}
+
+fn cmd_hash_ast(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 {
+        return Err("usage: exoc hash-ast <input.exo>".to_string());
+    }
+    let input = args[0].as_str();
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let ast_key = ast_pack_key(Path::new(input), &src)?;
+    let ast_pack = cache_ast_file_for_key(ast_key)?;
+    let text = if let Some(cached) = load_text_pack(&ast_pack, PACK_KIND_AST)? {
+        cached
+    } else {
+        let rendered = if let Ok(logos) = parse_logos_program(&src) {
+            format!("{:#?}", logos)
+        } else {
+            format!("{:#?}", parse_program(&src).map_err(|e| e.to_string())?)
+        };
+        let _ = save_text_pack(&ast_pack, PACK_KIND_AST, &rendered);
+        rendered
+    };
+    println!("{:016x}", fnv1a64(text.as_bytes()));
+    Ok(())
+}
+
+fn cmd_hash_ir(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err(
+            "usage: exoc hash-ir <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt]"
+                .to_string(),
+        );
+    }
+    let input = args[0].as_str();
+    let mut profile = CompileProfile::Auto;
+    let mut opt = OptLevel::O0;
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --profile".to_string())?;
+                profile = parse_compile_profile(v)?;
+            }
+            "--opt-level" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --opt-level".to_string())?;
+                opt = parse_opt_level(v)?;
+            }
+            "--opt" => opt = OptLevel::O1,
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let ir_key = ir_pack_key(Path::new(input), &src, profile, opt)?;
+    let ir_pack = cache_ir_file_for_key(ir_key)?;
+    let text = if let Some(cached) = load_text_pack(&ir_pack, PACK_KIND_IR)? {
+        cached
+    } else {
+        let rendered = match profile {
+            CompileProfile::Logos => {
+                let logos = parse_logos_program(&src).map_err(|e| e.to_string())?;
+                format!("{:#?}", lower_logos_laws_to_ir(&logos))
+            }
+            CompileProfile::RustLike => format!(
+                "{:#?}",
+                compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                    .map_err(|e| e.to_string())?
+            ),
+            CompileProfile::Auto => {
+                if let Ok(logos) = parse_logos_program(&src) {
+                    format!("{:#?}", lower_logos_laws_to_ir(&logos))
+                } else {
+                    format!(
+                        "{:#?}",
+                        compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                            .map_err(|e| e.to_string())?
+                    )
+                }
+            }
+        };
+        let _ = save_text_pack(&ir_pack, PACK_KIND_IR, &rendered);
+        rendered
+    };
+    println!("{:016x}", fnv1a64(text.as_bytes()));
+    Ok(())
+}
+
+fn cmd_hash_exb(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err(
+            "usage: exoc hash-exb <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt] [--trace-cache]"
+                .to_string(),
+        );
+    }
+    let input = args[0].as_str();
+    let mut profile = CompileProfile::Auto;
+    let mut opt = OptLevel::O0;
+    let mut debug_symbols = false;
+    let mut trace_cache_enabled = false;
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --profile".to_string())?;
+                profile = parse_compile_profile(v)?;
+            }
+            "--opt-level" => {
+                i += 1;
+                let v = args
+                    .get(i)
+                    .ok_or_else(|| "missing value for --opt-level".to_string())?;
+                opt = parse_opt_level(v)?;
+            }
+            "--opt" => opt = OptLevel::O1,
+            "--debug-symbols" => debug_symbols = true,
+            "--trace-cache" => trace_cache_enabled = true,
+            other => return Err(format!("unknown flag '{}'", other)),
+        }
+        i += 1;
+    }
+    let src =
+        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let exb_key = exb_pack_key(Path::new(input), &src, profile, opt, debug_symbols)?;
+    let exb_pack = cache_exb_file_for_key(exb_key)?;
+    let bytes = match load_blob_pack_ex(&exb_pack, PACK_KIND_EXB)? {
+        BlobPackLookup::Hit(cached) => {
+            trace_cache(
+                trace_cache_enabled,
+                CacheEvent::Hit,
+                CacheReason::Reused,
+                Path::new(input),
+                "EXBP",
+                &format!("{:016x}", exb_key),
+            );
+            cached
+        }
+        BlobPackLookup::Miss(reason) => {
+            trace_cache(
+                trace_cache_enabled,
+                CacheEvent::Miss,
+                reason,
+                Path::new(input),
+                "EXBP",
+                &format!("{:016x}", exb_key),
+            );
+            let built = compile_program_to_exobyte_with_options_debug(&src, profile, opt, debug_symbols)
+                .map_err(|e| e.to_string())?;
+            let _ = save_blob_pack(&exb_pack, PACK_KIND_EXB, &built);
+            built
+        }
+    };
+    println!("{:016x}", fnv1a64(&bytes));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn mk_temp_dir(prefix: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "{}_{}_{}",
+            prefix,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("mkdir");
+        base
+    }
+
+    #[test]
+    fn import_specs_parse_pub_and_alias() {
+        let src = r#"
+Import "a.exo"
+Import pub "b.exo"
+Import "c.exo" as Core
+"#;
+        let specs = parse_import_specs(src);
+        assert_eq!(specs, vec!["a.exo", "b.exo", "c.exo"]);
+    }
+
+    #[test]
+    fn cache_roundtrip_and_integrity_check() {
+        let dir = mk_temp_dir("exo_cache_roundtrip");
+        let path = dir.join("entry.cache");
+        let entry = CacheEntry {
+            fingerprint: 0x1234_5678_90ab_cdef,
+            warning_count: 2,
+            law_count: 5,
+            warnings: vec!["w1".into(), "w2".into()],
+        };
+        save_cache_entry(&path, &entry).expect("save");
+        let loaded = load_cache_entry(&path, entry.fingerprint)
+            .expect("load")
+            .expect("some");
+        assert_eq!(loaded.warning_count, 2);
+        assert_eq!(loaded.law_count, 5);
+        assert_eq!(loaded.warnings, vec!["w1", "w2"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cache_version_mismatch_is_ignored() {
+        let dir = mk_temp_dir("exo_cache_version");
+        let path = dir.join("entry.cache");
+        let payload = b"FP 0000000000000001\nWARN 0\nLAW 0\nWSUM 14650fb0739d0383\n".to_vec();
+        let header = PackHeader {
+            kind: PACK_KIND_SEM,
+            schema_version: CACHE_SCHEMA_VERSION - 1,
+            toolchain_hash: current_toolchain_hash(),
+            feature_hash: current_feature_hash(),
+            payload_len: payload.len() as u64,
+            payload_checksum: fnv1a64(&payload),
+        };
+        let mut bytes = encode_pack_header(&header);
+        bytes.extend_from_slice(&payload);
+        std::fs::write(&path, bytes).expect("write");
+        let got = load_cache_entry(&path, 1).expect("load");
+        assert!(got.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cache_checksum_mismatch_is_ignored() {
+        let dir = mk_temp_dir("exo_cache_checksum");
+        let path = dir.join("entry.cache");
+        let payload = b"FP 0000000000000001\nWARN 0\nLAW 0\nWSUM 14650fb0739d0383\n".to_vec();
+        let header = PackHeader {
+            kind: PACK_KIND_SEM,
+            schema_version: CACHE_SCHEMA_VERSION,
+            toolchain_hash: current_toolchain_hash(),
+            feature_hash: current_feature_hash(),
+            payload_len: payload.len() as u64,
+            payload_checksum: 0,
+        };
+        let mut bytes = encode_pack_header(&header);
+        bytes.extend_from_slice(&payload);
+        std::fs::write(&path, bytes).expect("write");
+        let got = load_cache_entry(&path, 1).expect("load");
+        assert!(got.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn module_fingerprint_changes_on_dependency_edit() {
+        let dir = mk_temp_dir("exo_mod_fp");
+        let root = dir.join("root.exo");
+        let child = dir.join("child.exo");
+        std::fs::write(
+            &root,
+            r#"
+Import "child.exo"
+Law "R" [priority 1]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("write root");
+        std::fs::write(
+            &child,
+            r#"
+Law "C" [priority 1]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("write child");
+        let fp1 = module_graph_fingerprint(&root).expect("fp1");
+        std::fs::write(
+            &child,
+            r#"
+Law "C2" [priority 2]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("rewrite child");
+        let fp2 = module_graph_fingerprint(&root).expect("fp2");
+        assert_ne!(fp1, fp2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+fn parse_compile_profile(v: &str) -> Result<CompileProfile, String> {
+    match v.to_ascii_lowercase().as_str() {
+        "auto" => Ok(CompileProfile::Auto),
+        "rust" | "rustlike" | "rust-like" => Ok(CompileProfile::RustLike),
+        "logos" => Ok(CompileProfile::Logos),
+        _ => Err(format!(
+            "invalid --profile '{}', expected auto|rust|logos",
+            v
+        )),
+    }
+}
+
+fn parse_opt_level(v: &str) -> Result<OptLevel, String> {
+    match v.to_ascii_uppercase().as_str() {
+        "O0" => Ok(OptLevel::O0),
+        "O1" => Ok(OptLevel::O1),
+        _ => Err(format!("invalid --opt-level '{}', expected O0|O1", v)),
+    }
+}
+
+fn cmd_snapshots(args: &[String]) -> Result<(), String> {
+    if args.len() > 1 {
+        return Err("usage: exoc snapshots [--update]".to_string());
+    }
+    let update = args.first().map(|s| s.as_str()) == Some("--update");
+    let mut cmd = Command::new("cargo");
+    cmd.arg("test").arg("--test").arg("golden_snapshots").arg("-q");
+    if update {
+        cmd.env("EXO_UPDATE_SNAPSHOTS", "1");
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("failed to run cargo test: {}", e))?;
+    if status.success() {
+        if update {
+            println!("snapshot tests passed and snapshots updated");
+        } else {
+            println!("snapshot tests passed");
+        }
+        Ok(())
+    } else {
+        Err(format!("snapshot tests failed with status {}", status))
+    }
+}
+
+fn cmd_features(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err("usage: exoc features".to_string());
+    }
+    let mut enabled = Vec::new();
+    let mut disabled = Vec::new();
+    for (name, on) in [
+        ("std", cfg!(feature = "std")),
+        ("profile-rust", cfg!(feature = "profile-rust")),
+        ("profile-logos", cfg!(feature = "profile-logos")),
+        ("debug-symbols", cfg!(feature = "debug-symbols")),
+        ("simd", cfg!(feature = "simd")),
+        ("bench", cfg!(feature = "bench")),
+    ] {
+        if on {
+            enabled.push(name);
+        } else {
+            disabled.push(name);
+        }
+    }
+    println!("enabled: {}", enabled.join(", "));
+    println!("disabled: {}", disabled.join(", "));
+    Ok(())
+}
+
+fn cmd_repl(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err("usage: exoc repl".to_string());
+    }
+
+    println!("EXOcode REPL (semantic check mode)");
+    println!("commands: :help, :check, :clear, :quit");
+
+    let mut buffer = String::new();
+    let mut line = String::new();
+
+    loop {
+        if buffer.trim().is_empty() {
+            print!("exo> ");
+        } else {
+            print!("...> ");
+        }
+        io::stdout()
+            .flush()
+            .map_err(|e| format!("stdout flush failed: {}", e))?;
+
+        line.clear();
+        let n = io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("stdin read failed: {}", e))?;
+        if n == 0 {
+            println!();
+            break;
+        }
+
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        match trimmed {
+            ":quit" | ":q" | ":exit" => break,
+            ":help" => {
+                println!(":check   run semantic analysis for current buffer");
+                println!(":clear   clear current buffer");
+                println!(":quit    exit REPL");
+                continue;
+            }
+            ":clear" => {
+                buffer.clear();
+                println!("buffer cleared");
+                continue;
+            }
+            ":check" => {
+                if buffer.trim().is_empty() {
+                    println!("buffer is empty");
+                    continue;
+                }
+                run_repl_check(&buffer);
+                continue;
+            }
+            _ => {}
+        }
+
+        buffer.push_str(trimmed);
+        buffer.push('\n');
+
+        if trimmed.is_empty() {
+            run_repl_check(&buffer);
+        }
+    }
+    Ok(())
+}
+
+fn run_repl_check(buffer: &str) {
+    let color_enabled = resolve_color_mode(ColorMode::Auto);
+    match check_source(buffer) {
+        Ok(report) => {
+            for w in &report.warnings {
+                print_diag_colored(color_enabled, &w.rendered);
+            }
+            println!(
+                "ok: {} warning(s), {} scheduled law(s)",
+                report.warnings.len(),
+                report.scheduled_laws.len()
+            );
+        }
+        Err(e) => {
+            print_diag_colored(color_enabled, &e.to_string());
+        }
+    }
 }
 
 fn cmd_run(args: &[String]) -> Result<(), String> {
@@ -87,7 +2122,20 @@ fn cmd_disasm(args: &[String]) -> Result<(), String> {
 fn usage() -> String {
     [
         "EXOcode toolchain v0",
-        "  exoc compile <input.exo> -o <out.exb>",
+        "  exoc compile <input.exo> -o <out.exb> [--profile auto|rust|logos] [--opt-level O0|O1] [--debug-symbols] [--metrics]",
+        "  exoc check <input.exo> [--no-cache] [--trace-cache] [--metrics] [--deny warnings|<CODE>] [--color auto|always|never]",
+        "  exoc lint <input.exo> [--no-cache] [--trace-cache] [--deny warnings|<CODE>] [--color auto|always|never]",
+        "  exoc watch <input.exo> [--metrics] [--color auto|always|never]",
+        "  exoc dump-ast <input.exo>",
+        "  exoc dump-ir <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt]",
+        "  exoc dump-bytecode <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt] [--debug-symbols]",
+        "  exoc hash-ast <input.exo>",
+        "  exoc hash-ir <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt]",
+        "  exoc hash-exb <input.exo> [--profile auto|rust|logos] [--opt-level O0|O1|--opt] [--debug-symbols]",
+        "  exoc snapshots [--update]",
+        "  exoc features",
+        "  exoc explain <error-code|--list>",
+        "  exoc repl",
         "  exoc run <input.exo>",
         "  exoc runb <input.exb>",
         "  exoc disasm <input.exb>",

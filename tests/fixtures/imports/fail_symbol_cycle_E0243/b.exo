@@ -1,0 +1,3 @@
+Import pub "a.exo"
+Entity BOnly:
+    state y: quad

@@ -1,6 +1,40 @@
 pub const MAGIC0: [u8; 8] = *b"EXOBYTE0";
 pub const MAGIC1: [u8; 8] = *b"EXOBYTE1";
 
+pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
+pub const CAP_F64_MATH: u32 = 1 << 1;
+pub const CAP_GATE_SURFACE: u32 = 1 << 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExobyteHeaderSpec {
+    pub magic: [u8; 8],
+    pub epoch: u16,
+    pub rev: u16,
+    pub capabilities: u32,
+}
+
+pub const HEADER_V0: ExobyteHeaderSpec = ExobyteHeaderSpec {
+    magic: MAGIC0,
+    epoch: 0,
+    rev: 1,
+    capabilities: CAP_DEBUG_SYMBOLS | CAP_GATE_SURFACE,
+};
+
+pub const HEADER_V1: ExobyteHeaderSpec = ExobyteHeaderSpec {
+    magic: MAGIC1,
+    epoch: 0,
+    rev: 2,
+    capabilities: CAP_DEBUG_SYMBOLS | CAP_F64_MATH | CAP_GATE_SURFACE,
+};
+
+pub fn supported_headers() -> &'static [ExobyteHeaderSpec] {
+    &[HEADER_V0, HEADER_V1]
+}
+
+pub fn header_spec_from_magic(magic: &[u8; 8]) -> Option<ExobyteHeaderSpec> {
+    supported_headers().iter().copied().find(|h| &h.magic == magic)
+}
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Opcode {
@@ -27,6 +61,9 @@ pub enum Opcode {
     SubF64 = 0x52,
     MulF64 = 0x53,
     DivF64 = 0x54,
+    GateRead = 0x60,
+    GateWrite = 0x61,
+    PulseEmit = 0x62,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +115,9 @@ impl Opcode {
             x if x == Self::SubF64 as u8 => Ok(Self::SubF64),
             x if x == Self::MulF64 as u8 => Ok(Self::MulF64),
             x if x == Self::DivF64 as u8 => Ok(Self::DivF64),
+            x if x == Self::GateRead as u8 => Ok(Self::GateRead),
+            x if x == Self::GateWrite as u8 => Ok(Self::GateWrite),
+            x if x == Self::PulseEmit as u8 => Ok(Self::PulseEmit),
             _ => Err(ExobyteFormatError::UnknownOpcode(v)),
         }
     }

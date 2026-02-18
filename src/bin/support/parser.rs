@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::{QuadroReg, F, N, S, T};
 use std::collections::HashMap;
 use std::path::Path;

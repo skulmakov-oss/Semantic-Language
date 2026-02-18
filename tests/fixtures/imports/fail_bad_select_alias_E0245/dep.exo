@@ -1,0 +1,5 @@
+Entity A:
+    state x: quad
+
+Entity B:
+    state y: quad

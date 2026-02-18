@@ -9,24 +9,57 @@ repository = ""
 keywords = ["logic", "simd", "reasoning", "agi"]
 categories = ["no-std", "science"]
 
+[workspace]
+members = [
+    ".",
+    "crates/exo-core",
+    "crates/exo-frontend",
+    "crates/exo-semantics",
+    "crates/exo-ir",
+    "crates/exo-emit",
+    "crates/exo-vm",
+    "crates/exo-cli",
+]
+resolver = "2"
+
 [lib]
 name = "exocode_core"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "exocode_core"
+path = "src/bin/exocode_core.rs"
+required-features = ["std"]
+
+[[bin]]
+name = "exoc"
+path = "src/bin/exoc.rs"
+required-features = ["std"]
+
 # -----------------------------
 # Features
 # -----------------------------
 [features]
-default = ["std"]
+default = ["std", "profile-rust", "profile-logos", "debug-symbols"]
 std = ["dep:serde", "dep:serde_json"]
 simd = []
 bench = []
+profile-rust = []
+profile-logos = []
+debug-symbols = []
 
 # -----------------------------
 # Dependencies
 # -----------------------------
 [dependencies]
+exo-core = { path = "crates/exo-core", default-features = false, features = ["alloc"] }
+exo-frontend = { path = "crates/exo-frontend", default-features = false, features = ["std"] }
+exo-semantics = { path = "crates/exo-semantics", default-features = false, features = ["std"] }
+exo-ir = { path = "crates/exo-ir", default-features = false, features = ["std", "profile-rust", "profile-logos", "debug-symbols"] }
+exo-emit = { path = "crates/exo-emit", default-features = false, features = ["std"] }
+exo-vm = { path = "crates/exo-vm", default-features = false, features = ["std"] }
+exo-cli = { path = "crates/exo-cli", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 

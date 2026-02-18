@@ -1,11 +1,15 @@
 use crate::exobyte_format::{
-    read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8, ExobyteFormatError,
-    Opcode, MAGIC0, MAGIC1,
+    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
+    read_utf8, supported_headers, ExobyteFormatError, ExobyteHeaderSpec, Opcode,
 };
 use crate::frontend::QuadVal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const MAX_STACK_DEPTH: usize = 256;
+const MAX_FUNCTIONS: usize = 4096;
+const MAX_STRINGS_PER_FUNCTION: usize = 4096;
+const MAX_STRING_LEN: usize = 8192;
+const MAX_DEBUG_SYMBOLS_PER_FUNCTION: usize = 8192;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -31,8 +35,16 @@ pub struct Frame {
 pub struct FunctionBytecode {
     pub name: String,
     pub strings: Vec<String>,
+    pub debug_symbols: Vec<DebugSymbol>,
     pub code: Vec<u8>,
     pub instr_start: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugSymbol {
+    pub pc: usize,
+    pub line: u32,
+    pub col: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -41,15 +53,10 @@ pub struct VM {
     pub callstack: Vec<Frame>,
 }
 
-#[derive(Debug, Clone)]
-struct ParsedExobyte {
-    magic: [u8; 8],
-    functions: HashMap<String, FunctionBytecode>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     BadHeader,
+    UnsupportedBytecodeVersion { found: String, supported: String },
     BadFormat(String),
     UnknownFunction(String),
     InvalidJumpAddress { func: String, addr: usize },
@@ -64,6 +71,11 @@ impl core::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             RuntimeError::BadHeader => write!(f, "bad EXObyte header"),
+            RuntimeError::UnsupportedBytecodeVersion { found, supported } => write!(
+                f,
+                "unsupported EXObyte version '{}'; supported versions: {}. hint: recompile source with current exoc",
+                found, supported
+            ),
             RuntimeError::BadFormat(m) => write!(f, "bad EXObyte format: {}", m),
             RuntimeError::UnknownFunction(n) => write!(f, "unknown function '{}'", n),
             RuntimeError::InvalidJumpAddress { func, addr } => {
@@ -85,9 +97,9 @@ pub fn run_exobyte(bytes: &[u8]) -> Result<(), RuntimeError> {
 }
 
 pub fn run_exobyte_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
-    let parsed = parse_exobyte(bytes)?;
+    let (_, functions) = parse_exobyte(bytes)?;
     let mut vm = VM {
-        functions: parsed.functions,
+        functions,
         callstack: Vec::new(),
     };
     push_frame(&mut vm, entry, Vec::new(), None)?;
@@ -95,15 +107,23 @@ pub fn run_exobyte_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeEr
 }
 
 pub fn disasm_exobyte(bytes: &[u8]) -> Result<String, RuntimeError> {
-    let parsed = parse_exobyte(bytes)?;
+    let (spec, functions) = parse_exobyte(bytes)?;
     let mut out = String::new();
-    out.push_str(&format!("{}\n", String::from_utf8_lossy(&parsed.magic)));
-    for f in parsed.functions.values() {
+    let header = if bytes.len() >= 8 { &bytes[0..8] } else { &[] };
+    out.push_str(&format!(
+        "{} epoch={}.{} caps=0x{:08x}\n",
+        String::from_utf8_lossy(header),
+        spec.epoch,
+        spec.rev,
+        spec.capabilities
+    ));
+    for f in functions.values() {
         out.push_str(&format!(
-            "fn {}: code={} bytes, strings={}\n",
+            "fn {}: code={} bytes, strings={}, debug={}\n",
             f.name,
             f.code.len(),
-            f.strings.len()
+            f.strings.len(),
+            f.debug_symbols.len()
         ));
         let mut pc = 0usize;
         while pc < f.code.len().saturating_sub(f.instr_start) {
@@ -115,21 +135,44 @@ pub fn disasm_exobyte(bytes: &[u8]) -> Result<String, RuntimeError> {
     Ok(out)
 }
 
-fn parse_exobyte(bytes: &[u8]) -> Result<ParsedExobyte, RuntimeError> {
-    if bytes.len() < MAGIC0.len() {
+fn parse_exobyte(bytes: &[u8]) -> Result<(ExobyteHeaderSpec, HashMap<String, FunctionBytecode>), RuntimeError> {
+    if bytes.len() < 8 {
         return Err(RuntimeError::BadHeader);
     }
-    let magic = if &bytes[0..8] == MAGIC0 {
-        MAGIC0
-    } else if &bytes[0..8] == MAGIC1 {
-        MAGIC1
-    } else {
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let Some(header) = header_spec_from_magic(&magic) else {
+        if &magic[0..7] == b"EXOBYTE" {
+            return Err(RuntimeError::UnsupportedBytecodeVersion {
+                found: String::from_utf8_lossy(&magic).to_string(),
+                supported: supported_headers()
+                    .iter()
+                    .map(|h| String::from_utf8_lossy(&h.magic).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            });
+        }
         return Err(RuntimeError::BadHeader);
     };
     let mut i = 8usize;
     let mut out = HashMap::new();
     while i < bytes.len() {
+        if out.len() >= MAX_FUNCTIONS {
+            return Err(RuntimeError::BadFormat(format!(
+                "too many functions (>{})",
+                MAX_FUNCTIONS
+            )));
+        }
         let name_len = read_u16_le(bytes, &mut i).map_err(map_format_err)? as usize;
+        if name_len == 0 {
+            return Err(RuntimeError::BadFormat("empty function name".to_string()));
+        }
+        if name_len > MAX_STRING_LEN {
+            return Err(RuntimeError::BadFormat(format!(
+                "function name too long: {}",
+                name_len
+            )));
+        }
         let name = read_utf8(bytes, &mut i, name_len).map_err(map_format_err)?;
         let code_len = read_u32_le(bytes, &mut i).map_err(map_format_err)? as usize;
         if i + code_len > bytes.len() {
@@ -140,13 +183,15 @@ fn parse_exobyte(bytes: &[u8]) -> Result<ParsedExobyte, RuntimeError> {
         let code = bytes[i..i + code_len].to_vec();
         i += code_len;
 
-        let (strings, instr_start) = parse_string_table(&code)?;
+        let (strings, debug_symbols, instr_start) = parse_string_table_and_debug(&code)?;
         let f = FunctionBytecode {
             name: name.clone(),
             strings,
+            debug_symbols,
             code,
             instr_start,
         };
+        validate_function_bytecode(&f)?;
         if out.insert(name.clone(), f).is_some() {
             return Err(RuntimeError::BadFormat(format!(
                 "duplicate function '{}'",
@@ -154,21 +199,50 @@ fn parse_exobyte(bytes: &[u8]) -> Result<ParsedExobyte, RuntimeError> {
             )));
         }
     }
-    Ok(ParsedExobyte {
-        magic,
-        functions: out,
-    })
+    Ok((header, out))
 }
 
-fn parse_string_table(code: &[u8]) -> Result<(Vec<String>, usize), RuntimeError> {
+fn parse_string_table_and_debug(
+    code: &[u8],
+) -> Result<(Vec<String>, Vec<DebugSymbol>, usize), RuntimeError> {
     let mut i = 0usize;
     let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+    if count > MAX_STRINGS_PER_FUNCTION {
+        return Err(RuntimeError::BadFormat(format!(
+            "too many strings in function: {} (max {})",
+            count, MAX_STRINGS_PER_FUNCTION
+        )));
+    }
     let mut strings = Vec::with_capacity(count);
     for _ in 0..count {
         let len = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+        if len > MAX_STRING_LEN {
+            return Err(RuntimeError::BadFormat(format!(
+                "string too long in function string table: {}",
+                len
+            )));
+        }
         strings.push(read_utf8(code, &mut i, len).map_err(map_format_err)?);
     }
-    Ok((strings, i))
+    let mut debug_symbols = Vec::new();
+    if i + 4 <= code.len() && &code[i..i + 4] == b"DBG0" {
+        i += 4;
+        let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+        if count > MAX_DEBUG_SYMBOLS_PER_FUNCTION {
+            return Err(RuntimeError::BadFormat(format!(
+                "too many debug symbols in function: {} (max {})",
+                count, MAX_DEBUG_SYMBOLS_PER_FUNCTION
+            )));
+        }
+        debug_symbols.reserve(count);
+        for _ in 0..count {
+            let pc = read_u32_le(code, &mut i).map_err(map_format_err)? as usize;
+            let line = read_u32_le(code, &mut i).map_err(map_format_err)?;
+            let col = read_u16_le(code, &mut i).map_err(map_format_err)?;
+            debug_symbols.push(DebugSymbol { pc, line, col });
+        }
+    }
+    Ok((strings, debug_symbols, i))
 }
 
 fn map_format_err(err: ExobyteFormatError) -> RuntimeError {
@@ -179,6 +253,127 @@ fn map_format_err(err: ExobyteFormatError) -> RuntimeError {
             RuntimeError::BadFormat(format!("unknown opcode 0x{:02x}", op))
         }
     }
+}
+
+fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> {
+    if f.instr_start > f.code.len() {
+        return Err(RuntimeError::BadFormat(format!(
+            "invalid instr_start in '{}'",
+            f.name
+        )));
+    }
+    let mut cur = f.instr_start;
+    let mut starts: HashSet<usize> = HashSet::new();
+    let mut jumps: Vec<usize> = Vec::new();
+    while cur < f.code.len() {
+        starts.insert(cur - f.instr_start);
+        let opcode = Opcode::from_byte(read_u8(&f.code, &mut cur).map_err(map_format_err)?)
+            .map_err(map_format_err)?;
+        match opcode {
+            Opcode::LoadQ => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::LoadBool => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::LoadI32 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::LoadF64 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::LoadVar | Opcode::StoreVar | Opcode::QNot | Opcode::BoolNot => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::QAnd
+            | Opcode::QOr
+            | Opcode::QImpl
+            | Opcode::BoolAnd
+            | Opcode::BoolOr
+            | Opcode::CmpEq
+            | Opcode::CmpNe
+            | Opcode::AddF64
+            | Opcode::SubF64
+            | Opcode::MulF64
+            | Opcode::DivF64 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::Jmp => {
+                let addr = read_u32_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                jumps.push(addr);
+            }
+            Opcode::JmpIf => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let addr = read_u32_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                jumps.push(addr);
+            }
+            Opcode::Call => {
+                let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let argc = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                for _ in 0..argc {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
+            Opcode::GateRead => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::GateWrite => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::PulseEmit => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::Ret => {
+                let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
+                if has_src {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
+        }
+    }
+    if cur != f.code.len() {
+        return Err(RuntimeError::BadFormat(format!(
+            "trailing bytes in '{}'",
+            f.name
+        )));
+    }
+    let instr_len = f.code.len().saturating_sub(f.instr_start);
+    for ds in &f.debug_symbols {
+        if ds.pc >= instr_len {
+            return Err(RuntimeError::BadFormat(format!(
+                "debug pc out of range in '{}': {}",
+                f.name, ds.pc
+            )));
+        }
+    }
+    for addr in jumps {
+        if addr >= instr_len {
+            return Err(RuntimeError::BadFormat(format!(
+                "jump out of range in '{}': {}",
+                f.name, addr
+            )));
+        }
+        if !starts.contains(&addr) {
+            return Err(RuntimeError::BadFormat(format!(
+                "jump to non-instruction boundary in '{}': {}",
+                f.name, addr
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
@@ -319,16 +514,16 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let lv = as_f64(get_reg(vm, frame_idx, lhs)?)?;
-                let rv = as_f64(get_reg(vm, frame_idx, rhs)?)?;
-                let out_v = match opcode {
-                    Opcode::AddF64 => lv + rv,
-                    Opcode::SubF64 => lv - rv,
-                    Opcode::MulF64 => lv * rv,
-                    Opcode::DivF64 => lv / rv,
+                let l = as_f64(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_f64(get_reg(vm, frame_idx, rhs)?)?;
+                let out = match opcode {
+                    Opcode::AddF64 => l + r,
+                    Opcode::SubF64 => l - r,
+                    Opcode::MulF64 => l * r,
+                    Opcode::DivF64 => l / r,
                     _ => unreachable!(),
                 };
-                set_reg(vm, frame_idx, dst, Value::F64(out_v));
+                set_reg(vm, frame_idx, dst, Value::F64(out));
                 next_pc = cur - f.instr_start;
             }
             Opcode::Jmp => {
@@ -368,17 +563,29 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                     let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                     args.push(get_reg(vm, frame_idx, r)?);
                 }
-                if let Some(ret) = eval_builtin(&callee, &args)? {
-                    if has_dst {
-                        set_reg(vm, frame_idx, dst, ret);
-                    }
-                    next_pc = cur - f.instr_start;
-                    vm.callstack[frame_idx].pc = next_pc;
-                    continue;
-                }
                 vm.callstack[frame_idx].pc = cur - f.instr_start;
                 push_frame(vm, &callee, args, if has_dst { Some(dst) } else { None })?;
                 continue;
+            }
+            Opcode::GateRead => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let val = ((device_id as i32) << 16) | (port as i32);
+                set_reg(vm, frame_idx, dst, Value::I32(val));
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::GateWrite => {
+                let _device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = get_reg(vm, frame_idx, src)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::PulseEmit => {
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _signal = lookup_str(&f, sid)?;
+                next_pc = cur - f.instr_start;
             }
             Opcode::Ret => {
                 let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
@@ -484,8 +691,8 @@ fn as_bool(v: Value) -> Result<bool, RuntimeError> {
 }
 
 fn as_f64(v: Value) -> Result<f64, RuntimeError> {
-    if let Value::F64(n) = v {
-        Ok(n)
+    if let Value::F64(x) = v {
+        Ok(x)
     } else {
         Err(RuntimeError::TypeMismatchRuntime(
             "expected f64".to_string(),
@@ -540,44 +747,6 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-fn eval_builtin(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
-    let out = match name {
-        "sin" => Some(Value::F64(as_f64_arg(name, args, 1, 0)?.sin())),
-        "cos" => Some(Value::F64(as_f64_arg(name, args, 1, 0)?.cos())),
-        "tan" => Some(Value::F64(as_f64_arg(name, args, 1, 0)?.tan())),
-        "sqrt" => Some(Value::F64(as_f64_arg(name, args, 1, 0)?.sqrt())),
-        "abs" => Some(Value::F64(as_f64_arg(name, args, 1, 0)?.abs())),
-        "pow" => Some(Value::F64(
-            as_f64_arg(name, args, 2, 0)?.powf(as_f64_arg(name, args, 2, 1)?),
-        )),
-        _ => None,
-    };
-    Ok(out)
-}
-
-fn as_f64_arg(
-    name: &str,
-    args: &[Value],
-    expected: usize,
-    idx: usize,
-) -> Result<f64, RuntimeError> {
-    if args.len() != expected {
-        return Err(RuntimeError::BadFormat(format!(
-            "builtin '{}' expects {} args, got {}",
-            name,
-            expected,
-            args.len()
-        )));
-    }
-    match args.get(idx) {
-        Some(Value::F64(n)) => Ok(*n),
-        _ => Err(RuntimeError::TypeMismatchRuntime(format!(
-            "builtin '{}' expects f64 args",
-            name
-        ))),
-    }
-}
-
 fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), RuntimeError> {
     let mut cur = f.instr_start + pc;
     let opcode = Opcode::from_byte(read_u8(&f.code, &mut cur).map_err(map_format_err)?)
@@ -618,12 +787,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
         | Opcode::QImpl
         | Opcode::BoolAnd
         | Opcode::BoolOr
-        | Opcode::CmpEq
-        | Opcode::CmpNe
         | Opcode::AddF64
         | Opcode::SubF64
         | Opcode::MulF64
-        | Opcode::DivF64 => {
+        | Opcode::DivF64
+        | Opcode::CmpEq
+        | Opcode::CmpNe => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -633,12 +802,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 Opcode::QImpl => "Q_IMPL",
                 Opcode::BoolAnd => "BOOL_AND",
                 Opcode::BoolOr => "BOOL_OR",
-                Opcode::CmpEq => "CMP_EQ",
-                Opcode::CmpNe => "CMP_NE",
                 Opcode::AddF64 => "ADD_F64",
                 Opcode::SubF64 => "SUB_F64",
                 Opcode::MulF64 => "MUL_F64",
-                _ => "DIV_F64",
+                Opcode::DivF64 => "DIV_F64",
+                Opcode::CmpEq => "CMP_EQ",
+                _ => "CMP_NE",
             };
             format!("{} r{}, r{}, r{}", op, d, l, r)
         }
@@ -670,6 +839,22 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
             format!("CALL dst?{} r{} fn#{} argc={}", has, d, n, argc)
+        }
+        Opcode::GateRead => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let dev = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("GATE_READ r{}, dev={}, port={}", d, dev, port)
+        }
+        Opcode::GateWrite => {
+            let dev = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("GATE_WRITE dev={}, port={}, r{}", dev, port, s)
+        }
+        Opcode::PulseEmit => {
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("PULSE_EMIT s{}", sid)
         }
         Opcode::Ret => {
             let has = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
@@ -735,19 +920,28 @@ mod tests {
     }
 
     #[test]
-    fn vm_runs_f64_math_and_builtins() {
-        let src = r#"
-			fn main() {
-				let a: f64 = 1.5 + 2.25 * 2.0;
-				let b: f64 = sqrt(9.0);
-				let c: f64 = sin(0.0) + cos(0.0) + abs(-1.0) + pow(2.0, 3.0);
-				if a == 6.0 { return; } else { return; }
-			}
-		"#;
-        let bytes = compile_program_to_exobyte(src).expect("compile");
-        let dis = disasm_exobyte(&bytes).expect("disasm");
-        assert!(dis.contains("EXOBYTE1"));
-        assert!(dis.contains("ADD_F64"));
-        run_exobyte(&bytes).expect("run");
+    fn vm_rejects_unknown_opcode_on_load() {
+        let src = "fn main() { return; }";
+        let mut bytes = compile_program_to_exobyte(src).expect("compile");
+        let opcode_pos = 8 + 2 + 4 + 4 + 2;
+        bytes[opcode_pos] = 0xff;
+        let err = run_exobyte(&bytes).expect_err("must fail");
+        assert!(matches!(err, RuntimeError::BadFormat(_)));
+    }
+
+    #[test]
+    fn vm_rejects_unsupported_bytecode_version_with_hint() {
+        let src = "fn main() { return; }";
+        let mut bytes = compile_program_to_exobyte(src).expect("compile");
+        bytes[7] = b'9';
+        let err = run_exobyte(&bytes).expect_err("must fail");
+        match err {
+            RuntimeError::UnsupportedBytecodeVersion { found, supported } => {
+                assert!(found.starts_with("EXOBYTE"));
+                assert!(supported.contains("EXOBYTE0"));
+                assert!(supported.contains("EXOBYTE1"));
+            }
+            other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
+        }
     }
 }

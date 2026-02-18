@@ -1,0 +1,4 @@
+Law "A" [priority 2]:
+    When X == T -> Y()
+Law "B" [priority 10]:
+    When X == S -> Z()

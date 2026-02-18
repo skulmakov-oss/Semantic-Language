@@ -1,0 +1,5 @@
+Import "dep.exo" { Entity:A }
+
+Law "Main" [priority 1]:
+    When true ->
+        System.recovery()

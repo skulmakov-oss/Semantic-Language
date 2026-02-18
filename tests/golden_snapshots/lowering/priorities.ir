@@ -1,0 +1,12 @@
+[
+    LogosIrLaw {
+        name: "B",
+        priority: 10,
+        when_count: 1,
+    },
+    LogosIrLaw {
+        name: "A",
+        priority: 2,
+        when_count: 1,
+    },
+]

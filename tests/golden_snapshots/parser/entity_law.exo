@@ -1,0 +1,9 @@
+Entity Sensor:
+    state val: quad
+    prop active: bool
+
+Law "CheckSignal" [priority 10]:
+    When Sensor.val == T ->
+        Log.emit("Signal OK")
+    When Sensor.val == S ->
+        System.recovery()

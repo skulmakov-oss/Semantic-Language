@@ -1,0 +1,6 @@
+fn helper() -> quad { return T; }
+fn main() {
+    let q: quad = helper();
+    if q == T { return; }
+    return;
+}

@@ -1,0 +1,26 @@
+# Optimization Passes (v0.2)
+
+## CrystalFold
+
+- Location: `crates/exo-ir/src/passes/crystalfold.rs`
+- Type: IR optimization pass (`OptPass`)
+- Entry: `run_default_opt_passes()` in `crates/exo-ir/src/passes/mod.rs`
+
+CrystalFold is an IR-stage pass. It is not part of parsing, semantic typing, or emit.
+
+## W0241 Scope
+
+- `W0241` is emitted by semantics as a hint/diagnostic only.
+- `W0241` does not guarantee a rewrite happened.
+- Materialized rewrites are performed by CrystalFold on IR.
+
+## Guarantees
+
+- Deterministic: linear instruction traversal, stable rewrite order.
+- Idempotent: applying CrystalFold twice is equivalent to once.
+- Covered by test: `crystalfold_idempotent`.
+
+## Pipeline Order
+
+`frontend -> semantics (warnings) -> lowering -> canonicalize/structural-opt -> CrystalFold -> emit`
+

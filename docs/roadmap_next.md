@@ -1,0 +1,68 @@
+# Roadmap Next (Post-Base Stabilization)
+
+This document tracks the next four closure tracks to move EXOcode from "working" to "production-disciplined".
+
+## NEXT-1: Import / Re-export v0.2 to FULL
+
+Goal:
+- Close policy edge-cases, symbol-level cycle behavior, collision matrix, and deterministic resolution docs/tests.
+
+Tasks:
+1. Fix and document lookup/export order contract.
+2. Complete edge-case matrix:
+   - missing select symbol
+   - kind mismatch
+   - alias collisions
+   - re-export collisions
+   - symbol-level cycles
+   - wildcard ambiguity (or explicit "not supported in v0.2")
+3. Finalize error pages: `E0242..E0245`.
+
+Acceptance:
+- Fixtures + snapshots for all edge-cases.
+- Stable deterministic behavior documented in `docs/imports.md` and `docs/exports.md`.
+
+## NEXT-2: Persistent Incremental Packs to FULL
+
+Goal:
+- Complete dependency-aware reuse/invalidation across Ast/Sem/Ir/Exb packs.
+
+Tasks:
+1. Dependency-aware `CacheIndex` + graph model.
+2. Formal `--trace-cache` reason codes (`SOURCE_CHANGED`, `DEP_CHANGED`, etc.).
+3. Strict downstream invalidation by dependency graph.
+4. Reuse smoke/perf scenarios.
+
+Acceptance:
+- Rebuild reasons are explicit and deterministic.
+- Leaf change rebuilds only downstream.
+
+## NEXT-3: Root Legacy Cleanup to FULL
+
+Goal:
+- Root contains only shim + bins; no legacy backend sources.
+
+Tasks:
+1. Final inventory and migration/removal.
+2. Strengthen CI and guard tests.
+3. Verify root cleanliness policy.
+
+Acceptance:
+- `root/src` clean by policy; guard tests enforce it.
+
+## NEXT-4: Arena-first + CrystalFold as Complete Stages
+
+Goal:
+- Arena-first AST/semantic/lowering invariants finalized.
+- CrystalFold formalized as deterministic optimization pass.
+
+Tasks:
+1. Remove remaining non-arena ownership tails.
+2. Add arena invariants tests.
+3. Define CrystalFold stage placement and pass interface.
+4. Add correctness/warning/determinism test pack.
+
+Acceptance:
+- Stable hash-equivalent outputs for same inputs.
+- Stable warning spans and diagnostics.
+- Pass contract documented in `docs/opts.md`.

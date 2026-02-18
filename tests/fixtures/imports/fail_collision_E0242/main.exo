@@ -1,0 +1,4 @@
+Import pub "a.exo"
+Import pub "b.exo"
+Law "Root" [priority 1]:
+    When true -> System.recovery()

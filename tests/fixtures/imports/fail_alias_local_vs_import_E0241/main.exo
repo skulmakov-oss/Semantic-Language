@@ -1,0 +1,8 @@
+Import "dep.exo" as Foo
+
+Entity Foo:
+    state x: quad
+
+Law "Main" [priority 1]:
+    When true ->
+        System.recovery()

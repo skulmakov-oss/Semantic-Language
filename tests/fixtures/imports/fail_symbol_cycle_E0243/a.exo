@@ -1,0 +1,3 @@
+Import pub "b.exo"
+Entity AOnly:
+    state x: quad

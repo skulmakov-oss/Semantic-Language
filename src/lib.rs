@@ -19,15 +19,118 @@ extern crate std;
 use core::fmt;
 
 #[cfg(feature = "std")]
-pub mod exobyte_format;
+pub mod exobyte_format {
+    pub use exo_emit::{
+        header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
+        read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
+        CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_GATE_SURFACE, ExobyteFormatError, ExobyteHeaderSpec,
+        Opcode, HEADER_V0, HEADER_V1, MAGIC0, MAGIC1,
+    };
+}
 #[cfg(feature = "std")]
-pub mod exobyte_vm;
+pub mod exobyte_vm {
+    pub use exo_vm::{
+        disasm_exobyte, run_exobyte, run_exobyte_with_entry, DebugSymbol, Frame, FunctionBytecode,
+        RuntimeError, Value, VM,
+    };
+}
 #[cfg(feature = "std")]
-pub mod frontend;
+pub mod semantics {
+    pub use exo_semantics::{
+        analyze_logos_program, check_file_with_provider, check_source, is_assignment_compatible,
+        DiagLevel, GateInstr, ImmutableIr, LawScheduler, ModuleProvider, ScopeKind,
+        SemanticDiagnostic, SemanticError, SemanticReport, SemanticType, Symbol, SymbolError,
+        SymbolTable, TypeId, TypeRegistry,
+    };
+}
 #[cfg(feature = "std")]
-pub mod language;
-#[cfg(feature = "std")]
-pub mod parser;
+pub mod frontend {
+    pub use exo_core::SourceMark;
+    pub use exo_emit::{
+        compile_program_to_exobyte, compile_program_to_exobyte_with_options,
+        compile_program_to_exobyte_with_options_debug, emit_ir_to_exobyte,
+    };
+    pub use exo_frontend::{
+        build_fn_table, builtin_sig, lex, parse_logos_program, parse_program, parse_rustlike,
+        resolve_symbol_name, type_check_function, type_check_function_with_table, type_check_program,
+        AstArena, BinaryOp, CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, Function,
+        LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
+        LogosWhen, MatchArm, OptLevel, Program, QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Token,
+        TokenKind, Type, UnaryOp,
+    };
+    pub use exo_ir::{
+        compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
+        compile_program_to_ir_with_options, lower_expr_to_ir, lower_function_to_ir,
+        lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
+    };
+
+    pub fn parse_function(input: &str) -> Result<Program, FrontendError> {
+        let mut p = parse_program(input)?;
+        if p.functions.len() != 1 {
+            return Err(FrontendError {
+                pos: 0,
+                message: "unexpected trailing tokens after function".to_string(),
+            });
+        }
+        Ok(Program {
+            arena: ::core::mem::take(&mut p.arena),
+            functions: p.functions,
+        })
+    }
+
+    pub mod core {
+        pub use super::{
+            build_fn_table, lex, parse_function, parse_logos_program, parse_program,
+            resolve_symbol_name, type_check_function, type_check_function_with_table,
+            type_check_program, AstArena, BinaryOp, Expr, ExprId, FnSig, FnTable, FrontendError,
+            Function, LogosEntity, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm,
+            Program, QuadVal, ScopeEnv, SourceMark, Stmt, StmtId, SymbolId, Token, TokenKind,
+            Type, UnaryOp,
+        };
+    }
+
+    pub mod ir {
+        pub use super::{
+            compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
+            compile_program_to_ir_with_options, lower_expr_to_ir, lower_function_to_ir,
+            lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
+        };
+    }
+
+    pub mod emit {
+        pub use super::{
+            compile_program_to_exobyte, compile_program_to_exobyte_with_options,
+            compile_program_to_exobyte_with_options_debug, emit_ir_to_exobyte,
+        };
+    }
+
+    pub const EXOCODE_EBNF: &str = r#"
+Program      = { Function } ;
+Function     = "fn" Ident "(" [ Param { "," Param } ] ")" [ "->" Type ] Block ;
+Param        = Ident ":" Type ;
+Type         = "quad" | "bool" | "i32" | "u32" | "fx" | "f64" ;
+Block        = "{" { Stmt } "}" ;
+Stmt         = LetStmt | IfStmt | MatchStmt | ReturnStmt | ExprStmt ;
+LetStmt      = "let" Ident [ ":" Type ] "=" Expr ";" ;
+IfStmt       = "if" Expr Block [ "else" ( Block | IfStmt ) ] ;
+MatchStmt    = "match" Expr "{" MatchArm { MatchArm } "}" ;
+MatchArm     = ( "N" | "F" | "T" | "S" | "_" ) "=>" Block ;
+ReturnStmt   = "return" [ Expr ] ";" ;
+ExprStmt     = Expr ";" ;
+Expr         = Impl ;
+Impl         = Or { "->" Or } ;
+Or           = And { "||" And } ;
+And          = Eq { "&&" Eq } ;
+Eq           = Add { ("==" | "!=") Add } ;
+Add          = Mul { ("+" | "-") Mul } ;
+Mul          = Unary { ("*" | "/") Unary } ;
+Unary        = [ "!" | "+" | "-" ] Primary ;
+Primary      = QuadLit | BoolLit | Num | Float | Ident | Call | "(" Expr ")" ;
+Call         = Ident "(" [ Expr { "," Expr } ] ")" ;
+QuadLit      = "N" | "F" | "T" | "S" ;
+BoolLit      = "true" | "false" ;
+"#;
+}
 
 // ------------------------------
 // Public constants (quadit states)
