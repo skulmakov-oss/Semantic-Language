@@ -3,11 +3,16 @@ use exocode_core::frontend::{
 };
 
 fn read_text(path: &str) -> String {
-    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read '{}': {}", path, e))
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read '{}': {}", path, e));
+    normalize_newlines(&raw)
 }
 
 fn write_text(path: &str, text: &str) {
     std::fs::write(path, text).unwrap_or_else(|e| panic!("write '{}': {}", path, e))
+}
+
+fn normalize_newlines(s: &str) -> String {
+    s.replace("\r\n", "\n")
 }
 
 fn update_mode() -> bool {
@@ -21,7 +26,8 @@ fn assert_snapshot(path: &str, got: &str) {
         write_text(path, got);
         return;
     }
-    let expected = read_text(path);
+    let expected = normalize_newlines(&read_text(path));
+    let got = normalize_newlines(got);
     assert_eq!(expected, got, "snapshot mismatch at {}", path);
 }
 

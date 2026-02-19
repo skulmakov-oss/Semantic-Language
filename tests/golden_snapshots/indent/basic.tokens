@@ -29,5 +29,5 @@
    6:17  LParen     (
    6:18  String     "ok"
    6:22  RParen     )
-   6:24  Newline    NEWLINE
+   6:23  Newline    NEWLINE
    7:1   Dedent     DEDENT
