@@ -30,7 +30,7 @@ mod tests {
     fn sm_vm_smoke_run() {
         let src = "fn main() { return; }";
         let bytes = compile_program_to_semcode(src).expect("compile");
-        run_semcode(&bytes).expect("run");
+        run_verified_semcode(&bytes).expect("run");
         let dis = disasm_semcode(&bytes).expect("disasm");
         assert!(dis.contains("main"));
     }

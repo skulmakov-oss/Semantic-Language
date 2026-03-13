@@ -16,10 +16,12 @@ use alloc::vec::Vec;
 pub mod types;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
-    AstArena, BinaryOp, Expr, ExprId, FrontendError, Function, LogosEntity, LogosEntityField,
-    LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, Program,
-    QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+    AstArena, BinaryOp, Expr, ExprId, FrontendError, FrontendErrorKind, Function, LogosEntity,
+    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
+    MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
 };
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use sm_profile::{CompatibilityMode, ParserProfile};
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub mod lexer;
@@ -150,23 +152,72 @@ pub enum AstBundle {
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct CompilePolicyView<'a> {
+    pub profile: &'a ParserProfile,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl<'a> CompilePolicyView<'a> {
+    pub const fn new(profile: &'a ParserProfile) -> Self {
+        Self { profile }
+    }
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub fn parse_rustlike(input: &str) -> Result<AstBundle, FrontendError> {
-    parser::parse_rustlike(input).map(AstBundle::RustLike)
+    let profile = ParserProfile::foundation_default();
+    parser::parse_rustlike_with_profile(input, &profile).map(AstBundle::RustLike)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_rustlike_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<AstBundle, FrontendError> {
+    parser::parse_rustlike_with_profile(input, profile).map(AstBundle::RustLike)
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn parse_logos(input: &str) -> Result<AstBundle, FrontendError> {
-    parser::parse_logos(input).map(AstBundle::Logos)
+    let profile = ParserProfile::foundation_default();
+    parser::parse_logos_with_profile(input, &profile).map(AstBundle::Logos)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_logos_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<AstBundle, FrontendError> {
+    parser::parse_logos_with_profile(input, profile).map(AstBundle::Logos)
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn parse_program(input: &str) -> Result<Program, FrontendError> {
-    parser::parse_rustlike(input)
+    let profile = ParserProfile::foundation_default();
+    parser::parse_rustlike_with_profile(input, &profile)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_program_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<Program, FrontendError> {
+    parser::parse_rustlike_with_profile(input, profile)
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn parse_logos_program(input: &str) -> Result<LogosProgram, FrontendError> {
-    parser::parse_logos(input)
+    let profile = ParserProfile::foundation_default();
+    parser::parse_logos_with_profile(input, &profile)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_logos_program_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<LogosProgram, FrontendError> {
+    parser::parse_logos_with_profile(input, profile)
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]

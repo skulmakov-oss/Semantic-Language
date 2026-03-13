@@ -5,6 +5,12 @@
 # Semantic
 Rust-like language toolchain with SemCode emitter and VM runtime.
 
+Semantic is not framed here as a general-purpose language first. It is a deterministic language/toolchain for describing reasoning rules, semantic state transitions, and executable logic inside the broader PROMETHEUS system model.
+
+Reference:
+- `docs/LANGUAGE.md` - language purpose, mechanics, design influences.
+- `docs/NAMING.md` - naming rules and short forms.
+
 This repository state is frozen as Toolchain v0 on branch `release/v0` and tag `v0.1.0`.
 
 ## Changelog

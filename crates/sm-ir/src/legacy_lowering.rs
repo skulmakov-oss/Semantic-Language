@@ -216,7 +216,13 @@ pub fn lower_function_to_ir(
 }
 
 pub fn compile_program_to_ir(input: &str) -> Result<Vec<IrFunction>, FrontendError> {
-    compile_program_to_ir_with_options(input, CompileProfile::RustLike, OptLevel::O0)
+    let profile = ParserProfile::foundation_default();
+    compile_program_to_ir_with_options_and_profile(
+        input,
+        CompileProfile::RustLike,
+        OptLevel::O0,
+        &profile,
+    )
 }
 
 pub fn compile_program_to_immutable_ir(
@@ -224,8 +230,12 @@ pub fn compile_program_to_immutable_ir(
     profile: CompileProfile,
     opt: OptLevel,
 ) -> Result<ImmutableIrProgram, FrontendError> {
-    Ok(ImmutableIrProgram::from_vec(compile_program_to_ir_with_options(
-        input, profile, opt,
+    let parser_profile = ParserProfile::foundation_default();
+    Ok(ImmutableIrProgram::from_vec(compile_program_to_ir_with_options_and_profile(
+        input,
+        profile,
+        opt,
+        &parser_profile,
     )?))
 }
 
@@ -233,6 +243,28 @@ pub fn compile_program_to_ir_with_options(
     input: &str,
     profile: CompileProfile,
     opt: OptLevel,
+) -> Result<Vec<IrFunction>, FrontendError> {
+    let parser_profile = ParserProfile::foundation_default();
+    compile_program_to_ir_with_options_and_profile(input, profile, opt, &parser_profile)
+}
+
+pub fn compile_program_to_ir_with_profile(
+    input: &str,
+    parser_profile: &ParserProfile,
+) -> Result<Vec<IrFunction>, FrontendError> {
+    compile_program_to_ir_with_options_and_profile(
+        input,
+        CompileProfile::RustLike,
+        OptLevel::O0,
+        parser_profile,
+    )
+}
+
+pub fn compile_program_to_ir_with_options_and_profile(
+    input: &str,
+    profile: CompileProfile,
+    opt: OptLevel,
+    parser_profile: &ParserProfile,
 ) -> Result<Vec<IrFunction>, FrontendError> {
     match profile {
         CompileProfile::RustLike if !cfg!(feature = "profile-rust") => {
@@ -253,7 +285,7 @@ pub fn compile_program_to_ir_with_options(
         }
         _ => {}
     }
-    let logos_detected = parse_logos_program(input)
+    let logos_detected = parse_logos_program_with_profile(input, parser_profile)
         .map(|p| p.system.is_some() || !p.entities.is_empty() || !p.laws.is_empty())
         .unwrap_or(false);
     if (matches!(profile, CompileProfile::Logos)
@@ -279,7 +311,7 @@ pub fn compile_program_to_ir_with_options(
             message: "RustLike lowering is disabled at compile time".to_string(),
         });
     }
-    let program = parse_program(input)?;
+    let program = parse_program_with_profile(input, parser_profile)?;
     let fn_table = build_fn_table(&program)?;
     type_check_program(&program)?;
     let mut out = Vec::new();
@@ -297,7 +329,13 @@ pub fn compile_program_to_ir_with_options(
 }
 
 pub fn compile_program_to_ir_optimized(input: &str) -> Result<Vec<IrFunction>, FrontendError> {
-    compile_program_to_ir_with_options(input, CompileProfile::RustLike, OptLevel::O1)
+    let profile = ParserProfile::foundation_default();
+    compile_program_to_ir_with_options_and_profile(
+        input,
+        CompileProfile::RustLike,
+        OptLevel::O1,
+        &profile,
+    )
 }
 
 pub fn validate_ir(f: &IrFunction) -> Result<(), FrontendError> {

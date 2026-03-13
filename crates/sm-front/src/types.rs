@@ -98,9 +98,39 @@ pub struct Program {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrontendErrorKind {
+    Syntax,
+    PolicyViolation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontendError {
     pub pos: usize,
     pub message: String,
+}
+
+impl FrontendError {
+    pub fn syntax(pos: usize, message: impl Into<String>) -> Self {
+        Self {
+            pos,
+            message: message.into(),
+        }
+    }
+
+    pub fn policy_violation(pos: usize, message: impl Into<String>) -> Self {
+        Self {
+            pos,
+            message: format!("policy violation: {}", message.into()),
+        }
+    }
+
+    pub fn kind(&self) -> FrontendErrorKind {
+        if self.message.starts_with("policy violation:") {
+            FrontendErrorKind::PolicyViolation
+        } else {
+            FrontendErrorKind::Syntax
+        }
+    }
 }
 
 impl ::core::fmt::Display for FrontendError {
@@ -296,12 +326,12 @@ mod tests {
     fn arena_invariants_append_only_and_stable_ids() {
         let mut arena = AstArena::default();
 
-        let e0 = arena.alloc_expr(Expr::Quad(QuadVal::T));
-        let e1 = arena.alloc_expr(Expr::Bool(true));
+        let e0 = arena.alloc_expr(Expr::QuadLiteral(QuadVal::T));
+        let e1 = arena.alloc_expr(Expr::BoolLiteral(true));
         assert_eq!(e0.0, 0);
         assert_eq!(e1.0, 1);
         assert_eq!(arena.expr_count(), 2);
-        assert_eq!(arena.expr(e0), &Expr::Quad(QuadVal::T));
+        assert_eq!(arena.expr(e0), &Expr::QuadLiteral(QuadVal::T));
 
         let s0 = arena.alloc_stmt(Stmt::Expr(e0));
         let s1 = arena.alloc_stmt(Stmt::Expr(e1));
@@ -311,9 +341,9 @@ mod tests {
         assert_eq!(arena.stmt(s0), &Stmt::Expr(e0));
 
         // Additional allocations must not change earlier IDs or referenced nodes.
-        let _e2 = arena.alloc_expr(Expr::Int(42));
+        let _e2 = arena.alloc_expr(Expr::Num(42));
         let _s2 = arena.alloc_stmt(Stmt::Return(None));
-        assert_eq!(arena.expr(e0), &Expr::Quad(QuadVal::T));
+        assert_eq!(arena.expr(e0), &Expr::QuadLiteral(QuadVal::T));
         assert_eq!(arena.stmt(s0), &Stmt::Expr(e0));
     }
 }

@@ -14,9 +14,12 @@ members = [
     ".",
     "crates/ton618-core",
     "crates/sm-front",
+    "crates/sm-profile",
     "crates/sm-sema",
     "crates/sm-ir",
     "crates/sm-emit",
+    "crates/sm-verify",
+    "crates/sm-runtime-core",
     "crates/sm-vm",
     "crates/smc-cli",
 ]
@@ -60,9 +63,12 @@ debug-symbols = []
 [dependencies]
 ton618-core = { path = "crates/ton618-core", default-features = false, features = ["alloc"] }
 sm-front = { path = "crates/sm-front", default-features = false, features = ["std"] }
+sm-profile = { path = "crates/sm-profile", default-features = false, features = ["std"] }
 sm-sema = { path = "crates/sm-sema", default-features = false, features = ["std"] }
 sm-ir = { path = "crates/sm-ir", default-features = false, features = ["std", "profile-rust", "profile-logos", "debug-symbols"] }
 sm-emit = { path = "crates/sm-emit", default-features = false, features = ["std"] }
+sm-verify = { path = "crates/sm-verify", default-features = false, features = ["std"] }
+sm-runtime-core = { path = "crates/sm-runtime-core", default-features = false, features = ["std"] }
 sm-vm = { path = "crates/sm-vm", default-features = false, features = ["std"] }
 smc-cli = { path = "crates/smc-cli", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"], optional = true }

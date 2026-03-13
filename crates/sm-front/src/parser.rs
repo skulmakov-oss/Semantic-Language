@@ -3,46 +3,57 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::lexer::lex_tokens;
+use crate::CompilePolicyView;
 use crate::types::{
     AstArena, BinaryOp, Expr, ExprId, FrontendError, Function, LogosEntity, LogosEntityField,
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, Program,
     QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
 };
+use sm_profile::{CompatibilityMode, ParserProfile};
 use ton618_core::diagnostics::{
     format_multiple_parser_errors, format_parser_error_at_input, suggest_closest_case_insensitive,
 };
 use ton618_core::SourceMap;
 
-pub fn parse_rustlike(input: &str) -> Result<Program, FrontendError> {
+pub fn parse_rustlike_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<Program, FrontendError> {
     let tokens = lex_tokens(input)?;
     let mut p = Parser {
         tokens,
         idx: 0,
         source: input.to_string(),
         arena: AstArena::default(),
+        policy: CompilePolicyView::new(profile),
     };
     p.parse_program()
 }
 
-pub fn parse_logos(input: &str) -> Result<LogosProgram, FrontendError> {
+pub fn parse_logos_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<LogosProgram, FrontendError> {
     let tokens = lex_tokens(input)?;
     let mut p = Parser {
         tokens,
         idx: 0,
         source: input.to_string(),
         arena: AstArena::default(),
+        policy: CompilePolicyView::new(profile),
     };
     p.parse_logos_program()
 }
 
-struct Parser {
+struct Parser<'a> {
     tokens: Vec<Token>,
     idx: usize,
     source: String,
     arena: AstArena,
+    policy: CompilePolicyView<'a>,
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
         let mut functions = Vec::new();
         loop {
@@ -335,6 +346,7 @@ impl Parser {
         if self.check(TokenKind::Num) {
             let text = self.advance().text;
             if text.contains('.') {
+                self.require_f64_feature("f64 literals are disabled by profile policy")?;
                 let n = text.parse::<f64>().map_err(|_| FrontendError {
                     pos: 0,
                     message: "invalid float number".to_string(),
@@ -404,6 +416,7 @@ impl Parser {
             return Ok(Type::Fx);
         }
         if self.eat(TokenKind::TyF64) {
+            self.require_f64_feature("type 'f64' is disabled by profile policy")?;
             return Ok(Type::F64);
         }
         Err(FrontendError {
@@ -413,6 +426,7 @@ impl Parser {
     }
 
     fn parse_logos_program(&mut self) -> Result<LogosProgram, FrontendError> {
+        self.require_logos_surface("Logos surface is disabled by profile policy")?;
         let mut out = LogosProgram::default();
         let mut errors: Vec<FrontendError> = Vec::new();
         while self.idx < self.tokens.len() {
@@ -454,6 +468,9 @@ impl Parser {
                 || self.check_raw(TokenKind::KwPulse)
                 || self.check_raw(TokenKind::KwProfile)
             {
+                self.require_legacy_compatibility(
+                    "legacy Logos directives require legacy compatibility mode",
+                )?;
                 while !self.check_raw(TokenKind::Newline) && self.idx < self.tokens.len() {
                     self.idx += 1;
                 }
@@ -670,6 +687,7 @@ impl Parser {
             return Ok(Type::Fx);
         }
         if self.eat_raw(TokenKind::TyF64) {
+            self.require_f64_feature("type 'f64' is disabled by profile policy")?;
             return Ok(Type::F64);
         }
         Err(self.error_at_current("expected type", "E0234"))
@@ -764,6 +782,30 @@ impl Parser {
         while self.eat_raw(TokenKind::Newline) {}
     }
 
+    fn require_f64_feature(&self, message: &str) -> Result<(), FrontendError> {
+        if self.policy.profile.features.allow_f64_math {
+            Ok(())
+        } else {
+            Err(FrontendError::policy_violation(self.pos(), message))
+        }
+    }
+
+    fn require_logos_surface(&self, message: &str) -> Result<(), FrontendError> {
+        if self.policy.profile.features.allow_logos_surface {
+            Ok(())
+        } else {
+            Err(FrontendError::policy_violation(self.pos(), message))
+        }
+    }
+
+    fn require_legacy_compatibility(&self, message: &str) -> Result<(), FrontendError> {
+        if self.policy.profile.compatibility == CompatibilityMode::LegacySupport {
+            Ok(())
+        } else {
+            Err(FrontendError::policy_violation(self.pos(), message))
+        }
+    }
+
     fn error_at_current(&self, msg: &str, code: &str) -> FrontendError {
         if let Some(tok) = self.tokens.get(self.idx) {
             self.error_at_token(tok, msg, code)
@@ -855,6 +897,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FrontendErrorKind;
+    use sm_profile::ParserProfile;
 
     #[test]
     fn rustlike_parser_smoke() {
@@ -862,7 +906,8 @@ mod tests {
 fn idq(q: quad) -> quad { return q; }
 fn main() { let x: quad = idq(T); return; }
 "#;
-        let a = parse_rustlike(src).expect("frontend rustlike");
+        let a = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("frontend rustlike");
         assert_eq!(a.functions.len(), 2);
     }
 
@@ -876,8 +921,33 @@ Law "CheckSignal" [priority 10]:
     When Sensor.val == T ->
         Log.emit("Signal OK")
 "#;
-        let a = parse_logos(src).expect("frontend logos");
+        let a = parse_logos_with_profile(src, &ParserProfile::foundation_default())
+            .expect("frontend logos");
         assert_eq!(a.entities.len(), 1);
         assert_eq!(a.laws.len(), 1);
+    }
+
+    #[test]
+    fn strict_profile_rejects_f64_surface() {
+        let profile = ParserProfile::default();
+        let err = parse_rustlike_with_profile("fn main() -> f64 { return 1.5; }", &profile)
+            .expect_err("strict profile must reject f64");
+
+        assert_eq!(err.kind(), FrontendErrorKind::PolicyViolation);
+        assert!(err.message.contains("f64"));
+    }
+
+    #[test]
+    fn strict_profile_rejects_logos_surface() {
+        let profile = ParserProfile::default();
+        let src = r#"
+Law "L" [priority 1]:
+    When true -> System.recovery()
+"#;
+        let err =
+            parse_logos_with_profile(src, &profile).expect_err("strict profile must reject logos");
+
+        assert_eq!(err.kind(), FrontendErrorKind::PolicyViolation);
+        assert!(err.message.contains("Logos surface"));
     }
 }

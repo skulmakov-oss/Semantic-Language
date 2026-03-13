@@ -1,5 +1,6 @@
 pub use semantic_language::{LSB_MASK, MSB_MASK, QuadroReg, F, N, S, T};
 use serde::Deserialize;
+use sm_profile::{train_profile_in_place, ParserProfile, TrainingSample};
 use std::collections::HashMap;
 use std::env;
 use std::process::ExitCode;
@@ -10,7 +11,6 @@ pub use support::parser;
 use support::language::{
     compile_human_program, execute_machine_program, parse_machine_program, render_machine_program,
 };
-use support::parser::{train_profile_in_place, ParserProfile, TrainingSample};
 
 #[derive(Debug, Deserialize)]
 struct JsonSample {

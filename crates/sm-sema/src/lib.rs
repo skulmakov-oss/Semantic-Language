@@ -29,8 +29,10 @@ pub use alloc_core::{
 #[cfg(feature = "std")]
 mod frontend {
     pub use ton618_core::SourceMark;
+    pub use sm_profile::ParserProfile;
     pub use sm_front::{
-        parse_logos_program, parse_program, type_check_program, LogosEntity, LogosEntityFieldKind,
+        parse_logos_program, parse_logos_program_with_profile, parse_program,
+        parse_program_with_profile, type_check_program, LogosEntity, LogosEntityFieldKind,
         LogosProgram, Type,
     };
 }

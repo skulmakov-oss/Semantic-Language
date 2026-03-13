@@ -1,5 +1,6 @@
-use crate::parser::{parse_assignment, BinaryOp as PBinaryOp, Expr, ParserProfile, UnaryOp};
+use crate::parser::{parse_assignment, BinaryOp as PBinaryOp, Expr, UnaryOp};
 use crate::{QuadroReg, F, N, S, T};
+use sm_profile::ParserProfile;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -783,7 +784,7 @@ fn apply_state_binary(op: &str, a: u8, b: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{train_profile, TrainingSample};
+    use sm_profile::{train_profile, TrainingSample};
 
     #[test]
     fn compile_and_execute_human_program_with_profile() {

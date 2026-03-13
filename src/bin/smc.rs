@@ -3,10 +3,13 @@ use sm_emit::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug,
     CompileProfile, OptLevel,
 };
-use sm_front::{lex, parse_logos_program, parse_program};
-use sm_ir::{compile_program_to_ir_with_options, lower_logos_laws_to_ir};
-use sm_sema::{check_file_with_provider, check_source, ModuleProvider};
-use sm_vm::{disasm_semcode, run_semcode};
+use sm_front::{
+    lex, parse_logos_program_with_profile, parse_program_with_profile, ParserProfile,
+};
+use sm_ir::{compile_program_to_ir_with_options_and_profile, lower_logos_laws_to_ir};
+use sm_sema::{check_file_with_provider_and_profile, check_source_with_profile, ModuleProvider};
+use sm_verify::verify_semcode;
+use sm_vm::{disasm_semcode, run_semcode, run_verified_semcode};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::{self, Write};
@@ -22,6 +25,10 @@ impl ModuleProvider for CliFsModuleProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
         std::fs::read(module_id).map_err(|e| e.to_string())
     }
+}
+
+fn cli_profile() -> ParserProfile {
+    ParserProfile::foundation_default()
 }
 
 fn main() -> ExitCode {
@@ -53,6 +60,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "features" => cmd_features(&args[1..]),
         "explain" => cmd_explain(&args[1..]),
         "repl" => cmd_repl(&args[1..]),
+        "verify" => cmd_verify(&args[1..]),
         "run" => cmd_run(&args[1..]),
         "run-smc" => cmd_run_smc(&args[1..]),
         "disasm" => cmd_disasm(&args[1..]),
@@ -113,6 +121,8 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
     let t_read = Instant::now();
+    let parser_profile = cli_profile();
+    let parser_profile = cli_profile();
     let bytes = compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
         .map_err(|e| e.to_string())?;
     let t_compile = Instant::now();
@@ -128,7 +138,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         let mut expr_count = 0usize;
         let mut stmt_count = 0usize;
         let mut symbol_count = 0usize;
-        if let Ok(p) = parse_program(&src) {
+        if let Ok(p) = parse_program_with_profile(&src, &parser_profile) {
             fn_count = p.functions.len();
             expr_count = p.arena.expr_count();
             stmt_count = p.arena.stmt_count();
@@ -136,7 +146,12 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         }
         let mut ir_func_count = 0usize;
         let mut ir_instr_count = 0usize;
-        if let Ok(ir) = compile_program_to_ir_with_options(&src, profile, opt) {
+        if let Ok(ir) = compile_program_to_ir_with_options_and_profile(
+            &src,
+            profile,
+            opt,
+            &parser_profile,
+        ) {
             ir_func_count = ir.len();
             ir_instr_count = ir.iter().map(|f| f.instrs.len()).sum();
         }
@@ -326,8 +341,8 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
     let root_canon = Path::new(input)
         .canonicalize()
         .map_err(|e| format!("failed to resolve '{}': {}", input, e))?;
-    let report = check_file_with_provider(&root_canon, &provider)
-        .or_else(|_| check_source(&src))
+    let report = check_file_with_provider_and_profile(&root_canon, &provider, &parser_profile)
+        .or_else(|_| check_source_with_profile(&src, &parser_profile))
         .map_err(|e| e.to_string())?;
     let t_check = Instant::now();
     let color_enabled = resolve_color_mode(color);
@@ -444,11 +459,17 @@ fn cmd_watch(args: &[String]) -> Result<(), String> {
                         }
                     };
                     let provider = CliFsModuleProvider;
+                    let parser_profile = cli_profile();
                     let snapshot = match root
                         .canonicalize()
                         .map_err(|e| e.to_string())
-                        .and_then(|p| check_file_with_provider(&p, &provider).map_err(|e| e.to_string()))
-                        .or_else(|_| check_source(&src).map_err(|e| e.to_string()))
+                        .and_then(|p| {
+                            check_file_with_provider_and_profile(&p, &provider, &parser_profile)
+                                .map_err(|e| e.to_string())
+                        })
+                        .or_else(|_| {
+                            check_source_with_profile(&src, &parser_profile).map_err(|e| e.to_string())
+                        })
                     {
                         Ok(report) => {
                             let mut out = String::new();
@@ -610,15 +631,19 @@ fn cmd_lint(args: &[String]) -> Result<(), String> {
     }
 
     let provider = CliFsModuleProvider;
+    let parser_profile = cli_profile();
     let report = if !no_cache {
         Path::new(input)
             .canonicalize()
             .map_err(|e| format!("failed to resolve '{}': {}", input, e))
-            .and_then(|p| check_file_with_provider(&p, &provider).map_err(|e| e.to_string()))
-            .or_else(|_| check_source(&src))
+            .and_then(|p| {
+                check_file_with_provider_and_profile(&p, &provider, &parser_profile)
+                    .map_err(|e| e.to_string())
+            })
+            .or_else(|_| check_source_with_profile(&src, &parser_profile))
             .map_err(|e| e.to_string())?
     } else {
-        check_source(&src).map_err(|e| e.to_string())?
+        check_source_with_profile(&src, &parser_profile).map_err(|e| e.to_string())?
     };
 
     let color_enabled = resolve_color_mode(color);
@@ -2099,13 +2124,31 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     run_semcode(&bytes).map_err(|e| e.to_string())
 }
 
+fn cmd_verify(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 {
+        return Err("usage: smc verify <input.smc>".to_string());
+    }
+    let input = args[0].as_str();
+    let bytes = std::fs::read(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let verified = verify_semcode(&bytes).map_err(|report| report.to_string())?;
+    println!(
+        "verified '{}' ({} function(s), header={}, epoch={}.{})",
+        input,
+        verified.functions.len(),
+        String::from_utf8_lossy(&verified.header.magic),
+        verified.header.epoch,
+        verified.header.rev
+    );
+    Ok(())
+}
+
 fn cmd_run_smc(args: &[String]) -> Result<(), String> {
     if args.len() != 1 {
         return Err("usage: smc run-smc <input.smc>".to_string());
     }
     let input = args[0].as_str();
     let bytes = std::fs::read(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
-    run_semcode(&bytes).map_err(|e| e.to_string())
+    run_verified_semcode(&bytes).map_err(|e| e.to_string())
 }
 
 fn cmd_disasm(args: &[String]) -> Result<(), String> {
@@ -2136,6 +2179,7 @@ fn usage() -> String {
         "  smc features",
         "  smc explain <error-code|--list>",
         "  smc repl",
+        "  smc verify <input.smc>",
         "  smc run <input.sm>",
         "  smc run-smc <input.smc>",
         "  smc disasm <input.smc>",

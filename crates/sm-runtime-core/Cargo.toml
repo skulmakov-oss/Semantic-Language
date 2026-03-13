@@ -1,0 +1,14 @@
+[package]
+name = "sm-runtime-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+alloc = []
+std = ["alloc"]
+
+[dependencies]

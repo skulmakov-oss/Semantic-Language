@@ -35,12 +35,33 @@ pub mod semcode_vm {
     };
 }
 #[cfg(feature = "std")]
+pub mod semcode_verify {
+    pub use sm_verify::{
+        verify_semcode, RejectReport, VerifiedFunction, VerifiedProgram, VerificationCode,
+        VerificationDiagnostic,
+    };
+}
+#[cfg(feature = "std")]
+pub mod runtime_core {
+    pub use sm_runtime_core::{
+        DebugNameMap, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas,
+        RuntimeSymbolTable, RuntimeTrap, SymbolId,
+    };
+}
+#[cfg(feature = "std")]
+pub mod profile {
+    pub use sm_profile::{
+        train_profile, train_profile_in_place, AbiProfile, CapabilityExpectations,
+        CompatibilityMode, FeaturePolicy, ParserProfile, ProfileVersion, TrainingSample,
+    };
+}
+#[cfg(feature = "std")]
 pub mod semantics {
     pub use sm_sema::{
-        analyze_logos_program, check_file_with_provider, check_source, is_assignment_compatible,
-        DiagLevel, GateInstr, ImmutableIr, LawScheduler, ModuleProvider, ScopeKind,
-        SemanticDiagnostic, SemanticError, SemanticReport, SemanticType, Symbol, SymbolError,
-        SymbolTable, TypeId, TypeRegistry,
+        analyze_logos_program, check_file_with_provider, check_file_with_provider_and_profile,
+        check_source, check_source_with_profile, is_assignment_compatible, DiagLevel, GateInstr,
+        ImmutableIr, LawScheduler, ModuleProvider, ScopeKind, SemanticDiagnostic, SemanticError,
+        SemanticReport, SemanticType, Symbol, SymbolError, SymbolTable, TypeId, TypeRegistry,
     };
 }
 #[cfg(feature = "std")]
@@ -50,17 +71,21 @@ pub mod frontend {
         compile_program_to_semcode, compile_program_to_semcode_with_options,
         compile_program_to_semcode_with_options_debug, emit_ir_to_semcode,
     };
+    pub use sm_profile::ParserProfile;
     pub use sm_front::{
         build_fn_table, builtin_sig, lex, parse_logos_program, parse_program, parse_rustlike,
-        resolve_symbol_name, type_check_function, type_check_function_with_table, type_check_program,
-        AstArena, BinaryOp, CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, Function,
-        LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
-        LogosWhen, MatchArm, OptLevel, Program, QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Token,
-        TokenKind, Type, UnaryOp,
+        parse_logos_program_with_profile, parse_logos_with_profile, parse_program_with_profile,
+        parse_rustlike_with_profile, resolve_symbol_name, type_check_function,
+        type_check_function_with_table, type_check_program, AstArena, BinaryOp, CompilePolicyView,
+        CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, FrontendErrorKind,
+        Function, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
+        LogosSystem, LogosWhen, MatchArm, OptLevel, Program, QuadVal, ScopeEnv, Stmt, StmtId,
+        SymbolId, Token, TokenKind, Type, UnaryOp,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
-        compile_program_to_ir_with_options, lower_expr_to_ir, lower_function_to_ir,
+        compile_program_to_ir_with_options, compile_program_to_ir_with_options_and_profile,
+        compile_program_to_ir_with_profile, lower_expr_to_ir, lower_function_to_ir,
         lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
     };
 
@@ -92,7 +117,8 @@ pub mod frontend {
     pub mod ir {
         pub use super::{
             compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
-            compile_program_to_ir_with_options, lower_expr_to_ir, lower_function_to_ir,
+            compile_program_to_ir_with_options, compile_program_to_ir_with_options_and_profile,
+            compile_program_to_ir_with_profile, lower_expr_to_ir, lower_function_to_ir,
             lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
         };
     }

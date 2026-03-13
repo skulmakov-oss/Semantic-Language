@@ -2,9 +2,9 @@
 
 use crate::{QuadroReg, F, N, S, T};
 use std::collections::HashMap;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
+pub use sm_profile::{
+    train_profile, train_profile_in_place, ParserProfile, ProfileIoError, TrainingSample,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
@@ -88,106 +88,6 @@ impl core::fmt::Display for ProgramError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for ProgramError {}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ParserProfile {
-    pub aliases: HashMap<String, String>,
-}
-
-impl ParserProfile {
-    pub fn add_alias(&mut self, raw: impl Into<String>, canonical: impl Into<String>) {
-        self.aliases.insert(raw.into(), canonical.into());
-    }
-
-    pub fn normalize(&self, input: &str) -> String {
-        let tokens = lex_tokens(input);
-        if tokens.is_empty() {
-            return String::new();
-        }
-
-        let mut out = String::new();
-        for (i, tok) in tokens.iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            if let Some(mapped) = self.aliases.get(*tok) {
-                out.push_str(mapped);
-            } else {
-                out.push_str(tok);
-            }
-        }
-        out
-    }
-
-    pub fn to_json(&self) -> Result<String, ProfileIoError> {
-        serde_json::to_string_pretty(self).map_err(ProfileIoError::Json)
-    }
-
-    pub fn from_json(json: &str) -> Result<Self, ProfileIoError> {
-        serde_json::from_str(json).map_err(ProfileIoError::Json)
-    }
-
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ProfileIoError> {
-        let json = self.to_json()?;
-        std::fs::write(path, json).map_err(ProfileIoError::Io)
-    }
-
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ProfileIoError> {
-        let json = std::fs::read_to_string(path).map_err(ProfileIoError::Io)?;
-        Self::from_json(&json)
-    }
-}
-
-#[derive(Debug)]
-pub enum ProfileIoError {
-    Io(std::io::Error),
-    Json(serde_json::Error),
-}
-
-impl core::fmt::Display for ProfileIoError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            ProfileIoError::Io(e) => write!(f, "I/O error: {}", e),
-            ProfileIoError::Json(e) => write!(f, "JSON error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for ProfileIoError {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TrainingSample<'a> {
-    pub input: &'a str,
-    pub target: &'a str,
-}
-
-pub fn train_profile(samples: &[TrainingSample<'_>]) -> ParserProfile {
-    let mut profile = ParserProfile::default();
-    train_profile_in_place(&mut profile, samples);
-    profile
-}
-
-pub fn train_profile_in_place(profile: &mut ParserProfile, samples: &[TrainingSample<'_>]) {
-    for sample in samples {
-        let raw_tokens = lex_tokens(sample.input);
-        let target_tokens = lex_tokens(sample.target);
-        if raw_tokens.len() != target_tokens.len() {
-            continue;
-        }
-
-        for (raw, canonical) in raw_tokens.iter().zip(target_tokens.iter()) {
-            if raw == canonical {
-                continue;
-            }
-            if can_learn_alias(raw, canonical) {
-                profile
-                    .aliases
-                    .entry((*raw).to_string())
-                    .or_insert_with(|| (*canonical).to_string());
-            }
-        }
-    }
-}
 
 pub fn parse_expression(input: &str) -> Result<Expr<'_>, ParseError> {
     let mut p = Parser::new(input);
@@ -329,70 +229,6 @@ fn strip_comment(line: &str) -> &str {
         (None, Some(b)) => &line[..b],
         (None, None) => line,
     }
-}
-
-fn can_learn_alias(raw: &str, canonical: &str) -> bool {
-    is_alias_input_token(raw) && is_supported_canonical_token(canonical)
-}
-
-fn is_alias_input_token(tok: &str) -> bool {
-    !tok.is_empty()
-        && tok
-            .as_bytes()
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
-}
-
-fn is_supported_canonical_token(tok: &str) -> bool {
-    matches!(tok, "!" | "&" | "|" | "^" | "N" | "F" | "T" | "S")
-}
-
-fn lex_tokens(input: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    let bytes = input.as_bytes();
-
-    while i < bytes.len() {
-        let ch = bytes[i];
-        if ch.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-
-        if i + 1 < bytes.len() && ch == b'/' && bytes[i + 1] == b'/' {
-            break;
-        }
-        if ch == b'#' {
-            break;
-        }
-
-        if is_single_char_token(ch) {
-            out.push(&input[i..i + 1]);
-            i += 1;
-            continue;
-        }
-
-        let start = i;
-        i += 1;
-        while i < bytes.len() {
-            let c = bytes[i];
-            if c.is_ascii_whitespace() || is_single_char_token(c) || c == b'#' {
-                break;
-            }
-            if i + 1 < bytes.len() && c == b'/' && bytes[i + 1] == b'/' {
-                break;
-            }
-            i += 1;
-        }
-        out.push(&input[start..i]);
-    }
-
-    out
-}
-
-#[inline]
-fn is_single_char_token(ch: u8) -> bool {
-    matches!(ch, b'(' | b')' | b'!' | b'&' | b'|' | b'^' | b'=')
 }
 
 #[inline]

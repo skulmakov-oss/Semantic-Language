@@ -3,9 +3,14 @@ use crate::semcode_format::{
     read_utf8, supported_headers, SemcodeFormatError, SemcodeHeaderSpec, Opcode,
 };
 use crate::frontend::QuadVal;
+use sm_runtime_core::{
+    ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas,
+    RuntimeSymbolTable, SymbolId,
+};
+use sm_verify::RejectReport;
+use sm_verify::verify_semcode;
 use std::collections::{HashMap, HashSet};
 
-const MAX_STACK_DEPTH: usize = 256;
 const MAX_FUNCTIONS: usize = 4096;
 const MAX_STRINGS_PER_FUNCTION: usize = 4096;
 const MAX_STRING_LEN: usize = 8192;
@@ -26,7 +31,7 @@ pub enum Value {
 pub struct Frame {
     pub pc: usize,
     pub regs: Vec<Value>,
-    pub locals: HashMap<String, Value>,
+    pub locals: HashMap<SymbolId, Value>,
     pub func: String,
     pub return_dst: Option<u16>,
 }
@@ -35,6 +40,7 @@ pub struct Frame {
 pub struct FunctionBytecode {
     pub name: String,
     pub strings: Vec<String>,
+    pub symbol_ids: Vec<SymbolId>,
     pub debug_symbols: Vec<DebugSymbol>,
     pub code: Vec<u8>,
     pub instr_start: usize,
@@ -51,6 +57,9 @@ pub struct DebugSymbol {
 pub struct VM {
     pub functions: HashMap<String, FunctionBytecode>,
     pub callstack: Vec<Frame>,
+    pub config: ExecutionConfig,
+    pub effect_calls: usize,
+    pub symbols: RuntimeSymbolTable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +72,8 @@ pub enum RuntimeError {
     TypeMismatchRuntime(String),
     StackUnderflow,
     StackOverflow,
+    QuotaExceeded(QuotaExceeded),
+    VerifierRejected(RejectReport),
     UnknownVariable(String),
     InvalidStringId(u16),
 }
@@ -84,6 +95,12 @@ impl core::fmt::Display for RuntimeError {
             RuntimeError::TypeMismatchRuntime(m) => write!(f, "runtime type mismatch: {}", m),
             RuntimeError::StackUnderflow => write!(f, "stack underflow"),
             RuntimeError::StackOverflow => write!(f, "stack overflow"),
+            RuntimeError::QuotaExceeded(exceeded) => write!(
+                f,
+                "quota exceeded: {:?} limit={} used={}",
+                exceeded.kind, exceeded.limit, exceeded.used
+            ),
+            RuntimeError::VerifierRejected(report) => write!(f, "{report}"),
             RuntimeError::UnknownVariable(n) => write!(f, "unknown variable '{}'", n),
             RuntimeError::InvalidStringId(id) => write!(f, "invalid string id {}", id),
         }
@@ -93,21 +110,74 @@ impl core::fmt::Display for RuntimeError {
 impl std::error::Error for RuntimeError {}
 
 pub fn run_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
-    run_semcode_with_entry(bytes, "main")
+    run_semcode_with_config(bytes, ExecutionConfig::for_context(ExecutionContext::VerifiedLocal))
+}
+
+pub fn run_verified_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
+    run_verified_semcode_with_config(
+        bytes,
+        ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+    )
 }
 
 pub fn run_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
-    let (_, functions) = parse_semcode(bytes)?;
+    run_semcode_with_entry_and_config(
+        bytes,
+        entry,
+        ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+    )
+}
+
+pub fn run_semcode_with_config(bytes: &[u8], config: ExecutionConfig) -> Result<(), RuntimeError> {
+    run_semcode_with_entry_and_config(bytes, "main", config)
+}
+
+pub fn run_verified_semcode_with_config(
+    bytes: &[u8],
+    config: ExecutionConfig,
+) -> Result<(), RuntimeError> {
+    run_verified_semcode_with_entry_and_config(bytes, "main", config)
+}
+
+pub fn run_verified_semcode_with_entry(
+    bytes: &[u8],
+    entry: &str,
+) -> Result<(), RuntimeError> {
+    run_verified_semcode_with_entry_and_config(
+        bytes,
+        entry,
+        ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+    )
+}
+
+pub fn run_verified_semcode_with_entry_and_config(
+    bytes: &[u8],
+    entry: &str,
+    config: ExecutionConfig,
+) -> Result<(), RuntimeError> {
+    verify_semcode(bytes).map_err(RuntimeError::VerifierRejected)?;
+    run_semcode_with_entry_and_config(bytes, entry, config)
+}
+
+pub fn run_semcode_with_entry_and_config(
+    bytes: &[u8],
+    entry: &str,
+    config: ExecutionConfig,
+) -> Result<(), RuntimeError> {
+    let (_, symbols, functions) = parse_semcode(bytes)?;
     let mut vm = VM {
         functions,
         callstack: Vec::new(),
+        config,
+        effect_calls: 0,
+        symbols,
     };
     push_frame(&mut vm, entry, Vec::new(), None)?;
     exec_loop(&mut vm)
 }
 
 pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
-    let (spec, functions) = parse_semcode(bytes)?;
+    let (spec, _, functions) = parse_semcode(bytes)?;
     let mut out = String::new();
     let header = if bytes.len() >= 8 { &bytes[0..8] } else { &[] };
     out.push_str(&format!(
@@ -135,7 +205,10 @@ pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
     Ok(out)
 }
 
-fn parse_semcode(bytes: &[u8]) -> Result<(SemcodeHeaderSpec, HashMap<String, FunctionBytecode>), RuntimeError> {
+fn parse_semcode(
+    bytes: &[u8],
+) -> Result<(SemcodeHeaderSpec, RuntimeSymbolTable, HashMap<String, FunctionBytecode>), RuntimeError>
+{
     if bytes.len() < 8 {
         return Err(RuntimeError::BadHeader);
     }
@@ -156,6 +229,7 @@ fn parse_semcode(bytes: &[u8]) -> Result<(SemcodeHeaderSpec, HashMap<String, Fun
     };
     let mut i = 8usize;
     let mut out = HashMap::new();
+    let mut runtime_symbols = RuntimeSymbolTable::new();
     while i < bytes.len() {
         if out.len() >= MAX_FUNCTIONS {
             return Err(RuntimeError::BadFormat(format!(
@@ -184,9 +258,14 @@ fn parse_semcode(bytes: &[u8]) -> Result<(SemcodeHeaderSpec, HashMap<String, Fun
         i += code_len;
 
         let (strings, debug_symbols, instr_start) = parse_string_table_and_debug(&code)?;
+        let symbol_ids = strings
+            .iter()
+            .map(|name| runtime_symbols.intern(name))
+            .collect::<Vec<_>>();
         let f = FunctionBytecode {
             name: name.clone(),
             strings,
+            symbol_ids,
             debug_symbols,
             code,
             instr_start,
@@ -199,7 +278,7 @@ fn parse_semcode(bytes: &[u8]) -> Result<(SemcodeHeaderSpec, HashMap<String, Fun
             )));
         }
     }
-    Ok((header, out))
+    Ok((header, runtime_symbols, out))
 }
 
 fn parse_string_table_and_debug(
@@ -415,45 +494,48 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                         )))
                     }
                 };
-                set_reg(vm, frame_idx, dst, Value::Quad(q));
+                set_reg(vm, frame_idx, dst, Value::Quad(q))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadBool => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let b = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
-                set_reg(vm, frame_idx, dst, Value::Bool(b));
+                set_reg(vm, frame_idx, dst, Value::Bool(b))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadI32 => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
-                set_reg(vm, frame_idx, dst, Value::I32(v));
+                set_reg(vm, frame_idx, dst, Value::I32(v))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadF64 => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
-                set_reg(vm, frame_idx, dst, Value::F64(v));
+                set_reg(vm, frame_idx, dst, Value::F64(v))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let name = lookup_str(&f, sid)?;
+                let symbol = lookup_symbol(&f, sid)?;
                 let val = vm.callstack[frame_idx]
                     .locals
-                    .get(name)
+                    .get(&symbol)
                     .cloned()
-                    .ok_or_else(|| RuntimeError::UnknownVariable(name.to_string()))?;
-                set_reg(vm, frame_idx, dst, val);
+                    .ok_or_else(|| {
+                        let name = lookup_str(&f, sid).unwrap_or("<unknown>");
+                        RuntimeError::UnknownVariable(name.to_string())
+                    })?;
+                set_reg(vm, frame_idx, dst, val)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::StoreVar => {
                 let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let name = lookup_str(&f, sid)?.to_string();
+                let symbol = lookup_symbol(&f, sid)?;
                 let val = get_reg(vm, frame_idx, src)?;
-                vm.callstack[frame_idx].locals.insert(name, val);
+                vm.callstack[frame_idx].locals.insert(symbol, val);
                 next_pc = cur - f.instr_start;
             }
             Opcode::QAnd | Opcode::QOr | Opcode::QImpl => {
@@ -468,14 +550,14 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                     Opcode::QImpl => quad_or(quad_not(lq), rq),
                     _ => unreachable!(),
                 };
-                set_reg(vm, frame_idx, dst, Value::Quad(out_q));
+                set_reg(vm, frame_idx, dst, Value::Quad(out_q))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::QNot => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let q = as_quad(get_reg(vm, frame_idx, src)?)?;
-                set_reg(vm, frame_idx, dst, Value::Quad(quad_not(q)));
+                set_reg(vm, frame_idx, dst, Value::Quad(quad_not(q)))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::BoolAnd | Opcode::BoolOr => {
@@ -489,14 +571,14 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 } else {
                     lb || rb
                 };
-                set_reg(vm, frame_idx, dst, Value::Bool(out_b));
+                set_reg(vm, frame_idx, dst, Value::Bool(out_b))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::BoolNot => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let b = as_bool(get_reg(vm, frame_idx, src)?)?;
-                set_reg(vm, frame_idx, dst, Value::Bool(!b));
+                set_reg(vm, frame_idx, dst, Value::Bool(!b))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::CmpEq | Opcode::CmpNe => {
@@ -507,7 +589,7 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 let rv = get_reg(vm, frame_idx, rhs)?;
                 let eq = value_eq(&lv, &rv)?;
                 let out = if opcode == Opcode::CmpEq { eq } else { !eq };
-                set_reg(vm, frame_idx, dst, Value::Bool(out));
+                set_reg(vm, frame_idx, dst, Value::Bool(out))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::AddF64 | Opcode::SubF64 | Opcode::MulF64 | Opcode::DivF64 => {
@@ -523,7 +605,7 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                     Opcode::DivF64 => l / r,
                     _ => unreachable!(),
                 };
-                set_reg(vm, frame_idx, dst, Value::F64(out));
+                set_reg(vm, frame_idx, dst, Value::F64(out))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::Jmp => {
@@ -568,14 +650,16 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 continue;
             }
             Opcode::GateRead => {
+                bump_effect_calls(vm)?;
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let val = ((device_id as i32) << 16) | (port as i32);
-                set_reg(vm, frame_idx, dst, Value::I32(val));
+                set_reg(vm, frame_idx, dst, Value::I32(val))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::GateWrite => {
+                bump_effect_calls(vm)?;
                 let _device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -583,6 +667,7 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 next_pc = cur - f.instr_start;
             }
             Opcode::PulseEmit => {
+                bump_effect_calls(vm)?;
                 let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _signal = lookup_str(&f, sid)?;
                 next_pc = cur - f.instr_start;
@@ -598,7 +683,7 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 let finished = vm.callstack.pop().ok_or(RuntimeError::StackUnderflow)?;
                 if let Some(caller) = vm.callstack.last_mut() {
                     if let Some(dst) = finished.return_dst {
-                        write_reg(caller, dst as usize, ret_val);
+                        write_reg(caller, dst as usize, ret_val, &vm.config.quotas)?;
                     }
                 } else {
                     return Ok(());
@@ -621,13 +706,15 @@ fn push_frame(
         .functions
         .get(func_name)
         .ok_or_else(|| RuntimeError::UnknownFunction(func_name.to_string()))?;
-    if vm.callstack.len() >= MAX_STACK_DEPTH {
-        return Err(RuntimeError::StackOverflow);
+    let next_depth = vm.callstack.len() + 1;
+    enforce_quota(&vm.config.quotas, QuotaKind::Frames, next_depth)?;
+    match enforce_quota(&vm.config.quotas, QuotaKind::StackDepth, next_depth) {
+        Err(RuntimeError::QuotaExceeded(_)) => return Err(RuntimeError::StackOverflow),
+        other => other?,
     }
-    let mut regs = vec![Value::Unit; 16];
-    if regs.len() < args.len() {
-        regs.resize(args.len(), Value::Unit);
-    }
+    let initial_reg_count = 16usize.max(args.len());
+    enforce_quota(&vm.config.quotas, QuotaKind::Registers, initial_reg_count)?;
+    let mut regs = vec![Value::Unit; initial_reg_count];
     for (i, v) in args.into_iter().enumerate() {
         regs[i] = v;
     }
@@ -649,6 +736,13 @@ fn lookup_str<'a>(f: &'a FunctionBytecode, sid: u16) -> Result<&'a str, RuntimeE
         .ok_or(RuntimeError::InvalidStringId(sid))
 }
 
+fn lookup_symbol(f: &FunctionBytecode, sid: u16) -> Result<SymbolId, RuntimeError> {
+    f.symbol_ids
+        .get(sid as usize)
+        .copied()
+        .ok_or(RuntimeError::InvalidStringId(sid))
+}
+
 fn get_reg(vm: &VM, frame_idx: usize, r: u16) -> Result<Value, RuntimeError> {
     vm.callstack
         .get(frame_idx)
@@ -657,17 +751,44 @@ fn get_reg(vm: &VM, frame_idx: usize, r: u16) -> Result<Value, RuntimeError> {
         .ok_or_else(|| RuntimeError::BadFormat(format!("read invalid reg r{}", r)))
 }
 
-fn set_reg(vm: &mut VM, frame_idx: usize, r: u16, v: Value) {
+fn set_reg(vm: &mut VM, frame_idx: usize, r: u16, v: Value) -> Result<(), RuntimeError> {
     if let Some(frame) = vm.callstack.get_mut(frame_idx) {
-        write_reg(frame, r as usize, v);
+        write_reg(frame, r as usize, v, &vm.config.quotas)?;
     }
+    Ok(())
 }
 
-fn write_reg(frame: &mut Frame, r: usize, v: Value) {
+fn write_reg(
+    frame: &mut Frame,
+    r: usize,
+    v: Value,
+    quotas: &RuntimeQuotas,
+) -> Result<(), RuntimeError> {
     if frame.regs.len() <= r {
-        frame.regs.resize(r + 1, Value::Unit);
+        let required = r + 1;
+        enforce_quota(quotas, QuotaKind::Registers, required)?;
+        frame.regs.resize(required, Value::Unit);
     }
     frame.regs[r] = v;
+    Ok(())
+}
+
+fn enforce_quota(
+    quotas: &RuntimeQuotas,
+    kind: QuotaKind,
+    used: usize,
+) -> Result<(), RuntimeError> {
+    if let Some(exceeded) = quotas.exceed(kind, used) {
+        return Err(RuntimeError::QuotaExceeded(exceeded));
+    }
+    Ok(())
+}
+
+fn bump_effect_calls(vm: &mut VM) -> Result<(), RuntimeError> {
+    let next = vm.effect_calls + 1;
+    enforce_quota(&vm.config.quotas, QuotaKind::EffectCalls, next)?;
+    vm.effect_calls = next;
+    Ok(())
 }
 
 fn as_quad(v: Value) -> Result<QuadVal, RuntimeError> {
@@ -873,6 +994,7 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
 mod tests {
     use super::*;
     use crate::frontend::compile_program_to_semcode;
+    use sm_runtime_core::{ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind};
 
     #[test]
     fn vm_runs_empty_main() {
@@ -943,5 +1065,52 @@ mod tests {
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn vm_enforces_configured_stack_depth() {
+        let src = r#"
+            fn helper() { return; }
+            fn main() { helper(); return; }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let mut config = ExecutionConfig::for_context(ExecutionContext::VerifiedLocal);
+        config.quotas.max_stack_depth = 1;
+        let err = run_semcode_with_config(&bytes, config).expect_err("must fail");
+        assert_eq!(err, RuntimeError::StackOverflow);
+    }
+
+    #[test]
+    fn vm_enforces_configured_register_budget() {
+        let src = r#"
+            fn main() {
+                let a: bool = true;
+                let b: bool = false;
+                let c = a && b;
+                if c == false { return; } else { return; }
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let mut config = ExecutionConfig::for_context(ExecutionContext::VerifiedLocal);
+        config.quotas.max_registers = 2;
+        let err = run_semcode_with_config(&bytes, config).expect_err("must fail");
+        assert_eq!(
+            err,
+            RuntimeError::QuotaExceeded(QuotaExceeded {
+                kind: QuotaKind::Registers,
+                limit: 2,
+                used: 16,
+            })
+        );
+    }
+
+    #[test]
+    fn verified_run_rejects_invalid_bytecode_before_execution() {
+        let src = "fn main() { return; }";
+        let mut bytes = compile_program_to_semcode(src).expect("compile");
+        let opcode_pos = 8 + 2 + 4 + 4 + 2;
+        bytes[opcode_pos] = 0xff;
+        let err = run_verified_semcode(&bytes).expect_err("must fail");
+        assert!(matches!(err, RuntimeError::VerifierRejected(_)));
     }
 }

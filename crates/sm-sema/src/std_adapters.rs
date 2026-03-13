@@ -85,12 +85,20 @@ pub struct SemanticReport {
 }
 
 pub fn check_source(input: &str) -> Result<SemanticReport, SemanticError> {
-    if let Ok(logos) = parse_logos_program(input) {
+    let profile = ParserProfile::foundation_default();
+    check_source_with_profile(input, &profile)
+}
+
+pub fn check_source_with_profile(
+    input: &str,
+    profile: &ParserProfile,
+) -> Result<SemanticReport, SemanticError> {
+    if let Ok(logos) = parse_logos_program_with_profile(input, profile) {
         if logos.system.is_some() || !logos.entities.is_empty() || !logos.laws.is_empty() {
             return analyze_logos_program(&logos, input);
         }
     }
-    let parsed = parse_program(input).map_err(|e| SemanticError {
+    let parsed = parse_program_with_profile(input, profile).map_err(|e| SemanticError {
         diag: render_diag(
             DiagLevel::Error,
             "E0000",
@@ -119,9 +127,18 @@ pub fn check_file_with_provider(
     root: &Path,
     provider: &dyn crate::alloc_core::ModuleProvider,
 ) -> Result<SemanticReport, SemanticError> {
+    let profile = ParserProfile::foundation_default();
+    check_file_with_provider_and_profile(root, provider, &profile)
+}
+
+pub fn check_file_with_provider_and_profile(
+    root: &Path,
+    provider: &dyn crate::alloc_core::ModuleProvider,
+    profile: &ParserProfile,
+) -> Result<SemanticReport, SemanticError> {
     let mut visiting: Vec<PathBuf> = Vec::new();
     let mut loaded: HashMap<PathBuf, (String, LogosProgram)> = HashMap::new();
-    load_module_recursive(root, &mut visiting, &mut loaded, provider)?;
+    load_module_recursive(root, &mut visiting, &mut loaded, provider, profile)?;
     let export_sets = build_export_sets(&loaded)?;
     validate_select_imports(&loaded, &export_sets)?;
 
@@ -140,8 +157,9 @@ pub fn check_file_with_provider(
             e
         })?;
         warnings.extend(report.warnings);
+        let module_key = path_contract_key(&module_path);
         for law in report.scheduled_laws {
-            scheduled_laws.push(format!("{}::{}", module_path.display(), law));
+            scheduled_laws.push(format!("{}::{}", module_key, law));
         }
         arena_nodes += report.arena_nodes;
     }
@@ -168,11 +186,16 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     out
 }
 
+fn path_contract_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn load_module_recursive(
     path: &Path,
     visiting: &mut Vec<PathBuf>,
     loaded: &mut HashMap<PathBuf, (String, LogosProgram)>,
     provider: &dyn crate::alloc_core::ModuleProvider,
+    profile: &ParserProfile,
 ) -> Result<(), SemanticError> {
     let key = normalize_lexical(path);
     if loaded.contains_key(&key) {
@@ -181,9 +204,9 @@ fn load_module_recursive(
     if visiting.contains(&key) {
         let mut chain = visiting
             .iter()
-            .map(|p| p.display().to_string())
+            .map(|p| path_contract_key(p))
             .collect::<Vec<_>>();
-        chain.push(path.display().to_string());
+        chain.push(path_contract_key(path));
         return Err(SemanticError {
             diag: render_diag(
                 DiagLevel::Error,
@@ -195,7 +218,7 @@ fn load_module_recursive(
         });
     }
 
-    let module_id = key.to_string_lossy().to_string();
+    let module_id = path_contract_key(&key);
     let bytes = provider.read_module(&module_id).map_err(|e| SemanticError {
         diag: render_diag(
             DiagLevel::Error,
@@ -214,7 +237,7 @@ fn load_module_recursive(
             "",
         ),
     })?;
-    let logos = parse_logos_program(&source).map_err(|e| SemanticError {
+    let logos = parse_logos_program_with_profile(&source, profile).map_err(|e| SemanticError {
         diag: render_diag(
             DiagLevel::Error,
             "E0239",
@@ -230,7 +253,7 @@ fn load_module_recursive(
     validate_import_namespace_rules(&imports, &logos, &source)?;
     for import in imports {
         let import_path = normalize_lexical(&resolve_import_path(base, &import.spec));
-        load_module_recursive(&import_path, visiting, loaded, provider)?;
+        load_module_recursive(&import_path, visiting, loaded, provider, profile)?;
     }
     let _ = visiting.pop();
     loaded.insert(key, (source, logos));
@@ -296,7 +319,7 @@ fn validate_select_imports(
     let mut src_by_key = std::collections::BTreeMap::<String, String>::new();
 
     for (k, set) in export_sets {
-        let key = k.display().to_string();
+        let key = path_contract_key(k);
         let mut syms = std::collections::BTreeSet::<String>::new();
         let mut kinds = std::collections::BTreeMap::<String, ExportKind>::new();
         for item in &set.items {
@@ -304,7 +327,7 @@ fn validate_select_imports(
             kinds.entry(item.public_name.clone()).or_insert(item.kind);
         }
         export_symbols.insert(key, syms);
-        export_kinds.insert(k.display().to_string(), kinds);
+        export_kinds.insert(path_contract_key(k), kinds);
     }
 
     for module in modules {
@@ -312,14 +335,14 @@ fn validate_select_imports(
             .get(&module)
             .expect("module key from loaded.keys()");
         let imports = parse_import_directives(src);
-        let module_key = module.display().to_string();
+        let module_key = path_contract_key(&module);
         src_by_key.insert(module_key.clone(), src.clone());
         let base = module.parent().unwrap_or_else(|| Path::new("."));
         for import in &imports {
             let dep = normalize_lexical(&resolve_import_path(base, &import.spec));
             dep_lookup.insert(
                 (module_key.clone(), import.spec.clone()),
-                dep.display().to_string(),
+                path_contract_key(&dep),
             );
         }
         core_modules.push(SelectImportModule {
@@ -379,14 +402,14 @@ fn build_export_sets(
                 "",
             ),
         })?;
-        let module_key = module.display().to_string();
+        let module_key = path_contract_key(module);
         let imports = parse_import_directives(source);
         let base = module.parent().unwrap_or_else(|| Path::new("."));
         for import in &imports {
             let dep = normalize_lexical(&resolve_import_path(base, &import.spec));
             dep_lookup.insert(
                 (module_key.clone(), import.spec.clone()),
-                dep.display().to_string(),
+                path_contract_key(&dep),
             );
         }
         modules.push(ExportBuildModule {
@@ -853,11 +876,9 @@ Law "L" [priority 1]:
     fn provider_pipeline_matches_direct_analyze_smoke() {
         let module = "/virtual/root.sm";
         let src = r#"
-Entity Sensor:
-    state val: quad
 Law "CheckSignal" [priority 10]:
-    When Sensor.val == T ->
-        Log.emit("Signal OK")
+    When true ->
+        System.recovery()
 "#;
         let mut modules = BTreeMap::new();
         modules.insert(module.to_string(), src.as_bytes().to_vec());

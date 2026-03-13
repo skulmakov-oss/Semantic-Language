@@ -1,0 +1,32 @@
+# Semantic v1 Milestones
+
+- `M0 Repository Discipline`
+  - architecture docs
+  - crate map
+  - legacy freeze policy
+  - PR/review governance
+- `M1 Core Contract`
+  - `sm-verify`
+  - `SymbolId` runtime
+  - quotas and admit-then-execute
+- `M2 Language Completion`
+  - `u32` / `fx`
+  - optimizer minimum set
+  - `sm-profile`
+- `M3 Platform Formalization`
+  - spec bundle
+  - stable CLI
+  - version contracts
+- `M4 PROMETHEUS Boundary`
+  - ABI
+  - capabilities
+  - gates
+- `M5 Semantic Runtime`
+  - state
+  - rules
+  - orchestration
+  - audit
+- `M6 v1 Lockdown`
+  - freezes
+  - golden baselines
+  - validation matrix

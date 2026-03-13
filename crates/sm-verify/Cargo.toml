@@ -1,5 +1,5 @@
 [package]
-name = "sm-vm"
+name = "sm-verify"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,10 +8,8 @@ path = "src/lib.rs"
 
 [features]
 default = ["std"]
-std = ["sm-emit/std", "sm-front/std", "sm-runtime-core/std", "sm-verify/std"]
+std = ["sm-emit/std", "sm-runtime-core/std"]
 
 [dependencies]
 sm-emit = { path = "../sm-emit", default-features = false, features = ["std"] }
-sm-front = { path = "../sm-front", default-features = false, features = ["std"] }
 sm-runtime-core = { path = "../sm-runtime-core", default-features = false, features = ["std"] }
-sm-verify = { path = "../sm-verify", default-features = false, features = ["std"] }
