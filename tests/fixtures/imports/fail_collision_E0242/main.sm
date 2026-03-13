@@ -1,0 +1,4 @@
+Import pub "a.sm"
+Import pub "b.sm"
+Law "Root" [priority 1]:
+    When true -> System.recovery()

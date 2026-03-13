@@ -2,11 +2,11 @@
 
 ## CrystalFold
 
-- Location: `crates/exo-ir/src/passes/crystalfold.rs`
+- Location: `crates/sm-ir/src/passes/crystalfold.rs`
 - Type: IR optimization pass (`OptPass`)
-- Entry: `run_default_opt_passes()` in `crates/exo-ir/src/passes/mod.rs`
+- Entry: `run_default_opt_passes()` in `crates/sm-ir/src/passes/mod.rs`
 
-CrystalFold is an IR-stage pass. It is not part of parsing, semantic typing, or emit.
+CrystalFold is an IR-stage pass. It is not part of parsing, smc typing, or emit.
 
 ## W0241 Scope
 

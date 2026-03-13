@@ -1,3 +1,0 @@
-Import "dep.exo" { Sensor, CheckLaw as CheckAlias }
-Law "Root" [priority 1]:
-    When true -> System.recovery()

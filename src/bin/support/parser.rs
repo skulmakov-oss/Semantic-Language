@@ -850,7 +850,7 @@ mod tests {
         profile.add_alias("OR", "|");
         profile.add_alias("NOT", "!");
 
-        let path = std::env::temp_dir().join("exocode_parser_profile_test.json");
+        let path = std::env::temp_dir().join("smcode_parser_profile_test.json");
         profile.save_to_file(&path).expect("save");
         let loaded = ParserProfile::load_from_file(&path).expect("load");
         let _ = std::fs::remove_file(&path);

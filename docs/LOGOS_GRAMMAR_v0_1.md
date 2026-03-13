@@ -58,7 +58,7 @@ Type         = "quad" | "bool" | "i32" | "u32" | "fx" | "f64" | "qvec" ["[" Num 
 
 ## Import v0.1 Policy
 
-- Path resolve: relative to current module directory; if extension is missing, `.exo` is appended.
+- Path resolve: relative to current module directory; if extension is missing, `.sm` is appended.
 - Cycle detection: recursive import loops are rejected with `E0238`.
 - Namespace isolation: each module is analyzed in its own scope; same `Entity`/`Law` names in different modules are allowed.
 - Alias collisions: duplicate import aliases inside one module are rejected with `E0241`.
@@ -68,19 +68,19 @@ Type         = "quad" | "bool" | "i32" | "u32" | "fx" | "f64" | "qvec" ["[" Num 
 ### Import Examples
 
 ```exo
-Import "core/math.exo"
-Import "drivers/sensor.exo" as SensorDrv
+Import "core/math.sm"
+Import "drivers/sensor.sm" as SensorDrv
 ```
 
 ```exo
 # E0241 (alias collision):
-Import "a.exo" as Core
-Import "b.exo" as Core
+Import "a.sm" as Core
+Import "b.sm" as Core
 ```
 
 ```exo
 # E0240 (re-export disabled in v0.1):
-Import pub "shared.exo"
+Import pub "shared.sm"
 ```
 
 ## Example

@@ -1,0 +1,6 @@
+Import "dep.sm" { A as X }
+Import "dep2.sm" as X
+
+Law "Main" [priority 1]:
+    When true ->
+        System.recovery()

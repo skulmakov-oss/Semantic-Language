@@ -1,4 +1,4 @@
-use exocode_core::frontend::{lex, parse_logos_program, parse_program};
+use semantic_language::frontend::{lex, parse_logos_program, parse_program};
 
 fn lcg(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);

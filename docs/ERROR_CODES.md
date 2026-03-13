@@ -1,14 +1,14 @@
-# EXOcode Error Codes
+# Semantic Error Codes
 
-Справочник диагностических кодов EXOcode.  
-CLI-источник: `exoc explain <code>` и `exoc explain --list`.
+Справочник диагностических кодов Semantic.  
+CLI-источник: `smc explain <code>` и `smc explain --list`.
 
 ## Как использовать
 
 - Просмотр конкретного кода:
-  - `exoc explain E0201`
+  - `smc explain E0201`
 - Список всех кодов:
-  - `exoc explain --list`
+  - `smc explain --list`
 
 ## Каталог
 
@@ -50,5 +50,5 @@ CLI-источник: `exoc explain <code>` и `exoc explain --list`.
 
 При добавлении новых кодов:
 
-1. Обновить каталог в `src/bin/exoc.rs` (`diagnostic_catalog`).
+1. Обновить каталог в `src/bin/smc.rs` (`diagnostic_catalog`).
 2. Обновить этот документ.

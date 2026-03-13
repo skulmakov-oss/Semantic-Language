@@ -1,5 +1,5 @@
-use exocode_core::frontend::parse_logos_program;
-use exocode_core::semantics::analyze_logos_program;
+use semantic_language::frontend::parse_logos_program;
+use semantic_language::semantics::analyze_logos_program;
 
 fn build_large_logos(law_count: usize, whens_per_law: usize) -> String {
     let mut src = String::new();

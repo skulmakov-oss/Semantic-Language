@@ -1,6 +1,6 @@
 # Exports v0.2
 
-This page documents the export surface behavior currently implemented in EXOcode semantics.
+This page documents the export surface behavior currently implemented in Semantic semantics.
 
 ## Exportable Items
 
@@ -14,9 +14,9 @@ The current export set includes top-level Logos declarations:
 
 Re-export is supported through `Import pub ...`:
 
-1. `Import pub "dep.exo"`
-2. `Import pub "dep.exo" { Foo, Bar as Baz }`
-3. `Import pub "dep.exo" *`
+1. `Import pub "dep.sm"`
+2. `Import pub "dep.sm" { Foo, Bar as Baz }`
+3. `Import pub "dep.sm" *`
 
 Each exported item stores provenance:
 
@@ -41,17 +41,17 @@ Re-export symbol cycles are detected and rejected with `E0243`, with a chain tra
 Collision (`E0242`):
 
 ```exo
-Import pub "a.exo"
-Import pub "b.exo"
+Import pub "a.sm"
+Import pub "b.sm"
 ```
 
 Cycle (`E0243`):
 
 ```exo
-// a.exo
-Import pub "b.exo"
-// b.exo
-Import pub "a.exo"
+// a.sm
+Import pub "b.sm"
+// b.sm
+Import pub "a.sm"
 ```
 
 ## Related Errors

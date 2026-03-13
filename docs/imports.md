@@ -1,6 +1,6 @@
 # Imports v0.2
 
-This page documents the import behavior currently implemented in EXOcode semantics.
+This page documents the import behavior currently implemented in Semantic semantics.
 
 ## Supported Forms
 
@@ -38,7 +38,7 @@ Re-export selected symbols from dependency module.
 Valid:
 
 ```exo
-Import "dep.exo" { Sensor, LawA as CheckA }
+Import "dep.sm" { Sensor, LawA as CheckA }
 Law "Root" [priority 1]:
     When true -> System.recovery()
 ```
@@ -46,7 +46,7 @@ Law "Root" [priority 1]:
 Invalid (`E0244`):
 
 ```exo
-Import "dep.exo" { MissingSymbol }
+Import "dep.sm" { MissingSymbol }
 Law "Root" [priority 1]:
     When true -> System.recovery()
 ```
@@ -54,7 +54,7 @@ Law "Root" [priority 1]:
 Invalid (`E0245`):
 
 ```exo
-Import "dep.exo" { A as X, B as X }
+Import "dep.sm" { A as X, B as X }
 Law "Root" [priority 1]:
     When true -> System.recovery()
 ```

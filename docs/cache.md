@@ -1,31 +1,31 @@
 # Cache & Incremental Pipeline
 
-This document defines the current persistent cache behavior for EXOcode.
+This document defines the current persistent cache behavior for Semantic.
 
 ## Layout
 
 Cache root:
 
 ```text
-.exo-cache/
+.smantic-cache/
   schema.json
   index.bin
   graph.bin
   packs/
-    sem/*.sempack
+    sem/*.smpack
     ast/*.astpack
     ir/*.irpack
-    exb/*.exbpack
+    exb/*.smcpack
 ```
 
 ## Pack Header Contract
 
 Each pack file uses a binary header (`EXOP`) with:
 
-- `kind` (`SEMP`, `ASTP`, `IRPK`, `EXBP`)
+- `kind` (`SEMP`, `ASTP`, `IRPK`, `SMCP`)
 - `schema_version`
 - `toolchain_hash`
-- `feature_hash` (for `EXBP`: includes caps hash salt)
+- `feature_hash` (for `SMCP`: includes caps hash salt)
 - `payload_len`
 - `payload_checksum`
 
@@ -76,16 +76,16 @@ Reasons currently emitted:
 
 Supported env vars:
 
-- `EXO_TOOLCHAIN_HASH`
-- `EXO_FEATURE_HASH`
-- `EXO_CACHE_SCHEMA`
-- `EXO_CAPS_HASH`
+- `SM_TOOLCHAIN_HASH`
+- `SM_FEATURE_HASH`
+- `SM_CACHE_SCHEMA`
+- `SM_CAPS_HASH`
 
 These are used in integration tests to force specific cache-reason paths.
 
 ## Notes
 
-- `hash-exb` supports `--trace-cache` for EXB cache diagnostics.
+- `hash-smc` supports `--trace-cache` for EXB cache diagnostics.
 - Dependency changes are reported as `DEP_CHANGED`.
 - Corrupted pack payloads are reported as `CORRUPT_PACK`.
 

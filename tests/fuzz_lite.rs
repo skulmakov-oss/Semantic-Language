@@ -1,4 +1,4 @@
-use exocode_core::frontend::{lex, parse_logos_program, parse_program};
+use semantic_language::frontend::{lex, parse_logos_program, parse_program};
 
 fn noisy(src: &str, seed: usize) -> String {
     let mut out = String::new();

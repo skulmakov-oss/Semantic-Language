@@ -4,6 +4,6 @@
 **/*.rs.bk
 *.tmp
 *.temp
-*.exb
-!tests/golden/*.exb
+*.smc
+!tests/golden/*.smc
 Cargo.lock

@@ -1,4 +1,4 @@
-use exo_semantics::{check_file_with_provider, ModuleProvider};
+use sm_sema::{check_file_with_provider, ModuleProvider};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ fn imports_policy_matrix() {
             .expect("EXPECT")
             .trim()
             .to_string();
-        let entry = case.join("main.exo").canonicalize().expect("main.exo");
+        let entry = case.join("main.sm").canonicalize().expect("main.sm");
         let res = check_file_with_provider(&entry, &provider);
 
         if expect == "OK" {

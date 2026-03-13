@@ -1,5 +1,5 @@
-# EXOcode Toolchain v0
-Rust-like frontend + EXObyte emitter + VM runtime.
+# Semantic Language toolchain v0
+Rust-like frontend + SemCode emitter + VM runtime.
 
 This repository state is frozen as Toolchain v0 on branch `release/v0` and tag `v0.1.0`.
 
@@ -7,9 +7,9 @@ This repository state is frozen as Toolchain v0 on branch `release/v0` and tag `
 - See `CHANGELOG.md` for release notes (`v0.1.0`, `v1.0.0`).
 
 ## What's included
-- Parser, type-checker, IR lowering, EXObyte emitter.
-- EXObyte v0 VM executor and disassembler.
-- CLI tool `exoc` for compile/run/runb/disasm.
+- Parser, type-checker, IR lowering, SemCode emitter.
+- SemCode v0 VM executor and disassembler.
+- Tools: `smc` for compile/check/lint and `svm` for VM run/disasm.
 - Golden byte-format tests.
 
 ## Quickstart
@@ -17,32 +17,32 @@ Use these commands as-is from repository root.
 
 ```powershell
 # 1) Build CLI
-cargo build --bin exoc
+cargo build --bin smc
 
 # 2) Create minimal source program
 @'
 fn main() {
     return;
 }
-'@ | Set-Content program.exo
+'@ | Set-Content program.sm
 
-# 3) Compile EXO -> EXObyte
-cargo run --bin exoc -- compile program.exo -o program.exb
+# 3) Compile EXO -> SemCode
+cargo run --bin smc -- compile program.sm -o program.smc
 
 # 4) Run source directly (compile in memory + execute main)
-cargo run --bin exoc -- run program.exo
+cargo run --bin smc -- run program.sm
 
-# 5) Run precompiled EXObyte
-cargo run --bin exoc -- runb program.exb
+# 5) Run precompiled SemCode
+cargo run --bin svm -- run program.smc
 
-# 6) Disassemble EXObyte
-cargo run --bin exoc -- disasm program.exb
+# 6) Disassemble SemCode
+cargo run --bin svm -- disasm program.smc
 ```
 
 Example `disasm` output:
 
 ```text
-EXOBYTE0
+SEMCODE0
 fn one: code=13 bytes, strings=0
   0000: LOAD_I32 r0, 1
   0007: RET r0
@@ -53,20 +53,20 @@ fn main: code=25 bytes, strings=2
 ```
 
 ## CLI reference
-- `exoc compile <input.exo> -o <out.exb>`
-  - Parses, type-checks, lowers, validates IR, emits EXObyte file.
-- `exoc features`
+- `smc compile <input.sm> -o <out.smc>`
+  - Parses, type-checks, lowers, validates IR, emits SemCode file.
+- `smc features`
   - Prints compile-time feature flags baked into this binary.
-- `exoc run <input.exo>`
+- `smc run <input.sm>`
   - Compiles source in memory and executes `main` in VM.
-- `exoc runb <input.exb>`
-  - Executes precompiled EXObyte in VM.
-- `exoc disasm <input.exb>`
-  - Prints decoded functions/opcodes from EXObyte payload.
+- `svm run <input.smc>`
+  - Executes precompiled SemCode in VM.
+- `svm disasm <input.smc>`
+  - Prints decoded functions/opcodes from SemCode payload.
 
-## EXObyte v0 format (spec)
+## SemCode v0 format (spec)
 - Endianness: little-endian for all integer fields.
-- Header: ASCII magic `EXOBYTE0` (8 bytes).
+- Header: ASCII magic `SEMCODE0` (8 bytes).
 - File body: repeated function records until EOF.
   - `u16 name_len`
   - `name_len` bytes function name (UTF-8)
@@ -83,7 +83,7 @@ fn main: code=25 bytes, strings=2
   - encoded as absolute function-local addresses in opcode stream.
   - `Label` nodes do not serialize into bytecode.
 - Opcode and encoding source of truth:
-  - `src/exobyte_format.rs` (`MAGIC`, `Opcode`, read/write LE helpers).
+  - `src/semcode_format.rs` (`MAGIC`, `Opcode`, read/write LE helpers).
 
 ## Language constraints (v0)
 - `if` condition is `bool` only. `if quad_expr` is forbidden.
@@ -96,7 +96,7 @@ fn main: code=25 bytes, strings=2
 ```powershell
 cargo fmt --check
 cargo test
-cargo test --test golden_exobyte
+cargo test --test golden_semcode
 ```
 
 ## no_std smoke-check
@@ -107,6 +107,7 @@ cargo check --no-default-features
 ```
 
 Reference matrix: `docs/NO_STD.md`.
+Naming note: `docs/NAMING.md`.
 
 ## Compile-Time Feature Flags
 
@@ -122,29 +123,30 @@ Optional:
 
 ## Repository layout
 - `src/frontend.rs` - lexer/parser/type-checker/lowering/IR validation/emitter.
-- `src/exobyte_format.rs` - EXObyte constants, opcodes, LE read/write helpers.
-- `src/exobyte_vm.rs` - EXObyte parser, VM runtime, disassembler.
-- `src/bin/exoc.rs` - CLI entrypoint (`compile`, `run`, `runb`, `disasm`).
-- `tests/golden/*` - `.exo` and `.exb` golden fixtures.
-- `tests/golden_exobyte.rs` - golden byte-for-byte format tests.
+- `src/semcode_format.rs` - SemCode constants, opcodes, LE read/write helpers.
+- `src/semcode_vm.rs` - SemCode parser, VM runtime, disassembler.
+- `src/bin/smc.rs` - compiler/tooling entrypoint (`compile`, `check`, `lint`, `watch`, hashes).
+- `src/bin/svm.rs` - VM entrypoint (`run`, `disasm`).
+- `tests/golden/*` - `.sm` and `.smc` golden fixtures.
+- `tests/golden_semcode.rs` - golden byte-for-byte format tests.
 
 ## Roadmap
-- EXObyte structural validator before VM execution.
+- SemCode structural validator before VM execution.
 - VM step limit / sandbox mode for deterministic safety.
 - Extend arithmetic typing and lowering (`u32`, `fx` ops).
 - Optimize `match` lowering (jump tables/selective chains).
 - Stabilize stdlib ABI and calling convention.
 - Debug info mapping (source positions -> bytecode offsets).
-- EXObyte versioning policy and compatibility matrix.
+- SemCode versioning policy and compatibility matrix.
 
 ## v1-math (in progress)
 - Add first-class `f64` type and float literals in frontend/type checker/IR.
 - Add arithmetic opcodes for `f64`: `LOAD_F64`, `ADD_F64`, `SUB_F64`, `MUL_F64`, `DIV_F64`.
 - Add math builtins in VM dispatch: `sin`, `cos`, `tan`, `sqrt`, `abs`, `pow`.
-- Preserve backward compatibility: VM executes both `EXOBYTE0` and `EXOBYTE1`.
+- Preserve backward compatibility: VM executes both `SEMCODE0` and `SEMCODE1`.
 - Keep all v0 tests/golden fixtures green while extending v1.
 
-## EXObyte Versioning Policy
-- `EXOBYTE0`: frozen v0 format and opcode set.
-- `EXOBYTE1`: v1 extension format (new MAGIC) for math opcodes.
-- VM reader supports both `EXOBYTE0` and `EXOBYTE1`, so old `.exb` files remain runnable.
+## SemCode Versioning Policy
+- `SEMCODE0`: frozen v0 format and opcode set.
+- `SEMCODE1`: v1 extension format (new MAGIC) for math opcodes.
+- VM reader supports both `SEMCODE0` and `SEMCODE1`, so old `.smc` files remain runnable.

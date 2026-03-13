@@ -1,4 +1,4 @@
-use exocode_core::frontend;
+use semantic_language::frontend;
 
 #[test]
 fn boundary_core_ir_emit_are_accessible() {
@@ -8,6 +8,6 @@ fn boundary_core_ir_emit_are_accessible() {
     let fns = frontend::core::build_fn_table(&p).expect("fn table");
     let _ = frontend::ir::lower_function_to_ir(&p.functions[0], &p.arena, &fns).expect("lower");
 
-    let bytes = frontend::emit::compile_program_to_exobyte(src).expect("emit");
+    let bytes = frontend::emit::compile_program_to_semcode(src).expect("emit");
     assert!(bytes.len() >= 8);
 }

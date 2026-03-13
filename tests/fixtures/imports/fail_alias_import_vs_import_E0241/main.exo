@@ -1,6 +1,0 @@
-Import "a.exo" as X
-Import "b.exo" as X
-
-Law "Main" [priority 1]:
-    When true ->
-        System.recovery()

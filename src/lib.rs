@@ -1,4 +1,4 @@
-//! EXOcode Core — Quadro Logic Engine
+//! Semantic Language Core — Quadro Logic Engine
 //!
 //! Packed Quadro logic:
 //! - 64-bit register stores 32 quadits (2 bits each).
@@ -19,24 +19,24 @@ extern crate std;
 use core::fmt;
 
 #[cfg(feature = "std")]
-pub mod exobyte_format {
-    pub use exo_emit::{
+pub mod semcode_format {
+    pub use sm_emit::{
         header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
         read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
-        CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_GATE_SURFACE, ExobyteFormatError, ExobyteHeaderSpec,
+        CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_GATE_SURFACE, SemcodeFormatError, SemcodeHeaderSpec,
         Opcode, HEADER_V0, HEADER_V1, MAGIC0, MAGIC1,
     };
 }
 #[cfg(feature = "std")]
-pub mod exobyte_vm {
-    pub use exo_vm::{
-        disasm_exobyte, run_exobyte, run_exobyte_with_entry, DebugSymbol, Frame, FunctionBytecode,
+pub mod semcode_vm {
+    pub use sm_vm::{
+        disasm_semcode, run_semcode, run_semcode_with_entry, DebugSymbol, Frame, FunctionBytecode,
         RuntimeError, Value, VM,
     };
 }
 #[cfg(feature = "std")]
 pub mod semantics {
-    pub use exo_semantics::{
+    pub use sm_sema::{
         analyze_logos_program, check_file_with_provider, check_source, is_assignment_compatible,
         DiagLevel, GateInstr, ImmutableIr, LawScheduler, ModuleProvider, ScopeKind,
         SemanticDiagnostic, SemanticError, SemanticReport, SemanticType, Symbol, SymbolError,
@@ -45,12 +45,12 @@ pub mod semantics {
 }
 #[cfg(feature = "std")]
 pub mod frontend {
-    pub use exo_core::SourceMark;
-    pub use exo_emit::{
-        compile_program_to_exobyte, compile_program_to_exobyte_with_options,
-        compile_program_to_exobyte_with_options_debug, emit_ir_to_exobyte,
+    pub use ton618_core::SourceMark;
+    pub use sm_emit::{
+        compile_program_to_semcode, compile_program_to_semcode_with_options,
+        compile_program_to_semcode_with_options_debug, emit_ir_to_semcode,
     };
-    pub use exo_frontend::{
+    pub use sm_front::{
         build_fn_table, builtin_sig, lex, parse_logos_program, parse_program, parse_rustlike,
         resolve_symbol_name, type_check_function, type_check_function_with_table, type_check_program,
         AstArena, BinaryOp, CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, Function,
@@ -58,7 +58,7 @@ pub mod frontend {
         LogosWhen, MatchArm, OptLevel, Program, QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Token,
         TokenKind, Type, UnaryOp,
     };
-    pub use exo_ir::{
+    pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
         compile_program_to_ir_with_options, lower_expr_to_ir, lower_function_to_ir,
         lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
@@ -99,12 +99,12 @@ pub mod frontend {
 
     pub mod emit {
         pub use super::{
-            compile_program_to_exobyte, compile_program_to_exobyte_with_options,
-            compile_program_to_exobyte_with_options_debug, emit_ir_to_exobyte,
+            compile_program_to_semcode, compile_program_to_semcode_with_options,
+            compile_program_to_semcode_with_options_debug, emit_ir_to_semcode,
         };
     }
 
-    pub const EXOCODE_EBNF: &str = r#"
+    pub const SEMANTIC_EBNF: &str = r#"
 Program      = { Function } ;
 Function     = "fn" Ident "(" [ Param { "," Param } ] ")" [ "->" Type ] Block ;
 Param        = Ident ":" Type ;

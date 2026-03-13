@@ -1,0 +1,15 @@
+[package]
+name = "sm-vm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["sm-emit/std", "sm-front/std"]
+
+[dependencies]
+sm-emit = { path = "../sm-emit", default-features = false, features = ["std"] }
+sm-front = { path = "../sm-front", default-features = false, features = ["std"] }

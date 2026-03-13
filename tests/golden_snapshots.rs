@@ -1,5 +1,5 @@
-use exocode_core::frontend::{
-    compile_program_to_exobyte, lex, lower_logos_laws_to_ir, parse_logos_program, TokenKind,
+use semantic_language::frontend::{
+    compile_program_to_semcode, lex, lower_logos_laws_to_ir, parse_logos_program, TokenKind,
 };
 
 fn read_text(path: &str) -> String {
@@ -16,7 +16,7 @@ fn normalize_newlines(s: &str) -> String {
 }
 
 fn update_mode() -> bool {
-    std::env::var("EXO_UPDATE_SNAPSHOTS")
+    std::env::var("SM_UPDATE_SNAPSHOTS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
@@ -72,35 +72,35 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     h
 }
 
-fn exobyte_hash_snapshot(input: &str) -> String {
-    let bytes = compile_program_to_exobyte(input).expect("compile");
+fn semcode_hash_snapshot(input: &str) -> String {
+    let bytes = compile_program_to_semcode(input).expect("compile");
     format!("{:016x}\n", fnv1a64(&bytes))
 }
 
 #[test]
 fn golden_tokens_indent() {
-    let src = read_text("tests/golden_snapshots/indent/basic.exo");
+    let src = read_text("tests/golden_snapshots/indent/basic.sm");
     let got = tokens_snapshot(&src);
     assert_snapshot("tests/golden_snapshots/indent/basic.tokens", &got);
 }
 
 #[test]
 fn golden_ast_logos() {
-    let src = read_text("tests/golden_snapshots/parser/entity_law.exo");
+    let src = read_text("tests/golden_snapshots/parser/entity_law.sm");
     let got = ast_snapshot(&src);
     assert_snapshot("tests/golden_snapshots/parser/entity_law.ast", &got);
 }
 
 #[test]
 fn golden_ir_logos() {
-    let src = read_text("tests/golden_snapshots/lowering/priorities.exo");
+    let src = read_text("tests/golden_snapshots/lowering/priorities.sm");
     let got = ir_snapshot(&src);
     assert_snapshot("tests/golden_snapshots/lowering/priorities.ir", &got);
 }
 
 #[test]
 fn golden_emit_hash_stable() {
-    let src = read_text("tests/golden_snapshots/emit/stable.exo");
-    let got = exobyte_hash_snapshot(&src);
+    let src = read_text("tests/golden_snapshots/emit/stable.sm");
+    let got = semcode_hash_snapshot(&src);
     assert_snapshot("tests/golden_snapshots/emit/stable.hash", &got);
 }

@@ -1,0 +1,3 @@
+Import pub "a.sm"
+Entity BOnly:
+    state y: quad

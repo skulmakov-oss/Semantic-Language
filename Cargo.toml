@@ -1,10 +1,10 @@
 [package]
-name = "exocode_core"
+name = "semantic_language"
 version = "0.1.0"
 edition = "2021"
 authors = ["Said Kulmakov"]
 license = "MIT OR Apache-2.0"
-description = "EXOcode Core — Quadro Logic Engine"
+description = "Semantic Language with TON618 Core"
 repository = ""
 keywords = ["logic", "simd", "reasoning", "agi"]
 categories = ["no-std", "science"]
@@ -12,29 +12,34 @@ categories = ["no-std", "science"]
 [workspace]
 members = [
     ".",
-    "crates/exo-core",
-    "crates/exo-frontend",
-    "crates/exo-semantics",
-    "crates/exo-ir",
-    "crates/exo-emit",
-    "crates/exo-vm",
-    "crates/exo-cli",
+    "crates/ton618-core",
+    "crates/sm-front",
+    "crates/sm-sema",
+    "crates/sm-ir",
+    "crates/sm-emit",
+    "crates/sm-vm",
+    "crates/smc-cli",
 ]
 resolver = "2"
 
 [lib]
-name = "exocode_core"
+name = "semantic_language"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [[bin]]
-name = "exocode_core"
-path = "src/bin/exocode_core.rs"
+name = "ton618_core"
+path = "src/bin/ton618_core.rs"
 required-features = ["std"]
 
 [[bin]]
-name = "exoc"
-path = "src/bin/exoc.rs"
+name = "smc"
+path = "src/bin/smc.rs"
+required-features = ["std"]
+
+[[bin]]
+name = "svm"
+path = "src/bin/svm.rs"
 required-features = ["std"]
 
 # -----------------------------
@@ -53,13 +58,13 @@ debug-symbols = []
 # Dependencies
 # -----------------------------
 [dependencies]
-exo-core = { path = "crates/exo-core", default-features = false, features = ["alloc"] }
-exo-frontend = { path = "crates/exo-frontend", default-features = false, features = ["std"] }
-exo-semantics = { path = "crates/exo-semantics", default-features = false, features = ["std"] }
-exo-ir = { path = "crates/exo-ir", default-features = false, features = ["std", "profile-rust", "profile-logos", "debug-symbols"] }
-exo-emit = { path = "crates/exo-emit", default-features = false, features = ["std"] }
-exo-vm = { path = "crates/exo-vm", default-features = false, features = ["std"] }
-exo-cli = { path = "crates/exo-cli", default-features = false, features = ["std"] }
+ton618-core = { path = "crates/ton618-core", default-features = false, features = ["alloc"] }
+sm-front = { path = "crates/sm-front", default-features = false, features = ["std"] }
+sm-sema = { path = "crates/sm-sema", default-features = false, features = ["std"] }
+sm-ir = { path = "crates/sm-ir", default-features = false, features = ["std", "profile-rust", "profile-logos", "debug-symbols"] }
+sm-emit = { path = "crates/sm-emit", default-features = false, features = ["std"] }
+sm-vm = { path = "crates/sm-vm", default-features = false, features = ["std"] }
+smc-cli = { path = "crates/smc-cli", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 

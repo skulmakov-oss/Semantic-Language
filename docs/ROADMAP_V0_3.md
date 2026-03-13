@@ -1,4 +1,4 @@
-# EXOcode Roadmap v0.3
+# Semantic Roadmap v0.3
 
 Этот план переводит `EXO_DNA` в исполнимые задачи, привязанные к текущей кодовой базе.
 
@@ -15,7 +15,7 @@
 - [ ] Унифицировать ошибки parser/type/lowering в rustc-style формат.
   - Модули: `src/frontend.rs`, `src/semantics/mod.rs`
 - [ ] Подготовить REPL parser mode (single-input incremental parse).
-  - Модуль: `src/bin/exoc.rs` (+ новый REPL модуль при необходимости)
+  - Модуль: `src/bin/smc.rs` (+ новый REPL модуль при необходимости)
 
 Acceptance:
 
@@ -39,23 +39,23 @@ Acceptance:
 
 Acceptance:
 
-- `exoc check` даёт стабильный отчёт;
+- `smc check` даёт стабильный отчёт;
 - негативные тесты на mismatch/shadowing/duplicate покрыты.
 
 ## Track C: IR, Bytecode, VM
 
 Цель: стабилизировать контракт выполнения и подготовить эволюцию формата.
 
-- [ ] Ввести capability/version таблицу в EXObyte header.
-  - Модуль: `src/exobyte_format.rs`
+- [ ] Ввести capability/version таблицу в SemCode header.
+  - Модуль: `src/semcode_format.rs`
 - [ ] Зафиксировать immutable IR boundary после lowering.
   - Модули: `src/frontend.rs`, `src/semantics/mod.rs`
 - [ ] Поддержка gate surface в pipeline (`GateRead/GateWrite/PulseEmit`) с явной политикой encode/decode.
-  - Модули: `src/frontend.rs`, `src/exobyte_format.rs`, `src/exobyte_vm.rs`
+  - Модули: `src/frontend.rs`, `src/semcode_format.rs`, `src/semcode_vm.rs`
 - [ ] Расширить VM validation на новые секции формата.
-  - Модуль: `src/exobyte_vm.rs`
+  - Модуль: `src/semcode_vm.rs`
 - [ ] Подготовить compatibility tests между версиями bytecode.
-  - Тесты: `tests/golden_exobyte.rs` + новые golden-наборы по версиям.
+  - Тесты: `tests/golden_semcode.rs` + новые golden-наборы по версиям.
 
 Acceptance:
 
@@ -80,10 +80,10 @@ Acceptance:
 
 ## CLI Milestones
 
-- [x] `exoc check <input.exo>` — семантический анализ без записи `.exb`.
-  - Модуль: `src/bin/exoc.rs`
-- [ ] `exoc repl` — интерактивный режим.
-- [ ] `exoc explain <error-code>` — справка по диагностике.
+- [x] `smc check <input.sm>` — семантический анализ без записи `.smc`.
+  - Модуль: `src/bin/smc.rs`
+- [ ] `smc repl` — интерактивный режим.
+- [ ] `smc explain <error-code>` — справка по диагностике.
 
 ## Технический долг (приоритет высокий)
 

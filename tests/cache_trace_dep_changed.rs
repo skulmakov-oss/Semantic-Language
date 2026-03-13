@@ -2,14 +2,14 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn run_check(dir: &std::path::Path, input: &str) -> std::process::Output {
-    let exe = env!("CARGO_BIN_EXE_exoc");
+    let exe = env!("CARGO_BIN_EXE_smc");
     Command::new(exe)
         .arg("check")
         .arg(input)
         .arg("--trace-cache")
         .current_dir(dir)
         .output()
-        .expect("run exoc check --trace-cache")
+        .expect("run smc check --trace-cache")
 }
 
 #[test]
@@ -24,12 +24,12 @@ fn trace_cache_reports_dep_changed_on_import_update() {
     ));
     std::fs::create_dir_all(&base).expect("mkdir");
 
-    let root = base.join("root.exo");
-    let dep = base.join("dep.exo");
+    let root = base.join("root.sm");
+    let dep = base.join("dep.sm");
     std::fs::write(
         &root,
         r#"
-Import "dep.exo"
+Import "dep.sm"
 Law "Root" [priority 1]:
     When true ->
         System.recovery()
@@ -46,14 +46,14 @@ Law "Dep" [priority 1]:
     )
     .expect("write dep");
 
-    let out1 = run_check(&base, "root.exo");
+    let out1 = run_check(&base, "root.sm");
     assert!(
         out1.status.success(),
         "first check failed: {}",
         String::from_utf8_lossy(&out1.stderr)
     );
 
-    let out2 = run_check(&base, "root.exo");
+    let out2 = run_check(&base, "root.sm");
     assert!(
         out2.status.success(),
         "second check failed: {}",
@@ -73,7 +73,7 @@ Law "Dep2" [priority 2]:
     )
     .expect("rewrite dep");
 
-    let out3 = run_check(&base, "root.exo");
+    let out3 = run_check(&base, "root.sm");
     let stderr3 = String::from_utf8_lossy(&out3.stderr);
     assert!(out3.status.success(), "third check failed: {stderr3}");
     assert!(

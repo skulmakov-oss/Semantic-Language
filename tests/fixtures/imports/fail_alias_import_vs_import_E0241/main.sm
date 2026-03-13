@@ -1,0 +1,6 @@
+Import "a.sm" as X
+Import "b.sm" as X
+
+Law "Main" [priority 1]:
+    When true ->
+        System.recovery()

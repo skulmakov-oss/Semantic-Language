@@ -1,0 +1,883 @@
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use crate::lexer::lex_tokens;
+use crate::types::{
+    AstArena, BinaryOp, Expr, ExprId, FrontendError, Function, LogosEntity, LogosEntityField,
+    LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, Program,
+    QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+};
+use ton618_core::diagnostics::{
+    format_multiple_parser_errors, format_parser_error_at_input, suggest_closest_case_insensitive,
+};
+use ton618_core::SourceMap;
+
+pub fn parse_rustlike(input: &str) -> Result<Program, FrontendError> {
+    let tokens = lex_tokens(input)?;
+    let mut p = Parser {
+        tokens,
+        idx: 0,
+        source: input.to_string(),
+        arena: AstArena::default(),
+    };
+    p.parse_program()
+}
+
+pub fn parse_logos(input: &str) -> Result<LogosProgram, FrontendError> {
+    let tokens = lex_tokens(input)?;
+    let mut p = Parser {
+        tokens,
+        idx: 0,
+        source: input.to_string(),
+        arena: AstArena::default(),
+    };
+    p.parse_logos_program()
+}
+
+struct Parser {
+    tokens: Vec<Token>,
+    idx: usize,
+    source: String,
+    arena: AstArena,
+}
+
+impl Parser {
+    fn parse_program(&mut self) -> Result<Program, FrontendError> {
+        let mut functions = Vec::new();
+        loop {
+            let i = self.next_non_layout_idx();
+            if i >= self.tokens.len() {
+                break;
+            }
+            self.idx = i;
+            functions.push(self.parse_function()?);
+        }
+        Ok(Program {
+            arena: ::core::mem::take(&mut self.arena),
+            functions,
+        })
+    }
+
+    fn parse_function(&mut self) -> Result<Function, FrontendError> {
+        self.expect(TokenKind::KwFn, "expected 'fn'")?;
+        let name = self.expect_symbol()?;
+        self.expect(TokenKind::LParen, "expected '('")?;
+        let mut params = Vec::new();
+        if !self.check(TokenKind::RParen) {
+            loop {
+                let pname = self.expect_symbol()?;
+                self.expect(TokenKind::Colon, "expected ':'")?;
+                let pty = self.parse_type()?;
+                params.push((pname, pty));
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "expected ')'")?;
+        let ret = if self.eat(TokenKind::Implies) {
+            self.parse_type()?
+        } else {
+            Type::Unit
+        };
+        let body = self.parse_block()?;
+        Ok(Function {
+            name,
+            params,
+            ret,
+            body,
+        })
+    }
+
+    fn parse_block(&mut self) -> Result<Vec<StmtId>, FrontendError> {
+        self.expect(TokenKind::LBrace, "expected '{'")?;
+        let mut out = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            out.push(self.parse_stmt()?);
+        }
+        self.expect(TokenKind::RBrace, "expected '}'")?;
+        Ok(out)
+    }
+
+    fn parse_stmt(&mut self) -> Result<StmtId, FrontendError> {
+        if self.eat(TokenKind::KwLet) {
+            let name = self.expect_symbol()?;
+            let ty = if self.eat(TokenKind::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            self.expect(TokenKind::Assign, "expected '='")?;
+            let value = self.parse_expr()?;
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
+        }
+        if self.eat(TokenKind::KwIf) {
+            let condition = self.parse_expr()?;
+            let then_block = self.parse_block()?;
+            let else_block = if self.eat(TokenKind::KwElse) {
+                if self.eat(TokenKind::KwIf) {
+                    let nested = self.parse_if_after_kw_if()?;
+                    vec![self.arena.alloc_stmt(nested)]
+                } else {
+                    self.parse_block()?
+                }
+            } else {
+                Vec::new()
+            };
+            return Ok(self.arena.alloc_stmt(Stmt::If {
+                condition,
+                then_block,
+                else_block,
+            }));
+        }
+        if self.eat(TokenKind::KwMatch) {
+            let scrutinee = self.parse_expr()?;
+            self.expect(TokenKind::LBrace, "expected '{' after match expr")?;
+            let mut arms = Vec::new();
+            let mut default: Option<Vec<StmtId>> = None;
+            while !self.check(TokenKind::RBrace) {
+                if self.eat(TokenKind::Underscore) {
+                    self.expect(TokenKind::FatArrow, "expected '=>' after '_'")?;
+                    let block = self.parse_block()?;
+                    default = Some(block);
+                    continue;
+                }
+                let pat = if self.eat(TokenKind::QuadN) {
+                    QuadVal::N
+                } else if self.eat(TokenKind::QuadF) {
+                    QuadVal::F
+                } else if self.eat(TokenKind::QuadT) {
+                    QuadVal::T
+                } else if self.eat(TokenKind::QuadS) {
+                    QuadVal::S
+                } else {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "expected match pattern N|F|T|S|_".to_string(),
+                    });
+                };
+                self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
+                let block = self.parse_block()?;
+                arms.push(MatchArm { pat, block });
+            }
+            self.expect(TokenKind::RBrace, "expected '}' after match arms")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Match {
+                scrutinee,
+                arms,
+                default: default.unwrap_or_default(),
+            }));
+        }
+        if self.eat(TokenKind::KwReturn) {
+            if self.eat(TokenKind::Semi) {
+                return Ok(self.arena.alloc_stmt(Stmt::Return(None)));
+            }
+            let expr = self.parse_expr()?;
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Return(Some(expr))));
+        }
+        let expr = self.parse_expr()?;
+        self.expect(TokenKind::Semi, "expected ';'")?;
+        Ok(self.arena.alloc_stmt(Stmt::Expr(expr)))
+    }
+
+    fn parse_if_after_kw_if(&mut self) -> Result<Stmt, FrontendError> {
+        let condition = self.parse_expr()?;
+        let then_block = self.parse_block()?;
+        let else_block = if self.eat(TokenKind::KwElse) {
+            if self.eat(TokenKind::KwIf) {
+                let nested = self.parse_if_after_kw_if()?;
+                vec![self.arena.alloc_stmt(nested)]
+            } else {
+                self.parse_block()?
+            }
+        } else {
+            Vec::new()
+        };
+        Ok(Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        })
+    }
+
+    fn parse_expr(&mut self) -> Result<ExprId, FrontendError> {
+        self.parse_impl()
+    }
+
+    fn parse_impl(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_or()?;
+        while self.eat(TokenKind::Implies) {
+            let right = self.parse_or()?;
+            left = self
+                .arena
+                .alloc_expr(Expr::Binary(left, BinaryOp::Implies, right));
+        }
+        Ok(left)
+    }
+
+    fn parse_or(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_and()?;
+        while self.eat(TokenKind::OrOr) {
+            let right = self.parse_and()?;
+            left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::OrOr, right));
+        }
+        Ok(left)
+    }
+
+    fn parse_and(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_eq()?;
+        while self.eat(TokenKind::AndAnd) {
+            let right = self.parse_eq()?;
+            left = self
+                .arena
+                .alloc_expr(Expr::Binary(left, BinaryOp::AndAnd, right));
+        }
+        Ok(left)
+    }
+
+    fn parse_eq(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_add()?;
+        loop {
+            if self.eat(TokenKind::EqEq) {
+                let right = self.parse_add()?;
+                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Eq, right));
+                continue;
+            }
+            if self.eat(TokenKind::Ne) {
+                let right = self.parse_add()?;
+                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Ne, right));
+                continue;
+            }
+            break;
+        }
+        Ok(left)
+    }
+
+    fn parse_add(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_mul()?;
+        loop {
+            if self.eat(TokenKind::Plus) {
+                let right = self.parse_mul()?;
+                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Add, right));
+                continue;
+            }
+            if self.eat(TokenKind::Minus) {
+                let right = self.parse_mul()?;
+                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Sub, right));
+                continue;
+            }
+            break;
+        }
+        Ok(left)
+    }
+
+    fn parse_mul(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_unary()?;
+        loop {
+            if self.eat(TokenKind::Star) {
+                let right = self.parse_unary()?;
+                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Mul, right));
+                continue;
+            }
+            if self.eat(TokenKind::Slash) {
+                let right = self.parse_unary()?;
+                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Div, right));
+                continue;
+            }
+            break;
+        }
+        Ok(left)
+    }
+
+    fn parse_unary(&mut self) -> Result<ExprId, FrontendError> {
+        if self.eat(TokenKind::Bang) {
+            let inner = self.parse_unary()?;
+            return Ok(self.arena.alloc_expr(Expr::Unary(UnaryOp::Not, inner)));
+        }
+        if self.eat(TokenKind::Plus) {
+            let inner = self.parse_unary()?;
+            return Ok(self.arena.alloc_expr(Expr::Unary(UnaryOp::Pos, inner)));
+        }
+        if self.eat(TokenKind::Minus) {
+            let inner = self.parse_unary()?;
+            return Ok(self.arena.alloc_expr(Expr::Unary(UnaryOp::Neg, inner)));
+        }
+        self.parse_primary()
+    }
+
+    fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
+        if self.eat(TokenKind::LParen) {
+            let e = self.parse_expr()?;
+            self.expect(TokenKind::RParen, "expected ')'")?;
+            return Ok(e);
+        }
+        if self.eat(TokenKind::QuadN) {
+            return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::N)));
+        }
+        if self.eat(TokenKind::QuadF) {
+            return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::F)));
+        }
+        if self.eat(TokenKind::QuadT) {
+            return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::T)));
+        }
+        if self.eat(TokenKind::QuadS) {
+            return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::S)));
+        }
+        if self.eat(TokenKind::KwTrue) {
+            return Ok(self.arena.alloc_expr(Expr::BoolLiteral(true)));
+        }
+        if self.eat(TokenKind::KwFalse) {
+            return Ok(self.arena.alloc_expr(Expr::BoolLiteral(false)));
+        }
+        if self.check(TokenKind::Num) {
+            let text = self.advance().text;
+            if text.contains('.') {
+                let n = text.parse::<f64>().map_err(|_| FrontendError {
+                    pos: 0,
+                    message: "invalid float number".to_string(),
+                })?;
+                return Ok(self.arena.alloc_expr(Expr::Float(n)));
+            }
+            let n = text.parse::<i64>().map_err(|_| FrontendError {
+                pos: 0,
+                message: "invalid number".to_string(),
+            })?;
+            return Ok(self.arena.alloc_expr(Expr::Num(n)));
+        }
+        if self.check(TokenKind::Ident) {
+            let name = self.expect_symbol()?;
+            if self.eat(TokenKind::LParen) {
+                let mut args = Vec::new();
+                if !self.check(TokenKind::RParen) {
+                    loop {
+                        args.push(self.parse_expr()?);
+                        if self.eat(TokenKind::Comma) {
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RParen, "expected ')'")?;
+                return Ok(self.arena.alloc_expr(Expr::Call(name, args)));
+            }
+            return Ok(self.arena.alloc_expr(Expr::Var(name)));
+        }
+        Err(FrontendError {
+            pos: self.pos(),
+            message: "expected primary expression".to_string(),
+        })
+    }
+
+    fn parse_type(&mut self) -> Result<Type, FrontendError> {
+        if self.check(TokenKind::Ident) {
+            let t = self.tokens[self.next_non_layout_idx()].text.clone();
+            if t == "qvec" {
+                let _ = self.advance();
+                if self.eat(TokenKind::LBracket) || self.eat(TokenKind::LParen) {
+                    let n = if self.check(TokenKind::Num) {
+                        self.advance().text.parse::<usize>().unwrap_or(32)
+                    } else {
+                        32
+                    };
+                    let _ = self.eat(TokenKind::RBracket) || self.eat(TokenKind::RParen);
+                    return Ok(Type::QVec(n));
+                }
+                return Ok(Type::QVec(32));
+            }
+        }
+        if self.eat(TokenKind::TyQuad) {
+            return Ok(Type::Quad);
+        }
+        if self.eat(TokenKind::TyBool) {
+            return Ok(Type::Bool);
+        }
+        if self.eat(TokenKind::TyI32) {
+            return Ok(Type::I32);
+        }
+        if self.eat(TokenKind::TyU32) {
+            return Ok(Type::U32);
+        }
+        if self.eat(TokenKind::TyFx) {
+            return Ok(Type::Fx);
+        }
+        if self.eat(TokenKind::TyF64) {
+            return Ok(Type::F64);
+        }
+        Err(FrontendError {
+            pos: self.pos(),
+            message: "expected type".to_string(),
+        })
+    }
+
+    fn parse_logos_program(&mut self) -> Result<LogosProgram, FrontendError> {
+        let mut out = LogosProgram::default();
+        let mut errors: Vec<FrontendError> = Vec::new();
+        while self.idx < self.tokens.len() {
+            self.skip_newlines_raw();
+            if self.idx >= self.tokens.len() {
+                break;
+            }
+            if self.check_raw(TokenKind::KwSystem) {
+                match self.parse_logos_system() {
+                    Ok(system) => out.system = Some(system),
+                    Err(e) => {
+                        errors.push(e);
+                        self.recover_logos_anchor();
+                    }
+                }
+                continue;
+            }
+            if self.check_raw(TokenKind::KwEntity) {
+                match self.parse_logos_entity() {
+                    Ok(entity) => out.entities.push(entity),
+                    Err(e) => {
+                        errors.push(e);
+                        self.recover_logos_anchor();
+                    }
+                }
+                continue;
+            }
+            if self.check_raw(TokenKind::KwLaw) {
+                match self.parse_logos_law() {
+                    Ok(law) => out.laws.push(law),
+                    Err(e) => {
+                        errors.push(e);
+                        self.recover_logos_anchor();
+                    }
+                }
+                continue;
+            }
+            if self.check_raw(TokenKind::KwImport)
+                || self.check_raw(TokenKind::KwPulse)
+                || self.check_raw(TokenKind::KwProfile)
+            {
+                while !self.check_raw(TokenKind::Newline) && self.idx < self.tokens.len() {
+                    self.idx += 1;
+                }
+                self.eat_raw(TokenKind::Newline);
+                continue;
+            }
+            let mut msg = "expected Logos declaration".to_string();
+            if let Some(tok) = self.tokens.get(self.idx) {
+                if tok.kind == TokenKind::Ident {
+                    if let Some(s) = suggest_closest_case_insensitive(
+                        &tok.text,
+                        &["System", "Entity", "Law", "Import", "Pulse", "Profile"],
+                        3,
+                    ) {
+                        msg.push_str(&format!("\nhelp: did you mean '{}'?", s));
+                    }
+                }
+            }
+            errors.push(self.error_at_current(&msg, "E0200"));
+            self.recover_logos_anchor();
+        }
+        if !errors.is_empty() {
+            return Err(self.merge_logos_errors(errors));
+        }
+        out.laws.sort_by(|a, b| b.priority.cmp(&a.priority));
+        Ok(out)
+    }
+
+    fn recover_logos_anchor(&mut self) {
+        while self.idx < self.tokens.len() {
+            let k = self.tokens[self.idx].kind;
+            if matches!(
+                k,
+                TokenKind::Newline
+                    | TokenKind::Dedent
+                    | TokenKind::KwSystem
+                    | TokenKind::KwEntity
+                    | TokenKind::KwLaw
+            ) {
+                if matches!(k, TokenKind::Newline | TokenKind::Dedent) {
+                    self.idx += 1;
+                }
+                break;
+            }
+            self.idx += 1;
+        }
+    }
+
+    fn merge_logos_errors(&self, errors: Vec<FrontendError>) -> FrontendError {
+        let pos = errors.first().map(|e| e.pos).unwrap_or(0);
+        let msgs: Vec<String> = errors.into_iter().map(|e| e.message).collect();
+        FrontendError {
+            pos,
+            message: format_multiple_parser_errors("E0200", &msgs),
+        }
+    }
+
+    fn parse_logos_system(&mut self) -> Result<LogosSystem, FrontendError> {
+        let kw = self.expect_raw(TokenKind::KwSystem, "expected 'System'", "E0201")?;
+        let name = self.expect_raw_ident()?;
+        let mut params = Vec::new();
+        if self.eat_raw(TokenKind::LParen) {
+            if !self.check_raw(TokenKind::RParen) {
+                loop {
+                    let pname = self.expect_raw_ident()?;
+                    self.expect_raw(TokenKind::Assign, "expected '='", "E0202")?;
+                    let pval = self.expect_raw_ident_or_num()?;
+                    params.push((pname, pval));
+                    if self.eat_raw(TokenKind::Comma) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.expect_raw(TokenKind::RParen, "expected ')'", "E0203")?;
+        }
+        self.eat_raw(TokenKind::Colon);
+        self.eat_raw(TokenKind::Newline);
+        Ok(LogosSystem {
+            name,
+            params,
+            mark: kw.mark,
+        })
+    }
+
+    fn parse_logos_entity(&mut self) -> Result<LogosEntity, FrontendError> {
+        let kw = self.expect_raw(TokenKind::KwEntity, "expected 'Entity'", "E0210")?;
+        let name = self.expect_raw_ident()?;
+        self.expect_raw(TokenKind::Colon, "expected ':'", "E0211")?;
+        self.expect_raw(TokenKind::Newline, "expected newline", "E0212")?;
+        self.expect_raw(TokenKind::Indent, "expected INDENT", "E0213")?;
+
+        let mut fields = Vec::new();
+        loop {
+            self.skip_newlines_raw();
+            if self.eat_raw(TokenKind::Dedent) {
+                break;
+            }
+            let kind_tok =
+                self.expect_raw(TokenKind::Ident, "expected 'state' or 'prop'", "E0214")?;
+            let field_kind = match kind_tok.text.as_str() {
+                "state" => LogosEntityFieldKind::State,
+                "prop" => LogosEntityFieldKind::Prop,
+                _ => {
+                    let mut msg = "expected 'state' or 'prop'".to_string();
+                    if let Some(s) =
+                        suggest_closest_case_insensitive(&kind_tok.text, &["state", "prop"], 3)
+                    {
+                        msg.push_str(&format!("\nhelp: did you mean '{}'?", s));
+                    }
+                    return Err(self.error_at_token(&kind_tok, &msg, "E0215"));
+                }
+            };
+            let field_name = self.expect_raw_ident()?;
+            self.expect_raw(TokenKind::Colon, "expected ':'", "E0216")?;
+            let ty = self.parse_type_raw()?;
+            fields.push(LogosEntityField {
+                kind: field_kind,
+                name: field_name,
+                ty,
+                mark: kind_tok.mark,
+            });
+            self.eat_raw(TokenKind::Newline);
+        }
+
+        Ok(LogosEntity {
+            name,
+            fields,
+            mark: kw.mark,
+        })
+    }
+
+    fn parse_logos_law(&mut self) -> Result<LogosLaw, FrontendError> {
+        let kw = self.expect_raw(TokenKind::KwLaw, "expected 'Law'", "E0220")?;
+        let name_tok = self.expect_raw(TokenKind::String, "expected law name", "E0221")?;
+        let name = name_tok.text.trim_matches('"').to_string();
+        let mut priority = 0u32;
+        if self.eat_raw(TokenKind::LBracket) {
+            let p_kw = self.expect_raw(TokenKind::Ident, "expected 'priority'", "E0222")?;
+            if p_kw.text != "priority" {
+                return Err(self.error_at_token(&p_kw, "expected 'priority'", "E0223"));
+            }
+            let num = self.expect_raw(TokenKind::Num, "expected priority number", "E0224")?;
+            priority = num
+                .text
+                .parse::<u32>()
+                .map_err(|_| self.error_at_token(&num, "invalid priority value", "E0225"))?;
+            self.expect_raw(TokenKind::RBracket, "expected ']'", "E0226")?;
+        }
+        self.expect_raw(TokenKind::Colon, "expected ':'", "E0227")?;
+        self.expect_raw(TokenKind::Newline, "expected newline", "E0228")?;
+        self.expect_raw(TokenKind::Indent, "expected INDENT", "E0229")?;
+
+        let mut whens = Vec::new();
+        loop {
+            self.skip_newlines_raw();
+            if self.eat_raw(TokenKind::Dedent) {
+                break;
+            }
+            let when_tok = self.expect_raw(TokenKind::KwWhen, "expected 'When'", "E0230")?;
+            let condition_tokens = self.collect_until_raw(TokenKind::Implies)?;
+            if condition_tokens.is_empty() {
+                return Err(self.error_at_token(&when_tok, "empty When condition", "E0231"));
+            }
+            self.expect_raw(TokenKind::Implies, "expected '->'", "E0232")?;
+            let effect_tokens = if self.eat_raw(TokenKind::Newline) {
+                self.skip_newlines_raw();
+                self.collect_until_newline_or_dedent()
+            } else {
+                self.collect_until_newline_or_dedent()
+            };
+            if effect_tokens.is_empty() {
+                return Err(self.error_at_token(&when_tok, "empty When effect", "E0233"));
+            }
+            let condition = self.join_token_text(&condition_tokens);
+            let effect = self.join_token_text(&effect_tokens);
+            whens.push(LogosWhen {
+                condition,
+                effect,
+                mark: when_tok.mark,
+            });
+            self.eat_raw(TokenKind::Newline);
+        }
+
+        Ok(LogosLaw {
+            name,
+            priority,
+            whens,
+            mark: kw.mark,
+        })
+    }
+
+    fn parse_type_raw(&mut self) -> Result<Type, FrontendError> {
+        if self.check_raw(TokenKind::Ident) {
+            let t = self.tokens[self.idx].text.clone();
+            if t == "qvec" {
+                self.idx += 1;
+                return Ok(Type::QVec(32));
+            }
+        }
+        if self.eat_raw(TokenKind::TyQuad) {
+            return Ok(Type::Quad);
+        }
+        if self.eat_raw(TokenKind::TyBool) {
+            return Ok(Type::Bool);
+        }
+        if self.eat_raw(TokenKind::TyI32) {
+            return Ok(Type::I32);
+        }
+        if self.eat_raw(TokenKind::TyU32) {
+            return Ok(Type::U32);
+        }
+        if self.eat_raw(TokenKind::TyFx) {
+            return Ok(Type::Fx);
+        }
+        if self.eat_raw(TokenKind::TyF64) {
+            return Ok(Type::F64);
+        }
+        Err(self.error_at_current("expected type", "E0234"))
+    }
+
+    fn collect_until_raw(&mut self, stop: TokenKind) -> Result<Vec<Token>, FrontendError> {
+        let mut out = Vec::new();
+        let mut paren = 0usize;
+        while self.idx < self.tokens.len() {
+            let t = self.tokens[self.idx].clone();
+            if t.kind == TokenKind::LParen {
+                paren += 1;
+            } else if t.kind == TokenKind::RParen {
+                paren = paren.saturating_sub(1);
+            }
+            if paren == 0 && t.kind == stop {
+                break;
+            }
+            if t.kind == TokenKind::Newline || t.kind == TokenKind::Dedent {
+                return Err(self.error_at_token(&t, "unexpected line break in expression", "E0235"));
+            }
+            out.push(t);
+            self.idx += 1;
+        }
+        Ok(out)
+    }
+
+    fn collect_until_newline_or_dedent(&mut self) -> Vec<Token> {
+        let mut out = Vec::new();
+        while self.idx < self.tokens.len() {
+            let t = self.tokens[self.idx].clone();
+            if matches!(t.kind, TokenKind::Newline | TokenKind::Dedent) {
+                break;
+            }
+            out.push(t);
+            self.idx += 1;
+        }
+        out
+    }
+
+    fn join_token_text(&self, toks: &[Token]) -> String {
+        toks.iter()
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn check_raw(&self, kind: TokenKind) -> bool {
+        self.tokens
+            .get(self.idx)
+            .map(|t| t.kind == kind)
+            .unwrap_or(false)
+    }
+
+    fn eat_raw(&mut self, kind: TokenKind) -> bool {
+        if self.check_raw(kind) {
+            self.idx += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_raw(&mut self, kind: TokenKind, msg: &str, code: &str) -> Result<Token, FrontendError> {
+        if self.check_raw(kind) {
+            let t = self.tokens[self.idx].clone();
+            self.idx += 1;
+            Ok(t)
+        } else {
+            Err(self.error_at_current(msg, code))
+        }
+    }
+
+    fn expect_raw_ident(&mut self) -> Result<String, FrontendError> {
+        let tok = self.expect_raw(TokenKind::Ident, "expected identifier", "E0236")?;
+        Ok(tok.text)
+    }
+
+    fn expect_raw_ident_or_num(&mut self) -> Result<String, FrontendError> {
+        if self.check_raw(TokenKind::Ident)
+            || self.check_raw(TokenKind::Num)
+            || self.check_raw(TokenKind::String)
+        {
+            let t = self.tokens[self.idx].clone();
+            self.idx += 1;
+            return Ok(t.text);
+        }
+        Err(self.error_at_current("expected identifier/number", "E0237"))
+    }
+
+    fn skip_newlines_raw(&mut self) {
+        while self.eat_raw(TokenKind::Newline) {}
+    }
+
+    fn error_at_current(&self, msg: &str, code: &str) -> FrontendError {
+        if let Some(tok) = self.tokens.get(self.idx) {
+            self.error_at_token(tok, msg, code)
+        } else {
+            FrontendError {
+                pos: self.pos(),
+                message: format!("error[{code}]: {msg}"),
+            }
+        }
+    }
+
+    fn error_at_token(&self, tok: &Token, msg: &str, code: &str) -> FrontendError {
+        let line = tok.mark.line.max(1);
+        let col = tok.mark.col.max(1);
+        let mut sm = SourceMap::new();
+        let fid = sm.add_file("<input>", &self.source);
+        let src_line = sm.line(fid, line).unwrap_or_default();
+        FrontendError {
+            pos: tok.pos,
+            message: format_parser_error_at_input(code, msg, line, col, src_line),
+        }
+    }
+
+    fn pos(&self) -> usize {
+        self.tokens.get(self.idx).map(|t| t.pos).unwrap_or(0)
+    }
+
+    fn is_layout(kind: TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+        )
+    }
+
+    fn next_non_layout_idx(&self) -> usize {
+        let mut i = self.idx;
+        while i < self.tokens.len() && Self::is_layout(self.tokens[i].kind) {
+            i += 1;
+        }
+        i
+    }
+
+    fn check(&self, kind: TokenKind) -> bool {
+        let i = self.next_non_layout_idx();
+        self.tokens.get(i).map(|t| t.kind == kind).unwrap_or(false)
+    }
+
+    fn eat(&mut self, kind: TokenKind) -> bool {
+        let i = self.next_non_layout_idx();
+        if self.tokens.get(i).map(|t| t.kind == kind).unwrap_or(false) {
+            self.idx = i + 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect(&mut self, kind: TokenKind, msg: &str) -> Result<(), FrontendError> {
+        if self.eat(kind) {
+            Ok(())
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: msg.to_string(),
+            })
+        }
+    }
+
+    fn expect_symbol(&mut self) -> Result<SymbolId, FrontendError> {
+        if self.check(TokenKind::Ident) {
+            let name = self.advance().text;
+            Ok(self.arena.intern_symbol(&name))
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: "expected identifier".to_string(),
+            })
+        }
+    }
+
+    fn advance(&mut self) -> Token {
+        let i = self.next_non_layout_idx();
+        let t = self.tokens[i].clone();
+        self.idx = i + 1;
+        t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rustlike_parser_smoke() {
+        let src = r#"
+fn idq(q: quad) -> quad { return q; }
+fn main() { let x: quad = idq(T); return; }
+"#;
+        let a = parse_rustlike(src).expect("frontend rustlike");
+        assert_eq!(a.functions.len(), 2);
+    }
+
+    #[test]
+    fn logos_parser_smoke() {
+        let src = r#"
+Entity Sensor:
+    state val: quad
+
+Law "CheckSignal" [priority 10]:
+    When Sensor.val == T ->
+        Log.emit("Signal OK")
+"#;
+        let a = parse_logos(src).expect("frontend logos");
+        assert_eq!(a.entities.len(), 1);
+        assert_eq!(a.laws.len(), 1);
+    }
+}

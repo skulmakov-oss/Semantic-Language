@@ -1,6 +1,6 @@
 # Roadmap Next (Post-Base Stabilization)
 
-This document tracks the next four closure tracks to move EXOcode from "working" to "production-disciplined".
+This document tracks the next four closure tracks to move Semantic from "working" to "production-disciplined".
 
 ## NEXT-1: Import / Re-export v0.2 to FULL
 

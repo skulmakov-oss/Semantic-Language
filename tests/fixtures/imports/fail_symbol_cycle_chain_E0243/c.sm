@@ -1,0 +1,5 @@
+Import pub "a.sm"
+
+Law "C" [priority 1]:
+    When true ->
+        System.recovery()

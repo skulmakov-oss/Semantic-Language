@@ -16,8 +16,8 @@ Everything else was migrated to workspace crates, moved to assets, or removed.
 src/
   lib.rs
   bin/
-    exoc.rs
-    exocode_core.rs
+    smc.rs
+    ton618_core.rs
     support/
       language.rs
       parser.rs
@@ -29,11 +29,11 @@ src/
 - shim side-files:
   - `src/frontend_shim.rs`
   - `src/semantics_shim.rs`
-  - `src/exobyte_format_shim.rs`
-  - `src/exobyte_vm_shim.rs`
+  - `src/semcode_format_shim.rs`
+  - `src/semcode_vm_shim.rs`
 - root sample data files moved to assets:
-  - `src/human.exo` -> `assets/legacy_cli/human.exo`
-  - `src/machine.exoasm` -> `assets/legacy_cli/machine.exoasm`
+  - `src/human.sm` -> `assets/legacy_cli/human.sm`
+  - `src/machine.sem` -> `assets/legacy_cli/machine.sem`
   - `src/profile.json` -> `assets/legacy_cli/profile.json`
   - `src/samples.json` -> `assets/legacy_cli/samples.json`
 
@@ -42,8 +42,8 @@ src/
 Compatibility re-exports remain in `src/lib.rs` as inline modules:
 - `frontend`
 - `semantics`
-- `exobyte_format`
-- `exobyte_vm`
+- `semcode_format`
+- `semcode_vm`
 
 No external shim files are used.
 

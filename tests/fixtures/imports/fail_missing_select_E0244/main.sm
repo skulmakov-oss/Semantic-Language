@@ -1,0 +1,3 @@
+Import "dep.sm" { MissingSymbol }
+Law "Root" [priority 1]:
+    When true -> System.recovery()

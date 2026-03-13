@@ -1,0 +1,14 @@
+[package]
+name = "sm-emit"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["sm-ir/std"]
+
+[dependencies]
+sm-ir = { path = "../sm-ir", default-features = false, features = ["std", "profile-rust", "profile-logos", "debug-symbols"] }

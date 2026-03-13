@@ -1,0 +1,5 @@
+Import "dep.sm" { Entity:A }
+
+Law "Main" [priority 1]:
+    When true ->
+        System.recovery()

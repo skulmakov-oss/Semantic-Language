@@ -1,0 +1,28 @@
+[package]
+name = "smc-cli"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "smc-cli"
+path = "src/bin/smc_cli.rs"
+
+[features]
+default = ["std"]
+std = [
+    "ton618-core/std",
+    "sm-ir/std",
+    "sm-emit/std",
+    "sm-sema/std",
+    "sm-vm/std",
+]
+
+[dependencies]
+ton618-core = { path = "../ton618-core", default-features = false, features = ["alloc"] }
+sm-ir = { path = "../sm-ir", default-features = false, features = ["std"] }
+sm-emit = { path = "../sm-emit", default-features = false, features = ["std"] }
+sm-sema = { path = "../sm-sema", default-features = false, features = ["std"] }
+sm-vm = { path = "../sm-vm", default-features = false, features = ["std"] }

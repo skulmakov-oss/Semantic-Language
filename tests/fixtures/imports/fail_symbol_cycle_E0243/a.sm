@@ -1,0 +1,3 @@
+Import pub "b.sm"
+Entity AOnly:
+    state x: quad

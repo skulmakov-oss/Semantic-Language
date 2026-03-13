@@ -1,0 +1,17 @@
+[package]
+name = "sm-ir"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std", "profile-rust", "profile-logos", "debug-symbols"]
+std = ["sm-front/std"]
+profile-rust = []
+profile-logos = []
+debug-symbols = []
+
+[dependencies]
+sm-front = { path = "../sm-front", default-features = false, features = ["std"] }

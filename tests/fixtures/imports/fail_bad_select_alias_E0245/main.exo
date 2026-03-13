@@ -1,3 +1,0 @@
-Import "dep.exo" { A as X, B as X }
-Law "Root" [priority 1]:
-    When true -> System.recovery()

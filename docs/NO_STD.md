@@ -4,23 +4,23 @@ This document defines the current `no_std` and `alloc` boundaries in the workspa
 
 ## Build Modes
 
-- `std` (default): full toolchain (`exo-cli` + workspace compiler pipeline).
+- `std` (default): full toolchain (`smc-cli` + workspace compiler pipeline).
 - `no_std` (`--no-default-features`): core/runtime-safe components only.
 - `alloc` (crate-level): parser/semantics core logic without OS/file-system dependencies.
 
 ## Crate Matrix
 
-- `crates/exo-core`: `no_std` + `alloc` native.
-- `crates/exo-frontend`: `alloc`-capable; `std` optional.
-- `crates/exo-semantics`:
-  - `alloc_core` module: alloc-native semantic core.
+- `crates/ton618-core`: `no_std` + `alloc` native.
+- `crates/sm-front`: `alloc`-capable; `std` optional.
+- `crates/sm-sema`:
+  - `alloc_core` module: alloc-native smc core.
   - `std_adapters` module: std-only glue (module loading, path/IO, diagnostic rendering context).
-- `crates/exo-cli`: `std` only.
+- `crates/smc-cli`: `std` only.
 
 ## Semantics Split (Contract)
 
 - `alloc_core` contains:
-  - type/symbol tables and semantic policies
+  - type/symbol tables and smc policies
   - import/export policy core checks
   - re-export/cycle/collision core helpers
   - pure law/when helpers and folding detectors
@@ -38,11 +38,11 @@ Run before merge:
 ```powershell
 cargo test -q
 cargo check --no-default-features --quiet
-cargo check -p exo-frontend --no-default-features --features alloc --quiet
-cargo check -p exo-semantics --no-default-features --features alloc --quiet
+cargo check -p sm-front --no-default-features --features alloc --quiet
+cargo check -p sm-sema --no-default-features --features alloc --quiet
 ```
 
 ## Scope
 
 `no_std` is intended for embedding core compiler/runtime primitives into VectorOS contexts.
-`exo-cli` and std adapters remain host-side orchestration layers.
+`smc-cli` and std adapters remain host-side orchestration layers.
