@@ -1,5 +1,5 @@
-# Semantic Language toolchain v0
-Rust-like frontend + SemCode emitter + VM runtime.
+# Semantic
+Rust-like language toolchain with SemCode emitter and VM runtime.
 
 This repository state is frozen as Toolchain v0 on branch `release/v0` and tag `v0.1.0`.
 
@@ -26,7 +26,7 @@ fn main() {
 }
 '@ | Set-Content program.sm
 
-# 3) Compile EXO -> SemCode
+# 3) Compile source -> SemCode
 cargo run --bin smc -- compile program.sm -o program.smc
 
 # 4) Run source directly (compile in memory + execute main)
