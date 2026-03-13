@@ -122,7 +122,6 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
     let t_read = Instant::now();
     let parser_profile = cli_profile();
-    let parser_profile = cli_profile();
     let bytes = compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
         .map_err(|e| e.to_string())?;
     let t_compile = Instant::now();
@@ -726,16 +725,20 @@ fn cmd_dump_ast(args: &[String]) -> Result<(), String> {
     let input = args[0].as_str();
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let parser_profile = cli_profile();
     let ast_key = ast_pack_key(Path::new(input), &src)?;
     let ast_pack = cache_ast_file_for_key(ast_key)?;
     if let Some(cached) = load_text_pack(&ast_pack, PACK_KIND_AST)? {
         println!("{}", cached);
         return Ok(());
     }
-    let rendered = if let Ok(logos) = parse_logos_program(&src) {
+    let rendered = if let Ok(logos) = parse_logos_program_with_profile(&src, &parser_profile) {
         format!("{:#?}", logos)
     } else {
-        format!("{:#?}", parse_program(&src).map_err(|e| e.to_string())?)
+        format!(
+            "{:#?}",
+            parse_program_with_profile(&src, &parser_profile).map_err(|e| e.to_string())?
+        )
     };
     let _ = save_text_pack(&ast_pack, PACK_KIND_AST, &rendered);
     println!("{}", rendered);
@@ -776,6 +779,7 @@ fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
     }
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let parser_profile = cli_profile();
     let ir_key = ir_pack_key(Path::new(input), &src, profile, opt)?;
     let ir_pack = cache_ir_file_for_key(ir_key)?;
     if let Some(cached) = load_text_pack(&ir_pack, PACK_KIND_IR)? {
@@ -784,21 +788,32 @@ fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
     }
     let rendered = match profile {
         CompileProfile::Logos => {
-            let logos = parse_logos_program(&src).map_err(|e| e.to_string())?;
+            let logos =
+                parse_logos_program_with_profile(&src, &parser_profile).map_err(|e| e.to_string())?;
             format!("{:#?}", lower_logos_laws_to_ir(&logos))
         }
         CompileProfile::RustLike => format!(
             "{:#?}",
-            compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+            compile_program_to_ir_with_options_and_profile(
+                &src,
+                CompileProfile::RustLike,
+                opt,
+                &parser_profile,
+            )
                 .map_err(|e| e.to_string())?
         ),
         CompileProfile::Auto => {
-            if let Ok(logos) = parse_logos_program(&src) {
+            if let Ok(logos) = parse_logos_program_with_profile(&src, &parser_profile) {
                 format!("{:#?}", lower_logos_laws_to_ir(&logos))
             } else {
                 format!(
                     "{:#?}",
-                    compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                    compile_program_to_ir_with_options_and_profile(
+                        &src,
+                        CompileProfile::RustLike,
+                        opt,
+                        &parser_profile,
+                    )
                         .map_err(|e| e.to_string())?
                 )
             }
@@ -845,6 +860,7 @@ fn cmd_dump_bytecode(args: &[String]) -> Result<(), String> {
     }
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let parser_profile = cli_profile();
     let exb_key = smc_pack_key(Path::new(input), &src, profile, opt, debug_symbols)?;
     let exb_pack = cache_smc_file_for_key(exb_key)?;
     let bytes = if let Some(cached) = load_blob_pack(&exb_pack, PACK_KIND_SMC)? {
@@ -1674,15 +1690,19 @@ fn cmd_hash_ast(args: &[String]) -> Result<(), String> {
     let input = args[0].as_str();
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let parser_profile = cli_profile();
     let ast_key = ast_pack_key(Path::new(input), &src)?;
     let ast_pack = cache_ast_file_for_key(ast_key)?;
     let text = if let Some(cached) = load_text_pack(&ast_pack, PACK_KIND_AST)? {
         cached
     } else {
-        let rendered = if let Ok(logos) = parse_logos_program(&src) {
+        let rendered = if let Ok(logos) = parse_logos_program_with_profile(&src, &parser_profile) {
             format!("{:#?}", logos)
         } else {
-            format!("{:#?}", parse_program(&src).map_err(|e| e.to_string())?)
+            format!(
+                "{:#?}",
+                parse_program_with_profile(&src, &parser_profile).map_err(|e| e.to_string())?
+            )
         };
         let _ = save_text_pack(&ast_pack, PACK_KIND_AST, &rendered);
         rendered
@@ -1725,6 +1745,7 @@ fn cmd_hash_ir(args: &[String]) -> Result<(), String> {
     }
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let parser_profile = cli_profile();
     let ir_key = ir_pack_key(Path::new(input), &src, profile, opt)?;
     let ir_pack = cache_ir_file_for_key(ir_key)?;
     let text = if let Some(cached) = load_text_pack(&ir_pack, PACK_KIND_IR)? {
@@ -1732,21 +1753,32 @@ fn cmd_hash_ir(args: &[String]) -> Result<(), String> {
     } else {
         let rendered = match profile {
             CompileProfile::Logos => {
-                let logos = parse_logos_program(&src).map_err(|e| e.to_string())?;
+                let logos = parse_logos_program_with_profile(&src, &parser_profile)
+                    .map_err(|e| e.to_string())?;
                 format!("{:#?}", lower_logos_laws_to_ir(&logos))
             }
             CompileProfile::RustLike => format!(
                 "{:#?}",
-                compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                compile_program_to_ir_with_options_and_profile(
+                    &src,
+                    CompileProfile::RustLike,
+                    opt,
+                    &parser_profile,
+                )
                     .map_err(|e| e.to_string())?
             ),
             CompileProfile::Auto => {
-                if let Ok(logos) = parse_logos_program(&src) {
+                if let Ok(logos) = parse_logos_program_with_profile(&src, &parser_profile) {
                     format!("{:#?}", lower_logos_laws_to_ir(&logos))
                 } else {
                     format!(
                         "{:#?}",
-                        compile_program_to_ir_with_options(&src, CompileProfile::RustLike, opt)
+                        compile_program_to_ir_with_options_and_profile(
+                            &src,
+                            CompileProfile::RustLike,
+                            opt,
+                            &parser_profile,
+                        )
                             .map_err(|e| e.to_string())?
                     )
                 }
@@ -2096,7 +2128,8 @@ fn cmd_repl(args: &[String]) -> Result<(), String> {
 
 fn run_repl_check(buffer: &str) {
     let color_enabled = resolve_color_mode(ColorMode::Auto);
-    match check_source(buffer) {
+    let parser_profile = cli_profile();
+    match check_source_with_profile(buffer, &parser_profile) {
         Ok(report) => {
             for w in &report.warnings {
                 print_diag_colored(color_enabled, &w.rendered);

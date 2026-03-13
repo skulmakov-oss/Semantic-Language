@@ -1,6 +1,6 @@
 use crate::frontend::{
-    parse_logos_program, parse_program, type_check_program, LogosEntity, LogosEntityFieldKind,
-    LogosProgram, SourceMark, Type,
+    parse_logos_program_with_profile, parse_program_with_profile, type_check_program,
+    LogosEntity, LogosEntityFieldKind, LogosProgram, ParserProfile, SourceMark, Type,
 };
 use crate::alloc_core::{
     build_export_sets_core,
