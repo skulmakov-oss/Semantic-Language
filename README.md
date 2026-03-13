@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/semantic-logo.svg" alt="Semantic" width="860">
+</p>
+
 # Semantic
 Rust-like language toolchain with SemCode emitter and VM runtime.
 
