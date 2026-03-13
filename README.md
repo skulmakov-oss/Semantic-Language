@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/semantic-logo.svg" alt="Semantic" width="860">
+  <img src="assets/brand/semantic-logo.png" alt="Semantic" width="860">
 </p>
 
 # Semantic
