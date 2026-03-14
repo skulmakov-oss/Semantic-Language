@@ -30,5 +30,6 @@ Foundational work already in place:
 Rule of execution:
 
 - do not start semantic runtime before verifier, runtime purity, and quotas are in place;
+- do not start ownership cleanup before the ownership decision issues land;
 - one PR equals one logical step;
 - contract/spec/tests come before cleanup and optimization.

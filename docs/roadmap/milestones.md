@@ -25,6 +25,7 @@
   - spec bundle
   - stable CLI
   - version contracts
+  - current status: broad formalization baseline exists, but ownership alignment is still pending
   - ownership decision gates:
     - optimizer owner
     - SemCode format owner
