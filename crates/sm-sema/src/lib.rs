@@ -42,3 +42,37 @@ mod std_adapters;
 
 #[cfg(feature = "std")]
 pub use std_adapters::*;
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sema_accepts_fx_passthrough_surface() {
+        let src = r#"
+            fn id(x: fx) -> fx {
+                let y: fx = x;
+                return y;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        check_source(src).expect("fx passthrough surface should analyze");
+    }
+
+    #[test]
+    fn sema_reports_explicit_fx_literal_gap() {
+        let src = r#"
+            fn main() {
+                let x: fx = 1.0;
+                return;
+            }
+        "#;
+
+        let err = check_source(src).expect_err("fx literal should reject");
+        assert!(err.diag.message.contains("fx literals are not implemented"));
+    }
+}

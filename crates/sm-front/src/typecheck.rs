@@ -3,6 +3,22 @@ use alloc::format;
 use alloc::string::ToString;
 use crate::*;
 
+fn fx_literal_gap_message() -> &'static str {
+    "fx literals are not implemented in the canonical Rust-like path yet"
+}
+
+fn fx_arithmetic_gap_message() -> &'static str {
+    "fx arithmetic is not implemented in the canonical Rust-like path yet"
+}
+
+fn fx_unary_gap_message() -> &'static str {
+    "fx unary +/- is not implemented in the canonical Rust-like path yet"
+}
+
+fn is_numeric_for_fx_gap(ty: Type) -> bool {
+    matches!(ty, Type::I32 | Type::U32 | Type::F64)
+}
+
 pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
     if program.functions.len() != 1 {
         return Err(FrontendError {
@@ -74,6 +90,16 @@ fn check_stmt(
             let vt = infer_expr_type(*value, arena, env, table)?;
             let final_ty = if let Some(ann) = ty {
                 if *ann != vt {
+                    if *ann == Type::Fx && is_numeric_for_fx_gap(vt) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "{}; let '{}' currently accepts only existing fx-typed values",
+                                fx_literal_gap_message(),
+                                resolve_symbol_name(arena, *name)?,
+                            ),
+                        });
+                    }
                     return Err(FrontendError {
                         pos: 0,
                         message: format!(
@@ -163,6 +189,15 @@ fn check_stmt(
                 Type::Unit
             };
             if got != ret_ty {
+                if ret_ty == Type::Fx && is_numeric_for_fx_gap(got) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "{}; function return currently requires an existing fx-typed value",
+                            fx_literal_gap_message(),
+                        ),
+                    });
+                }
                 return Err(FrontendError {
                     pos: 0,
                     message: format!("return type mismatch: expected {:?}, got {:?}", ret_ty, got),
@@ -218,6 +253,17 @@ fn infer_expr_type(
             for (i, arg) in args.iter().enumerate() {
                 let at = infer_expr_type(*arg, arena, env, table)?;
                 if at != sig.params[i] {
+                    if sig.params[i] == Type::Fx && is_numeric_for_fx_gap(at) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "{}; arg {} for '{}' currently requires an existing fx-typed value",
+                                fx_literal_gap_message(),
+                                i,
+                                resolve_symbol_name(arena, *name)?,
+                            ),
+                        });
+                    }
                     return Err(FrontendError {
                         pos: 0,
                         message: format!(
@@ -245,6 +291,11 @@ fn infer_expr_type(
                 UnaryOp::Pos | UnaryOp::Neg => {
                     if t == Type::F64 {
                         Ok(Type::F64)
+                    } else if t == Type::Fx {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: fx_unary_gap_message().to_string(),
+                        })
                     } else {
                         Err(FrontendError {
                             pos: 0,
@@ -294,6 +345,12 @@ fn infer_expr_type(
                     }
                 }
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    if lt == Type::Fx && rt == Type::Fx {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_gap_message().to_string(),
+                        });
+                    }
                     if lt == Type::F64 && rt == Type::F64 {
                         Ok(Type::F64)
                     } else {
@@ -308,5 +365,60 @@ fn infer_expr_type(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn typecheck_source(src: &str) -> Result<(), FrontendError> {
+        let program = parse_program(src)?;
+        type_check_program(&program)
+    }
+
+    #[test]
+    fn fx_identity_surface_typechecks() {
+        let src = r#"
+            fn id(x: fx) -> fx {
+                let y: fx = x;
+                return y;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("fx passthrough surface should typecheck");
+    }
+
+    #[test]
+    fn fx_literal_reports_explicit_gap() {
+        let src = r#"
+            fn main() {
+                let x: fx = 1.0;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("fx literal should reject");
+        assert!(err.message.contains("fx literals are not implemented"));
+    }
+
+    #[test]
+    fn fx_arithmetic_reports_explicit_gap() {
+        let src = r#"
+            fn add(x: fx, y: fx) -> fx {
+                return x + y;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("fx arithmetic should reject");
+        assert!(err.message.contains("fx arithmetic is not implemented"));
     }
 }
