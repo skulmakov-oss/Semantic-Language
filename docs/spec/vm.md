@@ -1,0 +1,171 @@
+# Semantic VM Specification
+
+Status: draft v0
+Owner crate: `sm-vm`
+Shared runtime vocabulary owner: `sm-runtime-core`
+
+## Purpose
+
+The Semantic VM executes verified SemCode inside a deterministic, isolated
+runtime.
+
+The VM is responsible for:
+
+- register-oriented execution
+- call-frame management
+- deterministic runtime evaluation
+- runtime quota enforcement
+- safe execution failure reporting
+
+The VM is not responsible for:
+
+- owning the SemCode binary contract
+- replacing verifier admission
+- owning capability policy semantics
+- owning semantic state or rule scheduling
+
+## Standard Execution Rule
+
+The standard public execution route is:
+
+`verify -> run_verified_semcode* -> execute`
+
+Current public verified entrypoints include:
+
+- `run_verified_semcode`
+- `run_verified_semcode_with_config`
+- `run_verified_semcode_with_entry`
+- `run_verified_semcode_with_entry_and_config`
+
+Lower-level helpers may still exist for tests or narrow integration points, but
+they must not redefine the public contract.
+
+## Runtime Value Model
+
+Current runtime values:
+
+- `Quad`
+- `Bool`
+- `I32`
+- `F64`
+- `U32`
+- `Fx`
+- `Unit`
+
+Presence in the runtime value model does not by itself imply that every
+source-level numeric family is already complete through the full public
+language pipeline.
+
+## Symbol Runtime Rule
+
+The VM hot path uses `SymbolId` rather than string-keyed locals.
+
+Current rule:
+
+- function-local string tables are converted into runtime `SymbolId` values
+  during SemCode loading
+- frame locals are keyed by `SymbolId`
+- debug naming remains a separate concern
+
+## Execution Contexts
+
+The VM consumes `ExecutionConfig`, which binds:
+
+- `ExecutionContext`
+- `RuntimeQuotas`
+- trace enablement
+
+Current execution contexts:
+
+- `PureCompute`
+- `VerifiedLocal`
+- `RuleExecution`
+- `KernelBound`
+
+Context rule:
+
+- context selects the runtime quota baseline
+- context does not weaken verifier admission or SemCode safety checks
+
+## Trap And Error Model
+
+Current public runtime error families include:
+
+- `BadHeader`
+- `UnsupportedBytecodeVersion`
+- `BadFormat`
+- `UnknownFunction`
+- `InvalidJumpAddress`
+- `TypeMismatchRuntime`
+- `StackUnderflow`
+- `StackOverflow`
+- `QuotaExceeded`
+- `VerifierRejected`
+- `UnknownVariable`
+- `InvalidStringId`
+
+Contract rule:
+
+- verifier rejection must be surfaced distinctly from runtime execution failure
+- quota exhaustion must preserve the exceeded quota kind, limit, and usage
+- malformed or unsupported bytecode must not be treated as a successful run
+
+## Determinism Rule
+
+The VM must behave deterministically for the same:
+
+- verified SemCode input
+- execution config
+- entry function
+
+The VM must not silently reinterpret:
+
+- unsupported header versions
+- malformed jump targets
+- malformed function layouts
+
+## Function And Frame Model
+
+Current frame model includes:
+
+- program counter
+- register vector
+- `SymbolId` local map
+- function identity
+- optional return destination
+
+Current function-bytecode model includes:
+
+- function name
+- string table
+- runtime symbol ids
+- optional debug symbols
+- instruction stream
+- instruction start offset
+
+## Effect Opcode Boundary
+
+The current VM instruction set includes effect-oriented opcodes such as:
+
+- `GateRead`
+- `GateWrite`
+- `PulseEmit`
+
+Current core rule:
+
+- effectful instructions are counted against the effect-call quota
+- effectful instructions do not define capability policy semantics by
+  themselves
+
+Richer ABI and capability binding is outside this core contract PR and must not
+be smuggled into the VM execution contract by implication.
+
+## Compatibility Rule
+
+The VM must reject unsupported SemCode versions with a clear migration hint.
+
+It must not:
+
+- silently coerce `SEMCODE1` to `SEMCODE0`
+- accept malformed bytecode by best effort
+- treat verifier rejection as a normal runtime success path
