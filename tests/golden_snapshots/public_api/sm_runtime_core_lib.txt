@@ -1,0 +1,54 @@
+source: crates/sm-runtime-core/src/lib.rs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SymbolId(pub u32);
+pub const fn new(raw: u32) -> Self {
+pub const fn raw(self) -> u32 {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionContext {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuotaExceeded {
+pub kind: QuotaKind,
+pub limit: usize,
+pub used: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeTrap {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeQuotas {
+pub max_steps: usize,
+pub max_calls: usize,
+pub max_stack_depth: usize,
+pub max_frames: usize,
+pub max_registers: usize,
+pub max_const_pool: usize,
+pub max_symbol_table: usize,
+pub max_effect_calls: usize,
+pub max_trace_entries: usize,
+pub const fn verified_local() -> Self {
+pub const fn pure_compute() -> Self {
+pub const fn kernel_bound() -> Self {
+pub fn exceed(self, kind: QuotaKind, used: usize) -> Option<QuotaExceeded> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionConfig {
+pub context: ExecutionContext,
+pub quotas: RuntimeQuotas,
+pub trace_enabled: bool,
+pub const fn new(context: ExecutionContext, quotas: RuntimeQuotas) -> Self {
+pub const fn for_context(context: ExecutionContext) -> Self {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeSymbolTable {
+pub fn new() -> Self {
+pub fn intern(&mut self, name: &str) -> SymbolId {
+pub fn resolve(&self, id: SymbolId) -> Option<&str> {
+pub fn len(&self) -> usize {
+pub fn is_empty(&self) -> bool {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DebugNameMap {
+pub fn new() -> Self {
+pub fn push(&mut self, name: &str) -> SymbolId {
+pub fn resolve(&self, id: SymbolId) -> Option<&str> {
+pub fn len(&self) -> usize {
+

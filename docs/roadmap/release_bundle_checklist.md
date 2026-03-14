@@ -29,6 +29,7 @@ Verify the release documents the current state of:
 Verify these are green before the bundle is considered releasable:
 
 - `cargo test --workspace`
+- `cargo test --test public_api_contracts`
 - `cargo test --test golden_semcode`
 - `cargo test --test prometheus_runtime_matrix`
 - `cargo test --test prometheus_runtime_goldens`

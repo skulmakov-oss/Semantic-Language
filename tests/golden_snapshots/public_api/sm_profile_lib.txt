@@ -1,0 +1,59 @@
+source: crates/sm-profile/src/lib.rs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct ProfileVersion {
+pub major: u16,
+pub minor: u16,
+pub const fn new(major: u16, minor: u16) -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum AbiProfile {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub enum CompatibilityMode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct FeaturePolicy {
+pub allow_debug_symbols: bool,
+pub allow_f64_math: bool,
+pub allow_gate_surface: bool,
+pub allow_logos_surface: bool,
+pub const fn core() -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct CapabilityExpectations {
+pub require_debug_symbols: bool,
+pub require_f64_math: bool,
+pub require_gate_surface: bool,
+pub const fn permissive() -> Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+pub struct ParserProfile {
+pub identity: String,
+pub version: ProfileVersion,
+pub abi: AbiProfile,
+pub compatibility: CompatibilityMode,
+pub features: FeaturePolicy,
+pub capabilities: CapabilityExpectations,
+pub aliases: BTreeMap<String, String>,
+pub fn foundation_default() -> Self {
+pub fn add_alias(&mut self, raw: impl Into<String>, canonical: impl Into<String>) {
+pub fn normalize(&self, input: &str) -> String {
+#[cfg(feature = "std")]
+pub fn to_json(&self) -> Result<String, ProfileIoError> {
+#[cfg(feature = "std")]
+pub fn from_json(json: &str) -> Result<Self, ProfileIoError> {
+#[cfg(feature = "std")]
+pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ProfileIoError> {
+#[cfg(feature = "std")]
+pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ProfileIoError> {
+#[cfg(feature = "std")]
+#[derive(Debug)]
+pub enum ProfileIoError {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrainingSample<'a> {
+pub input: &'a str,
+pub target: &'a str,
+pub fn train_profile(samples: &[TrainingSample<'_>]) -> ParserProfile {
+pub fn train_profile_in_place(profile: &mut ParserProfile, samples: &[TrainingSample<'_>]) {
+

@@ -1,0 +1,33 @@
+source: crates/prom-abi/src/lib.rs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HostCallId {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectClass {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeterminismClass {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostCallDescriptor {
+pub id: HostCallId,
+pub effect: EffectClass,
+pub determinism: DeterminismClass,
+pub returns_value: bool,
+pub const fn descriptor_for_call(id: HostCallId) -> HostCallDescriptor {
+#[derive(Debug, Clone, PartialEq)]
+pub enum AbiValue {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbiFailureKind {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbiError {
+pub call: HostCallId,
+pub kind: AbiFailureKind,
+pub message: String,
+pub fn new(call: HostCallId, kind: AbiFailureKind, message: impl Into<String>) -> Self {
+pub trait PrometheusHostAbi {
+#[derive(Debug, Default)]
+pub struct RecordingHostAbi {
+pub reads: alloc::vec::Vec<(u16, u16)>,
+pub writes: alloc::vec::Vec<(u16, u16, AbiValue)>,
+pub pulses: alloc::vec::Vec<String>,
+pub next_read: AbiValue,
+pub fn with_read_value(next_read: AbiValue) -> Self {
+

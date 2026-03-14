@@ -1,0 +1,41 @@
+source: crates/prom-cap/src/lib.rs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CapabilityKind {
+pub const fn required_capability_for_call(call: HostCallId) -> CapabilityKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityManifestVersion {
+pub const fn as_str(self) -> &'static str {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityManifestMetadata {
+pub schema: String,
+pub version: CapabilityManifestVersion,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilityDeniedCode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityDenied {
+pub capability: CapabilityKind,
+pub call: Option<HostCallId>,
+pub code: CapabilityDeniedCode,
+pub manifest: CapabilityManifestMetadata,
+pub message: String,
+pub fn new(
+pub trait CapabilityChecker {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestValidationCode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestValidationReport {
+pub code: ManifestValidationCode,
+pub message: String,
+pub fn new(code: ManifestValidationCode, message: impl Into<String>) -> Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityManifest {
+pub const CURRENT_SCHEMA: &'static str = "prom.cap.manifest";
+pub const CURRENT_VERSION: CapabilityManifestVersion = CapabilityManifestVersion::V1;
+pub fn new() -> Self {
+pub fn with_contract(
+pub fn allow(&mut self, capability: CapabilityKind) {
+pub fn allows(&self, capability: CapabilityKind) -> bool {
+pub fn metadata(&self) -> CapabilityManifestMetadata {
+pub fn validate(&self) -> Result<(), ManifestValidationReport> {
+pub fn gate_surface() -> Self {
+

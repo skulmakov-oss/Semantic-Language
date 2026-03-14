@@ -1,0 +1,51 @@
+source: crates/prom-runtime/src/lib.rs
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSessionDescriptor {
+pub context: ExecutionContext,
+pub capability_manifest: CapabilityManifestMetadata,
+pub gate_registry_bound: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIntegrationSnapshot {
+pub session: RuntimeSessionDescriptor,
+pub state_epoch: StateEpoch,
+pub active_rules: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivationSelection {
+pub entry: AgendaEntry,
+pub remaining_rules: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStateAdvance {
+pub transition: StateTransitionMetadata,
+pub agenda: Agenda,
+pub snapshot: RuntimeIntegrationSnapshot,
+pub struct ExecutionSession<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
+pub fn new(
+pub fn kernel_bound(
+pub fn descriptor(&self) -> &RuntimeSessionDescriptor {
+pub fn derive_agenda(&self, state: &SemanticStateStore, rules: &RuleEngine) -> Agenda {
+pub fn select_next_activation(&self, agenda: &Agenda) -> Option<ActivationSelection> {
+pub fn begin_audit_trail(&self) -> AuditTrail {
+pub fn record_session_started(&self, trail: &mut AuditTrail, entry: &str) -> AuditEventId {
+pub fn record_session_finished(&self, trail: &mut AuditTrail) -> AuditEventId {
+pub fn record_rule_activation(
+pub fn record_state_transition(
+pub fn integration_snapshot(
+pub fn apply_state_update_and_refresh_agenda(
+pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
+pub fn run_verified_semcode_entry(
+pub struct GateExecutionSession<'a, B: GateBinding, C: CapabilityChecker> {
+pub fn new(
+pub fn kernel_bound(
+pub fn descriptor(&self) -> &RuntimeSessionDescriptor {
+pub fn derive_agenda(&self, state: &SemanticStateStore, rules: &RuleEngine) -> Agenda {
+pub fn select_next_activation(&self, agenda: &Agenda) -> Option<ActivationSelection> {
+pub fn begin_audit_trail(&self) -> AuditTrail {
+pub fn record_session_started(&self, trail: &mut AuditTrail, entry: &str) -> AuditEventId {
+pub fn record_session_finished(&self, trail: &mut AuditTrail) -> AuditEventId {
+pub fn record_rule_activation(
+pub fn record_state_transition(
+pub fn integration_snapshot(
+pub fn apply_state_update_and_refresh_agenda(
+pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
+pub fn run_verified_semcode_entry(
+

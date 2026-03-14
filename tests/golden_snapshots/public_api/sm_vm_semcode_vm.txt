@@ -1,0 +1,44 @@
+source: crates/sm-vm/src/semcode_vm.rs
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+#[derive(Debug, Clone)]
+pub struct Frame {
+pub pc: usize,
+pub regs: Vec<Value>,
+pub locals: HashMap<SymbolId, Value>,
+pub func: String,
+pub return_dst: Option<u16>,
+#[derive(Debug, Clone)]
+pub struct FunctionBytecode {
+pub name: String,
+pub strings: Vec<String>,
+pub symbol_ids: Vec<SymbolId>,
+pub debug_symbols: Vec<DebugSymbol>,
+pub code: Vec<u8>,
+pub instr_start: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugSymbol {
+pub pc: usize,
+pub line: u32,
+pub col: u16,
+#[derive(Debug, Clone)]
+pub struct VM {
+pub functions: HashMap<String, FunctionBytecode>,
+pub callstack: Vec<Frame>,
+pub config: ExecutionConfig,
+pub effect_calls: usize,
+pub symbols: RuntimeSymbolTable,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeError {
+pub fn run_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
+pub fn run_verified_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
+pub fn run_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
+pub fn run_semcode_with_config(bytes: &[u8], config: ExecutionConfig) -> Result<(), RuntimeError> {
+pub fn run_verified_semcode_with_config(
+pub fn run_verified_semcode_with_entry(
+pub fn run_verified_semcode_with_entry_and_config(
+pub fn run_verified_semcode_with_host_and_capabilities<
+pub fn run_verified_semcode_with_host_and_capabilities_and_config<
+pub fn run_semcode_with_entry_and_config(
+pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
+

@@ -1,0 +1,13 @@
+source: crates/sm-ir/src/lib.rs
+pub use sm_front::{
+pub use sm_profile::ParserProfile;
+#[cfg(feature = "std")]
+pub mod semcode_format {
+pub use crate::local_format::{
+#[cfg(feature = "std")]
+pub mod passes;
+#[cfg(feature = "std")]
+pub use frontend::{CompileProfile, OptLevel};
+#[cfg(feature = "std")]
+pub use legacy_lowering::*;
+

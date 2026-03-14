@@ -18,6 +18,15 @@ jobs:
           cargo test --test ir_opt_boundaries --quiet
           cargo test --test dependency_boundaries --quiet
 
+  public-api-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Public API inventory guard
+        run: cargo test --test public_api_contracts --quiet
+
   test-std:
     runs-on: ubuntu-latest
     steps:

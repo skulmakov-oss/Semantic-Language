@@ -1,0 +1,30 @@
+source: crates/sm-verify/src/lib.rs
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationCode {
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationDiagnostic {
+pub code: VerificationCode,
+pub function: Option<String>,
+pub offset: Option<usize>,
+pub message: String,
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectReport {
+pub diagnostics: Vec<VerificationDiagnostic>,
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedFunction {
+pub name: String,
+pub code_len: usize,
+pub string_count: usize,
+pub debug_symbol_count: usize,
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedProgram {
+pub header: SemcodeHeaderSpec,
+pub functions: Vec<VerifiedFunction>,
+#[cfg(feature = "std")]
+pub fn verify_semcode(bytes: &[u8]) -> Result<VerifiedProgram, RejectReport> {
+
