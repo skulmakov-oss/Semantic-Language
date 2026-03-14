@@ -84,12 +84,14 @@ Current canonical pass API includes:
 
 Current default pipeline:
 
+- `StructuralCleanup` version `1`
 - `CrystalFold` version `1`
 
 Contract rule:
 
 - pass ordering is explicit
 - optimizer ownership is not split across a second crate in the current baseline
+- structural cleanup and fold logic must live in `sm-ir::passes`
 - default pipeline must stay discoverable without hidden lowering-only behavior
 
 ## Boundary Rule
@@ -108,6 +110,6 @@ This draft does not yet fully formalize:
 
 - every individual `IrInstr` operand invariant
 - full CFG notation
-- richer optimizer passes beyond `CrystalFold v1`
+- richer optimizer passes beyond `StructuralCleanup v1` and `CrystalFold v1`
 - a separate `sm-opt` owner model
 - canonical serialized textual IR form

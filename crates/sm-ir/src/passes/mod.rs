@@ -1,5 +1,6 @@
 use crate::legacy_lowering::IrFunction;
 
+pub mod cleanup;
 pub mod crystalfold;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -31,8 +32,10 @@ pub fn run_default_opt_passes(functions: &mut Vec<IrFunction>) -> OptReport {
         functions: core::mem::take(functions),
     };
     let mut report = OptReport::default();
-    let pass = crystalfold::CrystalFoldPass::default();
-    report.merge(pass.run(&mut module));
+    let cleanup = cleanup::StructuralCleanupPass;
+    report.merge(cleanup.run(&mut module));
+    let fold = crystalfold::CrystalFoldPass::default();
+    report.merge(fold.run(&mut module));
     *functions = module.functions;
     report
 }

@@ -1,5 +1,14 @@
 # Optimization Passes (v0.2)
 
+## StructuralCleanup
+
+- Location: `crates/sm-ir/src/passes/cleanup.rs`
+- Type: IR optimization pass (`OptPass`)
+- Entry: `run_default_opt_passes()` in `crates/sm-ir/src/passes/mod.rs`
+
+StructuralCleanup is an IR-stage cleanup pass. It is not part of lowering itself, and its
+implementation must not live in `legacy_lowering.rs`.
+
 ## CrystalFold
 
 - Location: `crates/sm-ir/src/passes/crystalfold.rs`
@@ -22,5 +31,5 @@ CrystalFold is an IR-stage pass. It is not part of parsing, smc typing, or emit.
 
 ## Pipeline Order
 
-`frontend -> semantics (warnings) -> lowering -> canonicalize/structural-opt -> CrystalFold -> emit`
+`frontend -> semantics (warnings) -> lowering -> StructuralCleanup -> CrystalFold -> emit`
 

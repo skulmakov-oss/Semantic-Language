@@ -386,10 +386,6 @@ pub fn compile_program_to_ir_with_options_and_profile(
         out.push(lower_function_to_ir(f, &program.arena, &fn_table)?);
     }
     if matches!(opt, OptLevel::O1) {
-        for f in &mut out {
-            canonicalize_ir_function(f);
-            optimize_ir_function(f);
-        }
         let _ = crate::passes::run_default_opt_passes(&mut out);
     }
     Ok(out)
@@ -444,115 +440,6 @@ pub fn validate_ir(f: &IrFunction) -> Result<(), FrontendError> {
         }
     }
     Ok(())
-}
-
-fn canonicalize_ir_function(f: &mut IrFunction) {
-    // Normalize obvious structural noise first.
-    remove_duplicate_consecutive_labels(&mut f.instrs);
-}
-
-fn optimize_ir_function(f: &mut IrFunction) {
-    remove_unreachable_until_label(&mut f.instrs);
-    remove_noop_jumps(&mut f.instrs);
-    remove_redundant_consecutive_loads(&mut f.instrs);
-}
-
-fn remove_duplicate_consecutive_labels(instrs: &mut Vec<IrInstr>) {
-    let mut out = Vec::with_capacity(instrs.len());
-    for instr in instrs.drain(..) {
-        let dup = matches!(
-            (out.last(), &instr),
-            (
-                Some(IrInstr::Label { name: a }),
-                IrInstr::Label { name: b }
-            ) if a == b
-        );
-        if !dup {
-            out.push(instr);
-        }
-    }
-    *instrs = out;
-}
-
-fn remove_unreachable_until_label(instrs: &mut Vec<IrInstr>) {
-    let mut out = Vec::with_capacity(instrs.len());
-    let mut unreachable = false;
-    for instr in instrs.drain(..) {
-        match &instr {
-            IrInstr::Label { .. } => {
-                unreachable = false;
-                out.push(instr);
-            }
-            _ if unreachable => {}
-            _ => {
-                let terminal = matches!(instr, IrInstr::Ret { .. } | IrInstr::Jmp { .. });
-                out.push(instr);
-                if terminal {
-                    unreachable = true;
-                }
-            }
-        }
-    }
-    *instrs = out;
-}
-
-fn remove_noop_jumps(instrs: &mut Vec<IrInstr>) {
-    let mut out = Vec::with_capacity(instrs.len());
-    let mut i = 0usize;
-    while i < instrs.len() {
-        let skip = if let IrInstr::Jmp { label } = &instrs[i] {
-            matches!(
-                instrs.get(i + 1),
-                Some(IrInstr::Label { name }) if name == label
-            )
-        } else {
-            false
-        };
-        if !skip {
-            out.push(instrs[i].clone());
-        }
-        i += 1;
-    }
-    *instrs = out;
-}
-
-fn load_dst_and_payload(instr: &IrInstr) -> Option<(u16, u64)> {
-    match instr {
-        IrInstr::LoadQ { dst, val } => Some((*dst, 0x1000 | (*val as u64))),
-        IrInstr::LoadBool { dst, val } => Some((*dst, 0x2000 | (*val as u64))),
-        IrInstr::LoadI32 { dst, val } => Some((*dst, 0x3000 | (*val as i64 as u64))),
-        IrInstr::LoadF64 { dst, val } => Some((*dst, 0x4000 | val.to_bits())),
-        IrInstr::LoadFx { dst, val } => Some((*dst, 0x6000 | (*val as i64 as u64))),
-        IrInstr::LoadVar { dst, name } => {
-            let mut h = 0xcbf29ce484222325u64;
-            for b in name.as_bytes() {
-                h ^= *b as u64;
-                h = h.wrapping_mul(0x100000001b3);
-            }
-            Some((*dst, 0x5000 ^ h))
-        }
-        _ => None,
-    }
-}
-
-fn remove_redundant_consecutive_loads(instrs: &mut Vec<IrInstr>) {
-    let mut out = Vec::with_capacity(instrs.len());
-    let mut i = 0usize;
-    while i < instrs.len() {
-        let drop_curr = if let (Some(a), Some(b)) = (
-            load_dst_and_payload(&instrs[i]),
-            instrs.get(i + 1).and_then(load_dst_and_payload),
-        ) {
-            a.0 == b.0
-        } else {
-            false
-        };
-        if !drop_curr {
-            out.push(instrs[i].clone());
-        }
-        i += 1;
-    }
-    *instrs = out;
 }
 
 pub fn compile_program_to_semcode(input: &str) -> Result<Vec<u8>, FrontendError> {
@@ -1620,12 +1507,16 @@ fn alloc(next: &mut u16) -> u16 {
 #[cfg(test)]
 mod opt_tests {
     use super::*;
+    use crate::passes::run_default_opt_passes;
 
     #[test]
     fn opt_removes_unreachable_and_noop_jmp() {
-        let mut f = IrFunction {
+        let mut ir = vec![IrFunction {
             name: "main".to_string(),
             instrs: vec![
+                IrInstr::Label {
+                    name: "entry".to_string(),
+                },
                 IrInstr::Jmp {
                     label: "l1".to_string(),
                 },
@@ -1635,11 +1526,11 @@ mod opt_tests {
                 },
                 IrInstr::Ret { src: None },
             ],
-        };
-        canonicalize_ir_function(&mut f);
-        optimize_ir_function(&mut f);
-        assert!(matches!(f.instrs[0], IrInstr::Label { .. }));
-        assert!(f
+        }];
+        let report = run_default_opt_passes(&mut ir);
+        assert!(report.changed);
+        assert!(matches!(ir[0].instrs[0], IrInstr::Label { .. }));
+        assert!(ir[0]
             .instrs
             .iter()
             .all(|i| !matches!(i, IrInstr::LoadBool { dst: 0, val: true })));
@@ -1647,23 +1538,24 @@ mod opt_tests {
 
     #[test]
     fn opt_removes_redundant_consecutive_loads() {
-        let mut f = IrFunction {
+        let mut ir = vec![IrFunction {
             name: "main".to_string(),
             instrs: vec![
                 IrInstr::LoadI32 { dst: 1, val: 10 },
                 IrInstr::LoadI32 { dst: 1, val: 11 },
                 IrInstr::Ret { src: Some(1) },
             ],
-        };
-        optimize_ir_function(&mut f);
-        let loads = f
+        }];
+        let report = run_default_opt_passes(&mut ir);
+        assert!(report.changed);
+        let loads = ir[0]
             .instrs
             .iter()
             .filter(|i| matches!(i, IrInstr::LoadI32 { dst: 1, .. }))
             .count();
         assert_eq!(loads, 1);
         assert!(matches!(
-            f.instrs[0],
+            ir[0].instrs[0],
             IrInstr::LoadI32 { dst: 1, val: 11 }
         ));
     }

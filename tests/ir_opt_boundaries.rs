@@ -17,4 +17,16 @@ fn lowering_does_not_embed_crystalfold_logic() {
         !src.contains("enum ConstVal"),
         "const-fold state machine must not live in legacy_lowering"
     );
+    assert!(
+        !src.contains("remove_redundant_consecutive_loads"),
+        "structural cleanup helpers must live in sm-ir passes"
+    );
+    assert!(
+        !src.contains("remove_noop_jumps"),
+        "jump cleanup helpers must live in sm-ir passes"
+    );
+    assert!(
+        !src.contains("remove_unreachable_until_label"),
+        "reachability cleanup helpers must live in sm-ir passes"
+    );
 }
