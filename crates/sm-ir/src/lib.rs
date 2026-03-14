@@ -20,9 +20,13 @@ mod frontend {
 mod local_format;
 
 #[cfg(feature = "std")]
-mod semcode_format {
+pub mod semcode_format {
     pub use crate::local_format::{
-        write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
+        header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
+        read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
+        CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, Opcode,
+        SemcodeFormatError, SemcodeHeaderSpec, HEADER_V0, HEADER_V1, HEADER_V2, MAGIC0, MAGIC1,
+        MAGIC2,
     };
 }
 

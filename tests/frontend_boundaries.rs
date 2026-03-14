@@ -1,4 +1,5 @@
 use semantic_language::frontend;
+use std::fs;
 
 #[test]
 fn boundary_core_ir_emit_are_accessible() {
@@ -10,4 +11,18 @@ fn boundary_core_ir_emit_are_accessible() {
 
     let bytes = frontend::emit::compile_program_to_semcode(src).expect("emit");
     assert!(bytes.len() >= 8);
+}
+
+#[test]
+fn sm_emit_reexports_semcode_contract_from_sm_ir() {
+    let src = fs::read_to_string("crates/sm-emit/src/lib.rs").expect("read sm-emit lib");
+
+    assert!(
+        src.contains("pub use sm_ir::semcode_format"),
+        "sm-emit must re-export the canonical SemCode contract from sm-ir"
+    );
+    assert!(
+        !src.contains("mod semcode_format;"),
+        "sm-emit must not carry a second local semcode_format owner"
+    );
 }

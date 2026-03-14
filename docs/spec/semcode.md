@@ -15,6 +15,7 @@ Ownership rule:
 
 - `sm-ir` owns the SemCode header, opcode, and capability contract in the current `v1` baseline
 - `sm-emit` exposes producer-facing entrypoints over that contract and is not a second format owner
+- `sm-emit` must re-export the canonical format surface from `sm-ir` rather than maintain a forked local copy
 
 Standard execution rule:
 

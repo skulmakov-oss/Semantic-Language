@@ -1,9 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "std")]
-mod semcode_format;
-#[cfg(feature = "std")]
-pub use semcode_format::{
+pub use sm_ir::semcode_format::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
     read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
     CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, SemcodeFormatError,
