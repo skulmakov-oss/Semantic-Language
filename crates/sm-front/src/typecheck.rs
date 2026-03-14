@@ -3,8 +3,8 @@ use alloc::format;
 use alloc::string::ToString;
 use crate::*;
 
-fn fx_literal_gap_message() -> &'static str {
-    "fx literals are not implemented in the canonical Rust-like path yet"
+fn fx_coercion_gap_message() -> &'static str {
+    "fx coercion from non-literal numeric expressions is not implemented in the canonical Rust-like path yet"
 }
 
 fn fx_arithmetic_gap_message() -> &'static str {
@@ -17,6 +17,14 @@ fn fx_unary_gap_message() -> &'static str {
 
 fn is_numeric_for_fx_gap(ty: Type) -> bool {
     matches!(ty, Type::I32 | Type::U32 | Type::F64)
+}
+
+fn is_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> bool {
+    match arena.expr(expr_id) {
+        Expr::Num(_) | Expr::Float(_) => true,
+        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_fx_literal_expr(*inner, arena),
+        _ => false,
+    }
 }
 
 pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
@@ -91,26 +99,32 @@ fn check_stmt(
             let final_ty = if let Some(ann) = ty {
                 if *ann != vt {
                     if *ann == Type::Fx && is_numeric_for_fx_gap(vt) {
+                        if is_fx_literal_expr(*value, arena) {
+                            Type::Fx
+                        } else {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "{}; let '{}' currently accepts only fx literals or existing fx-typed values",
+                                    fx_coercion_gap_message(),
+                                    resolve_symbol_name(arena, *name)?,
+                                ),
+                            });
+                        }
+                    } else {
                         return Err(FrontendError {
                             pos: 0,
                             message: format!(
-                                "{}; let '{}' currently accepts only existing fx-typed values",
-                                fx_literal_gap_message(),
+                                "type mismatch in let '{}': {:?} vs {:?}",
                                 resolve_symbol_name(arena, *name)?,
+                                ann,
+                                vt
                             ),
                         });
                     }
-                    return Err(FrontendError {
-                        pos: 0,
-                        message: format!(
-                            "type mismatch in let '{}': {:?} vs {:?}",
-                            resolve_symbol_name(arena, *name)?,
-                            ann,
-                            vt
-                        ),
-                    });
+                } else {
+                    *ann
                 }
-                *ann
             } else {
                 vt
             };
@@ -190,11 +204,16 @@ fn check_stmt(
             };
             if got != ret_ty {
                 if ret_ty == Type::Fx && is_numeric_for_fx_gap(got) {
+                    if let Some(expr_id) = v {
+                        if is_fx_literal_expr(*expr_id, arena) {
+                            return Ok(());
+                        }
+                    }
                     return Err(FrontendError {
                         pos: 0,
                         message: format!(
-                            "{}; function return currently requires an existing fx-typed value",
-                            fx_literal_gap_message(),
+                            "{}; function return currently requires an fx literal or an existing fx-typed value",
+                            fx_coercion_gap_message(),
                         ),
                     });
                 }
@@ -254,26 +273,29 @@ fn infer_expr_type(
                 let at = infer_expr_type(*arg, arena, env, table)?;
                 if at != sig.params[i] {
                     if sig.params[i] == Type::Fx && is_numeric_for_fx_gap(at) {
+                        if !is_fx_literal_expr(*arg, arena) {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "{}; arg {} for '{}' currently requires an fx literal or an existing fx-typed value",
+                                    fx_coercion_gap_message(),
+                                    i,
+                                    resolve_symbol_name(arena, *name)?,
+                                ),
+                            });
+                        }
+                    } else {
                         return Err(FrontendError {
                             pos: 0,
                             message: format!(
-                                "{}; arg {} for '{}' currently requires an existing fx-typed value",
-                                fx_literal_gap_message(),
+                                "arg {} for '{}' has type {:?}, expected {:?}",
                                 i,
                                 resolve_symbol_name(arena, *name)?,
+                                at,
+                                sig.params[i]
                             ),
                         });
                     }
-                    return Err(FrontendError {
-                        pos: 0,
-                        message: format!(
-                            "arg {} for '{}' has type {:?}, expected {:?}",
-                            i,
-                            resolve_symbol_name(arena, *name)?,
-                            at,
-                            sig.params[i]
-                        ),
-                    });
                 }
             }
             Ok(sig.ret)
@@ -394,16 +416,27 @@ mod tests {
     }
 
     #[test]
-    fn fx_literal_reports_explicit_gap() {
+    fn fx_literal_surface_typechecks() {
         let src = r#"
+            fn id(x: fx) -> fx {
+                return x;
+            }
+
+            fn value() -> fx {
+                return -1.25;
+            }
+
             fn main() {
                 let x: fx = 1.0;
-                return;
+                let y: fx = id(2);
+                let z: fx = value();
+                let same = x == x;
+                let also_same = y == z;
+                if same == also_same { return; } else { return; }
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("fx literal should reject");
-        assert!(err.message.contains("fx literals are not implemented"));
+        typecheck_source(src).expect("fx literal/call/return surface should typecheck");
     }
 
     #[test]

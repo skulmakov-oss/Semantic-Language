@@ -64,15 +64,26 @@ mod tests {
     }
 
     #[test]
-    fn sema_reports_explicit_fx_literal_gap() {
+    fn sema_accepts_fx_literal_surface() {
         let src = r#"
+            fn id(x: fx) -> fx {
+                return x;
+            }
+
+            fn value() -> fx {
+                return -1.25;
+            }
+
             fn main() {
                 let x: fx = 1.0;
-                return;
+                let y: fx = id(2);
+                let z: fx = value();
+                let same = x == x;
+                let also_same = y == z;
+                if same == also_same { return; } else { return; }
             }
         "#;
 
-        let err = check_source(src).expect_err("fx literal should reject");
-        assert!(err.diag.message.contains("fx literals are not implemented"));
+        check_source(src).expect("fx literal/call/return surface should analyze");
     }
 }
