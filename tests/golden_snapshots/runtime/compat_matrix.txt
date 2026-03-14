@@ -1,0 +1,10 @@
+manifest_schema=prom.cap.manifest
+manifest_version=V1
+capabilities=[(GateRead, true), (GateWrite, true), (PulseEmit, true)]
+session_context=KernelBound
+session_gate_registry_bound=true
+session_manifest=prom.cap.manifest@V1
+compat_matrix_duplicate_registration=gate descriptor already registered
+compat_matrix_unknown_read=gate is not registered
+compat_matrix_readonly_write=gate does not allow writes
+context_baseline=KernelBound

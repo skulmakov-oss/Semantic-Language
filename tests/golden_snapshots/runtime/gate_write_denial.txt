@@ -1,0 +1,5 @@
+error=HostAbi
+call=GateWrite
+kind=InvalidInput
+message=gate does not allow writes
+writes=[]

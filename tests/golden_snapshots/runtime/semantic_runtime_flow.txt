@@ -1,0 +1,13 @@
+context=KernelBound
+manifest=prom.cap.manifest@V1
+gate_registry_bound=true
+state_epoch=1
+active_rules=1
+activation=rule.alpha salience=9 remaining=0
+events:
+  0 StateTransition fact.alpha 0->1
+  1 SessionStarted main
+  2 RuleActivated rule.alpha salience=9
+  3 SessionFinished
+writes:
+  7:4=I32(41)

@@ -1,0 +1,6 @@
+error=StateValidation
+code=EmptyContext
+message=context window must not be empty
+state_epoch=0
+audit_events=0
+manifest=prom.cap.manifest@V1

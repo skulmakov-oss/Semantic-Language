@@ -1,0 +1,9 @@
+error=CapabilityDenied
+capability=PulseEmit
+call=PulseEmit
+code=MissingCapability
+schema=prom.cap.manifest
+version=V1
+reads=[(7, 3)]
+writes=[(7, 4, I32(42))]
+pulses=[]
