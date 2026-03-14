@@ -27,6 +27,20 @@ jobs:
       - name: Public API inventory guard
         run: cargo test --test public_api_contracts --quiet
 
+  runtime-release-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Runtime and SemCode release-facing validation gates
+        run: |
+          cargo test --test golden_semcode --quiet
+          cargo test --test prometheus_runtime_matrix --quiet
+          cargo test --test prometheus_runtime_goldens --quiet
+          cargo test --test prometheus_runtime_negative_goldens --quiet
+          cargo test --test prometheus_runtime_compat_matrix --quiet
+
   test-std:
     runs-on: ubuntu-latest
     steps:

@@ -67,6 +67,7 @@ Current runtime baselines do not yet cover:
 Changes touching the `prom-*` runtime contract should not merge unless:
 
 - public API inventory guard passes for contract-sensitive crates
+- CI runs the runtime validation quartet as explicit release-facing jobs
 - runtime matrix tests pass
 - runtime golden tests pass
 - runtime negative golden tests pass

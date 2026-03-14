@@ -28,6 +28,7 @@ Verify the release documents the current state of:
 
 Verify these are green before the bundle is considered releasable:
 
+- CI must run these as explicit release-facing jobs, not only via broad workspace test aggregation
 - `cargo test --workspace`
 - `cargo test --test public_api_contracts`
 - `cargo test --test golden_semcode`
