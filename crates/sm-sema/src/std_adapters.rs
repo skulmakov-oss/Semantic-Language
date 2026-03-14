@@ -793,6 +793,7 @@ fn to_core_diag_level(level: DiagLevel) -> ton618_core::DiagLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::parse_logos_program;
     use std::collections::{BTreeMap, HashMap};
     use std::fs;
     use std::path::PathBuf;

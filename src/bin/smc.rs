@@ -337,6 +337,7 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
     }
 
     let provider = CliFsModuleProvider;
+    let parser_profile = cli_profile();
     let root_canon = Path::new(input)
         .canonicalize()
         .map_err(|e| format!("failed to resolve '{}': {}", input, e))?;
