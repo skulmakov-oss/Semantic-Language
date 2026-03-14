@@ -1,0 +1,79 @@
+# Semantic v1 Compatibility Statement
+
+Status: draft v0
+
+This document summarizes the current compatibility commitments for the repository state that is moving toward Semantic v1.
+
+## SemCode Compatibility
+
+Current compatible SemCode families:
+
+- `SEMCODE0`
+- `SEMCODE1`
+- `SEMCODE2`
+
+Current compatibility rule:
+
+- standard execution accepts only verified SemCode
+- verifier rejects unknown or unsupported SemCode headers
+- VM must not silently reinterpret unsupported headers
+
+## ParserProfile Compatibility
+
+Current profile contract baseline:
+
+- schema owner: `sm-profile`
+- schema family: `ParserProfile`
+- public version baseline: `1.0`
+
+Current compatibility rule:
+
+- semantic meaning changes require explicit profile contract review
+- contract hash stability is required across canonical serialization roundtrips
+
+## CLI Compatibility
+
+Current compatibility-sensitive CLI surfaces:
+
+- `smc profile show --json`
+- `smc doctor --json`
+
+Current compatibility rule:
+
+- documented machine-readable fields must not change silently
+
+## PROMETHEUS Runtime Compatibility
+
+Current compatibility-sensitive `prom-*` surfaces:
+
+- capability manifest schema/version
+- gate registry validation behavior
+- runtime session descriptor fields
+- canonical audit event families used by orchestration helpers
+
+Current compatibility rule:
+
+- changes to these surfaces require:
+  - spec updates
+  - runtime matrix and golden updates
+  - compatibility review
+
+## Explicit Non-Commitments
+
+The repository does not yet claim final compatibility guarantees for:
+
+- incomplete `fx` language execution path
+- persistence backends
+- multi-session replay archives
+- rule-side effect execution semantics beyond the current narrow orchestration contract
+- final packaged release layout
+
+## Release Honesty Rule
+
+This compatibility statement must stay aligned with:
+
+- `docs/spec/`
+- `docs/roadmap/v1_readiness.md`
+- `docs/roadmap/runtime_validation_policy.md`
+
+If a surface is not yet fully stabilized, it must remain listed as a non-commitment rather than being implied as release-stable.
