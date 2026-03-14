@@ -1,5 +1,5 @@
 use semantic_language::semcode_format::{
-    header_spec_from_magic, CAP_F64_MATH, CAP_GATE_SURFACE, MAGIC0, MAGIC1,
+    header_spec_from_magic, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, MAGIC0, MAGIC1, MAGIC2,
 };
 use semantic_language::semcode_vm::{run_semcode, RuntimeError};
 use semantic_language::frontend::{
@@ -47,6 +47,30 @@ fn compat_v1_header_and_run() {
 }
 
 #[test]
+fn compat_v2_header_and_run() {
+    let src = r#"
+        fn id(x: fx) -> fx {
+            return x;
+        }
+
+        fn main() {
+            let x: fx = 1.25;
+            let y: fx = id(-2.0);
+            if x == x { return; } else { return; }
+        }
+    "#;
+    let bytes = compile_program_to_semcode(src).expect("compile");
+    assert_eq!(&bytes[0..8], &MAGIC2);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 3);
+    assert_ne!(spec.capabilities & CAP_FX_VALUES, 0);
+    run_semcode(&bytes).expect("run");
+}
+
+#[test]
 fn compat_unsupported_version_has_migration_hint() {
     let src = "fn main() { return; }";
     let mut bytes = compile_program_to_semcode(src).expect("compile");
@@ -57,6 +81,7 @@ fn compat_unsupported_version_has_migration_hint() {
             assert!(found.starts_with("SEMCODE"));
             assert!(supported.contains("SEMCODE0"));
             assert!(supported.contains("SEMCODE1"));
+            assert!(supported.contains("SEMCODE2"));
         }
         other => panic!("unexpected error: {other:?}"),
     }

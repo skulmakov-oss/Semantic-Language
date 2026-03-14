@@ -22,7 +22,7 @@ mod local_format;
 #[cfg(feature = "std")]
 mod semcode_format {
     pub use crate::local_format::{
-        write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1,
+        write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
     };
 }
 

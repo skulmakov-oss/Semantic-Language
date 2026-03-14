@@ -1,6 +1,6 @@
 use super::*;
 use crate::semcode_format::{
-    write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1,
+    write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +23,10 @@ pub enum IrInstr {
     LoadF64 {
         dst: u16,
         val: f64,
+    },
+    LoadFx {
+        dst: u16,
+        val: i32,
     },
     LoadVar {
         dst: u16,
@@ -153,6 +157,59 @@ pub struct LogosIrLaw {
     pub when_count: usize,
 }
 
+const FX_SCALE: i32 = 1_000;
+
+fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
+    let scaled = value * FX_SCALE as f64;
+    if !scaled.is_finite() {
+        return Err(FrontendError {
+            pos: 0,
+            message: "fx literal is not finite".to_string(),
+        });
+    }
+    let rounded = scaled.round();
+    if rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
+        return Err(FrontendError {
+            pos: 0,
+            message: "fx literal is out of range for the v1 fixed-point carrier".to_string(),
+        });
+    }
+    Ok(rounded as i32)
+}
+
+fn try_encode_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> Result<Option<i32>, FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::Num(n) => {
+            let value = i32::try_from(*n).map_err(|_| FrontendError {
+                pos: 0,
+                message: format!("numeric literal {} does not fit in i32", n),
+            })?;
+            value
+                .checked_mul(FX_SCALE)
+                .ok_or(FrontendError {
+                    pos: 0,
+                    message: "fx literal is out of range for the v1 fixed-point carrier".to_string(),
+                })
+                .map(Some)
+        }
+        Expr::Float(n) => encode_fx_literal(*n).map(Some),
+        Expr::Unary(UnaryOp::Pos, inner) => try_encode_fx_literal_expr(*inner, arena),
+        Expr::Unary(UnaryOp::Neg, inner) => {
+            let Some(value) = try_encode_fx_literal_expr(*inner, arena)? else {
+                return Ok(None);
+            };
+            value
+                .checked_neg()
+                .ok_or(FrontendError {
+                    pos: 0,
+                    message: "fx literal is out of range for the v1 fixed-point carrier".to_string(),
+                })
+                .map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
 pub fn lower_logos_laws_to_ir(program: &LogosProgram) -> Vec<LogosIrLaw> {
     let mut laws = program.laws.clone();
     laws.sort_by(|a, b| b.priority.cmp(&a.priority));
@@ -190,6 +247,16 @@ pub fn lower_function_to_ir(
 
     let mut ctx = LoweringCtx::new();
     let mut env = ScopeEnv::with_params(&func.params);
+    ctx.next_reg = u16::try_from(func.params.len()).map_err(|_| FrontendError {
+        pos: 0,
+        message: "too many function parameters for register space".to_string(),
+    })?;
+    for (idx, (name, _)) in func.params.iter().enumerate() {
+        ctx.instrs.push(IrInstr::StoreVar {
+            name: resolve_symbol_name(arena, *name)?.to_string(),
+            src: idx as u16,
+        });
+    }
     for stmt in &func.body {
         lower_stmt(*stmt, arena, &mut ctx, &mut env, func.ret, fn_table)?;
     }
@@ -455,6 +522,7 @@ fn load_dst_and_payload(instr: &IrInstr) -> Option<(u16, u64)> {
         IrInstr::LoadBool { dst, val } => Some((*dst, 0x2000 | (*val as u64))),
         IrInstr::LoadI32 { dst, val } => Some((*dst, 0x3000 | (*val as i64 as u64))),
         IrInstr::LoadF64 { dst, val } => Some((*dst, 0x4000 | val.to_bits())),
+        IrInstr::LoadFx { dst, val } => Some((*dst, 0x6000 | (*val as i64 as u64))),
         IrInstr::LoadVar { dst, name } => {
             let mut h = 0xcbf29ce484222325u64;
             for b in name.as_bytes() {
@@ -525,7 +593,9 @@ pub fn emit_ir_to_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<V
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v1_math_instr(funcs) {
+    if has_v2_fx_instr(funcs) {
+        out.extend_from_slice(&MAGIC2);
+    } else if has_v1_math_instr(funcs) {
         out.extend_from_slice(&MAGIC1);
     } else {
         out.extend_from_slice(&MAGIC0);
@@ -642,6 +712,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadBool { .. } => 1 + 2 + 1,
         IrInstr::LoadI32 { .. } => 1 + 2 + 4,
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
+        IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
         IrInstr::StoreVar { .. } => 1 + 2 + 2,
         IrInstr::QAnd { .. }
@@ -700,6 +771,11 @@ fn emit_instr(
             out.push(Opcode::LoadF64.byte());
             write_u16_le(out, *dst);
             write_f64_le(out, *val);
+        }
+        IrInstr::LoadFx { dst, val } => {
+            out.push(Opcode::LoadFx.byte());
+            write_u16_le(out, *dst);
+            write_i32_le(out, *val);
         }
         IrInstr::LoadVar { dst, name } => {
             out.push(Opcode::LoadVar.byte());
@@ -833,6 +909,14 @@ fn has_v1_math_instr(funcs: &[IrFunction]) -> bool {
     })
 }
 
+fn has_v2_fx_instr(funcs: &[IrFunction]) -> bool {
+    funcs.iter().any(|f| {
+        f.instrs
+            .iter()
+            .any(|i| matches!(i, IrInstr::LoadFx { .. }))
+    })
+}
+
 #[derive(Debug, Default)]
 struct StringInterner {
     ids: HashMap<String, u16>,
@@ -895,6 +979,18 @@ fn lower_expr(
     env: &ScopeEnv,
     fn_table: &FnTable,
 ) -> Result<(u16, Type), FrontendError> {
+    lower_expr_with_expected(expr_id, arena, next, out, env, fn_table, None)
+}
+
+fn lower_expr_with_expected(
+    expr_id: ExprId,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    expected: Option<Type>,
+) -> Result<(u16, Type), FrontendError> {
     match arena.expr(expr_id) {
         Expr::QuadLiteral(v) => {
             let r = alloc(next);
@@ -908,17 +1004,34 @@ fn lower_expr(
         }
         Expr::Num(n) => {
             let r = alloc(next);
-            let val = i32::try_from(*n).map_err(|_| FrontendError {
-                pos: 0,
-                message: format!("numeric literal {} does not fit in i32", n),
-            })?;
-            out.push(IrInstr::LoadI32 { dst: r, val });
-            Ok((r, Type::I32))
+            if expected == Some(Type::Fx) {
+                let val = try_encode_fx_literal_expr(expr_id, arena)?.ok_or(FrontendError {
+                    pos: 0,
+                    message: "expected fx literal".to_string(),
+                })?;
+                out.push(IrInstr::LoadFx { dst: r, val });
+                Ok((r, Type::Fx))
+            } else {
+                let val = i32::try_from(*n).map_err(|_| FrontendError {
+                    pos: 0,
+                    message: format!("numeric literal {} does not fit in i32", n),
+                })?;
+                out.push(IrInstr::LoadI32 { dst: r, val });
+                Ok((r, Type::I32))
+            }
         }
         Expr::Float(n) => {
             let r = alloc(next);
-            out.push(IrInstr::LoadF64 { dst: r, val: *n });
-            Ok((r, Type::F64))
+            if expected == Some(Type::Fx) {
+                out.push(IrInstr::LoadFx {
+                    dst: r,
+                    val: encode_fx_literal(*n)?,
+                });
+                Ok((r, Type::Fx))
+            } else {
+                out.push(IrInstr::LoadF64 { dst: r, val: *n });
+                Ok((r, Type::F64))
+            }
         }
         Expr::Var(name) => {
             let ty = env.get(*name).ok_or(FrontendError {
@@ -956,7 +1069,8 @@ fn lower_expr(
             }
             let mut regs = Vec::new();
             for (i, arg) in args.iter().enumerate() {
-                let (r, t) = lower_expr(*arg, arena, next, out, env, fn_table)?;
+                let (r, t) =
+                    lower_expr_with_expected(*arg, arena, next, out, env, fn_table, Some(sig.params[i]))?;
                 if t != sig.params[i] {
                     return Err(FrontendError {
                         pos: 0,
@@ -989,7 +1103,14 @@ fn lower_expr(
             Ok((r, sig.ret))
         }
         Expr::Unary(op, inner) => {
-            let (src, ty) = lower_expr(*inner, arena, next, out, env, fn_table)?;
+            if expected == Some(Type::Fx) {
+                if let Some(value) = try_encode_fx_literal_expr(expr_id, arena)? {
+                    let dst = alloc(next);
+                    out.push(IrInstr::LoadFx { dst, val: value });
+                    return Ok((dst, Type::Fx));
+                }
+            }
+            let (src, ty) = lower_expr_with_expected(*inner, arena, next, out, env, fn_table, expected)?;
             match op {
                 UnaryOp::Not => {
                     let dst = alloc(next);
@@ -1038,8 +1159,8 @@ fn lower_expr(
             }
         }
         Expr::Binary(left, op, right) => {
-            let (lr, lt) = lower_expr(*left, arena, next, out, env, fn_table)?;
-            let (rr, rt) = lower_expr(*right, arena, next, out, env, fn_table)?;
+            let (lr, lt) = lower_expr_with_expected(*left, arena, next, out, env, fn_table, expected)?;
+            let (rr, rt) = lower_expr_with_expected(*right, arena, next, out, env, fn_table, expected)?;
             if lt != rt {
                 return Err(FrontendError {
                     pos: 0,
@@ -1187,13 +1308,14 @@ fn lower_stmt(
     let stmt = arena.stmt(stmt_id);
     match stmt {
         Stmt::Let { name, ty, value } => {
-            let (reg, vty) = lower_expr(
+            let (reg, vty) = lower_expr_with_expected(
                 *value,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
                 fn_table,
+                *ty,
             )?;
             let final_ty = if let Some(ann) = ty { *ann } else { vty };
             env.insert(*name, final_ty);
@@ -1210,13 +1332,14 @@ fn lower_stmt(
         Stmt::Return(v) => {
             match v {
                 Some(e) => {
-                    let (reg, ty) = lower_expr(
+                    let (reg, ty) = lower_expr_with_expected(
                         *e,
                         arena,
                         &mut ctx.next_reg,
                         &mut ctx.instrs,
                         env,
                         fn_table,
+                        Some(ret_ty),
                     )?;
                     if ty != ret_ty {
                         return Err(FrontendError {
@@ -1422,7 +1545,15 @@ fn lower_expr_stmt(
         }
         let mut regs = Vec::new();
         for (i, arg) in args.iter().enumerate() {
-            let (r, t) = lower_expr(*arg, arena, &mut ctx.next_reg, &mut ctx.instrs, env, fn_table)?;
+            let (r, t) = lower_expr_with_expected(
+                *arg,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                Some(sig.params[i]),
+            )?;
             if t != sig.params[i] {
                 return Err(FrontendError {
                     pos: 0,

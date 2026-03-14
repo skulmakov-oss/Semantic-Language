@@ -7,7 +7,7 @@ extern crate std;
 use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
     read_utf8, Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH,
-    CAP_GATE_SURFACE,
+    CAP_FX_VALUES, CAP_GATE_SURFACE,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -443,6 +443,12 @@ fn decode_operands(
             refs.required_capabilities |= CAP_F64_MATH;
             read_f64_le(code, cursor).map_err(|_| invalid("truncated f64 literal"))?;
         }
+        Opcode::LoadFx => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            mark_reg(dst);
+            refs.required_capabilities |= CAP_FX_VALUES;
+            read_i32_le(code, cursor).map_err(|_| invalid("truncated fx literal"))?;
+        }
         Opcode::LoadVar | Opcode::StoreVar | Opcode::QNot | Opcode::BoolNot => {
             let reg = read_u16_le(code, cursor).map_err(|_| invalid("truncated operand register"))?;
             mark_reg(reg);
@@ -581,6 +587,21 @@ mod tests {
         let bytes = compile_program_to_semcode("fn main() { return; }").expect("compile");
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_fx_semcode() {
+        let src = r#"
+            fn id(x: fx) -> fx { return x; }
+            fn main() {
+                let x: fx = 1.25;
+                let y: fx = id(-2.0);
+                if x == x { return; } else { return; }
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 3);
     }
 
     #[test]

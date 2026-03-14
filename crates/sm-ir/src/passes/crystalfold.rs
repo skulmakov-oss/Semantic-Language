@@ -33,6 +33,7 @@ enum ConstVal {
     Bool(bool),
     F64(f64),
     I32(i32),
+    Fx(i32),
 }
 
 fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
@@ -103,6 +104,10 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
             IrInstr::LoadF64 { dst, val } => {
                 cst.insert(dst, ConstVal::F64(val));
                 out.push(IrInstr::LoadF64 { dst, val });
+            }
+            IrInstr::LoadFx { dst, val } => {
+                cst.insert(dst, ConstVal::Fx(val));
+                out.push(IrInstr::LoadFx { dst, val });
             }
             IrInstr::LoadVar { dst, name } => {
                 cst.remove(&dst);
@@ -412,6 +417,7 @@ fn const_eq(a: ConstVal, b: ConstVal) -> bool {
         (ConstVal::Bool(x), ConstVal::Bool(y)) => x == y,
         (ConstVal::F64(x), ConstVal::F64(y)) => x == y,
         (ConstVal::I32(x), ConstVal::I32(y)) => x == y,
+        (ConstVal::Fx(x), ConstVal::Fx(y)) => x == y,
         _ => false,
     }
 }

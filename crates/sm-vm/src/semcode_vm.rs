@@ -413,6 +413,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::LoadFx => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadVar | Opcode::StoreVar | Opcode::QNot | Opcode::BoolNot => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -633,6 +637,12 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
                 set_reg(vm, frame_idx, dst, Value::F64(v))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::LoadFx => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let v = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
+                set_reg(vm, frame_idx, dst, Value::Fx(v))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
@@ -1039,6 +1049,11 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let n = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_F64 r{}, {}", d, n)
         }
+        Opcode::LoadFx => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("LOAD_FX r{}, raw:{}", d, n)
+        }
         Opcode::LoadVar => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1188,6 +1203,30 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_fx_literal_call_and_compare_path() {
+        let src = r#"
+            fn id(x: fx) -> fx { return x; }
+
+            fn make() -> fx {
+                return -1.25;
+            }
+
+            fn main() {
+                let x: fx = 1.25;
+                let y: fx = id(2);
+                let z: fx = make();
+                let a = x == x;
+                let b = y != z;
+                if a == b { return; } else { return; }
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("LOAD_FX"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
     fn vm_rejects_unknown_opcode_on_load() {
         let src = "fn main() { return; }";
         let mut bytes = compile_program_to_semcode(src).expect("compile");
@@ -1208,6 +1247,7 @@ mod tests {
                 assert!(found.starts_with("SEMCODE"));
                 assert!(supported.contains("SEMCODE0"));
                 assert!(supported.contains("SEMCODE1"));
+                assert!(supported.contains("SEMCODE2"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }
