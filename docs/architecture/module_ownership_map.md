@@ -10,7 +10,7 @@ Core ownership:
 - compiler semantics: `sm-sema`
 - IR and lowering: `sm-ir`
 - optimization passes: `sm-ir`
-- SemCode binary contract: current implementation is split between `sm-ir/local_format` and `sm-emit`; canonical owner is pending decision
+- SemCode binary contract: `sm-ir`
 - bytecode admission contract: `sm-verify`
 - runtime primitives: `sm-runtime-core`
 - VM execution mechanics: `sm-vm`
@@ -30,6 +30,7 @@ Ownership rules:
 - no public contract may keep two long-term owners;
 - pending ownership decisions must be marked explicitly rather than implied as settled;
 - `sm-opt` is not a canonical owner crate for `v1`; optimizer contract lives in `sm-ir` unless a later architecture decision creates a separate owner with matching code movement;
+- `sm-emit` is a producer-facing facade in the current `v1` baseline; the SemCode header/opcode/capability contract is owned by `sm-ir`;
 - `sm-vm` consumes SemCode but does not own its format contract;
 - `sm-verify` owns admission, `sm-vm` executes only admitted code;
 - `prom-state` owns semantic state, not `sm-vm`;

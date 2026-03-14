@@ -9,7 +9,7 @@ Project zones:
 Current pending ownership notes:
 
 - optimizer surface is owned by `sm-ir` in the current `v1` baseline; a future `sm-opt` split would require an explicit follow-up decision and code move
-- SemCode format contract currently spans `sm-ir/local_format` and `sm-emit`; canonical ownership is still a decision item
+- SemCode format contract is owned by `sm-ir` in the current `v1` baseline; `sm-emit` remains a producer-facing facade and compatibility layer
 - public CLI surface is currently split between root `smc` and `smc-cli`
 
 Allowed flow:

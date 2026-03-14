@@ -1,7 +1,8 @@
 # SemCode Specification
 
 Status: draft v0
-Current producer surface: `sm-emit`
+Current format owner: `sm-ir`
+Current producer facade: `sm-emit`
 Admission owner: `sm-verify`
 Execution consumer: `sm-vm`
 
@@ -9,6 +10,11 @@ Execution consumer: `sm-vm`
 
 SemCode is the binary contract between the Semantic producer pipeline and the
 Semantic VM.
+
+Ownership rule:
+
+- `sm-ir` owns the SemCode header, opcode, and capability contract in the current `v1` baseline
+- `sm-emit` exposes producer-facing entrypoints over that contract and is not a second format owner
 
 Standard execution rule:
 
