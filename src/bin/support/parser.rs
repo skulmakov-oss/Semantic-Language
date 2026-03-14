@@ -1,3 +1,5 @@
+//! Legacy compatibility parser/profile helpers for `ton618_core` only.
+
 #![allow(dead_code)]
 
 use crate::{QuadroReg, F, N, S, T};

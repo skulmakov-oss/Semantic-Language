@@ -64,7 +64,8 @@ fn main: code=25 bytes, strings=2
 
 ## CLI reference
 - Canonical public CLI owner: `smc-cli`.
-- Current repository note: root `src/bin/smc.rs` and `src/bin/svm.rs` remain process entrypoints while CLI implementation cleanup is still pending.
+- Current repository note: root `src/bin/smc.rs` and `src/bin/svm.rs` remain process entrypoints that delegate into the canonical `smc-cli` owner.
+- `ton618_core` remains only as a legacy compatibility CLI shim for pre-v1 workflows.
 - `smc compile <input.sm> -o <out.smc>`
   - Parses, type-checks, lowers, validates IR, emits SemCode file.
 - `smc features`
@@ -134,13 +135,18 @@ Optional:
 - `bench`
 
 ## Repository layout
-- `src/frontend.rs` - lexer/parser/type-checker/lowering/IR validation/emitter.
-- `src/semcode_format.rs` - SemCode constants, opcodes, LE read/write helpers.
-- `src/semcode_vm.rs` - SemCode parser, VM runtime, disassembler.
-- `src/bin/smc.rs` - compiler/tooling entrypoint (`compile`, `check`, `lint`, `watch`, hashes).
-- `src/bin/svm.rs` - VM entrypoint (`run`, `disasm`).
-- `tests/golden/*` - `.sm` and `.smc` golden fixtures.
-- `tests/golden_semcode.rs` - golden byte-for-byte format tests.
+- `crates/sm-front` - lexer, parser, and source-surface typing.
+- `crates/sm-sema` - semantic analysis and diagnostics.
+- `crates/sm-ir` - lowering, IR verification, optimizer passes, and SemCode contract owner.
+- `crates/sm-emit` - producer-facing SemCode facade over the canonical `sm-ir` contract.
+- `crates/sm-verify` - SemCode admission verifier.
+- `crates/sm-runtime-core` - runtime primitives, quotas, and symbol vocabulary.
+- `crates/sm-vm` - verified-only VM execution.
+- `crates/smc-cli` - canonical public CLI owner.
+- `src/bin/smc.rs` and `src/bin/svm.rs` - root process entrypoints.
+- `src/bin/ton618_core.rs` and `src/bin/support/**` - legacy compatibility CLI perimeter.
+- `crates/ton618-core` - retained compatibility-named low-level primitive crate.
+- `tests/golden/*` and `tests/golden_snapshots/**` - format and runtime golden baselines.
 
 ## Roadmap
 - SemCode structural validator before VM execution.

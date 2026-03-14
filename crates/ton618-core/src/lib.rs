@@ -1,3 +1,9 @@
+//! Compatibility-named low-level core crate retained for `v1`.
+//!
+//! Canonical ownership of public platform contracts lives in the `sm-*` crates.
+//! This crate keeps the historical `ton618-core` name only for low-level primitives
+//! and dependency compatibility during the current `v1` baseline.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "alloc")]

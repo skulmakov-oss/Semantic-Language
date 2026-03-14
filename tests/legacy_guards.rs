@@ -113,3 +113,48 @@ fn root_smc_is_thin_wrapper_over_smc_cli() {
         "smc-cli must own the command runner"
     );
 }
+
+#[test]
+fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
+    let explicit_shims = [
+        "src/bin/ton618_core.rs",
+        "src/bin/support/mod.rs",
+        "src/bin/support/language.rs",
+        "src/bin/support/parser.rs",
+        "crates/ton618-core/src/lib.rs",
+    ];
+
+    for path in explicit_shims {
+        let txt = fs::read_to_string(path).expect("read compatibility shim");
+        assert!(
+            txt.contains("compatibility"),
+            "legacy shim {} must declare explicit compatibility status",
+            path
+        );
+    }
+
+    let mut ton618_named = Vec::new();
+    collect_rs_files(Path::new("src"), &mut ton618_named);
+    collect_rs_files(Path::new("crates/ton618-core/src"), &mut ton618_named);
+    let mut matches = Vec::new();
+    for file in ton618_named {
+        let rel = file.to_string_lossy().replace('\\', "/");
+        if rel.contains("ton618") {
+            matches.push(rel);
+        }
+    }
+    matches.sort();
+    matches.dedup();
+
+    assert!(
+        matches.iter().all(|rel| {
+            rel == "src/bin/ton618_core.rs" || rel.starts_with("crates/ton618-core/src/")
+        }),
+        "legacy ton618 naming must remain inside the explicit compatibility perimeter only: {:?}",
+        matches
+    );
+    assert!(
+        matches.iter().any(|rel| rel == "src/bin/ton618_core.rs"),
+        "legacy compatibility bin must remain explicit"
+    );
+}

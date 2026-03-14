@@ -25,5 +25,5 @@ Current remaining critical path:
 
 Current non-blocking follow-up work:
 
-- reduce legacy naming and compatibility tails
+- keep the explicit legacy compatibility perimeter narrow and non-owning
 - deepen runtime semantics only after `v1` scope is frozen

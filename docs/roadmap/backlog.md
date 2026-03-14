@@ -18,6 +18,10 @@ Current blocking implementation wave:
 - align code layout with chosen owners
 - add `M6` CI enforcement and release gates
 
+Current non-blocking hygiene wave:
+
+- keep the explicit `ton618_core` / `support` / `ton618-core` compatibility perimeter narrow and documented
+
 Foundational work already in place:
 
 - repository discipline and architecture baseline

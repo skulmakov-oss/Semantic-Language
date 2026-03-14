@@ -1,3 +1,5 @@
+//! Legacy compatibility language helpers for `ton618_core` only.
+
 use crate::parser::{parse_assignment, BinaryOp as PBinaryOp, Expr, UnaryOp};
 use crate::{QuadroReg, F, N, S, T};
 use sm_profile::ParserProfile;

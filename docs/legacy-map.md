@@ -17,8 +17,10 @@ src/
   lib.rs
   bin/
     smc.rs
+    svm.rs
     ton618_core.rs
     support/
+      mod.rs
       language.rs
       parser.rs
 ```
@@ -47,10 +49,24 @@ Compatibility re-exports remain in `src/lib.rs` as inline modules:
 
 No external shim files are used.
 
+Remaining compatibility perimeter:
+
+- `src/bin/ton618_core.rs`
+  - retained as a legacy CLI shim for pre-v1 `ton618_core` workflows
+  - not a canonical public CLI owner
+- `src/bin/support/**`
+  - retained only as helper modules for the `ton618_core` shim
+  - not canonical frontend/profile/parser owners
+- `crates/ton618-core`
+  - retained as a compatibility-named low-level primitive crate
+  - not a second owner for `sm-*` platform contracts
+
 ## Guards
 
 `tests/legacy_guards.rs` enforces:
 - no path adapters from crates to root (`#[path = "../../../src/..."]`)
 - root/src allowlist policy (`lib.rs` + `bin/**`)
 - ban of legacy patterns in root source (`legacy_`, `#[path =`, `include!`, `mod legacy`)
+- explicit compatibility markers on the allowlisted `ton618`/`support` shims
+- narrow allowlist for remaining `ton618` naming
 

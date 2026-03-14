@@ -1,3 +1,8 @@
+//! Legacy compatibility CLI shim.
+//!
+//! Canonical public CLI ownership lives in `smc-cli`.
+//! This binary remains only to preserve pre-v1 `ton618_core` workflows.
+
 pub use semantic_language::{LSB_MASK, MSB_MASK, QuadroReg, F, N, S, T};
 use serde::Deserialize;
 use sm_profile::{train_profile_in_place, ParserProfile, TrainingSample};
