@@ -9,10 +9,12 @@ mod semcode_format {
 }
 
 #[cfg(feature = "std")]
-mod frontend {
-    pub use sm_front::QuadVal;
-    #[cfg(test)]
-    pub use sm_emit::compile_program_to_semcode;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuadVal {
+    N,
+    F,
+    T,
+    S,
 }
 
 #[cfg(feature = "std")]

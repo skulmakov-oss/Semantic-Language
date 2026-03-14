@@ -5,14 +5,18 @@ on:
   pull_request:
 
 jobs:
-  root-cleanliness:
+  boundary-enforcement:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Root cleanliness guards
-        run: cargo test --test legacy_guards --quiet
+      - name: Boundary and ownership guards
+        run: |
+          cargo test --test legacy_guards --quiet
+          cargo test --test frontend_boundaries --quiet
+          cargo test --test ir_opt_boundaries --quiet
+          cargo test --test dependency_boundaries --quiet
 
   test-std:
     runs-on: ubuntu-latest

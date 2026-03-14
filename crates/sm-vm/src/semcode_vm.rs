@@ -2,7 +2,7 @@ use crate::semcode_format::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
     read_utf8, supported_headers, SemcodeFormatError, SemcodeHeaderSpec, Opcode,
 };
-use crate::frontend::QuadVal;
+use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
 use prom_cap::{CapabilityChecker, CapabilityDenied};
 use sm_runtime_core::{
@@ -1154,7 +1154,7 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::compile_program_to_semcode;
+    use sm_emit::compile_program_to_semcode;
     use sm_runtime_core::{ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind};
 
     #[test]

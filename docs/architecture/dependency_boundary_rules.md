@@ -27,7 +27,8 @@ Boundary rules:
 Current enforcement note:
 
 - these boundary rules are repository policy now
-- full CI enforcement for dependency graph and forbidden imports is still pending `M6`
+- CI now enforces baseline ownership and dependency guards for root shims, SemCode owner alignment, optimizer owner alignment, and crate-level forbidden dependency checks
+- broader graph visualization, API diff, and release gating remain pending `M6`
 
 Immediate debt markers:
 
