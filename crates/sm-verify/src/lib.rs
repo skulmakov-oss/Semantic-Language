@@ -205,17 +205,34 @@ pub fn verify_semcode(bytes: &[u8]) -> Result<VerifiedProgram, RejectReport> {
         .collect::<HashSet<_>>();
     for function in &pending_functions {
         for (offset, callee) in &function.call_targets {
-            if !known_functions.contains(callee.as_str()) {
-                diagnostics.push(diag(
-                    VerificationCode::UnknownCallTarget,
-                    Some(function.verified.name.clone()),
-                    Some(*offset),
-                    format!(
-                        "call target '{}' does not resolve to any function in this SemCode program",
-                        callee
-                    ),
-                ));
+            if known_functions.contains(callee.as_str()) {
+                continue;
             }
+
+            if let Some(required_capabilities) = builtin_call_required_capabilities(callee) {
+                if header.capabilities & required_capabilities != required_capabilities {
+                    diagnostics.push(diag(
+                        VerificationCode::CapabilityViolation,
+                        Some(function.verified.name.clone()),
+                        Some(*offset),
+                        format!(
+                            "builtin call target '{}' requires capability bits 0x{required_capabilities:08x}",
+                            callee
+                        ),
+                    ));
+                }
+                continue;
+            }
+
+            diagnostics.push(diag(
+                VerificationCode::UnknownCallTarget,
+                Some(function.verified.name.clone()),
+                Some(*offset),
+                format!(
+                    "call target '{}' does not resolve to any function in this SemCode program",
+                    callee
+                ),
+            ));
         }
     }
 
@@ -449,14 +466,27 @@ fn decode_operands(
             refs.required_capabilities |= CAP_FX_VALUES;
             read_i32_le(code, cursor).map_err(|_| invalid("truncated fx literal"))?;
         }
-        Opcode::LoadVar | Opcode::StoreVar | Opcode::QNot | Opcode::BoolNot => {
-            let reg = read_u16_le(code, cursor).map_err(|_| invalid("truncated operand register"))?;
-            mark_reg(reg);
+        Opcode::LoadVar => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            mark_reg(dst);
             let sid = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated operand register/string id"))?;
-            if matches!(opcode, Opcode::LoadVar | Opcode::StoreVar) {
-                refs.string_refs.push((offset, sid as usize, "variable reference"));
-            }
+                .map_err(|_| invalid("truncated variable string id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "variable reference"));
+        }
+        Opcode::StoreVar => {
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated variable string id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "variable reference"));
+            let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated src register"))?;
+            mark_reg(src);
+        }
+        Opcode::QNot | Opcode::BoolNot => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated src register"))?;
+            mark_reg(dst);
+            mark_reg(src);
         }
         Opcode::QAnd
         | Opcode::QOr
@@ -536,6 +566,14 @@ fn decode_operands(
 }
 
 #[cfg(feature = "std")]
+fn builtin_call_required_capabilities(name: &str) -> Option<u32> {
+    match name {
+        "sin" | "cos" | "tan" | "sqrt" | "abs" | "pow" => Some(CAP_F64_MATH),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "std")]
 #[derive(Default)]
 struct OperandRefs {
     jump_targets: Vec<usize>,
@@ -580,7 +618,10 @@ fn diag(
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
-    use sm_emit::compile_program_to_semcode;
+    use sm_emit::{
+        compile_program_to_semcode, compile_program_to_semcode_with_options_debug, CompileProfile,
+        OptLevel,
+    };
 
     #[test]
     fn verifier_accepts_valid_semcode() {
@@ -602,6 +643,44 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.header.rev, 3);
+    }
+
+    #[test]
+    fn verifier_accepts_cli_o0_f64_arithmetic_storevar_layout() {
+        let src = r#"
+            fn main() {
+                let y: f64 = 1.0 + 2.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode_with_options_debug(
+            src,
+            CompileProfile::Auto,
+            OptLevel::O0,
+            false,
+        )
+        .expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 2);
+    }
+
+    #[test]
+    fn verifier_accepts_builtin_f64_call_targets() {
+        let src = r#"
+            fn main() {
+                let y: f64 = sqrt(16.0);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode_with_options_debug(
+            src,
+            CompileProfile::Auto,
+            OptLevel::O0,
+            false,
+        )
+        .expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 2);
     }
 
     #[test]

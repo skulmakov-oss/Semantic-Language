@@ -417,7 +417,15 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
-            Opcode::LoadVar | Opcode::StoreVar | Opcode::QNot | Opcode::BoolNot => {
+            Opcode::LoadVar => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::StoreVar => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::QNot | Opcode::BoolNot => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
@@ -775,9 +783,16 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                     args.push(get_reg(vm, frame_idx, r)?);
                 }
-                vm.callstack[frame_idx].pc = cur - f.instr_start;
-                push_frame(vm, &callee, args, if has_dst { Some(dst) } else { None })?;
-                continue;
+                if let Some(result) = try_eval_builtin_call(&callee, &args)? {
+                    if has_dst {
+                        set_reg(vm, frame_idx, dst, result)?;
+                    }
+                    next_pc = cur - f.instr_start;
+                } else {
+                    vm.callstack[frame_idx].pc = cur - f.instr_start;
+                    push_frame(vm, &callee, args, if has_dst { Some(dst) } else { None })?;
+                    continue;
+                }
             }
             Opcode::GateRead => {
                 bump_effect_calls(vm)?;
@@ -1022,6 +1037,42 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             "CmpEq/CmpNe operands must have same runtime type".to_string(),
         )),
     }
+}
+
+fn try_eval_builtin_call(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
+    let value = match name {
+        "sin" => Value::F64(expect_builtin_unary_f64(name, args)?.sin()),
+        "cos" => Value::F64(expect_builtin_unary_f64(name, args)?.cos()),
+        "tan" => Value::F64(expect_builtin_unary_f64(name, args)?.tan()),
+        "sqrt" => Value::F64(expect_builtin_unary_f64(name, args)?.sqrt()),
+        "abs" => Value::F64(expect_builtin_unary_f64(name, args)?.abs()),
+        "pow" => {
+            let (lhs, rhs) = expect_builtin_binary_f64(name, args)?;
+            Value::F64(lhs.powf(rhs))
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(value))
+}
+
+fn expect_builtin_unary_f64(name: &str, args: &[Value]) -> Result<f64, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::TypeMismatchRuntime(format!(
+            "builtin '{name}' expects 1 f64 argument, got {}",
+            args.len()
+        )));
+    }
+    as_f64(args[0].clone())
+}
+
+fn expect_builtin_binary_f64(name: &str, args: &[Value]) -> Result<(f64, f64), RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::TypeMismatchRuntime(format!(
+            "builtin '{name}' expects 2 f64 arguments, got {}",
+            args.len()
+        )));
+    }
+    Ok((as_f64(args[0].clone())?, as_f64(args[1].clone())?))
 }
 
 fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), RuntimeError> {
