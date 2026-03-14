@@ -1,0 +1,133 @@
+# SemCode Specification
+
+Status: draft v0
+Current producer surface: `sm-emit`
+Admission owner: `sm-verify`
+Execution consumer: `sm-vm`
+
+## Purpose
+
+SemCode is the binary contract between the Semantic producer pipeline and the
+Semantic VM.
+
+Standard execution rule:
+
+`source -> AST -> sema -> IR -> SemCode -> verify -> execute`
+
+The VM is not the primary structural admission gate.
+`sm-verify` is the required admission stage for standard SemCode execution.
+
+## Versioned Header Family
+
+Current supported header family:
+
+- `SEMCODE0`
+- `SEMCODE1`
+
+Observed runtime support in the current toolchain:
+
+- `SEMCODE0`: epoch `0`, revision `1`
+- `SEMCODE1`: epoch `0`, revision `2`
+
+Header responsibilities:
+
+- identify the format family
+- identify the supported epoch and revision
+- carry the emitted capability bitset for the produced artifact
+
+## Version Policy
+
+Compatibility rules:
+
+1. A producer must emit exactly one supported SemCode header variant.
+2. A verifier must reject artifacts with unknown or unsupported headers.
+3. A VM must not silently reinterpret an unsupported header as a supported one.
+4. Any incompatible binary layout or meaning change requires a version bump.
+
+## Current Header Semantics
+
+`SEMCODE0`
+
+- baseline SemCode contract
+- does not imply floating-point math capability
+
+`SEMCODE1`
+
+- promoted contract used when emitted program usage requires the `f64` math
+  family
+- carries the stronger capability envelope required by that produced artifact
+
+Important rule:
+
+- header selection is derived from actual emitted usage, not from profile
+  permission alone
+
+That means:
+
+- a profile may allow `f64`
+- if the program does not actually use the `f64` family, the producer may still
+  emit `SEMCODE0`
+
+## Capability Contract
+
+The current capability contract is carried by the SemCode header and verified
+against actual opcode usage.
+
+Current canonical capability families:
+
+- `CAP_F64_MATH`
+- `CAP_GATE_SURFACE`
+- `CAP_DEBUG_SYMBOLS`
+
+Contract rule:
+
+- profile policy constrains what may be produced
+- SemCode header records what was actually produced
+- verifier proves that opcode usage matches the emitted capability contract
+
+## Structural Contract
+
+Current SemCode admission validates:
+
+- header magic and supported version
+- section and function-layout integrity
+- opcode validity
+- operand shape validity
+- jump-target validity
+- call-target validity
+- register-budget validity against the runtime contract
+- string and debug reference validity
+- capability consistency between actual usage and emitted contract
+
+## Backward Compatibility Rule
+
+The following changes require a SemCode version review:
+
+- header layout change
+- section layout change
+- opcode encoding change
+- capability bit meaning change
+- verifier interpretation change that alters what previously valid artifacts
+  mean
+
+Required follow-up:
+
+1. update this specification
+2. update verifier compatibility tests
+3. update VM compatibility tests
+4. update golden or compatibility fixtures if public behavior changed
+
+## No Silent Mutation Rule
+
+The following are forbidden without a documented version change:
+
+- repurposing an existing capability bit
+- changing the meaning of an existing header family
+- changing section interpretation while keeping the same public version
+
+## Consumer Rule
+
+`sm-vm` may consume SemCode on the standard execution route only through a
+verified admission path.
+
+Any raw or testing-only path must not redefine the public SemCode contract.
