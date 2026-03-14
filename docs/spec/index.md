@@ -12,9 +12,16 @@ Current documents in this PR:
 - `verifier.md` - SemCode admission verification contract
 - `vm.md` - Semantic VM public execution contract
 - `quotas.md` - runtime quota taxonomy and enforcement contract
+- `abi.md` - PROMETHEUS host ABI boundary contract
+- `capabilities.md` - capability manifest and denial contract
+- `gates.md` - gate registry and binding contract
+- `runtime.md` - runtime orchestration session contract
+- `state.md` - semantic state model and invariants
+- `rules.md` - deterministic rule and agenda contract
+- `audit.md` - audit trail and replay metadata contract
 
 Later PRs may extend this bundle with source-surface, IR, CLI, versioning, and
-PROMETHEUS-boundary specifications.
+release-facing validation specifications.
 
 Contract precedence:
 
