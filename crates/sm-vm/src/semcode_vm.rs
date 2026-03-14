@@ -3,6 +3,8 @@ use crate::semcode_format::{
     read_utf8, supported_headers, SemcodeFormatError, SemcodeHeaderSpec, Opcode,
 };
 use crate::frontend::QuadVal;
+use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
+use prom_cap::{CapabilityChecker, CapabilityDenied};
 use sm_runtime_core::{
     ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas,
     RuntimeSymbolTable, SymbolId,
@@ -76,6 +78,8 @@ pub enum RuntimeError {
     VerifierRejected(RejectReport),
     UnknownVariable(String),
     InvalidStringId(u16),
+    HostAbi(AbiError),
+    CapabilityDenied(CapabilityDenied),
 }
 
 impl core::fmt::Display for RuntimeError {
@@ -103,6 +107,8 @@ impl core::fmt::Display for RuntimeError {
             RuntimeError::VerifierRejected(report) => write!(f, "{report}"),
             RuntimeError::UnknownVariable(n) => write!(f, "unknown variable '{}'", n),
             RuntimeError::InvalidStringId(id) => write!(f, "invalid string id {}", id),
+            RuntimeError::HostAbi(err) => write!(f, "{err}"),
+            RuntimeError::CapabilityDenied(err) => write!(f, "{err}"),
         }
     }
 }
@@ -159,6 +165,47 @@ pub fn run_verified_semcode_with_entry_and_config(
     run_semcode_with_entry_and_config(bytes, entry, config)
 }
 
+pub fn run_verified_semcode_with_host_and_capabilities<
+    H: PrometheusHostAbi,
+    C: CapabilityChecker,
+>(
+    bytes: &[u8],
+    host: &mut H,
+    capabilities: &C,
+) -> Result<(), RuntimeError> {
+    run_verified_semcode_with_host_and_capabilities_and_config(
+        bytes,
+        "main",
+        host,
+        capabilities,
+        ExecutionConfig::for_context(ExecutionContext::KernelBound),
+    )
+}
+
+pub fn run_verified_semcode_with_host_and_capabilities_and_config<
+    H: PrometheusHostAbi,
+    C: CapabilityChecker,
+>(
+    bytes: &[u8],
+    entry: &str,
+    host: &mut H,
+    capabilities: &C,
+    config: ExecutionConfig,
+) -> Result<(), RuntimeError> {
+    verify_semcode(bytes).map_err(RuntimeError::VerifierRejected)?;
+    let (_, symbols, functions) = parse_semcode(bytes)?;
+    let mut vm = VM {
+        functions,
+        callstack: Vec::new(),
+        config,
+        effect_calls: 0,
+        symbols,
+    };
+    push_frame(&mut vm, entry, Vec::new(), None)?;
+    let mut bridge = PrometheusVmHost { host, capabilities };
+    exec_loop(&mut vm, &mut bridge)
+}
+
 pub fn run_semcode_with_entry_and_config(
     bytes: &[u8],
     entry: &str,
@@ -173,7 +220,8 @@ pub fn run_semcode_with_entry_and_config(
         symbols,
     };
     push_frame(&mut vm, entry, Vec::new(), None)?;
-    exec_loop(&mut vm)
+    let mut host = LegacyVmHost;
+    exec_loop(&mut vm, &mut host)
 }
 
 pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
@@ -455,7 +503,79 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
     Ok(())
 }
 
-fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
+trait VmHostBridge {
+    fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError>;
+    fn gate_write(
+        &mut self,
+        device_id: u16,
+        port: u16,
+        value: Value,
+    ) -> Result<(), RuntimeError>;
+    fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError>;
+}
+
+struct LegacyVmHost;
+
+impl VmHostBridge for LegacyVmHost {
+    fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError> {
+        Ok(Value::I32(((device_id as i32) << 16) | (port as i32)))
+    }
+
+    fn gate_write(
+        &mut self,
+        _device_id: u16,
+        _port: u16,
+        _value: Value,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn pulse_emit(&mut self, _signal: &str) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+}
+
+struct PrometheusVmHost<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
+    host: &'a mut H,
+    capabilities: &'a C,
+}
+
+impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for PrometheusVmHost<'a, H, C> {
+    fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::GateRead)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .gate_read(device_id, port)
+            .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn gate_write(
+        &mut self,
+        device_id: u16,
+        port: u16,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::GateWrite)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .gate_write(device_id, port, value_to_abi(value))
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::PulseEmit)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .pulse_emit(signal)
+            .map_err(RuntimeError::HostAbi)
+    }
+}
+
+fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeError> {
     loop {
         let Some(frame_idx) = vm.callstack.len().checked_sub(1) else {
             return Ok(());
@@ -654,22 +774,24 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let val = ((device_id as i32) << 16) | (port as i32);
-                set_reg(vm, frame_idx, dst, Value::I32(val))?;
+                let value = host.gate_read(device_id, port)?;
+                set_reg(vm, frame_idx, dst, value)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::GateWrite => {
                 bump_effect_calls(vm)?;
-                let _device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let _port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let device_id = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let port = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let _ = get_reg(vm, frame_idx, src)?;
+                let value = get_reg(vm, frame_idx, src)?;
+                host.gate_write(device_id, port, value)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::PulseEmit => {
                 bump_effect_calls(vm)?;
                 let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
-                let _signal = lookup_str(&f, sid)?;
+                let signal = lookup_str(&f, sid)?;
+                host.pulse_emit(signal)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::Ret => {
@@ -693,6 +815,30 @@ fn exec_loop(vm: &mut VM) -> Result<(), RuntimeError> {
         }
 
         vm.callstack[frame_idx].pc = next_pc;
+    }
+}
+
+fn value_to_abi(value: Value) -> AbiValue {
+    match value {
+        Value::Quad(q) => AbiValue::Quad(quad_to_u8(q)),
+        Value::Bool(v) => AbiValue::Bool(v),
+        Value::I32(v) => AbiValue::I32(v),
+        Value::F64(v) => AbiValue::F64(v),
+        Value::U32(v) => AbiValue::U32(v),
+        Value::Fx(v) => AbiValue::Fx(v),
+        Value::Unit => AbiValue::Unit,
+    }
+}
+
+fn value_from_abi(value: AbiValue) -> Value {
+    match value {
+        AbiValue::Quad(q) => Value::Quad(u8_to_quad(q)),
+        AbiValue::Bool(v) => Value::Bool(v),
+        AbiValue::I32(v) => Value::I32(v),
+        AbiValue::F64(v) => Value::F64(v),
+        AbiValue::U32(v) => Value::U32(v),
+        AbiValue::Fx(v) => Value::Fx(v),
+        AbiValue::Unit => Value::Unit,
     }
 }
 

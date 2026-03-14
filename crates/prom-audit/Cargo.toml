@@ -1,0 +1,15 @@
+[package]
+name = "prom-audit"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["prom-cap/std", "sm-runtime-core/std"]
+
+[dependencies]
+prom-cap = { path = "../prom-cap", default-features = false }
+sm-runtime-core = { path = "../sm-runtime-core", default-features = false }

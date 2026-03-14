@@ -1,0 +1,488 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+use prom_audit::{AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail};
+use prom_abi::PrometheusHostAbi;
+use prom_cap::{CapabilityChecker, CapabilityManifestMetadata};
+use prom_gates::{GateBinding, GateHostAdapter, GateRegistry};
+use prom_rules::{Agenda, AgendaEntry, RuleEngine};
+use prom_state::{
+    SemanticStateStore, StateEpoch, StateTransitionMetadata, StateUpdate, StateValidationError,
+};
+use sm_runtime_core::{ExecutionConfig, ExecutionContext};
+use sm_vm::{
+    run_verified_semcode_with_host_and_capabilities_and_config, RuntimeError,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSessionDescriptor {
+    pub context: ExecutionContext,
+    pub capability_manifest: CapabilityManifestMetadata,
+    pub gate_registry_bound: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIntegrationSnapshot {
+    pub session: RuntimeSessionDescriptor,
+    pub state_epoch: StateEpoch,
+    pub active_rules: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivationSelection {
+    pub entry: AgendaEntry,
+    pub remaining_rules: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStateAdvance {
+    pub transition: StateTransitionMetadata,
+    pub agenda: Agenda,
+    pub snapshot: RuntimeIntegrationSnapshot,
+}
+
+fn build_audit_session(descriptor: &RuntimeSessionDescriptor) -> AuditSessionMetadata {
+    AuditSessionMetadata {
+        context: descriptor.context,
+        capability_manifest: descriptor.capability_manifest.clone(),
+        gate_registry_bound: descriptor.gate_registry_bound,
+    }
+}
+
+fn build_integration_snapshot(
+    descriptor: &RuntimeSessionDescriptor,
+    state: &SemanticStateStore,
+    agenda: &Agenda,
+) -> RuntimeIntegrationSnapshot {
+    RuntimeIntegrationSnapshot {
+        session: descriptor.clone(),
+        state_epoch: state.epoch(),
+        active_rules: agenda.entries().len(),
+    }
+}
+
+fn apply_update_refresh_agenda(
+    descriptor: &RuntimeSessionDescriptor,
+    state: &mut SemanticStateStore,
+    update: StateUpdate,
+    rules: &RuleEngine,
+    trail: &mut AuditTrail,
+) -> Result<RuntimeStateAdvance, StateValidationError> {
+    let transition = state.apply(update)?;
+    trail.record(AuditEventKind::StateTransition {
+        key: transition.key.clone(),
+        from_epoch: transition.from_epoch.0,
+        to_epoch: transition.to_epoch.0,
+    });
+    let agenda = rules.evaluate(state);
+    let snapshot = build_integration_snapshot(descriptor, state, &agenda);
+    Ok(RuntimeStateAdvance {
+        transition,
+        agenda,
+        snapshot,
+    })
+}
+
+pub struct ExecutionSession<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
+    host: &'a mut H,
+    capabilities: &'a C,
+    config: ExecutionConfig,
+    descriptor: RuntimeSessionDescriptor,
+}
+
+impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> ExecutionSession<'a, H, C> {
+    pub fn new(
+        host: &'a mut H,
+        capabilities: &'a C,
+        config: ExecutionConfig,
+        capability_manifest: CapabilityManifestMetadata,
+    ) -> Self {
+        Self {
+            host,
+            capabilities,
+            descriptor: RuntimeSessionDescriptor {
+                context: config.context,
+                capability_manifest,
+                gate_registry_bound: false,
+            },
+            config,
+        }
+    }
+
+    pub fn kernel_bound(
+        host: &'a mut H,
+        capabilities: &'a C,
+        capability_manifest: CapabilityManifestMetadata,
+    ) -> Self {
+        Self::new(
+            host,
+            capabilities,
+            ExecutionConfig::for_context(ExecutionContext::KernelBound),
+            capability_manifest,
+        )
+    }
+
+    pub fn descriptor(&self) -> &RuntimeSessionDescriptor {
+        &self.descriptor
+    }
+
+    pub fn derive_agenda(&self, state: &SemanticStateStore, rules: &RuleEngine) -> Agenda {
+        rules.evaluate(state)
+    }
+
+    pub fn select_next_activation(&self, agenda: &Agenda) -> Option<ActivationSelection> {
+        agenda.entries().first().cloned().map(|entry| ActivationSelection {
+            entry,
+            remaining_rules: agenda.entries().len().saturating_sub(1),
+        })
+    }
+
+    pub fn begin_audit_trail(&self) -> AuditTrail {
+        AuditTrail::new(build_audit_session(&self.descriptor))
+    }
+
+    pub fn record_session_started(&self, trail: &mut AuditTrail, entry: &str) -> AuditEventId {
+        trail.record(AuditEventKind::SessionStarted {
+            entry: entry.into(),
+        })
+    }
+
+    pub fn record_session_finished(&self, trail: &mut AuditTrail) -> AuditEventId {
+        trail.record(AuditEventKind::SessionFinished)
+    }
+
+    pub fn record_rule_activation(
+        &self,
+        trail: &mut AuditTrail,
+        selection: &ActivationSelection,
+    ) -> AuditEventId {
+        trail.record(AuditEventKind::RuleActivated {
+            rule_id: selection.entry.rule_id.0.clone(),
+            salience: selection.entry.salience.0,
+        })
+    }
+
+    pub fn record_state_transition(
+        &self,
+        trail: &mut AuditTrail,
+        transition: &StateTransitionMetadata,
+    ) -> AuditEventId {
+        trail.record(AuditEventKind::StateTransition {
+            key: transition.key.clone(),
+            from_epoch: transition.from_epoch.0,
+            to_epoch: transition.to_epoch.0,
+        })
+    }
+
+    pub fn integration_snapshot(
+        &self,
+        state: &SemanticStateStore,
+        agenda: &Agenda,
+    ) -> RuntimeIntegrationSnapshot {
+        build_integration_snapshot(&self.descriptor, state, agenda)
+    }
+
+    pub fn apply_state_update_and_refresh_agenda(
+        &self,
+        state: &mut SemanticStateStore,
+        update: StateUpdate,
+        rules: &RuleEngine,
+        trail: &mut AuditTrail,
+    ) -> Result<RuntimeStateAdvance, StateValidationError> {
+        apply_update_refresh_agenda(&self.descriptor, state, update, rules, trail)
+    }
+
+    pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
+        self.run_verified_semcode_entry(bytes, "main")
+    }
+
+    pub fn run_verified_semcode_entry(
+        &mut self,
+        bytes: &[u8],
+        entry: &str,
+    ) -> Result<(), RuntimeError> {
+        run_verified_semcode_with_host_and_capabilities_and_config(
+            bytes,
+            entry,
+            self.host,
+            self.capabilities,
+            self.config,
+        )
+    }
+}
+
+pub struct GateExecutionSession<'a, B: GateBinding, C: CapabilityChecker> {
+    registry: &'a GateRegistry,
+    binding: &'a mut B,
+    capabilities: &'a C,
+    config: ExecutionConfig,
+    descriptor: RuntimeSessionDescriptor,
+}
+
+impl<'a, B: GateBinding, C: CapabilityChecker> GateExecutionSession<'a, B, C> {
+    pub fn new(
+        registry: &'a GateRegistry,
+        binding: &'a mut B,
+        capabilities: &'a C,
+        config: ExecutionConfig,
+        capability_manifest: CapabilityManifestMetadata,
+    ) -> Self {
+        Self {
+            registry,
+            binding,
+            capabilities,
+            descriptor: RuntimeSessionDescriptor {
+                context: config.context,
+                capability_manifest,
+                gate_registry_bound: true,
+            },
+            config,
+        }
+    }
+
+    pub fn kernel_bound(
+        registry: &'a GateRegistry,
+        binding: &'a mut B,
+        capabilities: &'a C,
+        capability_manifest: CapabilityManifestMetadata,
+    ) -> Self {
+        Self::new(
+            registry,
+            binding,
+            capabilities,
+            ExecutionConfig::for_context(ExecutionContext::KernelBound),
+            capability_manifest,
+        )
+    }
+
+    pub fn descriptor(&self) -> &RuntimeSessionDescriptor {
+        &self.descriptor
+    }
+
+    pub fn derive_agenda(&self, state: &SemanticStateStore, rules: &RuleEngine) -> Agenda {
+        rules.evaluate(state)
+    }
+
+    pub fn select_next_activation(&self, agenda: &Agenda) -> Option<ActivationSelection> {
+        agenda.entries().first().cloned().map(|entry| ActivationSelection {
+            entry,
+            remaining_rules: agenda.entries().len().saturating_sub(1),
+        })
+    }
+
+    pub fn begin_audit_trail(&self) -> AuditTrail {
+        AuditTrail::new(build_audit_session(&self.descriptor))
+    }
+
+    pub fn record_session_started(&self, trail: &mut AuditTrail, entry: &str) -> AuditEventId {
+        trail.record(AuditEventKind::SessionStarted {
+            entry: entry.into(),
+        })
+    }
+
+    pub fn record_session_finished(&self, trail: &mut AuditTrail) -> AuditEventId {
+        trail.record(AuditEventKind::SessionFinished)
+    }
+
+    pub fn record_rule_activation(
+        &self,
+        trail: &mut AuditTrail,
+        selection: &ActivationSelection,
+    ) -> AuditEventId {
+        trail.record(AuditEventKind::RuleActivated {
+            rule_id: selection.entry.rule_id.0.clone(),
+            salience: selection.entry.salience.0,
+        })
+    }
+
+    pub fn record_state_transition(
+        &self,
+        trail: &mut AuditTrail,
+        transition: &StateTransitionMetadata,
+    ) -> AuditEventId {
+        trail.record(AuditEventKind::StateTransition {
+            key: transition.key.clone(),
+            from_epoch: transition.from_epoch.0,
+            to_epoch: transition.to_epoch.0,
+        })
+    }
+
+    pub fn integration_snapshot(
+        &self,
+        state: &SemanticStateStore,
+        agenda: &Agenda,
+    ) -> RuntimeIntegrationSnapshot {
+        build_integration_snapshot(&self.descriptor, state, agenda)
+    }
+
+    pub fn apply_state_update_and_refresh_agenda(
+        &self,
+        state: &mut SemanticStateStore,
+        update: StateUpdate,
+        rules: &RuleEngine,
+        trail: &mut AuditTrail,
+    ) -> Result<RuntimeStateAdvance, StateValidationError> {
+        apply_update_refresh_agenda(&self.descriptor, state, update, rules, trail)
+    }
+
+    pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
+        self.run_verified_semcode_entry(bytes, "main")
+    }
+
+    pub fn run_verified_semcode_entry(
+        &mut self,
+        bytes: &[u8],
+        entry: &str,
+    ) -> Result<(), RuntimeError> {
+        let mut host = GateHostAdapter::new(self.registry, self.binding);
+        run_verified_semcode_with_host_and_capabilities_and_config(
+            bytes,
+            entry,
+            &mut host,
+            self.capabilities,
+            self.config,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prom_abi::{AbiValue, RecordingHostAbi};
+    use prom_cap::CapabilityManifest;
+    use prom_gates::{DeterministicGateMock, GateDescriptor, GateId};
+    use prom_rules::{RuleCondition, RuleDefinition, RuleEngine};
+    use prom_state::{ContextWindow, FactResolution, FactValue, StateUpdate};
+
+    #[test]
+    fn execution_session_descriptor_reports_context_and_manifest() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut host = RecordingHostAbi::with_read_value(AbiValue::I32(1));
+        let session = ExecutionSession::kernel_bound(&mut host, &manifest, metadata.clone());
+        assert_eq!(session.descriptor().context, ExecutionContext::KernelBound);
+        assert_eq!(session.descriptor().capability_manifest, metadata);
+        assert!(!session.descriptor().gate_registry_bound);
+    }
+
+    #[test]
+    fn gate_execution_session_descriptor_marks_gate_binding() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut registry = GateRegistry::new();
+        registry
+            .register(GateDescriptor::read_write(7, 4, "gate.alpha"))
+            .expect("register");
+        let mut binding = DeterministicGateMock::new();
+        binding.seed_read(GateId::new(7, 4), AbiValue::I32(1));
+        let session =
+            GateExecutionSession::kernel_bound(&registry, &mut binding, &manifest, metadata);
+        assert!(session.descriptor().gate_registry_bound);
+    }
+
+    #[test]
+    fn gate_execution_session_derives_agenda_and_audit_without_owning_subdomains() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut registry = GateRegistry::new();
+        registry
+            .register(GateDescriptor::read_write(7, 4, "gate.alpha"))
+            .expect("register");
+        let mut binding = DeterministicGateMock::new();
+        binding.seed_read(GateId::new(7, 4), AbiValue::I32(1));
+        let session =
+            GateExecutionSession::kernel_bound(&registry, &mut binding, &manifest, metadata);
+
+        let mut state = SemanticStateStore::new();
+        state
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("seed");
+        let mut rules = RuleEngine::new();
+        rules
+            .register(RuleDefinition::new(
+                "rule.alpha",
+                5,
+                vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+            ))
+            .expect("register rule");
+
+        let agenda = session.derive_agenda(&state, &rules);
+        assert_eq!(agenda.entries().len(), 1);
+        let activation = session
+            .select_next_activation(&agenda)
+            .expect("activation selection");
+        assert_eq!(activation.entry.rule_id.0, "rule.alpha");
+        assert_eq!(activation.remaining_rules, 0);
+
+        let mut audit = session.begin_audit_trail();
+        session.record_session_started(&mut audit, "main");
+        session.record_rule_activation(&mut audit, &activation);
+        let transition = state.transitions().last().expect("transition");
+        session.record_state_transition(&mut audit, transition);
+        session.record_session_finished(&mut audit);
+        assert!(audit.session().gate_registry_bound);
+        assert_eq!(audit.events().len(), 4);
+
+        let snapshot = session.integration_snapshot(&state, &agenda);
+        assert_eq!(snapshot.state_epoch, StateEpoch(1));
+        assert_eq!(snapshot.active_rules, 1);
+    }
+
+    #[test]
+    fn gate_execution_session_applies_state_update_refreshes_agenda_and_emits_audit() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut registry = GateRegistry::new();
+        registry
+            .register(GateDescriptor::read_write(7, 4, "gate.alpha"))
+            .expect("register");
+        let mut binding = DeterministicGateMock::new();
+        binding.seed_read(GateId::new(7, 4), AbiValue::I32(1));
+        let session =
+            GateExecutionSession::kernel_bound(&registry, &mut binding, &manifest, metadata);
+
+        let mut state = SemanticStateStore::new();
+        let mut rules = RuleEngine::new();
+        rules
+            .register(RuleDefinition::new(
+                "rule.alpha",
+                5,
+                vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+            ))
+            .expect("register rule");
+
+        let mut audit = session.begin_audit_trail();
+        let advance = session
+            .apply_state_update_and_refresh_agenda(
+                &mut state,
+                StateUpdate::new(
+                    "fact.alpha",
+                    FactResolution::Certain(FactValue::Bool(true)),
+                    ContextWindow::new("root"),
+                    "seed alpha",
+                ),
+                &rules,
+                &mut audit,
+            )
+            .expect("advance state");
+
+        assert_eq!(advance.transition.from_epoch, StateEpoch(0));
+        assert_eq!(advance.transition.to_epoch, StateEpoch(1));
+        assert_eq!(advance.agenda.entries().len(), 1);
+        assert_eq!(advance.snapshot.state_epoch, StateEpoch(1));
+        assert_eq!(advance.snapshot.active_rules, 1);
+        assert!(matches!(
+            &audit.events()[0].kind,
+            AuditEventKind::StateTransition {
+                key,
+                from_epoch,
+                to_epoch
+            } if key == "fact.alpha" && *from_epoch == 0 && *to_epoch == 1
+        ));
+    }
+}

@@ -22,6 +22,13 @@ members = [
     "crates/sm-runtime-core",
     "crates/sm-vm",
     "crates/smc-cli",
+    "crates/prom-abi",
+    "crates/prom-cap",
+    "crates/prom-gates",
+    "crates/prom-runtime",
+    "crates/prom-state",
+    "crates/prom-rules",
+    "crates/prom-audit",
 ]
 resolver = "2"
 
@@ -71,6 +78,13 @@ sm-verify = { path = "crates/sm-verify", default-features = false, features = ["
 sm-runtime-core = { path = "crates/sm-runtime-core", default-features = false, features = ["std"] }
 sm-vm = { path = "crates/sm-vm", default-features = false, features = ["std"] }
 smc-cli = { path = "crates/smc-cli", default-features = false, features = ["std"] }
+prom-abi = { path = "crates/prom-abi", default-features = false, features = ["std"] }
+prom-cap = { path = "crates/prom-cap", default-features = false, features = ["std"] }
+prom-gates = { path = "crates/prom-gates", default-features = false, features = ["std"] }
+prom-runtime = { path = "crates/prom-runtime", default-features = false, features = ["std"] }
+prom-state = { path = "crates/prom-state", default-features = false, features = ["std"] }
+prom-rules = { path = "crates/prom-rules", default-features = false, features = ["std"] }
+prom-audit = { path = "crates/prom-audit", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 

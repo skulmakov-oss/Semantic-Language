@@ -31,7 +31,8 @@ pub mod semcode_format {
 pub mod semcode_vm {
     pub use sm_vm::{
         disasm_semcode, run_semcode, run_semcode_with_entry, DebugSymbol, Frame, FunctionBytecode,
-        RuntimeError, Value, VM,
+        run_verified_semcode_with_host_and_capabilities,
+        run_verified_semcode_with_host_and_capabilities_and_config, RuntimeError, Value, VM,
     };
 }
 #[cfg(feature = "std")]
@@ -46,6 +47,57 @@ pub mod runtime_core {
     pub use sm_runtime_core::{
         DebugNameMap, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas,
         RuntimeSymbolTable, RuntimeTrap, SymbolId,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_abi {
+    pub use prom_abi::{
+        descriptor_for_call, AbiError, AbiFailureKind, AbiValue, DeterminismClass, EffectClass,
+        HostCallDescriptor, HostCallId, PrometheusHostAbi, RecordingHostAbi,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_cap {
+    pub use prom_cap::{
+        required_capability_for_call, CapabilityChecker, CapabilityDenied, CapabilityDeniedCode,
+        CapabilityKind, CapabilityManifest, CapabilityManifestMetadata,
+        CapabilityManifestVersion, ManifestValidationCode, ManifestValidationReport,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_gates {
+    pub use prom_gates::{
+        DeterministicGateMock, GateAccess, GateBinding, GateBindingError, GateDescriptor,
+        GateHostAdapter, GateId, GateRegistry,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_runtime {
+    pub use prom_runtime::{
+        ActivationSelection, ExecutionSession, GateExecutionSession,
+        RuntimeIntegrationSnapshot, RuntimeSessionDescriptor, RuntimeStateAdvance,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_state {
+    pub use prom_state::{
+        ContextWindow, FactResolution, FactValue, SemanticStateStore, StateEpoch, StateRecord,
+        StateSnapshot, StateTransitionMetadata, StateUpdate, StateValidationCode,
+        StateValidationError,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_rules {
+    pub use prom_rules::{
+        Agenda, AgendaEntry, RuleCondition, RuleDefinition, RuleEngine, RuleId, RuleValidationCode,
+        RuleValidationError, Salience,
+    };
+}
+#[cfg(feature = "std")]
+pub mod prom_audit {
+    pub use prom_audit::{
+        AuditEvent, AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail,
+        ReplayMetadata,
     };
 }
 #[cfg(feature = "std")]

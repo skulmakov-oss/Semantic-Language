@@ -1,0 +1,14 @@
+[package]
+name = "prom-rules"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["prom-state/std"]
+
+[dependencies]
+prom-state = { path = "../prom-state", default-features = false }
