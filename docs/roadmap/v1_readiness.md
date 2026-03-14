@@ -63,7 +63,7 @@ Currently ready or substantially stabilized surfaces:
 
 The following limits remain explicit and should be treated as release-facing honesty requirements:
 
-- `fx` is not yet end-to-end complete in the canonical Rust-like pipeline
+- richer `fx` arithmetic is not yet aligned with the broader `f64` numeric surface, even though the canonical `fx` value path is now end-to-end
 - semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
 - persistence backends are not part of the current runtime/audit contract
 - rollback persistence semantics are not yet formalized beyond current orchestration notes
@@ -83,7 +83,7 @@ The repository should be treated as v1-candidate only if all of the following st
 
 Current highest-signal remaining work before a final v1 tag:
 
-1. complete `fx` in the canonical language pipeline and tighten remaining numeric contract notes
+1. tighten remaining `fx` and `i32` numeric contract notes after landing the canonical `fx` value path
 2. tighten release bundle and compatibility statement
 3. formalize any remaining runtime rollback/replay constraints that must be public
 4. freeze artifact and CLI release packaging expectations

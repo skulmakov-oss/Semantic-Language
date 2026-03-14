@@ -19,8 +19,7 @@
   - `sm-profile`
   - type completeness matrix
   - optimizer review checklist
-  - current blocking gap: `fx`
-  - current follow-up gap: tighten `i32` completion notes honestly
+  - current follow-up gap: tighten `i32` and remaining `fx` numeric contract notes honestly
 - `M3 Platform Formalization`
   - spec bundle
   - stable CLI

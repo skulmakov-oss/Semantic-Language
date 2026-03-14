@@ -29,11 +29,13 @@ Current supported header family:
 
 - `SEMCODE0`
 - `SEMCODE1`
+- `SEMCODE2`
 
 Observed runtime support in the current toolchain:
 
 - `SEMCODE0`: epoch `0`, revision `1`
 - `SEMCODE1`: epoch `0`, revision `2`
+- `SEMCODE2`: epoch `0`, revision `3`
 
 Header responsibilities:
 
@@ -63,6 +65,13 @@ Compatibility rules:
   family
 - carries the stronger capability envelope required by that produced artifact
 
+`SEMCODE2`
+
+- promoted contract used when emitted program usage requires the canonical `fx`
+  value family
+- extends the supported opcode/header family without changing standard
+  admit-then-execute rules
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -82,6 +91,7 @@ against actual opcode usage.
 Current canonical capability families:
 
 - `CAP_F64_MATH`
+- `CAP_FX_VALUES`
 - `CAP_GATE_SURFACE`
 - `CAP_DEBUG_SYMBOLS`
 

@@ -166,6 +166,6 @@ The VM must reject unsupported SemCode versions with a clear migration hint.
 
 It must not:
 
-- silently coerce `SEMCODE1` to `SEMCODE0`
+- silently coerce one supported `SEMCODE*` family into another
 - accept malformed bytecode by best effort
 - treat verifier rejection as a normal runtime success path

@@ -18,7 +18,7 @@ Current remaining critical path:
 
 - stabilize repository history and reviewable change control
 - resolve pending ownership decisions for optimizer, SemCode, and CLI surfaces
-- complete `fx` end-to-end in the canonical language pipeline
+- tighten remaining `fx` numeric contract notes after landing the canonical end-to-end value path
 - choose formal `M4` boundary scope for `v1`
 - align code layout with ownership decisions
 - raise CI and release enforcement to planned `M6` strength

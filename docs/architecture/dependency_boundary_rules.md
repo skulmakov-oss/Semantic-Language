@@ -32,5 +32,5 @@ Current enforcement note:
 Immediate debt markers:
 
 - `ParserProfile` outside `sm-profile` is architectural debt;
-- incomplete `fx` canonical execution path is architectural debt;
+- richer `fx` arithmetic beyond the current literal/value transport path is architectural debt;
 - root-bin CLI implementation split is architectural debt until code layout catches up with the owner decision.

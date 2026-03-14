@@ -17,7 +17,7 @@ Current repository state:
 
 Current repository gaps that remain before an honest `v1` claim:
 
-- `fx` is still incomplete in the canonical Rust-like execution path
+- richer `fx` arithmetic remains intentionally narrower than the `f64` surface in the canonical Rust-like execution path
 - optimizer surface is fixed to `sm-ir` for `v1`; no separate `sm-opt` owner exists in the current repository baseline
 - SemCode format surface is fixed to `sm-ir` for `v1`; `sm-emit` remains a producer facade over that contract in the current repository baseline
 - public CLI surface is fixed to `smc-cli` for `v1`; root `smc` remains a process entrypoint shell until implementation cleanup catches up

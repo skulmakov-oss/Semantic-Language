@@ -14,7 +14,7 @@ Current decision wave:
 
 Current blocking implementation wave:
 
-- complete `fx` end-to-end
+- tighten remaining `fx` numeric contract notes now that the canonical value path is end-to-end
 - align code layout with chosen owners
 - add `M6` CI enforcement and release gates
 

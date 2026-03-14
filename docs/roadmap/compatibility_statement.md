@@ -62,7 +62,7 @@ Current compatibility rule:
 
 The repository does not yet claim final compatibility guarantees for:
 
-- incomplete `fx` language execution path
+- richer `fx` arithmetic semantics beyond the current canonical value path
 - persistence backends
 - multi-session replay archives
 - rule-side effect execution semantics beyond the current narrow orchestration contract
