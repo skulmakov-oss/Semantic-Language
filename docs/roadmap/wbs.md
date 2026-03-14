@@ -25,6 +25,5 @@ Current remaining critical path:
 
 Current non-blocking follow-up work:
 
-- tighten `i32` completeness notes
 - reduce legacy naming and compatibility tails
 - deepen runtime semantics only after `v1` scope is frozen

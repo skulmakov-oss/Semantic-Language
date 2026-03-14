@@ -90,7 +90,7 @@ The repository should be treated as v1-candidate only if all of the following st
 
 Current highest-signal remaining work before a final v1 tag:
 
-1. tighten remaining `fx` and `i32` numeric contract notes after landing the canonical `fx` value path
+1. tighten remaining `fx` numeric contract notes after landing the canonical `fx` value path
 2. complete ownership implementation alignment after the owner decisions already taken for `v1`
 3. raise CI and release enforcement to match the planned `M6` strength
 4. tighten release bundle and compatibility statement

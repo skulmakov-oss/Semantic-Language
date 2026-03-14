@@ -47,6 +47,31 @@ fn compat_v1_header_and_run() {
 }
 
 #[test]
+fn compat_i32_value_path_runs_under_v0_header() {
+    let src = r#"
+        fn id(x: i32) -> i32 {
+            return x;
+        }
+
+        fn main() {
+            let x: i32 = 1;
+            let y: i32 = id(2);
+            if x != y { return; } else { return; }
+        }
+    "#;
+    let bytes = compile_program_to_semcode(src).expect("compile");
+    assert_eq!(&bytes[0..8], &MAGIC0);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 1);
+    assert_eq!(spec.capabilities & CAP_F64_MATH, 0);
+    assert_eq!(spec.capabilities & CAP_FX_VALUES, 0);
+    run_semcode(&bytes).expect("run");
+}
+
+#[test]
 fn compat_v2_header_and_run() {
     let src = r#"
         fn id(x: fx) -> fx {
