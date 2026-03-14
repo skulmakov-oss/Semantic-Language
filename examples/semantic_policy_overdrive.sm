@@ -1,0 +1,223 @@
+fn is_t(q: quad) -> bool {
+    return q == T;
+}
+
+fn is_f(q: quad) -> bool {
+    return q == F;
+}
+
+fn is_n(q: quad) -> bool {
+    return q == N;
+}
+
+fn is_s(q: quad) -> bool {
+    return q == S;
+}
+
+fn abs_delta(x: f64, y: f64) -> f64 {
+    let d: f64 = x - y;
+    return abs(d);
+}
+
+fn energy3(a: f64, b: f64, c: f64) -> f64 {
+    let dab: f64 = abs_delta(a, b);
+    let dbc: f64 = abs_delta(b, c);
+    let dac: f64 = abs_delta(a, c);
+    let dab2: f64 = pow(dab, 2.0);
+    let dbc2: f64 = pow(dbc, 2.0);
+    let dac2: f64 = pow(dac, 2.0);
+    let partial: f64 = dab2 + dbc2;
+    let total: f64 = partial + dac2;
+    return sqrt(total);
+}
+
+fn quality_from_vector(a: f64, b: f64, c: f64) -> quad {
+    if a == 0.50 {
+        if b == 0.50 {
+            if c == 0.50 {
+                return T;
+            } else {
+                return N;
+            }
+        } else {
+            if b == 0.80 {
+                return F;
+            } else {
+                return S;
+            }
+        }
+    } else {
+        if a == 0.00 {
+            return S;
+        } else {
+            return S;
+        }
+    }
+    return S;
+}
+
+fn quality_state(a: f64, b: f64, c: f64) -> quad {
+    let energy: f64 = energy3(a, b, c);
+    if energy == energy {
+        return quality_from_vector(a, b, c);
+    } else {
+        return S;
+    }
+    return S;
+}
+
+fn final_decision(
+    camera_state: quad,
+    badge_state: quad,
+    operator_override: quad,
+    tamper_state: quad,
+    quality_state: quad
+) -> quad {
+    if is_t(tamper_state) || is_s(tamper_state) {
+        return S;
+    } else {
+        if is_s(quality_state) {
+            return S;
+        } else {
+            if is_s(operator_override) {
+                return S;
+            } else {
+                if is_t(operator_override) {
+                    return T;
+                } else {
+                    if is_s(camera_state) || is_s(badge_state) {
+                        return S;
+                    } else {
+                        if is_f(camera_state) || is_f(badge_state) {
+                            return F;
+                        } else {
+                            if is_t(camera_state) && is_t(badge_state) {
+                                if is_t(quality_state) {
+                                    return T;
+                                } else {
+                                    if is_n(quality_state) {
+                                        return N;
+                                    } else {
+                                        if is_f(quality_state) {
+                                            return F;
+                                        } else {
+                                            return S;
+                                        }
+                                    }
+                                }
+                            } else {
+                                if (is_t(camera_state) && is_n(badge_state))
+                                    || (is_n(camera_state) && is_t(badge_state)) {
+                                    if is_t(quality_state) || is_n(quality_state) {
+                                        return N;
+                                    } else {
+                                        if is_f(quality_state) {
+                                            return F;
+                                        } else {
+                                            return S;
+                                        }
+                                    }
+                                } else {
+                                    if is_n(camera_state) && is_n(badge_state) {
+                                        if is_t(quality_state) || is_n(quality_state) {
+                                            return N;
+                                        } else {
+                                            if is_f(quality_state) {
+                                                return F;
+                                            } else {
+                                                return S;
+                                            }
+                                        }
+                                    } else {
+                                        return S;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return S;
+}
+
+fn case_01() -> quad {
+    return final_decision(T, T, N, N, quality_state(0.50, 0.50, 0.50));
+}
+
+fn case_02() -> quad {
+    return final_decision(T, T, N, N, quality_state(0.50, 0.50, 0.60));
+}
+
+fn case_03() -> quad {
+    return final_decision(T, T, N, N, quality_state(0.50, 0.80, 0.65));
+}
+
+fn case_04() -> quad {
+    return final_decision(T, N, N, N, quality_state(0.50, 0.50, 0.50));
+}
+
+fn case_05() -> quad {
+    return final_decision(N, T, N, N, quality_state(0.50, 0.50, 0.60));
+}
+
+fn case_06() -> quad {
+    return final_decision(N, N, N, N, quality_state(0.50, 0.80, 0.65));
+}
+
+fn case_07() -> quad {
+    return final_decision(F, T, N, N, quality_state(0.50, 0.50, 0.50));
+}
+
+fn case_08() -> quad {
+    return final_decision(T, F, T, N, quality_state(0.50, 0.80, 0.65));
+}
+
+fn case_09() -> quad {
+    return final_decision(T, T, N, T, quality_state(0.50, 0.50, 0.50));
+}
+
+fn case_10() -> quad {
+    return final_decision(S, T, N, N, quality_state(0.50, 0.50, 0.50));
+}
+
+fn case_11() -> quad {
+    return final_decision(T, T, S, N, quality_state(0.50, 0.50, 0.50));
+}
+
+fn case_12() -> quad {
+    return final_decision(T, T, N, N, quality_state(0.00, 2.00, -1.00));
+}
+
+fn suite_result() -> quad {
+    let ok01: bool = case_01() == T;
+    let ok02: bool = case_02() == N;
+    let ok03: bool = case_03() == F;
+    let ok04: bool = case_04() == N;
+    let ok05: bool = case_05() == N;
+    let ok06: bool = case_06() == F;
+    let ok07: bool = case_07() == F;
+    let ok08: bool = case_08() == T;
+    let ok09: bool = case_09() == S;
+    let ok10: bool = case_10() == S;
+    let ok11: bool = case_11() == S;
+    let ok12: bool = case_12() == S;
+
+    if ok01 && ok02 && ok03 && ok04 && ok05 && ok06 && ok07 && ok08 && ok09 && ok10 && ok11 && ok12 {
+        return T;
+    } else {
+        return S;
+    }
+    return S;
+}
+
+fn main() {
+    let status: quad = suite_result();
+    if status == T {
+        return;
+    } else {
+        return;
+    }
+    return;
+}

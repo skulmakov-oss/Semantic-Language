@@ -1,7 +1,7 @@
 use semantic_language::semcode_format::{
     header_spec_from_magic, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, MAGIC0, MAGIC1, MAGIC2,
 };
-use semantic_language::semcode_vm::{run_semcode, RuntimeError};
+use semantic_language::semcode_vm::{disasm_semcode, run_semcode, RuntimeError};
 use semantic_language::frontend::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug, CompileProfile,
     OptLevel,
@@ -175,6 +175,20 @@ fn compat_cli_o0_complex_semantic_stress_runs_on_verified_path() {
     let bytes = compile_cli_default_semcode(src);
     assert_eq!(&bytes[0..8], &MAGIC1);
     run_verified_semcode(&bytes).expect("verified run");
+}
+
+#[test]
+fn compat_example_semantic_policy_overdrive_trace_runs_on_verified_path() {
+    let src = include_str!("../examples/semantic_policy_overdrive_trace.sm");
+    let bytes = compile_cli_default_semcode(src);
+    assert_eq!(&bytes[0..8], &MAGIC1);
+    run_verified_semcode(&bytes).expect("verified run");
+
+    let disasm = disasm_semcode(&bytes).expect("disasm");
+    assert!(disasm.contains("fn fusion_consensus_state:"));
+    assert!(disasm.contains("fn policy_trace_guard:"));
+    assert!(disasm.contains("fn policy_trace_quality:"));
+    assert!(disasm.contains("fn policy_trace:"));
 }
 
 #[test]
