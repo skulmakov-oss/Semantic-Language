@@ -90,3 +90,26 @@ fn root_src_bans_legacy_patterns() {
         );
     }
 }
+
+#[test]
+fn root_smc_is_thin_wrapper_over_smc_cli() {
+    let root = fs::read_to_string("src/bin/smc.rs").expect("read root smc");
+    let owner = fs::read_to_string("crates/smc-cli/src/app.rs").expect("read smc-cli app");
+
+    assert!(
+        root.contains("smc_cli::main_entry()"),
+        "root smc must delegate to the canonical smc-cli owner"
+    );
+    assert!(
+        !root.contains("match args[0].as_str()"),
+        "root smc must not carry its own command dispatch"
+    );
+    assert!(
+        owner.contains("pub fn main_entry()"),
+        "smc-cli must own the exported CLI process entry"
+    );
+    assert!(
+        owner.contains("pub fn run(args: Vec<String>)"),
+        "smc-cli must own the command runner"
+    );
+}

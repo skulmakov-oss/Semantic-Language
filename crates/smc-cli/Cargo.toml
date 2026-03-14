@@ -11,18 +11,27 @@ name = "smc-cli"
 path = "src/bin/smc_cli.rs"
 
 [features]
-default = ["std"]
+default = ["std", "profile-rust", "profile-logos", "debug-symbols"]
 std = [
     "ton618-core/std",
+    "sm-front/std",
     "sm-ir/std",
     "sm-emit/std",
     "sm-sema/std",
+    "sm-verify/std",
     "sm-vm/std",
 ]
+profile-rust = ["sm-ir/profile-rust"]
+profile-logos = ["sm-ir/profile-logos"]
+debug-symbols = ["sm-ir/debug-symbols"]
+simd = []
+bench = []
 
 [dependencies]
 ton618-core = { path = "../ton618-core", default-features = false, features = ["alloc"] }
+sm-front = { path = "../sm-front", default-features = false, features = ["std"] }
 sm-ir = { path = "../sm-ir", default-features = false, features = ["std"] }
 sm-emit = { path = "../sm-emit", default-features = false, features = ["std"] }
 sm-sema = { path = "../sm-sema", default-features = false, features = ["std"] }
+sm-verify = { path = "../sm-verify", default-features = false, features = ["std"] }
 sm-vm = { path = "../sm-vm", default-features = false, features = ["std"] }

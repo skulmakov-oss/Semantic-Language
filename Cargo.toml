@@ -77,7 +77,7 @@ sm-emit = { path = "crates/sm-emit", default-features = false, features = ["std"
 sm-verify = { path = "crates/sm-verify", default-features = false, features = ["std"] }
 sm-runtime-core = { path = "crates/sm-runtime-core", default-features = false, features = ["std"] }
 sm-vm = { path = "crates/sm-vm", default-features = false, features = ["std"] }
-smc-cli = { path = "crates/smc-cli", default-features = false, features = ["std"] }
+smc-cli = { path = "crates/smc-cli", default-features = false, features = ["std", "profile-rust", "profile-logos", "debug-symbols"] }
 prom-abi = { path = "crates/prom-abi", default-features = false, features = ["std"] }
 prom-cap = { path = "crates/prom-cap", default-features = false, features = ["std"] }
 prom-gates = { path = "crates/prom-gates", default-features = false, features = ["std"] }

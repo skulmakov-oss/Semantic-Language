@@ -1,6 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "std")]
+mod app;
+
+#[cfg(feature = "std")]
 use ton618_core::diagnostics::diagnostic_catalog;
 #[cfg(feature = "std")]
 use sm_emit::compile_program_to_semcode_with_options_debug;
@@ -15,6 +18,9 @@ use std::path::Path;
 
 #[cfg(feature = "std")]
 pub struct CliPipeline;
+
+#[cfg(feature = "std")]
+pub use app::{main_entry, run};
 
 #[cfg(feature = "std")]
 struct CliFsProvider;

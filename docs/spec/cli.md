@@ -11,7 +11,7 @@ This document defines the current public CLI contract for the Semantic toolchain
 Current owner rule:
 
 - `smc-cli` owns the public CLI contract in the current `v1` baseline
-- root `src/bin/smc.rs` and `src/bin/svm.rs` are process entrypoints and transition shells, not second long-term owners
+- root `src/bin/smc.rs` and `src/bin/svm.rs` are process entrypoints, not second long-term owners
 - the CLI must orchestrate public crate APIs rather than redefine compiler, verifier, VM, or profile semantics
 
 ## Current Command Surface
