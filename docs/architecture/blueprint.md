@@ -19,9 +19,9 @@ Current repository gaps that remain before an honest `v1` claim:
 
 - `fx` is still incomplete in the canonical Rust-like execution path
 - canonical ownership is still pending decision for:
-  - optimizer surface: `sm-opt` vs `sm-ir`
   - SemCode format surface: `sm-emit` vs `sm-ir/local_format`
   - public CLI surface: `smc-cli` vs root `smc`
+- optimizer surface is fixed to `sm-ir` for `v1`; no separate `sm-opt` owner exists in the current repository baseline
 - PROMETHEUS `v1` scope is still pending a narrow-vs-full boundary decision
 - CI enforcement is still weaker than the planned `M6` boundary and release gates
 

@@ -27,9 +27,9 @@
   - version contracts
   - current status: broad formalization baseline exists, but ownership alignment is still pending
   - ownership decision gates:
-    - optimizer owner
     - SemCode format owner
     - public CLI owner
+  - optimizer owner is fixed to `sm-ir` for the current `v1` baseline
   - `docs/spec/syntax.md`
   - `docs/spec/types.md`
   - `docs/spec/ir.md`
