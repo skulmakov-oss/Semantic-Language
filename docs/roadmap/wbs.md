@@ -14,12 +14,17 @@ Milestones:
 - `1.6` semantic runtime
 - `1.7` v1 lockdown
 
-Minimal first execution package:
+Current remaining critical path:
 
-- design verifier contract
-- create `sm-verify`
-- implement structural verification
-- design `SymbolId`
-- add `sm-runtime-core` symbol primitives
-- define quota taxonomy
-- add core contract golden tests
+- stabilize repository history and reviewable change control
+- resolve pending ownership decisions for optimizer, SemCode, and CLI surfaces
+- complete `fx` end-to-end in the canonical language pipeline
+- choose formal `M4` boundary scope for `v1`
+- align code layout with ownership decisions
+- raise CI and release enforcement to planned `M6` strength
+
+Current non-blocking follow-up work:
+
+- tighten `i32` completeness notes
+- reduce legacy naming and compatibility tails
+- deepen runtime semantics only after `v1` scope is frozen

@@ -1,26 +1,31 @@
 # Semantic v1 Backlog Seed
 
-Critical first wave:
+Current release-control wave:
+
+- stabilize repository history for current `M3-M6` state
+- keep new feature work paused until baseline and ownership decisions are fixed
+
+Current decision wave:
+
+- decide optimizer owner: `sm-opt` vs `sm-ir`
+- decide SemCode format owner: `sm-emit` vs `sm-ir/local_format`
+- decide CLI owner: `smc-cli` vs root `smc`
+- decide narrow vs full `M4` scope for `v1`
+
+Current blocking implementation wave:
+
+- complete `fx` end-to-end
+- align code layout with chosen owners
+- add `M6` CI enforcement and release gates
+
+Foundational work already in place:
 
 - repository discipline and architecture baseline
-- `sm-verify` contract and crate
-- structural verification
-- control-flow verification
-- admit-then-execute bridge
-
-Second wave:
-
-- `SymbolId` runtime model
-- `sm-runtime-core`
-- VM symbol migration
-- quota taxonomy and enforcement
-
-Third wave:
-
-- type completeness matrix
-- `u32` / `fx` end-to-end
-- optimizer minimum set
-- `sm-profile` extraction and pipeline integration
+- verifier and admit-then-execute baseline
+- `SymbolId` runtime model and quota enforcement
+- type completeness matrix and `u32` completion
+- canonical `sm-profile`
+- narrow PROMETHEUS boundary and owner-split semantic runtime baseline
 
 Rule of execution:
 

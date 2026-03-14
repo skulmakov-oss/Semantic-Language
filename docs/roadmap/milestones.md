@@ -5,28 +5,72 @@
   - crate map
   - legacy freeze policy
   - PR/review governance
+  - PR template
+  - architecture review checklist
+  - current status: baseline largely in place
 - `M1 Core Contract`
   - `sm-verify`
   - `SymbolId` runtime
   - quotas and admit-then-execute
+  - current status: strong baseline exists in code and tests
 - `M2 Language Completion`
   - `u32` / `fx`
   - optimizer minimum set
   - `sm-profile`
+  - type completeness matrix
+  - optimizer review checklist
+  - current blocking gap: `fx`
+  - current follow-up gap: tighten `i32` completion notes honestly
 - `M3 Platform Formalization`
   - spec bundle
   - stable CLI
   - version contracts
+  - ownership decision gates:
+    - optimizer owner
+    - SemCode format owner
+    - public CLI owner
+  - `docs/spec/syntax.md`
+  - `docs/spec/types.md`
+  - `docs/spec/ir.md`
+  - `docs/spec/verifier.md`
+  - `docs/spec/semcode.md`
+  - `docs/spec/profile.md`
+  - `docs/spec/vm.md`
+  - `docs/spec/quotas.md`
+  - `docs/spec/cli.md`
+  - `docs/spec/versioning.md`
 - `M4 PROMETHEUS Boundary`
   - ABI
   - capabilities
   - gates
+  - current state: narrow working boundary exists
+  - current decision gate: narrow `v1` vs wider planned ABI scope
+  - `docs/spec/abi.md`
+  - `docs/spec/capabilities.md`
+  - `docs/spec/gates.md`
 - `M5 Semantic Runtime`
   - state
   - rules
   - orchestration
   - audit
+  - semantic runtime integration checklist
+  - `docs/spec/runtime.md`
+  - `docs/spec/state.md`
+  - `docs/spec/rules.md`
+  - `docs/spec/audit.md`
+  - current state: owner-split runtime baseline exists
+  - richer runtime semantics remain secondary unless `M4` widens `v1`
 - `M6 v1 Lockdown`
   - freezes
   - golden baselines
   - validation matrix
+  - `tests/prometheus_runtime_matrix.rs`
+  - `tests/prometheus_runtime_goldens.rs`
+  - `tests/prometheus_runtime_negative_goldens.rs`
+  - `tests/prometheus_runtime_compat_matrix.rs`
+  - `docs/roadmap/runtime_validation_policy.md`
+  - `docs/roadmap/v1_readiness.md`
+  - `docs/roadmap/release_bundle_checklist.md`
+  - `docs/roadmap/compatibility_statement.md`
+  - current state: validation artifacts exist
+  - current gap: CI enforcement and release process are not yet at planned strength
