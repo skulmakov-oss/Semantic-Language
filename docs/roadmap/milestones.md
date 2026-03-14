@@ -25,11 +25,10 @@
   - spec bundle
   - stable CLI
   - version contracts
-  - current status: broad formalization baseline exists, but ownership alignment is still pending
-  - ownership decision gates:
-    - public CLI owner
+  - current status: broad formalization baseline exists; owner decisions are fixed and implementation alignment remains
   - optimizer owner is fixed to `sm-ir` for the current `v1` baseline
   - SemCode format owner is fixed to `sm-ir` for the current `v1` baseline
+  - public CLI owner is fixed to `smc-cli` for the current `v1` baseline
   - `docs/spec/syntax.md`
   - `docs/spec/types.md`
   - `docs/spec/ir.md`

@@ -10,7 +10,7 @@ Current pending ownership notes:
 
 - optimizer surface is owned by `sm-ir` in the current `v1` baseline; a future `sm-opt` split would require an explicit follow-up decision and code move
 - SemCode format contract is owned by `sm-ir` in the current `v1` baseline; `sm-emit` remains a producer-facing facade and compatibility layer
-- public CLI surface is currently split between root `smc` and `smc-cli`
+- public CLI contract is owned by `smc-cli` in the current `v1` baseline; root `smc` remains an entrypoint shell pending cleanup
 
 Allowed flow:
 
@@ -33,4 +33,4 @@ Immediate debt markers:
 
 - `ParserProfile` outside `sm-profile` is architectural debt;
 - incomplete `fx` canonical execution path is architectural debt;
-- unresolved optimizer / SemCode / CLI ownership is architectural debt.
+- root-bin CLI implementation split is architectural debt until code layout catches up with the owner decision.

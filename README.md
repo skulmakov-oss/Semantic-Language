@@ -63,6 +63,8 @@ fn main: code=25 bytes, strings=2
 ```
 
 ## CLI reference
+- Canonical public CLI owner: `smc-cli`.
+- Current repository note: root `src/bin/smc.rs` and `src/bin/svm.rs` remain process entrypoints while CLI implementation cleanup is still pending.
 - `smc compile <input.sm> -o <out.smc>`
   - Parses, type-checks, lowers, validates IR, emits SemCode file.
 - `smc features`
