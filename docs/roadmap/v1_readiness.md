@@ -80,6 +80,7 @@ The following limits remain explicit and should be treated as release-facing hon
 The repository should be treated as v1-candidate only if all of the following stay green:
 
 - `cargo test --workspace`
+- `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath <path>`
 - semantic runtime matrix tests
 - semantic runtime golden tests
 - semantic runtime negative golden tests

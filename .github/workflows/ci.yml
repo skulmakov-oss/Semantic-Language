@@ -41,6 +41,15 @@ jobs:
           cargo test --test prometheus_runtime_negative_goldens --quiet
           cargo test --test prometheus_runtime_compat_matrix --quiet
 
+  release-bundle-process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release bundle process
+        shell: pwsh
+        run: |
+          pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath "${{ runner.temp }}/semantic_v1_release_bundle_manifest.json"
+
   test-std:
     runs-on: ubuntu-latest
     steps:

@@ -14,6 +14,10 @@ Verify the bundle includes:
 - `docs/roadmap/runtime_validation_policy.md`
 - `docs/roadmap/compatibility_statement.md`
 
+Reproducible check command:
+
+- `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath <path>`
+
 ## Required Contract Surfaces
 
 Verify the release documents the current state of:
