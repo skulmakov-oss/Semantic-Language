@@ -42,8 +42,8 @@
   - ABI
   - capabilities
   - gates
-  - current state: narrow working boundary exists
-  - current decision gate: narrow `v1` vs wider planned ABI scope
+  - current state: narrow working boundary exists and is fixed as the official `v1` scope
+  - wider planned ABI scope remains post-`v1` work rather than a release blocker
   - `docs/spec/abi.md`
   - `docs/spec/capabilities.md`
   - `docs/spec/gates.md`
@@ -58,7 +58,7 @@
   - `docs/spec/rules.md`
   - `docs/spec/audit.md`
   - current state: owner-split runtime baseline exists
-  - richer runtime semantics remain secondary unless `M4` widens `v1`
+  - richer runtime semantics remain non-blocking for the current narrow `v1`
 - `M6 v1 Lockdown`
   - freezes
   - golden baselines

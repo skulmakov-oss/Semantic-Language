@@ -30,6 +30,10 @@ Current canonical orchestration types:
 - gate registry semantics
 - semantic state, agenda, or rule scheduling
 
+Current `v1` rule:
+
+- richer semantic runtime semantics remain non-blocking for `v1` while the PROMETHEUS boundary stays on the narrow ABI/capability/gate surface
+
 ## Session Rule
 
 Current session invariant:

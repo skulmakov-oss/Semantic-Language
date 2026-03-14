@@ -21,7 +21,7 @@ Current repository gaps that remain before an honest `v1` claim:
 - optimizer surface is fixed to `sm-ir` for `v1`; no separate `sm-opt` owner exists in the current repository baseline
 - SemCode format surface is fixed to `sm-ir` for `v1`; `sm-emit` remains a producer facade over that contract in the current repository baseline
 - public CLI surface is fixed to `smc-cli` for `v1`; root `smc` remains a process entrypoint shell until implementation cleanup catches up
-- PROMETHEUS `v1` scope is still pending a narrow-vs-full boundary decision
+- PROMETHEUS `v1` scope is fixed to the current narrow ABI/capability/gate boundary; wider planned calls remain post-`v1`
 - CI enforcement is still weaker than the planned `M6` boundary and release gates
 
 Non-negotiable architecture rules:

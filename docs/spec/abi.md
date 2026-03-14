@@ -13,6 +13,18 @@ Current canonical host calls:
 - `GateWrite`
 - `PulseEmit`
 
+Current `v1` scope decision:
+
+- the narrow ABI surface above is the official `v1` boundary
+- the wider planned call family is not part of the current `v1` commitment
+
+Explicit non-`v1` calls:
+
+- `StateQuery`
+- `StateUpdate`
+- `EventPost`
+- `ClockRead`
+
 ## Contract Rule
 
 The ABI layer defines:

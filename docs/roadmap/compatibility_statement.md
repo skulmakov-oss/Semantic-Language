@@ -58,11 +58,17 @@ Current compatibility rule:
   - runtime matrix and golden updates
   - compatibility review
 
+Current `v1` scope commitment:
+
+- compatibility commitments for `prom-*` apply only to the narrow ABI/capability/gate surface already implemented in the repository
+- wider planned calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` are explicitly outside the current `v1` compatibility envelope
+
 ## Explicit Non-Commitments
 
 The repository does not yet claim final compatibility guarantees for:
 
 - richer `fx` arithmetic semantics beyond the current canonical value path
+- wider planned PROMETHEUS host-call families beyond `GateRead`, `GateWrite`, and `PulseEmit`
 - persistence backends
 - multi-session replay archives
 - rule-side effect execution semantics beyond the current narrow orchestration contract
