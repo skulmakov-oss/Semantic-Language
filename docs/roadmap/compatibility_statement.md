@@ -1,6 +1,6 @@
 # Semantic v1 Compatibility Statement
 
-Status: draft v0
+Status: release-candidate baseline
 
 This document summarizes the current compatibility commitments for the repository state that is moving toward Semantic v1.
 
@@ -41,6 +41,7 @@ Current compatibility-sensitive CLI surfaces:
 Current compatibility rule:
 
 - documented machine-readable fields must not change silently
+- canonical CLI owner remains `smc-cli`; root process entrypoints must not become second CLI owners
 
 ## PROMETHEUS Runtime Compatibility
 
@@ -57,6 +58,7 @@ Current compatibility rule:
   - spec updates
   - runtime matrix and golden updates
   - compatibility review
+- boundary and public API CI guards must remain green for the current contract-sensitive crates
 
 Current `v1` scope commitment:
 

@@ -1,6 +1,6 @@
 # Semantic v1 Readiness
 
-Status: draft v0
+Status: release-candidate baseline
 
 This document summarizes the current release-facing readiness state for Semantic v1.
 
@@ -16,6 +16,7 @@ Current repository state has working coverage for:
 - PROMETHEUS ABI, capability, and gate boundaries
 - PROMETHEUS runtime, state, rules, and audit owner crates
 - semantic runtime validation matrix and golden baselines
+- CI-enforced boundary, public API, runtime, and release-bundle gates
 
 This means the repository has crossed from architecture-only planning into release-shaped validation for the current contract surfaces.
 
@@ -23,6 +24,7 @@ Current `v1` boundary decision:
 
 - the official `v1` PROMETHEUS scope is the existing narrow ABI/capability/gate boundary
 - wider planned host calls are not part of the current `v1` commitment
+- ownership alignment for optimizer, SemCode, and CLI is already implemented in code
 
 ## Current Artifact List
 
@@ -80,6 +82,8 @@ The following limits remain explicit and should be treated as release-facing hon
 The repository should be treated as v1-candidate only if all of the following stay green:
 
 - `cargo test --workspace`
+- boundary and ownership guard tests
+- `cargo test --test public_api_contracts`
 - `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath <path>`
 - semantic runtime matrix tests
 - semantic runtime golden tests
@@ -90,12 +94,11 @@ The repository should be treated as v1-candidate only if all of the following st
 
 Current highest-signal remaining work before a final v1 tag:
 
-1. tighten remaining `fx` numeric contract notes after landing the canonical `fx` value path
-2. complete ownership implementation alignment after the owner decisions already taken for `v1`
-3. raise CI and release enforcement to match the planned `M6` strength
-4. tighten release bundle and compatibility statement
-5. formalize any remaining runtime rollback/replay constraints that must be public
-6. freeze artifact and CLI release packaging expectations
+1. promote the integrated narrow `v1` line onto official `main`
+2. keep release-facing docs aligned with the actual integrated repository state
+3. freeze tag and release packaging expectations
+4. publish `v1.0.0-rc1`
+5. perform one final clean validation pass before `v1.0.0`
 
 ## Contract Rule
 

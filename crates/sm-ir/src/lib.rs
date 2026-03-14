@@ -6,8 +6,8 @@ use std::collections::HashMap;
 #[cfg(feature = "std")]
 mod frontend {
     pub use sm_front::{
-        build_fn_table, builtin_sig, parse_logos_program, parse_logos_program_with_profile,
-        parse_program, parse_program_with_profile, resolve_symbol_name,
+        build_fn_table, builtin_sig, parse_logos_program_with_profile,
+        parse_program_with_profile, resolve_symbol_name,
         type_check_function_with_table, type_check_program, AstArena, BinaryOp, CompileProfile,
         Expr, ExprId, FnTable, FrontendError, Function, LogosProgram, OptLevel,
         QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,

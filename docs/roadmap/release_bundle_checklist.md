@@ -1,6 +1,6 @@
 # Semantic v1 Release Bundle Checklist
 
-Status: draft v0
+Status: release-candidate baseline
 
 Use this checklist before assembling a release-facing v1 bundle.
 
@@ -33,6 +33,7 @@ Verify the release documents the current state of:
 Verify these are green before the bundle is considered releasable:
 
 - CI must run these as explicit release-facing jobs, not only via broad workspace test aggregation
+- `.github/workflows/ci.yml` should include `boundary-enforcement`, `public-api-guard`, `runtime-release-gates`, and `release-bundle-process`
 - `cargo test --workspace`
 - `cargo test --test public_api_contracts`
 - `cargo test --test golden_semcode`
@@ -46,7 +47,7 @@ Verify these are green before the bundle is considered releasable:
 Verify the release notes include:
 
 - currently stabilized surfaces
-- known limits that still block a final v1 tag
+- known limits that remain explicit non-commitments for the current narrow `v1`
 - explicit snapshot regeneration rule
 - compatibility-sensitive contract families
 
