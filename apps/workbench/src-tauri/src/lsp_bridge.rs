@@ -79,7 +79,12 @@ pub fn run_smlsp_bridge(
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
-    .map_err(|error| format!("failed to start smlsp command '{}': {error}", command_name))?;
+    .map_err(|error| {
+      format!(
+        "failed to start smlsp command '{}': {error}. Set a valid smlsp command in Workbench Settings, point it to a full executable path, or disable experimental workflows if smlsp is unavailable.",
+        command_name
+      )
+    })?;
 
   let mut stdin = child
     .stdin
@@ -288,7 +293,10 @@ fn resolve_document_path(workspace_root: &Path, relative_path: &str) -> Result<P
 fn normalized_command(command: &str) -> Result<String, String> {
   let value = command.trim();
   if value.is_empty() {
-    return Err("smlsp command cannot be empty".into());
+    return Err(
+      "smlsp command cannot be empty. Configure a valid command in Workbench Settings or disable experimental workflows."
+        .into(),
+    );
   }
   Ok(value.to_string())
 }
@@ -389,13 +397,19 @@ fn wait_for_response(
   loop {
     let now = Instant::now();
     if now >= deadline {
-      return Err(format!("timed out waiting for smlsp response id={request_id}"));
+      return Err(format!(
+        "timed out waiting for smlsp response id={request_id}. The configured smlsp process may not be speaking the expected protocol or may need a valid executable path."
+      ));
     }
 
     let remaining = deadline.saturating_duration_since(now);
     let message = rx
       .recv_timeout(remaining)
-      .map_err(|_| format!("timed out waiting for smlsp response id={request_id}"))??;
+      .map_err(|_| {
+        format!(
+          "timed out waiting for smlsp response id={request_id}. The configured smlsp process may not be speaking the expected protocol or may need a valid executable path."
+        )
+      })??;
 
     if handle_notification(&message, state)? {
       continue;

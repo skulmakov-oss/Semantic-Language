@@ -110,6 +110,12 @@ type PackageManifestPreview = {
   entry: string | null
 }
 
+type SmlspSessionResult = {
+  relativePath: string
+  command: string
+  result: SmlspBridgeResult
+}
+
 type EditorCursorPosition = {
   line: number
   character: number
@@ -3164,14 +3170,22 @@ function ProjectPanel({
   const [packageManifestError, setPackageManifestError] = useState<string | null>(null)
   const [editorCursor, setEditorCursor] = useState<EditorCursorPosition>({ line: 0, character: 0 })
   const [smlspBusy, setSmlspBusy] = useState(false)
-  const [smlspResult, setSmlspResult] = useState<SmlspBridgeResult | null>(null)
+  const [smlspSession, setSmlspSession] = useState<SmlspSessionResult | null>(null)
   const [smlspError, setSmlspError] = useState<string | null>(null)
   const packageManifestRequestIdRef = useRef(0)
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const activeSmlspResult =
+    activeEditorTab && smlspSession?.relativePath === activeEditorTab.relativePath
+      ? smlspSession.result
+      : null
+  const staleSmlspSession =
+    smlspSession && activeEditorTab && smlspSession.relativePath !== activeEditorTab.relativePath
+      ? smlspSession
+      : null
   const smlspDefinitionRelativePath =
-    smlspResult?.definitionPath && selectedWorkspace
+    activeSmlspResult?.definitionPath && selectedWorkspace
       ? resolveAbsoluteWorkspacePath(
-          smlspResult.definitionPath,
+          activeSmlspResult.definitionPath,
           selectedWorkspace,
         )
       : null
@@ -3183,9 +3197,15 @@ function ProjectPanel({
 
   useEffect(() => {
     setEditorCursor({ line: 0, character: 0 })
-    setSmlspResult(null)
     setSmlspError(null)
   }, [activeEditorPath])
+
+  useEffect(() => {
+    if (!settings.showExperimental) {
+      setSmlspSession(null)
+      setSmlspError(null)
+    }
+  }, [settings.showExperimental])
 
   useEffect(() => {
     if (
@@ -3441,6 +3461,7 @@ function ProjectPanel({
 
   async function runSmlspBridge() {
     if (
+      !settings.showExperimental ||
       !selectedWorkspace ||
       !activeEditorTab ||
       !isSemanticSource(activeEditorTab.relativePath) ||
@@ -3449,34 +3470,46 @@ function ProjectPanel({
       return
     }
 
+    const sessionRelativePath = activeEditorTab.relativePath
+    const sessionContent = activeEditorTab.content
+    const sessionCommand = settings.smlspCommand
+
     setSmlspBusy(true)
     setSmlspError(null)
 
     try {
       const result = await runSmlspProtocolBridge({
         workspaceRoot: selectedWorkspace.resolvedPath,
-        relativePath: activeEditorTab.relativePath,
-        content: activeEditorTab.content,
+        relativePath: sessionRelativePath,
+        content: sessionContent,
         line: editorCursor.line,
         character: editorCursor.character,
-        command: settings.smlspCommand,
+        command: sessionCommand,
         args: [],
       })
-      setSmlspResult(result)
+      setSmlspSession({
+        relativePath: sessionRelativePath,
+        command: sessionCommand,
+        result,
+      })
     } catch (error) {
-      setSmlspResult(null)
-      setSmlspError(String(error))
+      setSmlspSession(null)
+      setSmlspError(normalizeSmlspError(String(error), sessionCommand))
     } finally {
       setSmlspBusy(false)
     }
   }
 
   function applySmlspFormatting() {
-    if (!activeEditorTab || !smlspResult?.formattingText) {
+    if (
+      !activeEditorTab ||
+      !activeSmlspResult?.formattingText ||
+      smlspSession?.relativePath !== activeEditorTab.relativePath
+    ) {
       return
     }
 
-    onUpdateEditorContent(activeEditorTab.relativePath, smlspResult.formattingText)
+    onUpdateEditorContent(activeEditorTab.relativePath, activeSmlspResult.formattingText)
   }
 
   return (
@@ -3732,6 +3765,18 @@ function ProjectPanel({
               Workbench does not synthesize hover, definition, diagnostics, or formatting on its
               own.
             </p>
+            <section className="diagnostic-callout document-truth-callout">
+              <span className="diagnostic-meta-label">Experimental guardrails</span>
+              <p className="job-meta">
+                This panel stays hidden until experimental workflows are enabled in Settings.
+                Failures stay local to this panel and do not alter editor, compiler, verifier, or
+                runtime ownership.
+              </p>
+              <p className="job-meta">
+                Formatted text can only be applied back to the same buffer that produced the
+                current `smlsp` result.
+              </p>
+            </section>
             <div className="field-actions">
               <button
                 type="button"
@@ -3750,7 +3795,11 @@ function ProjectPanel({
                 type="button"
                 className="ghost-button"
                 onClick={() => applySmlspFormatting()}
-                disabled={!activeEditorTab || !smlspResult?.formattingText}
+                disabled={
+                  !activeEditorTab ||
+                  !activeSmlspResult?.formattingText ||
+                  smlspSession?.relativePath !== activeEditorTab.relativePath
+                }
               >
                 Apply formatted text
               </button>
@@ -3762,36 +3811,53 @@ function ProjectPanel({
               active file:{' '}
               <code>{activeEditorTab?.relativePath ?? 'open a .sm file first'}</code>
             </p>
+            <p className="job-meta">
+              command: <code>{settings.smlspCommand}</code>
+            </p>
             {smlspError ? <p className="adapter-error">{smlspError}</p> : null}
-            {smlspResult ? (
+            {staleSmlspSession ? (
+              <div className="diagnostic-callout document-truth-callout">
+                <span className="diagnostic-meta-label">Buffered experimental result</span>
+                <p className="job-meta">
+                  The last successful `smlsp` session belongs to{' '}
+                  <code>{staleSmlspSession.relativePath}</code>. Open that buffer again to inspect
+                  its hover, definition, diagnostics, or formatting result.
+                </p>
+              </div>
+            ) : null}
+            {activeSmlspResult ? (
               <div className="screen-stack">
                 <div className="diagnostics-filter-row">
                   <span className="status-pill draft">experimental</span>
-                  <span className="status-pill stable">{smlspResult.transport}</span>
-                  {smlspResult.capabilities.map((capability) => (
+                  <span className="status-pill stable">{activeSmlspResult.transport}</span>
+                  {activeSmlspResult.capabilities.map((capability) => (
                     <span key={capability} className="status-pill stable">
                       {capability}
                     </span>
                   ))}
                 </div>
-                {smlspResult.hoverMarkdown ? (
+                <p className="job-meta">
+                  session source: <code>{smlspSession?.relativePath}</code> via{' '}
+                  <code>{smlspSession?.command}</code>
+                </p>
+                {activeSmlspResult.hoverMarkdown ? (
                   <section className="inspect-output-block">
                     <span className="diagnostic-meta-label">Hover</span>
-                    <pre className="inspect-output-code">{smlspResult.hoverMarkdown}</pre>
+                    <pre className="inspect-output-code">{activeSmlspResult.hoverMarkdown}</pre>
                   </section>
                 ) : null}
-                {smlspResult.definitionPath ? (
+                {activeSmlspResult.definitionPath ? (
                   <section className="inspect-signal-card">
                     <div className="diagnostic-card-topline">
                       <strong>Definition</strong>
                       <span className="status-pill stable">linked</span>
                     </div>
                     <p className="job-meta">
-                      <code>{smlspResult.definitionPath}</code>
+                      <code>{activeSmlspResult.definitionPath}</code>
                     </p>
                     <p className="job-meta">
-                      line {smlspResult.definitionLine ?? 0}, character{' '}
-                      {smlspResult.definitionCharacter ?? 0}
+                      line {activeSmlspResult.definitionLine ?? 0}, character{' '}
+                      {activeSmlspResult.definitionCharacter ?? 0}
                     </p>
                     {smlspDefinitionRelativePath ? (
                       <button
@@ -3806,11 +3872,11 @@ function ProjectPanel({
                 ) : null}
                 <section className="inspect-output-block">
                   <span className="diagnostic-meta-label">
-                    Inline diagnostics ({smlspResult.diagnostics.length})
+                    Inline diagnostics ({activeSmlspResult.diagnostics.length})
                   </span>
-                  {smlspResult.diagnostics.length > 0 ? (
+                  {activeSmlspResult.diagnostics.length > 0 ? (
                     <div className="diagnostics-group-list">
-                      {smlspResult.diagnostics.map((diagnostic, index) => (
+                      {activeSmlspResult.diagnostics.map((diagnostic, index) => (
                         <section key={`${diagnostic.message}-${index}`} className="diagnostic-card">
                           <div className="diagnostic-card-topline">
                             <span className={`status-pill ${severityPillClass(diagnostic.severity as WorkbenchDiagnostic['severity'])}`}>
@@ -3834,10 +3900,10 @@ function ProjectPanel({
                     </p>
                   )}
                 </section>
-                {smlspResult.stderr.trim().length > 0 ? (
+                {activeSmlspResult.stderr.trim().length > 0 ? (
                   <section className="inspect-output-block">
                     <span className="diagnostic-meta-label">smlsp stderr</span>
-                    <pre className="inspect-output-code">{smlspResult.stderr}</pre>
+                    <pre className="inspect-output-code">{activeSmlspResult.stderr}</pre>
                   </section>
                 ) : null}
               </div>
@@ -5294,6 +5360,28 @@ function buildReleaseReportMarkdown({
   }
 
   return `${lines.join('\n').trimEnd()}\n`
+}
+
+function normalizeSmlspError(message: string, command: string) {
+  const trimmed = message.trim()
+  const lower = trimmed.toLowerCase()
+
+  if (
+    lower.includes('failed to start smlsp command') ||
+    lower.includes('command cannot be empty')
+  ) {
+    return `Failed to start experimental smlsp bridge with \`${command}\`. Check the \`smlsp\` command in Settings, install the executable or point it to a full path, or disable experimental workflows if smlsp is unavailable.\n\nRaw error: ${trimmed}`
+  }
+
+  if (lower.includes('timed out waiting for smlsp response')) {
+    return `The experimental smlsp process started but did not answer the protocol handshake in time. Verify that \`${command}\` is a working language-server command and not a different executable.\n\nRaw error: ${trimmed}`
+  }
+
+  if (lower.includes('workspace root') || lower.includes('document path')) {
+    return `The experimental smlsp bridge refused the current workspace or document path. Reopen a canonical workspace inside the repository and retry on a real \`.sm\` buffer.\n\nRaw error: ${trimmed}`
+  }
+
+  return trimmed
 }
 
 export default App
