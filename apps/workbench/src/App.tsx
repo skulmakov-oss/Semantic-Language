@@ -14,11 +14,15 @@ import {
   saveWorkspaceFile,
   scaffoldSemanticProject,
   type AdapterContract,
+  type AssetSmokeSnapshot,
   type AdapterJobSpec,
   type JobKind,
   type JobResult,
+  type OverviewDocument,
   type OverviewSnapshot,
+  type ReleaseBundleManifest,
   type SmlspBridgeResult,
+  type SpecCatalogDocument,
   type ScaffoldProjectResult,
   type SpecCatalogSection,
   type SpecDocumentHeading,
@@ -2004,54 +2008,12 @@ function ReleasePanel({
   const [validationMessage, setValidationMessage] = useState<string | null>(null)
   const [validationRunning, setValidationRunning] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
-  const releaseSection = specCatalog.find((section) => section.key === 'release')
-  const releaseJobs = releaseValidationPlan.map((action) => ({
-    action,
-    job: latestJobMatching(jobs, (job) => jobMatchesAction(job, action)),
-  }))
-  const latestTrace = latestJobMatching(
-    jobs,
-    (job) => job.kind === 'smc' && effectiveResolvedCommand(job).includes('--trace-cache'),
-  )
-  const releaseManifest = overviewSnapshot?.releaseManifest ?? null
-  const assetSmoke = overviewSnapshot?.assetSmoke ?? null
-  const releaseDocuments = releaseSection?.documents ?? []
-  const docsAlignment = [
-    {
-      label: 'Baseline manifest present',
-      ok: overviewSnapshot?.baselineManifestExists ?? false,
-      detail: overviewSnapshot?.baselineManifestPath ?? 'No baseline manifest path resolved.',
-    },
-    {
-      label: 'Release docs indexed',
-      ok: releaseDocuments.length >= 5,
-      detail: `${releaseDocuments.length} release document(s) indexed in the canonical navigator.`,
-    },
-    {
-      label: 'Stable policy doc present',
-      ok: releaseDocuments.some((document) =>
-        document.relativePath.endsWith('stable_release_policy.md'),
-      ),
-      detail: 'The release console expects stable_release_policy.md to remain in the indexed release bundle.',
-    },
-    {
-      label: 'Asset smoke tag recorded',
-      ok: Boolean(assetSmoke?.validatedTag),
-      detail: assetSmoke?.validatedTag ?? 'No validated asset tag found in release_asset_smoke_matrix.md.',
-    },
-  ]
-  const gateRows = [
-    ...releaseJobs.map(({ action, job }) => ({
-      label: action.label.replace(/^Clean validation:\s*/, ''),
-      detail: action.args.join(' '),
-      job,
-    })),
-    {
-      label: 'Trace workflow',
-      detail: 'smc check --trace-cache',
-      job: latestTrace,
-    },
-  ]
+  const releaseView = deriveReleaseConsoleView(overviewSnapshot, specCatalog, jobs)
+  const releaseManifest = releaseView.releaseManifest
+  const assetSmoke = releaseView.assetSmoke
+  const releaseDocuments = releaseView.releaseDocuments
+  const docsAlignment = releaseView.docsAlignment
+  const gateRows = releaseView.gateRows
 
   async function runCleanValidationPass() {
     setValidationRunning(true)
@@ -2080,8 +2042,7 @@ function ReleasePanel({
 
     const markdown = buildReleaseReportMarkdown({
       overviewSnapshot,
-      gateRows,
-      docsAlignment,
+      releaseView,
     })
 
     try {
@@ -2120,6 +2081,13 @@ function ReleasePanel({
           </div>
           {validationMessage ? <p className="job-meta">{validationMessage}</p> : null}
           {exportMessage ? <p className="job-meta">{exportMessage}</p> : null}
+          <section className="diagnostic-callout document-truth-callout">
+            <span className="diagnostic-meta-label">Release truth contract</span>
+            <p className="job-meta">
+              Gate badges below come only from local job history. Docs alignment, known limits, and
+              asset smoke come only from canonical repository documents and the baseline manifest.
+            </p>
+          </section>
           <dl className="facts-grid">
             <div>
               <dt>Branch</dt>
@@ -2190,6 +2158,11 @@ function ReleasePanel({
                 <p className="job-meta">
                   {gate.job ? gate.job.commandLine : 'No local job recorded for this gate yet.'}
                 </p>
+                <section className="diagnostic-callout document-truth-callout">
+                  <span className="diagnostic-meta-label">Truth source</span>
+                  <p className="job-meta">{gate.truthSource}</p>
+                  <p className="job-meta">{gate.meaning}</p>
+                </section>
               </section>
             ))}
           </div>
@@ -2210,6 +2183,9 @@ function ReleasePanel({
                   </span>
                 </div>
                 <p className="job-meta">{item.detail}</p>
+                <p className="job-meta">
+                  truth source: <code>{item.truthSource}</code>
+                </p>
               </section>
             ))}
           </div>
@@ -2250,6 +2226,15 @@ function ReleasePanel({
                   <strong>Baseline artifact inventory</strong>
                   <span className="status-pill stable">manifest</span>
                 </div>
+                <section className="diagnostic-callout document-truth-callout">
+                  <span className="diagnostic-meta-label">Repository truth</span>
+                  <p className="job-meta">
+                    source path: <code>{overviewSnapshot?.baselineManifestPath ?? 'not resolved'}</code>
+                  </p>
+                  <p className="job-meta">
+                    generated at: <code>{releaseManifest.generatedAt}</code>
+                  </p>
+                </section>
                 <p className="job-meta">documentation bundle</p>
                 <ul className="bullet-list">
                   {releaseManifest.documentationBundle.map((path) => (
@@ -2284,6 +2269,16 @@ function ReleasePanel({
                   {assetSmoke?.validatedTag ? 'recorded' : 'missing'}
                 </span>
               </div>
+              <section className="diagnostic-callout document-truth-callout">
+                <span className="diagnostic-meta-label">Repository truth</span>
+                <p className="job-meta">
+                  source path: <code>{releaseView.assetSmokeDocPath}</code>
+                </p>
+                <p className="job-meta">
+                  badge meaning: recorded means the validated tag is present in the canonical smoke
+                  matrix, not that a fresh publish smoke just happened in this session.
+                </p>
+              </section>
               <p className="job-meta">
                 validated tag: <code>{assetSmoke?.validatedTag ?? 'not recorded'}</code>
               </p>
@@ -2318,6 +2313,20 @@ function ReleasePanel({
                 <strong>Known limits</strong>
                 <span className="status-pill draft">honesty</span>
               </div>
+              <section className="diagnostic-callout document-truth-callout">
+                <span className="diagnostic-meta-label">Repository truth</span>
+                <p className="job-meta">
+                  Known limits stay visible even when every local release gate above is green.
+                </p>
+                <p className="job-meta">
+                  source docs:{' '}
+                  <code>
+                    {releaseView.knownLimitSources.length > 0
+                      ? releaseView.knownLimitSources.map((document) => document.path).join(', ')
+                      : 'No explicit highlight source recorded in release docs.'}
+                  </code>
+                </p>
+              </section>
               <ul className="bullet-list">
                 {(overviewSnapshot?.knownLimits ?? []).map((limit) => (
                   <li key={limit}>{limit}</li>
@@ -5061,6 +5070,135 @@ function latestJobMatching(
   return jobs.find(predicate)
 }
 
+type ReleaseGateRow = {
+  label: string
+  detail: string
+  job: JobRecord | null
+  truthSource: string
+  meaning: string
+}
+
+type ReleaseDocsAlignmentItem = {
+  label: string
+  ok: boolean
+  detail: string
+  truthSource: string
+}
+
+type ReleaseConsoleView = {
+  releaseDocuments: SpecCatalogDocument[]
+  releaseManifest: ReleaseBundleManifest | null
+  assetSmoke: AssetSmokeSnapshot | null
+  gateRows: ReleaseGateRow[]
+  docsAlignment: ReleaseDocsAlignmentItem[]
+  assetSmokeDocPath: string
+  knownLimitSources: OverviewDocument[]
+}
+
+function findReleaseDocumentBySuffix(
+  releaseDocuments: SpecCatalogDocument[],
+  suffix: string,
+) {
+  return (
+    releaseDocuments.find((document) => document.relativePath.endsWith(suffix)) ?? null
+  )
+}
+
+function deriveReleaseConsoleView(
+  overviewSnapshot: OverviewSnapshot | null,
+  specCatalog: SpecCatalogSection[],
+  jobs: JobRecord[],
+): ReleaseConsoleView {
+  const releaseSection = specCatalog.find((section) => section.key === 'release')
+  const releaseDocuments = releaseSection?.documents ?? []
+  const releaseManifest = overviewSnapshot?.releaseManifest ?? null
+  const assetSmoke = overviewSnapshot?.assetSmoke ?? null
+  const latestTrace = latestJobMatching(
+    jobs,
+    (job) => job.kind === 'smc' && effectiveResolvedCommand(job).includes('--trace-cache'),
+  )
+  const stablePolicyDoc = findReleaseDocumentBySuffix(
+    releaseDocuments,
+    'stable_release_policy.md',
+  )
+  const assetSmokeDoc = findReleaseDocumentBySuffix(
+    releaseDocuments,
+    'release_asset_smoke_matrix.md',
+  )
+  const knownLimitSources =
+    overviewSnapshot?.releaseDocs.filter((document) => Boolean(document.highlight)) ??
+    []
+  const gateRows: ReleaseGateRow[] = [
+    ...releaseValidationPlan.map((action) => {
+      const job =
+        latestJobMatching(jobs, (candidate) => jobMatchesAction(candidate, action)) ?? null
+
+      return {
+        label: action.label.replace(/^Clean validation:\s*/, ''),
+        detail: action.args.join(' '),
+        job,
+        truthSource: job
+          ? `latest matching local job: ${job.commandLine}`
+          : `no local job recorded yet for public command ${action.kind} ${action.args.join(' ')}`,
+        meaning: 'Badge reflects only the latest matching local job status.',
+      }
+    }),
+    {
+      label: 'Trace workflow',
+      detail: 'smc check --trace-cache',
+      job: latestTrace ?? null,
+      truthSource: latestTrace
+        ? `latest matching local job: ${latestTrace.commandLine}`
+        : 'no local trace workflow recorded yet',
+      meaning: 'Badge reflects only the latest local trace workflow status.',
+    },
+  ]
+  const docsAlignment: ReleaseDocsAlignmentItem[] = [
+    {
+      label: 'Baseline manifest present',
+      ok: overviewSnapshot?.baselineManifestExists ?? false,
+      detail: overviewSnapshot?.baselineManifestPath ?? 'No baseline manifest path resolved.',
+      truthSource: overviewSnapshot?.baselineManifestPath ?? 'baseline manifest path unresolved',
+    },
+    {
+      label: 'Release docs indexed',
+      ok: releaseDocuments.length >= 5,
+      detail: `${releaseDocuments.length} release document(s) indexed in the canonical navigator.`,
+      truthSource: `canonical release section in docs/spec and docs/roadmap (${releaseDocuments.length} indexed document(s))`,
+    },
+    {
+      label: 'Stable policy doc present',
+      ok: Boolean(stablePolicyDoc),
+      detail:
+        stablePolicyDoc?.absolutePath ??
+        'stable_release_policy.md was not found in the indexed release bundle.',
+      truthSource:
+        stablePolicyDoc?.absolutePath ??
+        'expected canonical doc: docs/roadmap/stable_release_policy.md',
+    },
+    {
+      label: 'Asset smoke tag recorded',
+      ok: Boolean(assetSmoke?.validatedTag),
+      detail: assetSmoke?.validatedTag ?? 'No validated asset tag found in release_asset_smoke_matrix.md.',
+      truthSource:
+        assetSmokeDoc?.absolutePath ??
+        'expected canonical doc: docs/roadmap/release_asset_smoke_matrix.md',
+    },
+  ]
+
+  return {
+    releaseDocuments,
+    releaseManifest,
+    assetSmoke,
+    gateRows,
+    docsAlignment,
+    assetSmokeDocPath:
+      assetSmokeDoc?.absolutePath ??
+      'docs/roadmap/release_asset_smoke_matrix.md',
+    knownLimitSources,
+  }
+}
+
 function jobMatchesAction(job: JobRecord, action: JobActionSpec) {
   if (job.kind !== action.kind) {
     return false
@@ -5072,13 +5210,12 @@ function jobMatchesAction(job: JobRecord, action: JobActionSpec) {
 
 function buildReleaseReportMarkdown({
   overviewSnapshot,
-  gateRows,
-  docsAlignment,
+  releaseView,
 }: {
   overviewSnapshot: OverviewSnapshot
-  gateRows: Array<{ label: string; detail: string; job?: JobRecord }>
-  docsAlignment: Array<{ label: string; ok: boolean; detail: string }>
+  releaseView: ReleaseConsoleView
 }) {
+  const { gateRows, docsAlignment, releaseManifest, assetSmoke, knownLimitSources } = releaseView
   const lines = [
     '# Workbench Release Console Report',
     '',
@@ -5098,32 +5235,55 @@ function buildReleaseReportMarkdown({
       `- cwd: \`${gate.job?.cwd ?? overviewSnapshot.repoRoot}\``,
       `- exit: ${gate.job?.exitCode ?? 'n/a'}`,
       `- duration_ms: ${gate.job?.durationMs ?? 'n/a'}`,
+      `- truth_source: ${gate.truthSource}`,
+      `- meaning: ${gate.meaning}`,
       '',
     ]),
     '## Docs Alignment',
     '',
     ...docsAlignment.flatMap((item) => [
       `- ${item.ok ? '[x]' : '[ ]'} ${item.label}: ${item.detail}`,
+      `  - truth_source: ${item.truthSource}`,
     ]),
+    '',
+    '## Baseline Artifact Inventory',
+    '',
+    `- manifest_path: \`${overviewSnapshot.baselineManifestPath}\``,
+    ...(releaseManifest
+      ? [
+          `- generated_at: ${releaseManifest.generatedAt}`,
+          `- current_scope: ${releaseManifest.currentScope}`,
+          ...releaseManifest.documentationBundle.map((path) => `- documentation: \`${path}\``),
+          ...releaseManifest.validationTests.map((command) => `- validation_test: \`${command}\``),
+          ...releaseManifest.snapshotDirectories.map((path) => `- snapshot_dir: \`${path}\``),
+        ]
+      : ['- No parsed release manifest snapshot available.']),
     '',
     '## Known Limits',
     '',
     ...(overviewSnapshot.knownLimits.length > 0
       ? overviewSnapshot.knownLimits.map((limit) => `- ${limit}`)
       : ['- No known limits extracted from readiness docs.']),
+    `- truth_sources: ${
+      knownLimitSources.length > 0
+        ? knownLimitSources.map((document) => document.path).join(', ')
+        : 'No explicit highlight source recorded in release docs.'
+    }`,
     '',
     '## Asset Smoke',
     '',
-    `- validated tag: \`${overviewSnapshot.assetSmoke?.validatedTag ?? 'not recorded'}\``,
-    ...(overviewSnapshot.assetSmoke?.validatedAssets.length
-      ? overviewSnapshot.assetSmoke.validatedAssets.map((asset) => `- asset: \`${asset}\``)
+    `- source_path: \`${releaseView.assetSmokeDocPath}\``,
+    '- badge_meaning: recorded means the validated tag is present in the canonical smoke matrix, not that a fresh publish smoke just happened in this session.',
+    `- validated_tag: \`${assetSmoke?.validatedTag ?? 'not recorded'}\``,
+    ...(assetSmoke?.validatedAssets.length
+      ? assetSmoke.validatedAssets.map((asset) => `- asset: \`${asset}\``)
       : ['- No validated assets recorded.']),
     '',
   ]
 
-  if (overviewSnapshot.assetSmoke?.scenarios.length) {
+  if (assetSmoke?.scenarios.length) {
     lines.push('## Smoke Scenarios', '')
-    for (const scenario of overviewSnapshot.assetSmoke.scenarios) {
+    for (const scenario of assetSmoke.scenarios) {
       lines.push(`### ${scenario.scenario}`)
       lines.push(`- source: ${scenario.source}`)
       lines.push(`- validation: ${scenario.validation}`)
