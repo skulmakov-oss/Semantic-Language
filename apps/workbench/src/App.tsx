@@ -152,10 +152,10 @@ const routeSpecs: ScreenSpec[] = [
     stable: [
       'Workspace resolver over canonical repository paths',
       'Recent projects list and default workspace persistence',
-      'Workspace file tree and read/write text editor tabs for authoring shell',
+      'Workspace file tree, read/write text editor tabs, and current-file compile/check actions',
     ],
     next: [
-      'Add compile and check current file actions through the shared jobs pipeline',
+      'Route current-file command results into richer diagnostics views',
       'Keep editor shell intentionally lighter than a full IDE until later slices arrive',
     ],
   },
@@ -957,6 +957,7 @@ function WorkbenchScreen({
           onOpenEditorFile={onOpenEditorFile}
           onSelectEditorPath={onSelectEditorPath}
           onUpdateEditorContent={onUpdateEditorContent}
+          onRunAction={onRunAction}
           onSaveEditorFile={onSaveEditorFile}
           onReloadEditorFile={onReloadEditorFile}
           onCloseEditorTab={onCloseEditorTab}
@@ -1660,6 +1661,21 @@ function createEditorTab(document: WorkspaceFileDocument): EditorTab {
   }
 }
 
+function isSemanticSource(relativePath: string) {
+  return relativePath.toLowerCase().endsWith('.sm')
+}
+
+function toRepoRelativePath(relativePath: string, workspace: WorkspaceSummary) {
+  return workspace.repoRelativePath
+    ? `${workspace.repoRelativePath}/${relativePath}`.replace(/\\/g, '/')
+    : relativePath.replace(/\\/g, '/')
+}
+
+function compileOutputPath(repoRelativePath: string) {
+  const stem = repoRelativePath.replace(/\\/g, '/').replace(/\//g, '__').replace(/\.sm$/i, '')
+  return `target/workbench-${stem}.smc`
+}
+
 function renderMarkdown(markdown: string, headings: SpecDocumentHeading[]) {
   const headingAnchors = new Map(headings.map((heading) => [heading.title, heading.anchor]))
   const lines = markdown.split(/\r?\n/)
@@ -1809,6 +1825,7 @@ function ProjectPanel({
   onOpenEditorFile,
   onSelectEditorPath,
   onUpdateEditorContent,
+  onRunAction,
   onSaveEditorFile,
   onReloadEditorFile,
   onCloseEditorTab,
@@ -1827,12 +1844,48 @@ function ProjectPanel({
   onOpenEditorFile: (relativePath: string) => Promise<void>
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
+  onRunAction: (action: JobActionSpec) => Promise<void>
   onSaveEditorFile: (relativePath: string) => Promise<void>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
 }) {
   const activeEditorTab =
     editorTabs.find((tab) => tab.relativePath === activeEditorPath) ?? editorTabs[0] ?? null
+  const activeEditorRepoPath =
+    activeEditorTab && selectedWorkspace
+      ? toRepoRelativePath(activeEditorTab.relativePath, selectedWorkspace)
+      : null
+  const canRunSemanticFileAction =
+    !!activeEditorTab && !!activeEditorRepoPath && isSemanticSource(activeEditorTab.relativePath)
+
+  async function runCurrentFileAction(mode: 'check' | 'compile') {
+    if (!activeEditorTab || !selectedWorkspace || !adapterContract || !activeEditorRepoPath) {
+      return
+    }
+
+    if (activeEditorTab.status !== 'clean') {
+      await onSaveEditorFile(activeEditorTab.relativePath)
+    }
+
+    const args =
+      mode === 'check'
+        ? ['check', activeEditorRepoPath]
+        : ['compile', activeEditorRepoPath, '-o', compileOutputPath(activeEditorRepoPath)]
+
+    await onRunAction({
+      kind: 'smc',
+      label:
+        mode === 'check'
+          ? `Check ${activeEditorTab.title}`
+          : `Compile ${activeEditorTab.title}`,
+      args,
+      notes:
+        mode === 'check'
+          ? 'Check the active .sm file through the canonical smc check surface.'
+          : 'Compile the active .sm file through the canonical smc compile surface.',
+      cwdMode: 'repo',
+    })
+  }
 
   return (
     <div className="screen-stack">
@@ -2020,10 +2073,35 @@ function ProjectPanel({
                 >
                   Reload from disk
                 </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void runCurrentFileAction('check')}
+                  disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
+                >
+                  Check current file
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void runCurrentFileAction('compile')}
+                  disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
+                >
+                  Compile current file
+                </button>
               </div>
               <p className="job-meta">
                 path: <code>{activeEditorTab.absolutePath}</code>
               </p>
+              <p className="job-meta">
+                repo path:{' '}
+                <code>{activeEditorRepoPath ?? 'not a repository-scoped semantic source'}</code>
+              </p>
+              {!isSemanticSource(activeEditorTab.relativePath) ? (
+                <p className="empty-state">
+                  Current-file compile and check are only enabled for `.sm` source files.
+                </p>
+              ) : null}
               <textarea
                 className="editor-textarea"
                 value={activeEditorTab.content}
