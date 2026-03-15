@@ -1,24 +1,24 @@
 {
-  "generatedAtUtc": "2026-03-15T20:55:56.6623669Z",
+  "generatedAtUtc": "2026-03-15T21:22:41.9740735Z",
   "productName": "Semantic Workbench",
   "version": "0.1.0",
   "packageFormat": "portable-zip",
   "releaseExecutable": {
-    "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\apps\\workbench\\src-tauri\\target\\release\\semantic-workbench-app.exe",
+    "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\tauri-target\\release\\semantic-workbench-app.exe",
     "fileName": "semantic-workbench-app.exe",
     "sizeBytes": 9077248,
-    "sha256": "70126083f3868942d09f8855ba793db13396f2da96f6e8012274e769ab81c4ff"
+    "sha256": "ce6076ac0a173301c63960c05410a1036799317e5d609966987a3aad41d9c2a8"
   },
   "portableZip": {
     "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\package\\semantic-workbench-beta-portable.zip",
     "fileName": "semantic-workbench-beta-portable.zip",
-    "sizeBytes": 2895680,
-    "sha256": "73c67c6af525fd8b18132f0847121858f3220602c754c7f7a9038e4216177a75"
+    "sizeBytes": 2895803,
+    "sha256": "9850e18d3a83037e272642796b2333aa6dd44d81ddc1bf71abaa3d5964dd6820"
   },
   "extractedExecutable": {
     "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\package-extract\\semantic-workbench-app.exe",
     "fileName": "semantic-workbench-app.exe",
     "sizeBytes": 9077248,
-    "sha256": "70126083f3868942d09f8855ba793db13396f2da96f6e8012274e769ab81c4ff"
+    "sha256": "ce6076ac0a173301c63960c05410a1036799317e5d609966987a3aad41d9c2a8"
   }
 }

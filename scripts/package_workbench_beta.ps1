@@ -133,6 +133,7 @@ $logsDirectory = Join-Path $outputDirectory "logs"
 $workspaceDirectory = Join-Path $outputDirectory "workspace"
 $packageDirectory = Join-Path $outputDirectory "package"
 $extractedDirectory = Join-Path $outputDirectory "package-extract"
+$tauriTargetDirectory = Join-Path $outputDirectory "tauri-target"
 $bundleManifestPath = Join-Path $outputDirectory "workbench_beta_package_manifest.json"
 $releaseManifestPath = Join-Path $outputDirectory "workbench_beta_release_bundle_manifest.json"
 $jsonReportPath = Join-Path $outputDirectory "workbench_beta_smoke_latest.json"
@@ -144,13 +145,15 @@ New-Directory $logsDirectory
 Remove-IfExists $workspaceDirectory
 Remove-IfExists $packageDirectory
 Remove-IfExists $extractedDirectory
+Remove-IfExists $tauriTargetDirectory
 New-Directory $workspaceDirectory
 New-Directory $packageDirectory
 New-Directory $extractedDirectory
+New-Directory $tauriTargetDirectory
 
 $workbenchDirectory = Join-Path $repoRoot "apps/workbench"
 $tauriDirectory = Join-Path $workbenchDirectory "src-tauri"
-$workbenchReleaseDirectory = Join-Path $tauriDirectory "target/release"
+$workbenchReleaseDirectory = Join-Path $tauriTargetDirectory "release"
 $workbenchExePath = Join-Path $workbenchReleaseDirectory "semantic-workbench-app.exe"
 $smcReleasePath = Join-Path $repoRoot "target/release/smc.exe"
 $svmReleasePath = Join-Path $repoRoot "target/release/svm.exe"
@@ -163,7 +166,8 @@ $steps.Add((Invoke-CapturedStep -Name "workbench lint" -FilePath "npm.cmd" -Argu
 $steps.Add((Invoke-CapturedStep -Name "workbench build" -FilePath "npm.cmd" -ArgumentList @("run", "build") -WorkingDirectory $workbenchDirectory -LogsDirectory $logsDirectory))
 $steps.Add((Invoke-CapturedStep -Name "workbench tauri tests" -FilePath "cargo" -ArgumentList @("test", "--manifest-path", "apps/workbench/src-tauri/Cargo.toml") -WorkingDirectory $repoRoot -LogsDirectory $logsDirectory))
 $steps.Add((Invoke-CapturedStep -Name "semantic release binaries" -FilePath "cargo" -ArgumentList @("build", "--release", "--bin", "smc", "--bin", "svm") -WorkingDirectory $repoRoot -LogsDirectory $logsDirectory))
-$steps.Add((Invoke-CapturedStep -Name "workbench release build" -FilePath "npm.cmd" -ArgumentList @("run", "tauri:build", "--", "--no-bundle") -WorkingDirectory $workbenchDirectory -LogsDirectory $logsDirectory))
+$tauriBuildCommand = "`$env:CARGO_TARGET_DIR='$tauriTargetDirectory'; npm.cmd run tauri:build -- --no-bundle"
+$steps.Add((Invoke-CapturedStep -Name "workbench release build" -FilePath "pwsh" -ArgumentList @("-NoProfile", "-Command", $tauriBuildCommand) -WorkingDirectory $workbenchDirectory -LogsDirectory $logsDirectory))
 
 if (-not (Test-Path -LiteralPath $workbenchExePath)) {
     throw "expected packaged Workbench executable at '$workbenchExePath'"
