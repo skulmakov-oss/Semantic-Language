@@ -122,3 +122,5 @@ This resolution contract depends on:
 
 - `docs/roadmap/language_maturity/package_ecosystem.md`
 - `docs/roadmap/language_maturity/package_manifest.md`
+- `docs/roadmap/language_maturity/package_lockfile.md`
+- `docs/roadmap/language_maturity/package_worked_example.md`

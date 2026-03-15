@@ -147,3 +147,5 @@ This manifest design works together with:
 
 - `docs/roadmap/language_maturity/package_ecosystem.md`
 - `docs/roadmap/language_maturity/dependency_resolution.md`
+- `docs/roadmap/language_maturity/package_lockfile.md`
+- `docs/roadmap/language_maturity/package_worked_example.md`

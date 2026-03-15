@@ -90,7 +90,9 @@ Only after package identity is stable should the repository define:
 The immediate package-ecosystem design is anchored in:
 
 - `docs/roadmap/language_maturity/package_manifest.md`
+- `docs/roadmap/language_maturity/package_lockfile.md`
 - `docs/roadmap/language_maturity/dependency_resolution.md`
+- `docs/roadmap/language_maturity/package_worked_example.md`
 
 ## Relationship To Imports
 
@@ -127,10 +129,15 @@ This workstream should be considered materially started only when:
 
 ## Immediate Next Slice
 
-The immediate next slice for this PR is to define:
+This PR now defines:
 
 - the package manifest
 - dependency-resolution rules
 - lockfile expectations
+- one end-to-end worked example
 
-because those three pieces are the minimum coherent package story.
+The next slice after this PR should define:
+
+- workspace/package layout expectations
+- update flows that are allowed to rewrite `Semantic.lock`
+- the first stable package-aware CLI entrypoints
