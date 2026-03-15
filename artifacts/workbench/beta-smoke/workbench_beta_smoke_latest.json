@@ -1,11 +1,11 @@
 {
-  "generatedAtUtc": "2026-03-15T21:22:42.0734627Z",
+  "generatedAtUtc": "2026-03-15T21:30:01.4975699Z",
   "gitBranch": "codex/wb-bh-14-beta-release-notes",
-  "gitCommit": "2ea476e3f8c554daa958fccaf88096b1c4583bd8",
+  "gitCommit": "a39a01f30e03f1031dfb9cf095987b5ed1bad5ea",
   "outputRoot": "artifacts/workbench/beta-smoke",
   "workspaceRoot": "artifacts/workbench/beta-smoke/workspace",
   "portablePackage": {
-    "generatedAtUtc": "2026-03-15T21:22:41.9740735Z",
+    "generatedAtUtc": "2026-03-15T21:30:01.3974544Z",
     "productName": "Semantic Workbench",
     "version": "0.1.0",
     "packageFormat": "portable-zip",
@@ -13,25 +13,25 @@
       "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\tauri-target\\release\\semantic-workbench-app.exe",
       "fileName": "semantic-workbench-app.exe",
       "sizeBytes": 9077248,
-      "sha256": "ce6076ac0a173301c63960c05410a1036799317e5d609966987a3aad41d9c2a8"
+      "sha256": "59e6840834c20d3d995c8011fc8314a725622dd58f57febb78e0695ce370b95f"
     },
     "portableZip": {
       "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\package\\semantic-workbench-beta-portable.zip",
       "fileName": "semantic-workbench-beta-portable.zip",
-      "sizeBytes": 2895803,
-      "sha256": "9850e18d3a83037e272642796b2333aa6dd44d81ddc1bf71abaa3d5964dd6820"
+      "sizeBytes": 2895799,
+      "sha256": "e979dec3618fda6ca8425cbe283fb78b2818de7ee779be6fb3b26469bb2a042e"
     },
     "extractedExecutable": {
       "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\package-extract\\semantic-workbench-app.exe",
       "fileName": "semantic-workbench-app.exe",
       "sizeBytes": 9077248,
-      "sha256": "ce6076ac0a173301c63960c05410a1036799317e5d609966987a3aad41d9c2a8"
+      "sha256": "59e6840834c20d3d995c8011fc8314a725622dd58f57febb78e0695ce370b95f"
     }
   },
   "launchSmoke": {
     "launched": true,
     "launchSmokeSeconds": 8,
-    "durationMs": 8116,
+    "durationMs": 8126,
     "executable": "artifacts/workbench/beta-smoke/package-extract/semantic-workbench-app.exe",
     "exitCodeBeforeStop": null
   },
@@ -48,7 +48,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 6048,
+      "durationMs": 7062,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-lint.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-lint.stderr.txt"
     },
@@ -64,7 +64,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 6024,
+      "durationMs": 6021,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-build.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-build.stderr.txt"
     },
@@ -81,7 +81,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 2035,
+      "durationMs": 2028,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-tauri-tests.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-tauri-tests.stderr.txt"
     },
@@ -101,7 +101,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1022,
+      "durationMs": 1030,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\semantic-release-binaries.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\semantic-release-binaries.stderr.txt"
     },
@@ -118,7 +118,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 358029,
+      "durationMs": 318014,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-release-build.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-release-build.stderr.txt"
     },
@@ -151,7 +151,7 @@
       "exitCode": 1,
       "expectFailure": true,
       "succeeded": true,
-      "durationMs": 1023,
+      "durationMs": 1014,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-before-write.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-before-write.stderr.txt"
     },
@@ -167,7 +167,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1022,
+      "durationMs": 1014,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-write.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-write.stderr.txt"
     },
@@ -184,7 +184,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1019,
+      "durationMs": 1013,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-after-write.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-after-write.stderr.txt"
     },
@@ -202,7 +202,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1024,
+      "durationMs": 1025,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-compile.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-compile.stderr.txt"
     },
@@ -218,7 +218,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1017,
+      "durationMs": 1020,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-verify.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-verify.stderr.txt"
     },
@@ -234,7 +234,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1018,
+      "durationMs": 1032,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-disasm.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-disasm.stderr.txt"
     },
@@ -268,7 +268,7 @@
       "exitCode": 0,
       "expectFailure": false,
       "succeeded": true,
-      "durationMs": 1013,
+      "durationMs": 1015,
       "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\release-bundle-verify.stdout.txt",
       "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\release-bundle-verify.stderr.txt"
     }
