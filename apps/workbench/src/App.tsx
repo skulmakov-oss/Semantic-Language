@@ -83,7 +83,9 @@ type InspectableJob = {
   job: JobRecord
   family: InspectFamily
   artifactPath: string | null
+  artifactSource: 'explicit-command-arg' | 'not-explicit'
   summary: string
+  summarySource: 'stdout-first-line' | 'stderr-first-line' | 'job-status'
   stdoutText: string | null
   stderrText: string | null
 }
@@ -2506,13 +2508,17 @@ function deriveInspectableJobs(jobs: JobRecord[]): InspectableJob[] {
 
     const stdoutText = normalizeInspectOutput(job.stdout)
     const stderrText = normalizeInspectOutput(job.stderr)
+    const artifact = extractInspectArtifact(job, family)
+    const summary = summarizeInspectJob(job, stdoutText, stderrText)
 
     return [
       {
         job,
         family,
-        artifactPath: extractInspectArtifactPath(job, family),
-        summary: summarizeInspectJob(job, stdoutText, stderrText),
+        artifactPath: artifact.path,
+        artifactSource: artifact.source,
+        summary: summary.text,
+        summarySource: summary.source,
         stdoutText,
         stderrText,
       },
@@ -2556,7 +2562,7 @@ function effectiveResolvedCommand(job: JobRecord) {
   return job.commandLine.split(/\s+/).filter(Boolean)
 }
 
-function extractInspectArtifactPath(job: JobRecord, family: InspectFamily) {
+function extractInspectArtifact(job: JobRecord, family: InspectFamily) {
   const command = effectiveResolvedCommand(job)
   const subcommand =
     family === 'trace'
@@ -2571,10 +2577,18 @@ function extractInspectArtifactPath(job: JobRecord, family: InspectFamily) {
   const subcommandIndex = command.findIndex((token) => token === subcommand)
 
   if (subcommandIndex === -1) {
-    return null
+    return {
+      path: null,
+      source: 'not-explicit' as const,
+    }
   }
 
-  return command[subcommandIndex + 1] ?? null
+  const path = command[subcommandIndex + 1] ?? null
+
+  return {
+    path,
+    source: path ? ('explicit-command-arg' as const) : ('not-explicit' as const),
+  }
 }
 
 function normalizeInspectOutput(output: string) {
@@ -2587,21 +2601,60 @@ function summarizeInspectJob(
   stdoutText: string | null,
   stderrText: string | null,
 ) {
-  const firstLine = stdoutText?.split(/\r?\n/, 1)[0] ?? stderrText?.split(/\r?\n/, 1)[0] ?? null
+  const stdoutFirstLine = stdoutText?.split(/\r?\n/, 1)[0] ?? null
+  if (stdoutFirstLine) {
+    return {
+      text: stdoutFirstLine,
+      source: 'stdout-first-line' as const,
+    }
+  }
 
-  if (firstLine) {
-    return firstLine
+  const stderrFirstLine = stderrText?.split(/\r?\n/, 1)[0] ?? null
+  if (stderrFirstLine) {
+    return {
+      text: stderrFirstLine,
+      source: 'stderr-first-line' as const,
+    }
   }
 
   if (job.status === 'success') {
-    return 'Completed without captured stdout or stderr.'
+    return {
+      text: 'Completed without captured stdout or stderr.',
+      source: 'job-status' as const,
+    }
   }
 
   if (job.status === 'running') {
-    return 'Command still running.'
+    return {
+      text: 'Command still running.',
+      source: 'job-status' as const,
+    }
   }
 
-  return 'Command failed without captured output.'
+  return {
+    text: 'Command failed without captured output.',
+    source: 'job-status' as const,
+  }
+}
+
+function inspectArtifactSourceLabel(source: InspectableJob['artifactSource']) {
+  switch (source) {
+    case 'explicit-command-arg':
+      return 'explicit command argument'
+    case 'not-explicit':
+      return 'not explicit in command'
+  }
+}
+
+function inspectSummarySourceLabel(source: InspectableJob['summarySource']) {
+  switch (source) {
+    case 'stdout-first-line':
+      return 'derived from first stdout line'
+    case 'stderr-first-line':
+      return 'derived from first stderr line'
+    case 'job-status':
+      return 'derived from job status only'
+  }
 }
 
 type InspectSignal = {
@@ -4757,8 +4810,18 @@ function InspectPanel({
                     </span>
                   </div>
                   <strong>{entry.job.label}</strong>
-                  <p className="job-meta">{entry.summary}</p>
-                  <p className="job-meta">{entry.artifactPath ?? entry.job.commandLine}</p>
+                  <div className="inspect-card-meta">
+                    <span className="diagnostic-meta-label">Derived summary</span>
+                    <p className="job-meta">{entry.summary}</p>
+                    <p className="job-meta">{inspectSummarySourceLabel(entry.summarySource)}</p>
+                  </div>
+                  <div className="inspect-card-meta">
+                    <span className="diagnostic-meta-label">Artifact path</span>
+                    <p className="job-meta">
+                      {entry.artifactPath ?? 'Not explicit in captured command arguments.'}
+                    </p>
+                    <p className="job-meta">{inspectArtifactSourceLabel(entry.artifactSource)}</p>
+                  </div>
                 </button>
               ))}
             </div>
@@ -4786,7 +4849,14 @@ function InspectPanel({
                 <div className="diagnostic-meta-grid">
                   <div>
                     <span className="diagnostic-meta-label">Artifact</span>
-                    <code>{selectedInspectableJob.artifactPath ?? 'derived from raw command'}</code>
+                    <code>
+                      {selectedInspectableJob.artifactPath ??
+                        'Not explicit in captured command arguments.'}
+                    </code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Artifact source</span>
+                    <code>{inspectArtifactSourceLabel(selectedInspectableJob.artifactSource)}</code>
                   </div>
                   <div>
                     <span className="diagnostic-meta-label">Command</span>
@@ -4817,6 +4887,14 @@ function InspectPanel({
                 </div>
 
                 <div className="inspect-callout">
+                  <span className="diagnostic-meta-label">Derived summary</span>
+                  <p>{selectedInspectableJob.summary}</p>
+                  <p className="job-meta">
+                    {inspectSummarySourceLabel(selectedInspectableJob.summarySource)}
+                  </p>
+                </div>
+
+                <div className="inspect-callout">
                   <span className="diagnostic-meta-label">Inspector contract</span>
                   <p>
                     {selectedInspectableJob.family === 'trace'
@@ -4826,6 +4904,14 @@ function InspectPanel({
                       : selectedInspectableJob.family === 'disasm'
                         ? 'Workbench displays raw SemCode disassembly from the public CLI surface. It does not own a second bytecode model.'
                         : 'Workbench displays verified execution status from the public run surface. It does not infer runtime semantics beyond exit code and captured output.'}
+                  </p>
+                </div>
+
+                <div className="inspect-callout">
+                  <span className="diagnostic-meta-label">Derived signals</span>
+                  <p>
+                    Signal cards below are derived from preserved stdout, stderr, exit code, and
+                    artifact metadata. Raw output remains authoritative.
                   </p>
                 </div>
 

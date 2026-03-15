@@ -1130,6 +1130,11 @@
   box-shadow: 0 0 0 3px rgba(32, 190, 167, 0.12);
 }
 
+.inspect-card-meta {
+  display: grid;
+  gap: 0.15rem;
+}
+
 .inspect-output-code {
   margin: 0.5rem 0 0;
   padding: 0;
