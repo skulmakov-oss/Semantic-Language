@@ -1,6 +1,14 @@
 # Imports v0.2
 
-This page documents the import behavior currently implemented in Semantic semantics.
+This page is a companion guide to the current module/import surface.
+
+The canonical public contract now lives in:
+
+- `docs/spec/modules.md`
+- `docs/spec/diagnostics.md`
+
+This page should stay aligned with those source-contract documents and is
+intended mainly as a compact guide with examples.
 
 ## Supported Forms
 

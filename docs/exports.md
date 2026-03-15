@@ -1,6 +1,14 @@
 # Exports v0.2
 
-This page documents the export surface behavior currently implemented in Semantic semantics.
+This page is a companion guide to the current export and re-export surface.
+
+The canonical public contract now lives in:
+
+- `docs/spec/modules.md`
+- `docs/spec/diagnostics.md`
+
+This page should stay aligned with those source-contract documents and is
+intended mainly as a compact guide with examples.
 
 ## Exportable Items
 
