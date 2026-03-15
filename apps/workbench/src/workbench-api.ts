@@ -117,6 +117,39 @@ export type ScaffoldProjectResult = {
   entryRelativePath: string
 }
 
+export type SmlspBridgeRequest = {
+  workspaceRoot: string
+  relativePath: string
+  content: string
+  line: number
+  character: number
+  command: string
+  args: string[]
+}
+
+export type SmlspBridgeDiagnostic = {
+  severity: string
+  code: string | null
+  message: string
+  line: number
+  character: number
+  endLine: number
+  endCharacter: number
+}
+
+export type SmlspBridgeResult = {
+  transport: string
+  commandLine: string[]
+  capabilities: string[]
+  hoverMarkdown: string | null
+  definitionPath: string | null
+  definitionLine: number | null
+  definitionCharacter: number | null
+  formattingText: string | null
+  diagnostics: SmlspBridgeDiagnostic[]
+  stderr: string
+}
+
 export type OverviewSnapshot = {
   repoRoot: string
   branch: string
@@ -209,4 +242,8 @@ export async function exportReleaseReportFile(request: ReleaseReportExportReques
 
 export async function scaffoldSemanticProject(request: ScaffoldProjectRequest) {
   return invoke<ScaffoldProjectResult>('scaffold_semantic_project', { request })
+}
+
+export async function runSmlspProtocolBridge(request: SmlspBridgeRequest) {
+  return invoke<SmlspBridgeResult>('run_smlsp_protocol_bridge', { request })
 }

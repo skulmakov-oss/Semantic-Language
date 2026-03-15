@@ -10,6 +10,7 @@ import {
   fetchWorkspaceTree,
   resolveWorkspaceRoot,
   runCliJob,
+  runSmlspProtocolBridge,
   saveWorkspaceFile,
   scaffoldSemanticProject,
   type AdapterContract,
@@ -17,6 +18,7 @@ import {
   type JobKind,
   type JobResult,
   type OverviewSnapshot,
+  type SmlspBridgeResult,
   type ScaffoldProjectResult,
   type SpecCatalogSection,
   type SpecDocumentHeading,
@@ -99,6 +101,11 @@ type PackageManifestPreview = {
   version: string | null
   edition: string | null
   entry: string | null
+}
+
+type EditorCursorPosition = {
+  line: number
+  character: number
 }
 
 const initialWorkbenchState = loadWorkbenchState()
@@ -2625,11 +2632,28 @@ function ProjectPanel({
     'idle' | 'loading' | 'ready' | 'missing' | 'error'
   >('idle')
   const [packageManifestError, setPackageManifestError] = useState<string | null>(null)
+  const [editorCursor, setEditorCursor] = useState<EditorCursorPosition>({ line: 0, character: 0 })
+  const [smlspBusy, setSmlspBusy] = useState(false)
+  const [smlspResult, setSmlspResult] = useState<SmlspBridgeResult | null>(null)
+  const [smlspError, setSmlspError] = useState<string | null>(null)
+  const smlspDefinitionRelativePath =
+    smlspResult?.definitionPath && selectedWorkspace
+      ? resolveAbsoluteWorkspacePath(
+          smlspResult.definitionPath,
+          selectedWorkspace,
+        )
+      : null
 
   useEffect(() => {
     setScaffoldPackageName(deriveScaffoldPackageName(selectedWorkspace))
     setScaffoldMessage(null)
   }, [selectedWorkspace])
+
+  useEffect(() => {
+    setEditorCursor({ line: 0, character: 0 })
+    setSmlspResult(null)
+    setSmlspError(null)
+  }, [activeEditorPath])
 
   useEffect(() => {
     let cancelled = false
@@ -2799,6 +2823,46 @@ function ProjectPanel({
     } finally {
       setScaffoldBusy(false)
     }
+  }
+
+  async function runSmlspBridge() {
+    if (
+      !selectedWorkspace ||
+      !activeEditorTab ||
+      !isSemanticSource(activeEditorTab.relativePath) ||
+      smlspBusy
+    ) {
+      return
+    }
+
+    setSmlspBusy(true)
+    setSmlspError(null)
+
+    try {
+      const result = await runSmlspProtocolBridge({
+        workspaceRoot: selectedWorkspace.resolvedPath,
+        relativePath: activeEditorTab.relativePath,
+        content: activeEditorTab.content,
+        line: editorCursor.line,
+        character: editorCursor.character,
+        command: settings.smlspCommand,
+        args: [],
+      })
+      setSmlspResult(result)
+    } catch (error) {
+      setSmlspResult(null)
+      setSmlspError(String(error))
+    } finally {
+      setSmlspBusy(false)
+    }
+  }
+
+  function applySmlspFormatting() {
+    if (!activeEditorTab || !smlspResult?.formattingText) {
+      return
+    }
+
+    onUpdateEditorContent(activeEditorTab.relativePath, smlspResult.formattingText)
   }
 
   return (
@@ -3010,6 +3074,133 @@ function ProjectPanel({
             </dl>
           ) : null}
         </article>
+
+        {settings.showExperimental ? (
+          <article className="screen-card">
+            <p className="card-kicker">Experimental protocol bridge</p>
+            <h3>`smlsp` over stdio for the active editor buffer</h3>
+            <p className="screen-summary">
+              This bridge talks only to an external <code>{settings.smlspCommand}</code> process.
+              Workbench does not synthesize hover, definition, diagnostics, or formatting on its
+              own.
+            </p>
+            <div className="field-actions">
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => void runSmlspBridge()}
+                disabled={
+                  !selectedWorkspace ||
+                  !activeEditorTab ||
+                  !isSemanticSource(activeEditorTab.relativePath) ||
+                  smlspBusy
+                }
+              >
+                {smlspBusy ? 'Running smlsp...' : 'Run smlsp bridge'}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => applySmlspFormatting()}
+                disabled={!activeEditorTab || !smlspResult?.formattingText}
+              >
+                Apply formatted text
+              </button>
+            </div>
+            <p className="job-meta">
+              cursor: <code>{editorCursor.line}:{editorCursor.character}</code>
+            </p>
+            <p className="job-meta">
+              active file:{' '}
+              <code>{activeEditorTab?.relativePath ?? 'open a .sm file first'}</code>
+            </p>
+            {smlspError ? <p className="adapter-error">{smlspError}</p> : null}
+            {smlspResult ? (
+              <div className="screen-stack">
+                <div className="diagnostics-filter-row">
+                  <span className="status-pill draft">experimental</span>
+                  <span className="status-pill stable">{smlspResult.transport}</span>
+                  {smlspResult.capabilities.map((capability) => (
+                    <span key={capability} className="status-pill stable">
+                      {capability}
+                    </span>
+                  ))}
+                </div>
+                {smlspResult.hoverMarkdown ? (
+                  <section className="inspect-output-block">
+                    <span className="diagnostic-meta-label">Hover</span>
+                    <pre className="inspect-output-code">{smlspResult.hoverMarkdown}</pre>
+                  </section>
+                ) : null}
+                {smlspResult.definitionPath ? (
+                  <section className="inspect-signal-card">
+                    <div className="diagnostic-card-topline">
+                      <strong>Definition</strong>
+                      <span className="status-pill stable">linked</span>
+                    </div>
+                    <p className="job-meta">
+                      <code>{smlspResult.definitionPath}</code>
+                    </p>
+                    <p className="job-meta">
+                      line {smlspResult.definitionLine ?? 0}, character{' '}
+                      {smlspResult.definitionCharacter ?? 0}
+                    </p>
+                    {smlspDefinitionRelativePath ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => void onOpenEditorFile(smlspDefinitionRelativePath)}
+                      >
+                        Open definition file
+                      </button>
+                    ) : null}
+                  </section>
+                ) : null}
+                <section className="inspect-output-block">
+                  <span className="diagnostic-meta-label">
+                    Inline diagnostics ({smlspResult.diagnostics.length})
+                  </span>
+                  {smlspResult.diagnostics.length > 0 ? (
+                    <div className="diagnostics-group-list">
+                      {smlspResult.diagnostics.map((diagnostic, index) => (
+                        <section key={`${diagnostic.message}-${index}`} className="diagnostic-card">
+                          <div className="diagnostic-card-topline">
+                            <span className={`status-pill ${severityPillClass(diagnostic.severity as WorkbenchDiagnostic['severity'])}`}>
+                              {diagnostic.severity}
+                            </span>
+                            {diagnostic.code ? (
+                              <code>{diagnostic.code}</code>
+                            ) : null}
+                          </div>
+                          <strong>{diagnostic.message}</strong>
+                          <p className="job-meta">
+                            {diagnostic.line}:{diagnostic.character} → {diagnostic.endLine}:
+                            {diagnostic.endCharacter}
+                          </p>
+                        </section>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-state">
+                      No diagnostics were published by the current `smlsp` session.
+                    </p>
+                  )}
+                </section>
+                {smlspResult.stderr.trim().length > 0 ? (
+                  <section className="inspect-output-block">
+                    <span className="diagnostic-meta-label">smlsp stderr</span>
+                    <pre className="inspect-output-code">{smlspResult.stderr}</pre>
+                  </section>
+                ) : null}
+              </div>
+            ) : (
+              <p className="empty-state">
+                Run the bridge to inspect hover, definition, formatting, and published diagnostics
+                for the current buffer.
+              </p>
+            )}
+          </article>
+        ) : null}
       </section>
 
       <section className="project-shell">
@@ -3164,6 +3355,14 @@ function ProjectPanel({
                 onChange={(event) =>
                   onUpdateEditorContent(activeEditorTab.relativePath, event.target.value)
                 }
+                onSelect={(event) =>
+                  setEditorCursor(
+                    deriveCursorPosition(
+                      event.currentTarget.value,
+                      event.currentTarget.selectionStart ?? 0,
+                    ),
+                  )
+                }
                 spellCheck={false}
               />
             </div>
@@ -3194,6 +3393,35 @@ function deriveScaffoldPackageName(selectedWorkspace: WorkspaceSummary | null) {
 
 function deriveScaffoldPackageNameFromResult(result: ScaffoldProjectResult) {
   return result.packageName
+}
+
+function deriveCursorPosition(content: string, selectionStart: number): EditorCursorPosition {
+  const safeOffset = Math.max(0, Math.min(selectionStart, content.length))
+  const prefix = content.slice(0, safeOffset)
+  const lines = prefix.split(/\r?\n/)
+  return {
+    line: Math.max(0, lines.length - 1),
+    character: lines[lines.length - 1]?.length ?? 0,
+  }
+}
+
+function resolveAbsoluteWorkspacePath(
+  absolutePath: string,
+  workspace: WorkspaceSummary,
+) {
+  const normalizedAbsolute = absolutePath.replace(/\\/g, '/').toLowerCase()
+  const normalizedWorkspace = workspace.resolvedPath.replace(/\\/g, '/').toLowerCase()
+
+  if (!normalizedAbsolute.startsWith(normalizedWorkspace)) {
+    return null
+  }
+
+  const relative = absolutePath
+    .replace(/\\/g, '/')
+    .slice(workspace.resolvedPath.replace(/\\/g, '/').length)
+    .replace(/^\/+/, '')
+
+  return relative || null
 }
 
 function parsePackageManifest(content: string): PackageManifestPreview {
@@ -3844,6 +4072,24 @@ function SettingsPanel({
               checked={settings.showExperimental}
               onChange={(event) =>
                 onUpdateSettings({ showExperimental: event.target.checked })
+              }
+            />
+          </label>
+
+          <label className="toggle-row toggle-row-input">
+            <span>
+              <strong>`smlsp` command</strong>
+              <p className="job-meta">
+                External editor-protocol bridge command. Workbench only shells out to this process;
+                it does not implement hover, definition, diagnostics, or formatting itself.
+              </p>
+            </span>
+            <input
+              type="text"
+              className="text-field settings-text-field"
+              value={settings.smlspCommand}
+              onChange={(event) =>
+                onUpdateSettings({ smlspCommand: event.target.value || 'smlsp' })
               }
             />
           </label>

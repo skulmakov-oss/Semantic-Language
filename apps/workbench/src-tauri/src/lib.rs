@@ -1,5 +1,6 @@
 mod adapter;
 mod docs;
+mod lsp_bridge;
 mod reports;
 mod scaffold;
 mod snapshot;
@@ -15,6 +16,7 @@ use adapter::{
   WorkspaceSummary,
 };
 use docs::{read_spec_catalog, read_spec_document, SpecCatalogSection, SpecDocumentView};
+use lsp_bridge::{run_smlsp_bridge, SmlspBridgeRequest, SmlspBridgeResult};
 use reports::{
   export_release_report, ReleaseReportExportRequest, ReleaseReportExportResult,
 };
@@ -93,6 +95,13 @@ fn scaffold_semantic_project(
   scaffold_project(request)
 }
 
+#[tauri::command]
+fn run_smlsp_protocol_bridge(
+  request: SmlspBridgeRequest,
+) -> Result<SmlspBridgeResult, String> {
+  run_smlsp_bridge(request)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -117,7 +126,8 @@ pub fn run() {
       get_workspace_file,
       save_workspace_file_contents,
       export_release_report_file,
-      scaffold_semantic_project
+      scaffold_semantic_project,
+      run_smlsp_protocol_bridge
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

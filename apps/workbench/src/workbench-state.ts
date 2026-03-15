@@ -16,6 +16,7 @@ export type WorkbenchSettings = {
   preferredShell: 'pwsh'
   formatOnSave: boolean
   showExperimental: boolean
+  smlspCommand: string
 }
 
 export type StoredWorkbenchState = {
@@ -32,6 +33,7 @@ const defaultState: StoredWorkbenchState = {
     preferredShell: 'pwsh',
     formatOnSave: false,
     showExperimental: false,
+    smlspCommand: 'smlsp',
   },
 }
 
@@ -59,6 +61,11 @@ export function loadWorkbenchState(): StoredWorkbenchState {
         preferredShell: 'pwsh',
         formatOnSave: Boolean(parsed.settings?.formatOnSave),
         showExperimental: Boolean(parsed.settings?.showExperimental),
+        smlspCommand:
+          typeof parsed.settings?.smlspCommand === 'string' &&
+          parsed.settings.smlspCommand.trim().length > 0
+            ? parsed.settings.smlspCommand
+            : 'smlsp',
       },
     }
   } catch {
