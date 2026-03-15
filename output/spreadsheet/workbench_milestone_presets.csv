@@ -1,0 +1,7 @@
+Milestone,Description,RecommendedOrder
+WB-0 Bootstrap,Foundation wave for architecture shell command bus and project opening,1
+WB-0.1 Cockpit,Operations cockpit and spec release navigation wave,2
+WB-0.2 Authoring,Editor shell diagnostics and formatter integration wave,3
+WB-0.3 Inspect,Disasm verify and trace runtime inspection wave,4
+WB-0.4 Operate,Release console and scaffolding wave,5
+WB-0.5 Protocol,Post-v1 editor protocol bridge through smlsp,6

@@ -1,0 +1,34 @@
+Label,Color,Description
+workbench,1f6feb,Top-level Workbench backlog item
+docs,5319e7,Docs or contract-definition focused work
+foundation,0e8a16,Foundational architecture or bootstrap work
+frontend,d4c5f9,React or UI-facing implementation work
+backend,0052cc,Rust-side app or orchestration backend work
+tauri,bfd4f2,Tauri shell or desktop integration work
+cli-adapter,fbca04,Process adapter work over smc svm cargo or scripts
+project,c2e0c6,Project workspace or project metadata handling
+settings,fef2c0,User or workspace settings behavior
+cockpit,1d76db,Overview or status cockpit work
+release,b60205,Release and readiness related work
+jobs,ededed,Job runner or command output history work
+spec-navigator,7057ff,Spec tree search and document navigation work
+editor,ff7b72,Editor shell or file editing work
+authoring,ff9f1c,Authoring-loop focused UX work
+compile-check,e99695,Compile or check workflow integration
+diagnostics,d93f0b,Diagnostics ingestion or presentation
+docs-linking,5319e7,Links from UI to specs diagnostics or roadmap docs
+formatter,8a63d2,Formatting workflow and canonical layout integration
+inspector,0a3069,Inspection workflow for verify disasm or runtime outputs
+disasm,0550ae,Disassembly viewing and related workflows
+verify,1b7f83,Verifier-facing workflows and output handling
+trace,006b75,Trace and execution-inspection workflows
+runtime,8250df,Runtime summary or execution inspection surface
+console,9a6700,Console-like control and operations surfaces
+automation,a371f7,One-click validation or repeatable operational flows
+scaffolding,3fb950,Project bootstrap and initialization workflows
+package,c5def5,Package metadata or package-aware UX
+lsp,fbca04,Editor protocol and language-server integration
+post-v1,6e7781,Deferred slice not required for Workbench v1
+priority:high,b60205,High-priority critical-path work
+priority:medium,fbca04,Medium-priority follow-on work
+priority:low,6e7781,Low-priority optional or later work
