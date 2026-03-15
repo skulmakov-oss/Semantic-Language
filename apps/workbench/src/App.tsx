@@ -371,7 +371,7 @@ function App() {
   const [specError, setSpecError] = useState<string | null>(null)
   const [jobs, setJobs] = useState<JobRecord[]>([])
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
-  const [activeJob, setActiveJob] = useState<JobKind | null>(null)
+  const [runningActionKeys, setRunningActionKeys] = useState<string[]>([])
   const [specCatalog, setSpecCatalog] = useState<SpecCatalogSection[]>([])
   const [specSearch, setSpecSearch] = useState('')
   const [selectedSpecPath, setSelectedSpecPath] = useState<string | null>(null)
@@ -397,6 +397,7 @@ function App() {
     initialWorkbenchState.settings,
   )
   const workspaceTreeRequestIdRef = useRef(0)
+  const runningActionJobIdsRef = useRef(new Map<string, string>())
 
   useEffect(() => {
     let cancelled = false
@@ -572,11 +573,20 @@ function App() {
   }, [adapterContract, selectedWorkspace, settings.defaultWorkspacePath])
 
   async function runJobAction(action: JobActionSpec): Promise<JobResult | null> {
+    const cwd = resolveActionCwd(action, adapterContract, selectedWorkspace)
+    const actionKey = createActionExecutionKey(action.kind, cwd, action.args)
+    const existingJobId = runningActionJobIdsRef.current.get(actionKey)
+
+    if (existingJobId) {
+      setSelectedJobId(existingJobId)
+      return null
+    }
+
     const id = crypto.randomUUID()
-    const cwd =
-      action.cwdMode === 'repo'
-        ? adapterContract?.repoRoot ?? selectedWorkspace?.repoRoot ?? ''
-        : selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? ''
+    runningActionJobIdsRef.current.set(actionKey, id)
+    setRunningActionKeys((current) =>
+      current.includes(actionKey) ? current : [...current, actionKey],
+    )
 
     startTransition(() =>
       setJobs((current) => [
@@ -595,7 +605,6 @@ function App() {
       ]),
     )
     setSelectedJobId(id)
-    setActiveJob(action.kind)
 
     try {
       const result = await runCliJob({
@@ -624,7 +633,10 @@ function App() {
       setAdapterError(message)
       return null
     } finally {
-      setActiveJob(null)
+      if (runningActionJobIdsRef.current.get(actionKey) === id) {
+        runningActionJobIdsRef.current.delete(actionKey)
+      }
+      setRunningActionKeys((current) => current.filter((entry) => entry !== actionKey))
     }
   }
 
@@ -659,6 +671,12 @@ function App() {
         ),
       ),
     )
+  }
+
+  function isActionRunning(action: JobActionSpec) {
+    const cwd = resolveActionCwd(action, adapterContract, selectedWorkspace)
+    const actionKey = createActionExecutionKey(action.kind, cwd, action.args)
+    return runningActionKeys.includes(actionKey)
   }
 
   function updateWorkspaceInput(value: string) {
@@ -1000,8 +1018,8 @@ function App() {
                   activeEditorPath={activeEditorPath}
                   jobs={jobs}
                   selectedJobId={selectedJobId}
-                  activeJob={activeJob}
                   onRunAction={runJobAction}
+                  isActionRunning={isActionRunning}
                   onRunProbe={runProbe}
                   onSpecSearchChange={setSpecSearch}
                   onSelectSpecPath={setSelectedSpecPath}
@@ -1052,8 +1070,8 @@ function WorkbenchScreen({
   activeEditorPath,
   jobs,
   selectedJobId,
-  activeJob,
   onRunAction,
+  isActionRunning,
   onRunProbe,
   onSpecSearchChange,
   onSelectSpecPath,
@@ -1094,8 +1112,8 @@ function WorkbenchScreen({
   activeEditorPath: string | null
   jobs: JobRecord[]
   selectedJobId: string | null
-  activeJob: JobKind | null
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
+  isActionRunning: (action: JobActionSpec) => boolean
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   onSpecSearchChange: (value: string) => void
   onSelectSpecPath: (value: string) => void
@@ -1158,8 +1176,8 @@ function WorkbenchScreen({
           snapshotError={snapshotError}
           jobs={jobs}
           selectedJobId={selectedJobId}
-          activeJob={activeJob}
           onRunAction={onRunAction}
+          isActionRunning={isActionRunning}
           onRunProbe={onRunProbe}
           onSelectJob={onSelectJob}
           selectedWorkspace={selectedWorkspace}
@@ -1210,6 +1228,7 @@ function WorkbenchScreen({
           onSelectEditorPath={onSelectEditorPath}
           onUpdateEditorContent={onUpdateEditorContent}
           onRunAction={onRunAction}
+          isActionRunning={isActionRunning}
           onRefreshWorkspace={onRefreshWorkspace}
           onSaveEditorFile={onSaveEditorFile}
           onReloadEditorFile={onReloadEditorFile}
@@ -1254,8 +1273,8 @@ function CommandBusPanel({
   snapshotError,
   jobs,
   selectedJobId,
-  activeJob,
   onRunAction,
+  isActionRunning,
   onRunProbe,
   onSelectJob,
   selectedWorkspace,
@@ -1266,8 +1285,8 @@ function CommandBusPanel({
   snapshotError: string | null
   jobs: JobRecord[]
   selectedJobId: string | null
-  activeJob: JobKind | null
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
+  isActionRunning: (action: JobActionSpec) => boolean
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
@@ -1391,11 +1410,16 @@ function CommandBusPanel({
             These actions run real repository workflows through the backend adapter. Repository-wide validation always executes from the repository root.
           </p>
           <div className="workflow-grid">
-            {workflowActions.map((action) => (
+            {workflowActions.map((action) => {
+              const actionRunning = isActionRunning(action)
+
+              return (
               <section key={action.label} className="workflow-card">
                 <div className="adapter-header">
                   <h4>{action.label}</h4>
-                  <span className="status-pill stable">{action.kind}</span>
+                  <span className={`status-pill ${actionRunning ? 'running' : 'stable'}`}>
+                    {actionRunning ? 'running' : action.kind}
+                  </span>
                 </div>
                 <p>{action.notes}</p>
                 <p className="job-meta">
@@ -1411,12 +1435,12 @@ function CommandBusPanel({
                   type="button"
                   className="action-button"
                   onClick={() => void onRunAction(action)}
-                  disabled={activeJob === action.kind}
+                  disabled={actionRunning}
                 >
-                  {activeJob === action.kind ? 'Running command...' : `Run ${action.label}`}
+                  {actionRunning ? 'Running command...' : `Run ${action.label}`}
                 </button>
               </section>
-            ))}
+            )})}
           </div>
         </article>
 
@@ -1449,11 +1473,23 @@ function CommandBusPanel({
           </p>
           {adapterError ? <p className="adapter-error">{adapterError}</p> : null}
           <div className="spec-grid">
-            {(adapterContract?.jobs ?? []).map((spec) => (
+            {(adapterContract?.jobs ?? []).map((spec) => {
+              const probeAction: JobActionSpec = {
+                kind: spec.kind,
+                label: `${spec.label} probe`,
+                args: spec.exampleArgs,
+                notes: spec.notes,
+                cwdMode: 'workspace',
+              }
+              const probeRunning = isActionRunning(probeAction)
+
+              return (
               <section key={spec.kind} className="adapter-spec">
                 <div className="adapter-header">
                   <h4>{spec.label}</h4>
-                  <span className="status-pill draft">probe</span>
+                  <span className={`status-pill ${probeRunning ? 'running' : 'draft'}`}>
+                    {probeRunning ? 'running' : 'probe'}
+                  </span>
                 </div>
                 <p>{spec.notes}</p>
                 <code className="code-block">{spec.resolution}</code>
@@ -1461,12 +1497,12 @@ function CommandBusPanel({
                   type="button"
                   className="ghost-button"
                   onClick={() => void onRunProbe(spec)}
-                  disabled={activeJob === spec.kind}
+                  disabled={probeRunning}
                 >
-                  {activeJob === spec.kind ? 'Running probe...' : `Run ${spec.label} probe`}
+                  {probeRunning ? 'Running probe...' : `Run ${spec.label} probe`}
                 </button>
               </section>
-            ))}
+            )})}
           </div>
         </article>
 
@@ -2702,6 +2738,7 @@ function ProjectPanel({
   onSelectEditorPath,
   onUpdateEditorContent,
   onRunAction,
+  isActionRunning,
   onRefreshWorkspace,
   onSaveEditorFile,
   onReloadEditorFile,
@@ -2730,6 +2767,7 @@ function ProjectPanel({
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
+  isActionRunning: (action: JobActionSpec) => boolean
   onRefreshWorkspace: () => Promise<void>
   onSaveEditorFile: (relativePath: string) => Promise<void>
   onReloadEditorFile: (relativePath: string) => Promise<void>
@@ -2743,10 +2781,58 @@ function ProjectPanel({
       : null
   const canRunSemanticFileAction =
     !!activeEditorTab && !!activeEditorRepoPath && isSemanticSource(activeEditorTab.relativePath)
+  const currentFileCheckAction =
+    canRunSemanticFileAction && activeEditorTab && activeEditorRepoPath
+      ? {
+          kind: 'smc' as const,
+          label: `Check ${activeEditorTab.title}`,
+          args: ['check', activeEditorRepoPath],
+          notes: 'Check the active .sm file through the canonical smc check surface.',
+          cwdMode: 'repo' as const,
+        }
+      : null
+  const currentFileCompileAction =
+    canRunSemanticFileAction && activeEditorTab && activeEditorRepoPath
+      ? {
+          kind: 'smc' as const,
+          label: `Compile ${activeEditorTab.title}`,
+          args: ['compile', activeEditorRepoPath, '-o', compileOutputPath(activeEditorRepoPath)],
+          notes: 'Compile the active .sm file through the canonical smc compile surface.',
+          cwdMode: 'repo' as const,
+        }
+      : null
   const workspaceFormatTarget = selectedWorkspace?.repoRelativePath ?? '.'
   const hasDirtySemanticTabs = editorTabs.some(
     (tab) => isSemanticSource(tab.relativePath) && tab.status !== 'clean',
   )
+  const currentFileFormatAction =
+    canRunSemanticFileAction && activeEditorTab && activeEditorRepoPath
+      ? {
+          kind: 'smc' as const,
+          label: `Format ${activeEditorTab.title}`,
+          args: ['fmt', activeEditorRepoPath],
+          notes: 'Format the active Semantic source file through the canonical smc fmt surface.',
+          cwdMode: 'repo' as const,
+        }
+      : null
+  const workspaceFormatAction = selectedWorkspace
+    ? {
+        kind: 'smc' as const,
+        label: `Format ${selectedWorkspace.repoRelativePath ?? 'repository root'}`,
+        args: ['fmt', workspaceFormatTarget],
+        notes: 'Format all Semantic source files under the selected workspace through smc fmt.',
+        cwdMode: 'repo' as const,
+      }
+    : null
+  const workspaceFormatCheckAction = selectedWorkspace
+    ? {
+        kind: 'smc' as const,
+        label: `Format check ${selectedWorkspace.repoRelativePath ?? 'repository root'}`,
+        args: ['fmt', '--check', workspaceFormatTarget],
+        notes: 'Run canonical formatter check for the selected workspace.',
+        cwdMode: 'repo' as const,
+      }
+    : null
   const [scaffoldPackageName, setScaffoldPackageName] = useState(
     deriveScaffoldPackageName(selectedWorkspace),
   )
@@ -2844,19 +2930,23 @@ function ProjectPanel({
         ? ['check', activeEditorRepoPath]
         : ['compile', activeEditorRepoPath, '-o', compileOutputPath(activeEditorRepoPath)]
 
-    await onRunAction({
-      kind: 'smc',
-      label:
-        mode === 'check'
-          ? `Check ${activeEditorTab.title}`
-          : `Compile ${activeEditorTab.title}`,
-      args,
-      notes:
-        mode === 'check'
-          ? 'Check the active .sm file through the canonical smc check surface.'
-          : 'Compile the active .sm file through the canonical smc compile surface.',
-      cwdMode: 'repo',
-    })
+    await onRunAction(
+      mode === 'check'
+        ? currentFileCheckAction ?? {
+            kind: 'smc',
+            label: `Check ${activeEditorTab.title}`,
+            args,
+            notes: 'Check the active .sm file through the canonical smc check surface.',
+            cwdMode: 'repo',
+          }
+        : currentFileCompileAction ?? {
+            kind: 'smc',
+            label: `Compile ${activeEditorTab.title}`,
+            args,
+            notes: 'Compile the active .sm file through the canonical smc compile surface.',
+            cwdMode: 'repo',
+          },
+    )
   }
 
   async function runFormatterAction(mode: 'file' | 'workspace' | 'check') {
@@ -2873,13 +2963,15 @@ function ProjectPanel({
         await onSaveEditorFile(activeEditorTab.relativePath)
       }
 
-      const result = await onRunAction({
-        kind: 'smc',
-        label: `Format ${activeEditorTab.title}`,
-        args: ['fmt', activeEditorRepoPath],
-        notes: 'Format the active Semantic source file through the canonical smc fmt surface.',
-        cwdMode: 'repo',
-      })
+      const result = await onRunAction(
+        currentFileFormatAction ?? {
+          kind: 'smc',
+          label: `Format ${activeEditorTab.title}`,
+          args: ['fmt', activeEditorRepoPath],
+          notes: 'Format the active Semantic source file through the canonical smc fmt surface.',
+          cwdMode: 'repo',
+        },
+      )
 
       if (result?.success) {
         await onReloadEditorFile(activeEditorTab.relativePath)
@@ -2891,22 +2983,23 @@ function ProjectPanel({
       return
     }
 
-    const result = await onRunAction({
-      kind: 'smc',
-      label:
-        mode === 'check'
-          ? `Format check ${selectedWorkspace.repoRelativePath ?? 'repository root'}`
-          : `Format ${selectedWorkspace.repoRelativePath ?? 'repository root'}`,
-      args:
-        mode === 'check'
-          ? ['fmt', '--check', workspaceFormatTarget]
-          : ['fmt', workspaceFormatTarget],
-      notes:
-        mode === 'check'
-          ? 'Run canonical formatter check for the selected workspace.'
-          : 'Format all Semantic source files under the selected workspace through smc fmt.',
-      cwdMode: 'repo',
-    })
+    const result = await onRunAction(
+      mode === 'check'
+        ? workspaceFormatCheckAction ?? {
+            kind: 'smc',
+            label: `Format check ${selectedWorkspace.repoRelativePath ?? 'repository root'}`,
+            args: ['fmt', '--check', workspaceFormatTarget],
+            notes: 'Run canonical formatter check for the selected workspace.',
+            cwdMode: 'repo',
+          }
+        : workspaceFormatAction ?? {
+            kind: 'smc',
+            label: `Format ${selectedWorkspace.repoRelativePath ?? 'repository root'}`,
+            args: ['fmt', workspaceFormatTarget],
+            notes: 'Format all Semantic source files under the selected workspace through smc fmt.',
+            cwdMode: 'repo',
+          },
+    )
 
     if (mode === 'workspace' && result?.success) {
       for (const tab of editorTabs) {
@@ -3472,41 +3565,76 @@ function ProjectPanel({
                   type="button"
                   className="ghost-button"
                   onClick={() => void runFormatterAction('file')}
-                  disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
+                  disabled={
+                    !canRunSemanticFileAction ||
+                    activeEditorTab.status === 'saving' ||
+                    !currentFileFormatAction ||
+                    isActionRunning(currentFileFormatAction)
+                  }
                 >
-                  Format file
+                  {currentFileFormatAction && isActionRunning(currentFileFormatAction)
+                    ? 'Formatting file...'
+                    : 'Format file'}
                 </button>
                 <button
                   type="button"
                   className="ghost-button"
                   onClick={() => void runFormatterAction('workspace')}
-                  disabled={!selectedWorkspace || hasDirtySemanticTabs}
+                  disabled={
+                    !selectedWorkspace ||
+                    hasDirtySemanticTabs ||
+                    !workspaceFormatAction ||
+                    isActionRunning(workspaceFormatAction)
+                  }
                 >
-                  Format workspace
+                  {workspaceFormatAction && isActionRunning(workspaceFormatAction)
+                    ? 'Formatting workspace...'
+                    : 'Format workspace'}
                 </button>
                 <button
                   type="button"
                   className="ghost-button"
                   onClick={() => void runFormatterAction('check')}
-                  disabled={!selectedWorkspace || hasDirtySemanticTabs}
+                  disabled={
+                    !selectedWorkspace ||
+                    hasDirtySemanticTabs ||
+                    !workspaceFormatCheckAction ||
+                    isActionRunning(workspaceFormatCheckAction)
+                  }
                 >
-                  Format check
+                  {workspaceFormatCheckAction && isActionRunning(workspaceFormatCheckAction)
+                    ? 'Running format check...'
+                    : 'Format check'}
                 </button>
                 <button
                   type="button"
                   className="ghost-button"
                   onClick={() => void runCurrentFileAction('check')}
-                  disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
+                  disabled={
+                    !canRunSemanticFileAction ||
+                    activeEditorTab.status === 'saving' ||
+                    !currentFileCheckAction ||
+                    isActionRunning(currentFileCheckAction)
+                  }
                 >
-                  Check current file
+                  {currentFileCheckAction && isActionRunning(currentFileCheckAction)
+                    ? 'Checking current file...'
+                    : 'Check current file'}
                 </button>
                 <button
                   type="button"
                   className="ghost-button"
                   onClick={() => void runCurrentFileAction('compile')}
-                  disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
+                  disabled={
+                    !canRunSemanticFileAction ||
+                    activeEditorTab.status === 'saving' ||
+                    !currentFileCompileAction ||
+                    isActionRunning(currentFileCompileAction)
+                  }
                 >
-                  Compile current file
+                  {currentFileCompileAction && isActionRunning(currentFileCompileAction)
+                    ? 'Compiling current file...'
+                    : 'Compile current file'}
                 </button>
               </div>
               <p className="job-meta">
@@ -3626,6 +3754,20 @@ function workspaceSourceTone(source: WorkspaceOpenSource | null) {
 function describeWorkspaceOpenError(candidate: string, error: unknown) {
   const detail = String(error)
   return `Could not open workspace "${candidate}". Use an absolute path or a repository-relative path that stays inside the repository boundary. ${detail}`
+}
+
+function resolveActionCwd(
+  action: JobActionSpec,
+  adapterContract: AdapterContract | null,
+  selectedWorkspace: WorkspaceSummary | null,
+) {
+  return action.cwdMode === 'repo'
+    ? adapterContract?.repoRoot ?? selectedWorkspace?.repoRoot ?? ''
+    : selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? ''
+}
+
+function createActionExecutionKey(kind: JobKind, cwd: string, args: string[]) {
+  return [kind, cwd, ...args].join('\u001f')
 }
 
 function deriveScaffoldPackageNameFromResult(result: ScaffoldProjectResult) {
