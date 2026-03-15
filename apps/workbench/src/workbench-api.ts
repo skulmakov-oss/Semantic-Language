@@ -32,10 +32,21 @@ export type JobResult = {
   stderr: string
 }
 
+export type WorkspaceSummary = {
+  repoRoot: string
+  resolvedPath: string
+  repoRelativePath: string | null
+  isRepoRoot: boolean
+}
+
 export async function fetchAdapterContract() {
   return invoke<AdapterContract>('get_adapter_contract')
 }
 
 export async function runCliJob(request: JobRequest) {
   return invoke<JobResult>('run_cli_job', { request })
+}
+
+export async function resolveWorkspaceRoot(candidate?: string) {
+  return invoke<WorkspaceSummary>('resolve_workspace_root', { candidate })
 }

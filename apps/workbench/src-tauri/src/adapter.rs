@@ -29,6 +29,15 @@ pub struct AdapterContract {
   pub jobs: Vec<AdapterJobSpec>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSummary {
+  pub repo_root: String,
+  pub resolved_path: String,
+  pub repo_relative_path: Option<String>,
+  pub is_repo_root: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobRequest {
@@ -122,6 +131,23 @@ pub fn execute_job(request: JobRequest) -> Result<JobResult, String> {
     success: output.status.success(),
     stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
     stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+  })
+}
+
+pub fn resolve_workspace(candidate: Option<String>) -> Result<WorkspaceSummary, String> {
+  let repo_root = repo_root()?;
+  let resolved = resolve_cwd(&repo_root, candidate.as_deref())?;
+  let repo_relative_path = resolved
+    .strip_prefix(&repo_root)
+    .ok()
+    .map(|path| path.to_string_lossy().replace('\\', "/"))
+    .and_then(|path| if path.is_empty() { None } else { Some(path) });
+
+  Ok(WorkspaceSummary {
+    repo_root: repo_root.to_string_lossy().into_owned(),
+    resolved_path: resolved.to_string_lossy().into_owned(),
+    repo_relative_path,
+    is_repo_root: resolved == repo_root,
   })
 }
 

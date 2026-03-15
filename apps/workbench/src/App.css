@@ -224,6 +224,18 @@
   color: #5a6675;
 }
 
+.sidebar-strong {
+  margin: 0.35rem 0 0.2rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.sidebar-copy {
+  margin: 0;
+  color: var(--text-soft);
+  word-break: break-word;
+}
+
 .repo-root code,
 .code-block,
 .terminal-output {
@@ -299,6 +311,23 @@
   box-shadow: none;
 }
 
+.ghost-button {
+  padding: 0.7rem 0.95rem;
+  border: 1px solid rgba(15, 23, 32, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #0f1720;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ghost-button:hover,
+.ghost-button:focus-visible {
+  border-color: rgba(32, 190, 167, 0.5);
+  outline: none;
+}
+
 .status-pill.running {
   background: rgba(15, 23, 32, 0.1);
   color: #374151;
@@ -341,6 +370,79 @@
   color: #8f1d29;
 }
 
+.field-label {
+  display: block;
+  margin: 1rem 0 0.45rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5a6675;
+}
+
+.field-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.85rem;
+}
+
+.text-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.12);
+  background: rgba(255, 255, 255, 0.82);
+  color: #0f1720;
+  font: inherit;
+}
+
+.text-field:focus-visible {
+  border-color: rgba(32, 190, 167, 0.5);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(32, 190, 167, 0.12);
+}
+
+.settings-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.toggle-row {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.1);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.toggle-row code {
+  display: inline-flex;
+  width: fit-content;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 32, 0.08);
+}
+
+.toggle-row-interactive {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 1rem;
+}
+
+.toggle-row input[type='checkbox'] {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
 @media (max-width: 1180px) {
   .workbench-shell {
     grid-template-columns: 1fr;
@@ -370,5 +472,14 @@
 
   .status-cluster {
     justify-content: flex-start;
+  }
+
+  .field-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toggle-row-interactive {
+    grid-template-columns: 1fr;
   }
 }

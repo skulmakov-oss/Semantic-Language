@@ -2,12 +2,21 @@ import { startTransition, useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import {
   fetchAdapterContract,
+  resolveWorkspaceRoot,
   runCliJob,
   type AdapterContract,
   type AdapterJobSpec,
   type JobKind,
   type JobResult,
+  type WorkspaceSummary,
 } from './workbench-api'
+import {
+  loadWorkbenchState,
+  mergeRecentWorkspace,
+  saveWorkbenchState,
+  type RecentWorkspace,
+  type WorkbenchSettings,
+} from './workbench-state'
 import './App.css'
 
 type ScreenSpec = {
@@ -31,6 +40,8 @@ type JobRecord = {
   stdout: string
   stderr: string
 }
+
+const initialWorkbenchState = loadWorkbenchState()
 
 const routeSpecs: ScreenSpec[] = [
   {
@@ -59,13 +70,13 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Project owns workspace selection, recent roots, and local settings. It does not create an alternate package or repository model.',
     stable: [
-      'Workspace cards and local context placeholders',
-      'Recent projects panel and settings summary shell',
+      'Workspace resolver over canonical repository paths',
+      'Recent projects list and default workspace persistence',
       'Explicit rule that all jobs inherit the selected root',
     ],
     next: [
-      'Persist recent projects and settings through the backend adapter',
-      'Expose canonical root metadata only',
+      'Add native directory-pick affordances if needed',
+      'Keep project context read-only with respect to repository semantics',
     ],
   },
   {
@@ -144,13 +155,13 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Settings is for shell-level behavior only: display, formatter preferences, shell defaults, and workspace affordances. It must not widen Semantic scope.',
     stable: [
-      'Settings route and local preference card shell',
+      'Settings route with persisted local preferences',
       'Scope guard against hidden runtime or language toggles',
-      'Formatter and shell preference placeholders',
+      'Formatter and shell preference toggles',
     ],
     next: [
-      'Persist local UI settings only',
-      'Keep feature experimentation visibly labeled and opt-in',
+      'Route settings into later formatter and command surfaces',
+      'Keep experimentation visibly labeled and opt-in',
     ],
   },
 ]
@@ -162,6 +173,17 @@ function App() {
   const [adapterError, setAdapterError] = useState<string | null>(null)
   const [jobs, setJobs] = useState<JobRecord[]>([])
   const [activeJob, setActiveJob] = useState<JobKind | null>(null)
+  const [workspaceInput, setWorkspaceInput] = useState('')
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary | null>(
+    null,
+  )
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspace[]>(
+    initialWorkbenchState.recentWorkspaces,
+  )
+  const [settings, setSettings] = useState<WorkbenchSettings>(
+    initialWorkbenchState.settings,
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -184,6 +206,33 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    saveWorkbenchState({
+      recentWorkspaces,
+      settings,
+    })
+  }, [recentWorkspaces, settings])
+
+  useEffect(() => {
+    if (!adapterContract || selectedWorkspace) {
+      return
+    }
+
+    const initialWorkspacePath =
+      settings.defaultWorkspacePath ?? adapterContract.repoRoot
+
+    void (async () => {
+      try {
+        const workspace = await resolveWorkspaceRoot(initialWorkspacePath)
+        setWorkspaceError(null)
+        setSelectedWorkspace(workspace)
+        setWorkspaceInput(workspace.resolvedPath)
+      } catch (error) {
+        setWorkspaceError(String(error))
+      }
+    })()
+  }, [adapterContract, selectedWorkspace, settings.defaultWorkspacePath])
+
   async function runProbe(spec: AdapterJobSpec) {
     const id = crypto.randomUUID()
 
@@ -194,7 +243,7 @@ function App() {
           label: spec.label,
           status: 'running',
           commandLine: [spec.label, ...spec.exampleArgs].join(' '),
-          cwd: adapterContract?.repoRoot ?? '',
+          cwd: selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? '',
           stdout: '',
           stderr: '',
         },
@@ -207,6 +256,7 @@ function App() {
       const result = await runCliJob({
         kind: spec.kind,
         args: spec.exampleArgs,
+        cwd: selectedWorkspace?.resolvedPath,
       })
       setAdapterError(null)
       commitJob(id, spec.label, result)
@@ -253,6 +303,31 @@ function App() {
     )
   }
 
+  async function openWorkspace(candidate: string, persist = true) {
+    try {
+      const workspace = await resolveWorkspaceRoot(candidate)
+      setWorkspaceError(null)
+      setSelectedWorkspace(workspace)
+      setWorkspaceInput(workspace.resolvedPath)
+      if (persist) {
+        setRecentWorkspaces((current) => mergeRecentWorkspace(current, workspace))
+      }
+      setSettings((current) => ({
+        ...current,
+        defaultWorkspacePath: workspace.resolvedPath,
+      }))
+    } catch (error) {
+      setWorkspaceError(String(error))
+    }
+  }
+
+  function updateSettings(next: Partial<WorkbenchSettings>) {
+    setSettings((current) => ({
+      ...current,
+      ...next,
+    }))
+  }
+
   return (
     <div className="workbench-shell">
       <aside className="sidebar">
@@ -288,40 +363,52 @@ function App() {
             <li>Workbench owns only UI state, orchestration, and presentation caches.</li>
           </ul>
         </section>
+
+        <section className="sidebar-card">
+          <p className="card-kicker">Workspace context</p>
+          <p className="sidebar-strong">
+            {selectedWorkspace?.repoRelativePath ?? 'repository root'}
+          </p>
+          <p className="sidebar-copy">
+            {selectedWorkspace?.resolvedPath ??
+              adapterContract?.repoRoot ??
+              'Loading workspace root...'}
+          </p>
+        </section>
       </aside>
 
       <main className="main-panel">
         <header className="topbar">
           <div>
-            <p className="eyebrow">WB-03 Command bus and CLI adapter</p>
-            <h2>Deterministic process orchestration over public Semantic tools</h2>
+            <p className="eyebrow">WB-04 Project open and workspace settings</p>
+            <h2>Workspace-aware jobs without inventing project metadata</h2>
           </div>
           <div className="status-cluster">
-            <span className="status-pill stable">Stable now: shell, routes, adapter contract</span>
-            <span className="status-pill draft">Draft target: project open and workspace settings</span>
+            <span className="status-pill stable">Stable now: shell, adapter contract, workspace context</span>
+            <span className="status-pill draft">Draft target: cockpit signals from real git and validation state</span>
           </div>
         </header>
 
         <section className="hero-grid">
           <article className="hero-card">
             <p className="card-kicker">Current slice</p>
-            <h3>Foundation before behavior</h3>
+            <h3>Jobs now inherit explicit workspace context</h3>
             <p>
-              The shell now owns a deterministic job model and backend adapter while still refusing to absorb compiler, verifier, VM, or runtime semantics.
+              The shell now resolves and persists a canonical workspace root, keeps recent projects, and feeds that root into every adapter execution.
             </p>
           </article>
           <article className="hero-card">
             <p className="card-kicker">Do not cross</p>
-            <h3>No second compiler, verifier, or runtime</h3>
+            <h3>No alternate package or repository semantics</h3>
             <p>
-              Command execution is limited to `smc`, `svm`, `cargo`, and the release verification script. Private crate internals remain outside this boundary.
+              Workbench stores only local UI state. Workspace roots are canonicalized by the backend adapter and still constrained to the repository tree.
             </p>
           </article>
           <article className="hero-card">
             <p className="card-kicker">Immediate next</p>
-            <h3>Project open and workspace settings</h3>
+            <h3>Operations cockpit on top of real state</h3>
             <p>
-              `WB-04` should replace the fixed repository root with user-selected workspace context and local settings.
+              `WB-05` should surface branch, commit, baseline tag, and validation signals from real commands and documents.
             </p>
           </article>
         </section>
@@ -339,6 +426,14 @@ function App() {
                   jobs={jobs}
                   activeJob={activeJob}
                   onRunProbe={runProbe}
+                  selectedWorkspace={selectedWorkspace}
+                  workspaceInput={workspaceInput}
+                  workspaceError={workspaceError}
+                  recentWorkspaces={recentWorkspaces}
+                  settings={settings}
+                  onWorkspaceInputChange={setWorkspaceInput}
+                  onOpenWorkspace={openWorkspace}
+                  onUpdateSettings={updateSettings}
                 />
               }
             />
@@ -356,6 +451,14 @@ function WorkbenchScreen({
   jobs,
   activeJob,
   onRunProbe,
+  selectedWorkspace,
+  workspaceInput,
+  workspaceError,
+  recentWorkspaces,
+  settings,
+  onWorkspaceInputChange,
+  onOpenWorkspace,
+  onUpdateSettings,
 }: {
   route: ScreenSpec
   adapterContract: AdapterContract | null
@@ -363,6 +466,14 @@ function WorkbenchScreen({
   jobs: JobRecord[]
   activeJob: JobKind | null
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+  selectedWorkspace: WorkspaceSummary | null
+  workspaceInput: string
+  workspaceError: string | null
+  recentWorkspaces: RecentWorkspace[]
+  settings: WorkbenchSettings
+  onWorkspaceInputChange: (value: string) => void
+  onOpenWorkspace: (candidate: string, persist?: boolean) => Promise<void>
+  onUpdateSettings: (next: Partial<WorkbenchSettings>) => void
 }) {
   return (
     <div className="screen-stack">
@@ -399,6 +510,27 @@ function WorkbenchScreen({
           jobs={jobs}
           activeJob={activeJob}
           onRunProbe={onRunProbe}
+          selectedWorkspace={selectedWorkspace}
+        />
+      ) : null}
+
+      {route.path === '/project' ? (
+        <ProjectPanel
+          adapterContract={adapterContract}
+          selectedWorkspace={selectedWorkspace}
+          workspaceInput={workspaceInput}
+          workspaceError={workspaceError}
+          recentWorkspaces={recentWorkspaces}
+          onWorkspaceInputChange={onWorkspaceInputChange}
+          onOpenWorkspace={onOpenWorkspace}
+        />
+      ) : null}
+
+      {route.path === '/settings' ? (
+        <SettingsPanel
+          settings={settings}
+          selectedWorkspace={selectedWorkspace}
+          onUpdateSettings={onUpdateSettings}
         />
       ) : null}
     </div>
@@ -411,12 +543,14 @@ function CommandBusPanel({
   jobs,
   activeJob,
   onRunProbe,
+  selectedWorkspace,
 }: {
   adapterContract: AdapterContract | null
   adapterError: string | null
   jobs: JobRecord[]
   activeJob: JobKind | null
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+  selectedWorkspace: WorkspaceSummary | null
 }) {
   return (
     <section className="command-grid">
@@ -427,9 +561,13 @@ function CommandBusPanel({
           The backend adapter resolves only approved tools and keeps all job cwd values inside the repository root.
         </p>
         <div className="repo-root">
-          <span className="repo-root-label">Repository root</span>
+          <span className="repo-root-label">Active workspace root</span>
           <code>{adapterContract?.repoRoot ?? 'Loading adapter contract...'}</code>
         </div>
+        <p className="job-meta">
+          current workspace:{' '}
+          <code>{selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? 'Loading...'}</code>
+        </p>
         {adapterError ? (
           <p className="adapter-error">{adapterError}</p>
         ) : null}
@@ -494,6 +632,204 @@ function CommandBusPanel({
             ))
           )}
         </div>
+      </article>
+    </section>
+  )
+}
+
+function ProjectPanel({
+  adapterContract,
+  selectedWorkspace,
+  workspaceInput,
+  workspaceError,
+  recentWorkspaces,
+  onWorkspaceInputChange,
+  onOpenWorkspace,
+}: {
+  adapterContract: AdapterContract | null
+  selectedWorkspace: WorkspaceSummary | null
+  workspaceInput: string
+  workspaceError: string | null
+  recentWorkspaces: RecentWorkspace[]
+  onWorkspaceInputChange: (value: string) => void
+  onOpenWorkspace: (candidate: string, persist?: boolean) => Promise<void>
+}) {
+  return (
+    <section className="command-grid">
+      <article className="screen-card">
+        <p className="card-kicker">Open workspace</p>
+        <h3>Canonical root selection for every job</h3>
+        <p className="screen-summary">
+          Enter an absolute path or repository-relative path. The backend resolver canonicalizes it and refuses anything outside the repository boundary.
+        </p>
+        <label className="field-label" htmlFor="workspace-path">
+          Workspace path
+        </label>
+        <div className="field-row">
+          <input
+            id="workspace-path"
+            className="text-field"
+            type="text"
+            value={workspaceInput}
+            onChange={(event) => onWorkspaceInputChange(event.target.value)}
+            placeholder={adapterContract?.repoRoot ?? 'Loading repository root...'}
+          />
+          <button
+            type="button"
+            className="action-button"
+            onClick={() =>
+              void onOpenWorkspace(
+                workspaceInput.trim() || adapterContract?.repoRoot || '',
+              )
+            }
+            disabled={!adapterContract}
+          >
+            Open
+          </button>
+        </div>
+        <div className="field-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void onOpenWorkspace(adapterContract?.repoRoot ?? '')}
+            disabled={!adapterContract}
+          >
+            Use repository root
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void onOpenWorkspace('examples')}
+            disabled={!adapterContract}
+          >
+            Use `examples`
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void onOpenWorkspace('docs')}
+            disabled={!adapterContract}
+          >
+            Use `docs`
+          </button>
+        </div>
+        {workspaceError ? <p className="adapter-error">{workspaceError}</p> : null}
+        <div className="repo-root">
+          <span className="repo-root-label">Selected workspace</span>
+          <code>{selectedWorkspace?.resolvedPath ?? 'No workspace selected yet.'}</code>
+        </div>
+        <p className="job-meta">
+          repo-relative:{' '}
+          <code>{selectedWorkspace?.repoRelativePath ?? '(repository root)'}</code>
+        </p>
+      </article>
+
+      <article className="screen-card">
+        <p className="card-kicker">Recent projects</p>
+        <h3>Persisted local workspace history</h3>
+        <div className="job-list">
+          {recentWorkspaces.length === 0 ? (
+            <p className="empty-state">
+              No recent workspaces yet. Opening a canonical root stores it locally for future sessions.
+            </p>
+          ) : (
+            recentWorkspaces.map((workspace) => (
+              <section key={workspace.path} className="job-card">
+                <div className="job-topline">
+                  <div>
+                    <strong>{workspace.repoRelativePath ?? 'repository root'}</strong>
+                    <p className="job-meta">{workspace.path}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => void onOpenWorkspace(workspace.path)}
+                  >
+                    Reopen
+                  </button>
+                </div>
+                <p className="job-meta">last opened: {workspace.openedAtIso}</p>
+              </section>
+            ))
+          )}
+        </div>
+      </article>
+    </section>
+  )
+}
+
+function SettingsPanel({
+  settings,
+  selectedWorkspace,
+  onUpdateSettings,
+}: {
+  settings: WorkbenchSettings
+  selectedWorkspace: WorkspaceSummary | null
+  onUpdateSettings: (next: Partial<WorkbenchSettings>) => void
+}) {
+  return (
+    <section className="command-grid">
+      <article className="screen-card">
+        <p className="card-kicker">Local settings</p>
+        <h3>Preferences that stay in the UI layer</h3>
+        <div className="settings-grid">
+          <label className="toggle-row">
+            <span>
+              <strong>Default workspace</strong>
+              <p className="job-meta">
+                Persist the currently selected canonical workspace for future sessions.
+              </p>
+            </span>
+            <code>{settings.defaultWorkspacePath ?? selectedWorkspace?.resolvedPath ?? 'unset'}</code>
+          </label>
+
+          <label className="toggle-row">
+            <span>
+              <strong>Preferred shell</strong>
+              <p className="job-meta">Current bootstrap only supports PowerShell-based release flows.</p>
+            </span>
+            <span className="status-pill stable">{settings.preferredShell}</span>
+          </label>
+
+          <label className="toggle-row toggle-row-interactive">
+            <span>
+              <strong>Format on save</strong>
+              <p className="job-meta">Preference only. Formatter integration arrives in `WB-13`.</p>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.formatOnSave}
+              onChange={(event) =>
+                onUpdateSettings({ formatOnSave: event.target.checked })
+              }
+            />
+          </label>
+
+          <label className="toggle-row toggle-row-interactive">
+            <span>
+              <strong>Show experimental workflows</strong>
+              <p className="job-meta">Controls visibility only; it must not widen Semantic scope.</p>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.showExperimental}
+              onChange={(event) =>
+                onUpdateSettings({ showExperimental: event.target.checked })
+              }
+            />
+          </label>
+        </div>
+      </article>
+
+      <article className="screen-card">
+        <p className="card-kicker">Scope guard</p>
+        <h3>What settings cannot do</h3>
+        <ul className="bullet-list">
+          <li>They cannot enable hidden runtime semantics.</li>
+          <li>They cannot widen PROMETHEUS scope or alter capability rules.</li>
+          <li>They cannot override repository truth for readiness or compatibility.</li>
+          <li>They exist only for shell behavior and local workflow preferences.</li>
+        </ul>
       </article>
     </section>
   )
