@@ -9,6 +9,10 @@ Current documents in this PR:
 
 - `syntax.md` - canonical Rust-like source syntax contract
 - `types.md` - source-level type contract and current type-family limits
+- `source_semantics.md` - source-level execution and binding semantics
+- `diagnostics.md` - source-facing parse, policy, type, and module diagnostics
+- `modules.md` - module, import, and re-export contract
+- `logos.md` - declarative Logos source-surface contract
 - `semcode.md` - SemCode binary contract and compatibility rules
 - `profile.md` - `ParserProfile` policy contract
 - `verifier.md` - SemCode admission verification contract

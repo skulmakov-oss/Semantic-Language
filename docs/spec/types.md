@@ -11,6 +11,12 @@ Semantic programs.
 It covers the executable source surface rather than the SemCode or VM
 representation layer.
 
+Operational source-level meaning such as call resolution, control-flow
+selection, and source diagnostics is specified separately in:
+
+- `source_semantics.md`
+- `diagnostics.md`
+
 ## Current Type Family
 
 Current source-visible types:

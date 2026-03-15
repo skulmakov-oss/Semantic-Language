@@ -29,8 +29,10 @@ This document covers the Rust-like executable surface first. Import/export and
 Logos semantics remain part of the public source contract, but are still
 documented in:
 
-- `docs/imports.md`
-- `docs/exports.md`
+- `source_semantics.md`
+- `diagnostics.md`
+- `modules.md`
+- `logos.md`
 - `docs/LANGUAGE.md`
 
 ## Program Structure
