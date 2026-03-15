@@ -123,6 +123,10 @@ type EditorOpenOptions = {
   source?: 'diagnostic' | 'definition' | 'scaffold' | 'workspace'
 }
 
+type SaveEditorOptions = {
+  applyFormatOnSave?: boolean
+}
+
 type EditorFocusTarget = {
   relativePath: string
   line: number | null
@@ -833,7 +837,7 @@ function App() {
     )
   }
 
-  async function saveEditorFile(relativePath: string) {
+  async function saveEditorFile(relativePath: string, options?: SaveEditorOptions) {
     if (!selectedWorkspace) {
       return false
     }
@@ -859,7 +863,9 @@ function App() {
       })
       let nextDocument = document
 
-      if (settings.formatOnSave && isSemanticSource(relativePath)) {
+      const applyFormatOnSave = options?.applyFormatOnSave ?? settings.formatOnSave
+
+      if (applyFormatOnSave && isSemanticSource(relativePath)) {
         const repoRelativePath = toRepoRelativePath(relativePath, selectedWorkspace)
         const formatResult = await runJobAction({
           kind: 'smc',
@@ -1155,7 +1161,7 @@ function WorkbenchScreen({
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
   onRefreshWorkspace: () => Promise<void>
-  onSaveEditorFile: (relativePath: string) => Promise<boolean>
+  onSaveEditorFile: (relativePath: string, options?: SaveEditorOptions) => Promise<boolean>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
   onClearEditorFocusTarget: () => void
@@ -1248,6 +1254,7 @@ function WorkbenchScreen({
           workspaceTree={workspaceTree}
           workspaceTreeBusy={workspaceTreeBusy}
           workspaceTreeError={workspaceTreeError}
+          jobs={jobs}
           editorTabs={editorTabs}
           activeEditorPath={activeEditorPath}
           editorFocusTarget={editorFocusTarget}
@@ -1263,13 +1270,14 @@ function WorkbenchScreen({
   onOpenEditorFile={onOpenEditorFile}
   onSelectEditorPath={onSelectEditorPath}
   onUpdateEditorContent={onUpdateEditorContent}
-  onRunAction={onRunAction}
+          onRunAction={onRunAction}
   isActionRunning={isActionRunning}
   onRefreshWorkspace={onRefreshWorkspace}
           onSaveEditorFile={onSaveEditorFile}
           onReloadEditorFile={onReloadEditorFile}
           onCloseEditorTab={onCloseEditorTab}
           onClearEditorFocusTarget={onClearEditorFocusTarget}
+          onSelectJob={onSelectJob}
         />
       ) : null}
 
@@ -2884,6 +2892,7 @@ function ProjectPanel({
   workspaceSource,
   recentWorkspaces,
   settings,
+  jobs,
   onWorkspaceInputChange,
   onOpenWorkspace,
   onOpenEditorFile,
@@ -2896,12 +2905,14 @@ function ProjectPanel({
   onReloadEditorFile,
   onCloseEditorTab,
   onClearEditorFocusTarget,
+  onSelectJob,
 }: {
   adapterContract: AdapterContract | null
   selectedWorkspace: WorkspaceSummary | null
   workspaceTree: WorkspaceTreeNode[]
   workspaceTreeBusy: boolean
   workspaceTreeError: string | null
+  jobs: JobRecord[]
   editorTabs: EditorTab[]
   activeEditorPath: string | null
   editorFocusTarget: EditorFocusTarget | null
@@ -2923,10 +2934,11 @@ function ProjectPanel({
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
   isActionRunning: (action: JobActionSpec) => boolean
   onRefreshWorkspace: () => Promise<void>
-  onSaveEditorFile: (relativePath: string) => Promise<boolean>
+  onSaveEditorFile: (relativePath: string, options?: SaveEditorOptions) => Promise<boolean>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
   onClearEditorFocusTarget: () => void
+  onSelectJob: (jobId: string) => void
 }) {
   const navigate = useNavigate()
   const activeEditorTab =
@@ -3011,6 +3023,18 @@ function ProjectPanel({
         notes: 'Run canonical formatter check for the selected workspace.',
         cwdMode: 'repo' as const,
       }
+    : null
+  const dirtySemanticTabs = editorTabs.filter(
+    (tab) => isSemanticSource(tab.relativePath) && tab.status !== 'clean',
+  )
+  const dirtySemanticTabTitles = dirtySemanticTabs.map((tab) => tab.title)
+  const currentFileFormatNeedsSave = Boolean(
+    activeEditorTab &&
+      canRunSemanticFileAction &&
+      activeEditorTab.status !== 'clean',
+  )
+  const latestWorkspaceFormatCheckJob = workspaceFormatCheckAction
+    ? latestJobMatching(jobs, (job) => jobMatchesAction(job, workspaceFormatCheckAction))
     : null
   const [scaffoldPackageName, setScaffoldPackageName] = useState(
     deriveScaffoldPackageName(selectedWorkspace),
@@ -3199,7 +3223,9 @@ function ProjectPanel({
         }
 
         if (activeEditorTab.status !== 'clean') {
-          const saved = await onSaveEditorFile(activeEditorTab.relativePath)
+          const saved = await onSaveEditorFile(activeEditorTab.relativePath, {
+            applyFormatOnSave: false,
+          })
           if (!saved) {
             return
           }
@@ -3242,6 +3268,11 @@ function ProjectPanel({
             cwdMode: 'repo',
           },
     )
+
+    if (mode === 'check' && result) {
+      navigate('/overview')
+      return
+    }
 
     if (mode === 'workspace' && result?.success) {
       for (const tab of editorTabs) {
@@ -3816,7 +3847,9 @@ function ProjectPanel({
                 >
                   {currentFileFormatAction && isActionRunning(currentFileFormatAction)
                     ? 'Formatting file...'
-                    : 'Format file'}
+                    : currentFileFormatNeedsSave
+                      ? 'Save + format file'
+                      : 'Format file'}
                 </button>
                 <button
                   type="button"
@@ -3929,6 +3962,15 @@ function ProjectPanel({
                 <span className="status-pill draft">smc fmt</span>{' '}
                 {settings.formatOnSave ? 'with format-on-save enabled' : 'format-on-save disabled'}
               </p>
+              {settings.formatOnSave && canRunSemanticFileAction ? (
+                <div className="diagnostic-callout">
+                  <span className="diagnostic-meta-label">Format-on-save behavior</span>
+                  <p>
+                    Save file runs the canonical <code>smc fmt</code> surface only after a successful disk write.
+                    Format file uses one explicit formatter pass and does not trigger a hidden second pass.
+                  </p>
+                </div>
+              ) : null}
               <p className="job-meta">
                 compiled artifact:{' '}
                 <code>{currentFileArtifactPath ?? 'open a repository-scoped .sm file to derive a canonical .smc path'}</code>
@@ -3939,9 +3981,44 @@ function ProjectPanel({
                 </p>
               ) : null}
               {hasDirtySemanticTabs ? (
-                <p className="empty-state">
-                  Workspace format actions stay disabled while Semantic source tabs are dirty, so the formatter only runs against saved repository state.
-                </p>
+                <div className="diagnostic-callout">
+                  <span className="diagnostic-meta-label">Workspace formatter guard</span>
+                  <p>
+                    Format workspace and format check stay disabled until every dirty <code>.sm</code> tab is saved.
+                    Workbench does not auto-save those buffers silently before a workspace-wide formatter run.
+                  </p>
+                  <ul className="bullet-list compact">
+                    {dirtySemanticTabTitles.map((title) => (
+                      <li key={title}>{title}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {latestWorkspaceFormatCheckJob ? (
+                <div className="diagnostic-callout">
+                  <div className="document-topline">
+                    <span className="diagnostic-meta-label">Latest format check</span>
+                    <span className={`status-pill ${latestWorkspaceFormatCheckJob.status}`}>
+                      {latestWorkspaceFormatCheckJob.status}
+                    </span>
+                  </div>
+                  <p className="job-meta">{latestWorkspaceFormatCheckJob.commandLine}</p>
+                  <p className="job-meta">
+                    {latestWorkspaceFormatCheckJob.status === 'success'
+                      ? 'Canonical formatter check passed for the selected workspace.'
+                      : 'Canonical formatter check reported drift. The full captured output is preserved in the jobs panel.'}
+                  </p>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      onSelectJob(latestWorkspaceFormatCheckJob.id)
+                      navigate('/overview')
+                    }}
+                  >
+                    Focus format check result
+                  </button>
+                </div>
               ) : null}
               {canRunSemanticFileAction ? (
                 <p className="screen-summary">
