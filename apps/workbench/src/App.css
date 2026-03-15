@@ -753,6 +753,27 @@
   color: #8f1d29;
 }
 
+.workspace-banner {
+  margin: 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.9rem;
+  border: 1px solid transparent;
+  font-size: 0.93rem;
+  line-height: 1.55;
+}
+
+.workspace-banner.stable {
+  background: rgba(32, 190, 167, 0.12);
+  border-color: rgba(32, 190, 167, 0.28);
+  color: #0a5d52;
+}
+
+.workspace-banner.draft {
+  background: rgba(227, 159, 40, 0.12);
+  border-color: rgba(227, 159, 40, 0.28);
+  color: #8f5d03;
+}
+
 .field-label {
   display: block;
   margin: 1rem 0 0.45rem;

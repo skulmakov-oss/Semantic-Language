@@ -108,6 +108,14 @@ type EditorCursorPosition = {
   character: number
 }
 
+type WorkspaceOpenSource = 'default' | 'manual' | 'recent' | 'preset' | 'fallback'
+
+type WorkspaceOpenOptions = {
+  persist?: boolean
+  source?: WorkspaceOpenSource
+  successMessage?: string | null
+}
+
 const initialWorkbenchState = loadWorkbenchState()
 
 const workflowActions: JobActionSpec[] = [
@@ -376,6 +384,9 @@ function App() {
   const [activeEditorPath, setActiveEditorPath] = useState<string | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null)
+  const [workspaceBusy, setWorkspaceBusy] = useState(false)
+  const [workspaceSource, setWorkspaceSource] = useState<WorkspaceOpenSource | null>(null)
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary | null>(
     null,
   )
@@ -524,13 +535,49 @@ function App() {
       settings.defaultWorkspacePath ?? adapterContract.repoRoot
 
     void (async () => {
+      setWorkspaceBusy(true)
       try {
         const workspace = await resolveWorkspaceRoot(initialWorkspacePath)
         setWorkspaceError(null)
+        setWorkspaceNotice(
+          settings.defaultWorkspacePath
+            ? 'Restored the saved default workspace for this session.'
+            : 'Using the repository root as the current workspace.',
+        )
         setSelectedWorkspace(workspace)
+        setWorkspaceSource(settings.defaultWorkspacePath ? 'default' : 'preset')
         setWorkspaceInput(workspace.resolvedPath)
       } catch (error) {
-        setWorkspaceError(String(error))
+        if (!settings.defaultWorkspacePath) {
+          setWorkspaceError(describeWorkspaceOpenError(initialWorkspacePath, error))
+          setWorkspaceNotice(null)
+          setWorkspaceSource(null)
+          return
+        }
+
+        try {
+          const fallbackWorkspace = await resolveWorkspaceRoot(adapterContract.repoRoot)
+          setWorkspaceError(null)
+          setWorkspaceNotice(
+            `Saved default workspace could not be restored. Workbench fell back to the repository root. ${describeWorkspaceOpenError(initialWorkspacePath, error)}`,
+          )
+          setSelectedWorkspace(fallbackWorkspace)
+          setWorkspaceSource('fallback')
+          setWorkspaceInput(fallbackWorkspace.resolvedPath)
+          setRecentWorkspaces((current) => mergeRecentWorkspace(current, fallbackWorkspace))
+          setSettings((current) => ({
+            ...current,
+            defaultWorkspacePath: fallbackWorkspace.resolvedPath,
+          }))
+        } catch (fallbackError) {
+          setWorkspaceError(
+            `Saved default workspace could not be restored, and repository root fallback failed. ${describeWorkspaceOpenError(adapterContract.repoRoot, fallbackError)}`,
+          )
+          setWorkspaceNotice(null)
+          setWorkspaceSource(null)
+        }
+      } finally {
+        setWorkspaceBusy(false)
       }
     })()
   }, [adapterContract, selectedWorkspace, settings.defaultWorkspacePath])
@@ -625,11 +672,37 @@ function App() {
     )
   }
 
-  async function openWorkspace(candidate: string, persist = true) {
+  function updateWorkspaceInput(value: string) {
+    setWorkspaceInput(value)
+    setWorkspaceError(null)
+    if (workspaceSource !== 'fallback') {
+      setWorkspaceNotice(null)
+    }
+  }
+
+  async function openWorkspace(candidate: string, optionsInput?: boolean | WorkspaceOpenOptions) {
+    const options = normalizeWorkspaceOpenOptions(optionsInput)
+    const persist = options.persist ?? true
+    const source = options.source ?? 'manual'
+    const normalizedCandidate = candidate.trim()
+
+    if (!normalizedCandidate) {
+      setWorkspaceError('Enter an absolute path or a repository-relative path before opening a workspace.')
+      setWorkspaceNotice(null)
+      return
+    }
+
+    setWorkspaceBusy(true)
+    setWorkspaceError(null)
+    if (source !== 'fallback') {
+      setWorkspaceNotice(null)
+    }
+
     try {
-      const workspace = await resolveWorkspaceRoot(candidate)
+      const workspace = await resolveWorkspaceRoot(normalizedCandidate)
       setWorkspaceError(null)
       setSelectedWorkspace(workspace)
+      setWorkspaceSource(source)
       setWorkspaceInput(workspace.resolvedPath)
       if (persist) {
         setRecentWorkspaces((current) => mergeRecentWorkspace(current, workspace))
@@ -638,8 +711,13 @@ function App() {
         ...current,
         defaultWorkspacePath: workspace.resolvedPath,
       }))
+      setWorkspaceNotice(
+        options.successMessage ?? defaultWorkspaceSuccessMessage(workspace, source),
+      )
     } catch (error) {
-      setWorkspaceError(String(error))
+      setWorkspaceError(describeWorkspaceOpenError(normalizedCandidate, error))
+    } finally {
+      setWorkspaceBusy(false)
     }
   }
 
@@ -918,9 +996,12 @@ function App() {
                   selectedWorkspace={selectedWorkspace}
                   workspaceInput={workspaceInput}
                   workspaceError={workspaceError}
+                  workspaceNotice={workspaceNotice}
+                  workspaceBusy={workspaceBusy}
+                  workspaceSource={workspaceSource}
                   recentWorkspaces={recentWorkspaces}
                   settings={settings}
-                  onWorkspaceInputChange={setWorkspaceInput}
+                  onWorkspaceInputChange={updateWorkspaceInput}
                   onOpenWorkspace={openWorkspace}
                   onUpdateSettings={updateSettings}
                 />
@@ -966,6 +1047,9 @@ function WorkbenchScreen({
   selectedWorkspace,
   workspaceInput,
   workspaceError,
+  workspaceNotice,
+  workspaceBusy,
+  workspaceSource,
   recentWorkspaces,
   settings,
   onWorkspaceInputChange,
@@ -1004,10 +1088,16 @@ function WorkbenchScreen({
   selectedWorkspace: WorkspaceSummary | null
   workspaceInput: string
   workspaceError: string | null
+  workspaceNotice: string | null
+  workspaceBusy: boolean
+  workspaceSource: WorkspaceOpenSource | null
   recentWorkspaces: RecentWorkspace[]
   settings: WorkbenchSettings
   onWorkspaceInputChange: (value: string) => void
-  onOpenWorkspace: (candidate: string, persist?: boolean) => Promise<void>
+  onOpenWorkspace: (
+    candidate: string,
+    options?: boolean | WorkspaceOpenOptions,
+  ) => Promise<void>
   onUpdateSettings: (next: Partial<WorkbenchSettings>) => void
 }) {
   return (
@@ -1086,6 +1176,9 @@ function WorkbenchScreen({
           activeEditorPath={activeEditorPath}
           workspaceInput={workspaceInput}
           workspaceError={workspaceError}
+          workspaceNotice={workspaceNotice}
+          workspaceBusy={workspaceBusy}
+          workspaceSource={workspaceSource}
           recentWorkspaces={recentWorkspaces}
           settings={settings}
           onWorkspaceInputChange={onWorkspaceInputChange}
@@ -2574,6 +2667,9 @@ function ProjectPanel({
   activeEditorPath,
   workspaceInput,
   workspaceError,
+  workspaceNotice,
+  workspaceBusy,
+  workspaceSource,
   recentWorkspaces,
   settings,
   onWorkspaceInputChange,
@@ -2595,10 +2691,16 @@ function ProjectPanel({
   activeEditorPath: string | null
   workspaceInput: string
   workspaceError: string | null
+  workspaceNotice: string | null
+  workspaceBusy: boolean
+  workspaceSource: WorkspaceOpenSource | null
   recentWorkspaces: RecentWorkspace[]
   settings: WorkbenchSettings
   onWorkspaceInputChange: (value: string) => void
-  onOpenWorkspace: (candidate: string, persist?: boolean) => Promise<void>
+  onOpenWorkspace: (
+    candidate: string,
+    options?: boolean | WorkspaceOpenOptions,
+  ) => Promise<void>
   onOpenEditorFile: (relativePath: string) => Promise<void>
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
@@ -2886,6 +2988,7 @@ function ProjectPanel({
               value={workspaceInput}
               onChange={(event) => onWorkspaceInputChange(event.target.value)}
               placeholder={adapterContract?.repoRoot ?? 'Loading repository root...'}
+              disabled={workspaceBusy}
             />
             <button
               type="button"
@@ -2893,39 +2996,60 @@ function ProjectPanel({
               onClick={() =>
                 void onOpenWorkspace(
                   workspaceInput.trim() || adapterContract?.repoRoot || '',
+                  { source: 'manual' },
                 )
               }
-              disabled={!adapterContract}
+              disabled={!adapterContract || workspaceBusy}
             >
-              Open
+              {workspaceBusy ? 'Opening...' : 'Open'}
             </button>
           </div>
           <div className="field-actions">
             <button
               type="button"
               className="ghost-button"
-              onClick={() => void onOpenWorkspace(adapterContract?.repoRoot ?? '')}
-              disabled={!adapterContract}
+              onClick={() =>
+                void onOpenWorkspace(adapterContract?.repoRoot ?? '', {
+                  source: 'preset',
+                  successMessage: 'Switched back to the repository root workspace.',
+                })
+              }
+              disabled={!adapterContract || workspaceBusy}
             >
               Use repository root
             </button>
             <button
               type="button"
               className="ghost-button"
-              onClick={() => void onOpenWorkspace('examples')}
-              disabled={!adapterContract}
+              onClick={() =>
+                void onOpenWorkspace('examples', {
+                  source: 'preset',
+                  successMessage: 'Opened the canonical examples workspace.',
+                })
+              }
+              disabled={!adapterContract || workspaceBusy}
             >
               Use `examples`
             </button>
             <button
               type="button"
               className="ghost-button"
-              onClick={() => void onOpenWorkspace('docs')}
-              disabled={!adapterContract}
+              onClick={() =>
+                void onOpenWorkspace('docs', {
+                  source: 'preset',
+                  successMessage: 'Opened the canonical docs workspace.',
+                })
+              }
+              disabled={!adapterContract || workspaceBusy}
             >
               Use `docs`
             </button>
           </div>
+          {workspaceNotice ? (
+            <p className={`workspace-banner ${workspaceSource === 'fallback' ? 'draft' : 'stable'}`}>
+              {workspaceNotice}
+            </p>
+          ) : null}
           {workspaceError ? <p className="adapter-error">{workspaceError}</p> : null}
           <div className="repo-root">
             <span className="repo-root-label">Selected workspace</span>
@@ -2934,6 +3058,12 @@ function ProjectPanel({
           <p className="job-meta">
             repo-relative:{' '}
             <code>{selectedWorkspace?.repoRelativePath ?? '(repository root)'}</code>
+          </p>
+          <p className="job-meta">
+            source:{' '}
+            <span className={`status-pill ${workspaceSourceTone(workspaceSource)}`}>
+              {workspaceSourceLabel(workspaceSource)}
+            </span>
           </p>
         </article>
 
@@ -2956,7 +3086,13 @@ function ProjectPanel({
                     <button
                       type="button"
                       className="ghost-button"
-                      onClick={() => void onOpenWorkspace(workspace.path)}
+                      onClick={() =>
+                        void onOpenWorkspace(workspace.path, {
+                          source: 'recent',
+                          successMessage: `Reopened ${workspace.repoRelativePath ?? 'the repository root'} from recent workspaces.`,
+                        })
+                      }
+                      disabled={workspaceBusy}
                     >
                       Reopen
                     </button>
@@ -3389,6 +3525,61 @@ function deriveScaffoldPackageName(selectedWorkspace: WorkspaceSummary | null) {
     .replace(/^-+|-+$/g, '')
 
   return normalized || 'semantic-project'
+}
+
+function normalizeWorkspaceOpenOptions(
+  value?: boolean | WorkspaceOpenOptions,
+): WorkspaceOpenOptions {
+  if (typeof value === 'boolean') {
+    return { persist: value }
+  }
+
+  return value ?? {}
+}
+
+function defaultWorkspaceSuccessMessage(
+  workspace: WorkspaceSummary,
+  source: WorkspaceOpenSource,
+) {
+  switch (source) {
+    case 'default':
+      return 'Restored the saved default workspace for this session.'
+    case 'recent':
+      return `Reopened ${workspace.repoRelativePath ?? 'the repository root'} from recent workspaces.`
+    case 'preset':
+      return `Opened ${workspace.repoRelativePath ?? 'the repository root'} through the Workbench shortcut.`
+    case 'fallback':
+      return 'Workbench fell back to the repository root to keep the session recoverable.'
+    case 'manual':
+    default:
+      return `Opened ${workspace.repoRelativePath ?? 'the repository root'} from the requested workspace path.`
+  }
+}
+
+function workspaceSourceLabel(source: WorkspaceOpenSource | null) {
+  switch (source) {
+    case 'default':
+      return 'Saved default'
+    case 'recent':
+      return 'Recent'
+    case 'preset':
+      return 'Shortcut'
+    case 'fallback':
+      return 'Fallback'
+    case 'manual':
+      return 'Manual'
+    default:
+      return 'Unset'
+  }
+}
+
+function workspaceSourceTone(source: WorkspaceOpenSource | null) {
+  return source === 'fallback' ? 'draft' : 'stable'
+}
+
+function describeWorkspaceOpenError(candidate: string, error: unknown) {
+  const detail = String(error)
+  return `Could not open workspace "${candidate}". Use an absolute path or a repository-relative path that stays inside the repository boundary. ${detail}`
 }
 
 function deriveScaffoldPackageNameFromResult(result: ScaffoldProjectResult) {
