@@ -1775,6 +1775,12 @@ function SpecNavigatorPanel({
   onSelectSpecPath: (value: string) => void
 }) {
   const query = specSearch.trim().toLowerCase()
+  const quickSearchFilters = [
+    { label: 'Language', value: 'language' },
+    { label: 'Execution', value: 'vm' },
+    { label: 'PROMETHEUS', value: 'abi' },
+    { label: 'Release', value: 'readiness' },
+  ]
   const docsEntryDocuments = [
     'docs/spec/index.md',
     'docs/LANGUAGE.md',
@@ -1798,6 +1804,11 @@ function SpecNavigatorPanel({
       }),
     }))
     .filter((section) => section.documents.length > 0)
+  const totalDocumentCount = specCatalog.reduce((count, section) => count + section.documents.length, 0)
+  const filteredDocumentCount = filteredSections.reduce(
+    (count, section) => count + section.documents.length,
+    0,
+  )
 
   return (
     <div className="screen-stack">
@@ -1815,7 +1826,10 @@ function SpecNavigatorPanel({
                 key={document.relativePath}
                 type="button"
                 className={`spec-doc-button ${selectedSpecPath === document.relativePath ? 'spec-doc-button-active' : ''}`}
-                onClick={() => onSelectSpecPath(document.relativePath)}
+                onClick={() => {
+                  onSpecSearchChange('')
+                  onSelectSpecPath(document.relativePath)
+                }}
               >
                 <span className="spec-doc-title">{document.title}</span>
                 <span className="spec-doc-path">{document.relativePath}</span>
@@ -1845,6 +1859,33 @@ function SpecNavigatorPanel({
             onChange={(event) => onSpecSearchChange(event.target.value)}
             placeholder="Search syntax, vm, readiness, release..."
           />
+          <div className="field-row">
+            <p className="job-meta">
+              search scope: canonical titles and relative paths only. freshness and other derived metadata never affect
+              matches.
+            </p>
+            {specSearch ? (
+              <button type="button" className="ghost-button" onClick={() => onSpecSearchChange('')}>
+                Clear search
+              </button>
+            ) : null}
+          </div>
+          <div className="status-cluster">
+            {quickSearchFilters.map((filter) => (
+              <button
+                key={filter.label}
+                type="button"
+                className="ghost-button"
+                onClick={() => onSpecSearchChange(filter.value)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+          <p className="job-meta">
+            showing {filteredDocumentCount} of {totalDocumentCount} canonical documents
+            {query ? ` for "${specSearch}"` : ''}.
+          </p>
           {specError ? <p className="adapter-error">{specError}</p> : null}
           <div className="spec-section-list">
             {filteredSections.length === 0 ? (
@@ -1906,6 +1947,10 @@ function SpecNavigatorPanel({
                 <p className="job-meta">
                   Workbench reads this document directly from the repository and does not keep an alternative spec
                   mirror.
+                </p>
+                <p className="job-meta">
+                  derived freshness: <code>{formatFreshness(selectedSpecDocument.modifiedEpochMs)}</code> from filesystem
+                  modification time only.
                 </p>
               </section>
               <div className="spec-document-grid">
@@ -2175,12 +2220,19 @@ function ReleasePanel({
                     {document.status ?? 'draft'}
                   </span>
                 </div>
-                <p className="job-meta">
-                  path: <code>{document.absolutePath}</code>
-                </p>
-                <p className="job-meta">
-                  freshness: {formatFreshness(document.modifiedEpochMs)}
-                </p>
+                <section className="diagnostic-callout document-truth-callout">
+                  <span className="diagnostic-meta-label">Repository truth</span>
+                  <p className="job-meta">
+                    source path: <code>{document.absolutePath}</code>
+                  </p>
+                  <p className="job-meta">
+                    status label: <code>{document.status ?? 'draft'}</code>
+                  </p>
+                  <p className="job-meta">
+                    derived freshness: <code>{formatFreshness(document.modifiedEpochMs)}</code> from filesystem
+                    modification time only.
+                  </p>
+                </section>
               </section>
             ))}
           </div>
