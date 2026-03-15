@@ -116,6 +116,19 @@ type WorkspaceOpenOptions = {
   successMessage?: string | null
 }
 
+type EditorOpenOptions = {
+  line?: number | null
+  column?: number | null
+  source?: 'diagnostic' | 'definition' | 'scaffold' | 'workspace'
+}
+
+type EditorFocusTarget = {
+  relativePath: string
+  line: number | null
+  column: number | null
+  source: NonNullable<EditorOpenOptions['source']>
+}
+
 const initialWorkbenchState = loadWorkbenchState()
 
 const workflowActions: JobActionSpec[] = [
@@ -382,6 +395,7 @@ function App() {
   const [workspaceTreeBusy, setWorkspaceTreeBusy] = useState(false)
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeEditorPath, setActiveEditorPath] = useState<string | null>(null)
+  const [editorFocusTarget, setEditorFocusTarget] = useState<EditorFocusTarget | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null)
@@ -762,14 +776,25 @@ function App() {
     await loadWorkspaceTree(selectedWorkspace.resolvedPath)
   }
 
-  async function openEditorFile(relativePath: string) {
+  async function openEditorFile(relativePath: string, options?: EditorOpenOptions) {
     if (!selectedWorkspace) {
       return
     }
 
+    const nextFocusTarget =
+      options?.source && (options.line !== undefined || options.column !== undefined)
+        ? {
+            relativePath,
+            line: options.line ?? null,
+            column: options.column ?? null,
+            source: options.source,
+          }
+        : null
+
     const existingTab = editorTabs.find((tab) => tab.relativePath === relativePath)
     if (existingTab) {
       setActiveEditorPath(relativePath)
+      setEditorFocusTarget(nextFocusTarget)
       return
     }
 
@@ -779,17 +804,18 @@ function App() {
         relativePath,
       })
 
-      startTransition(() => {
-        setEditorTabs((current) => [
-          ...current,
-          createEditorTab(document),
-        ])
-        setActiveEditorPath(relativePath)
-        setWorkspaceTreeError(null)
-      })
-    } catch (error) {
-      setWorkspaceTreeError(String(error))
-    }
+        startTransition(() => {
+          setEditorTabs((current) => [
+            ...current,
+            createEditorTab(document),
+          ])
+          setActiveEditorPath(relativePath)
+          setEditorFocusTarget(nextFocusTarget)
+          setWorkspaceTreeError(null)
+        })
+      } catch (error) {
+        setWorkspaceTreeError(String(error))
+      }
   }
 
   function updateEditorContent(relativePath: string, content: string) {
@@ -1018,6 +1044,7 @@ function App() {
                   workspaceTreeError={workspaceTreeError}
                   editorTabs={editorTabs}
                   activeEditorPath={activeEditorPath}
+                  editorFocusTarget={editorFocusTarget}
                   jobs={jobs}
                   selectedJobId={selectedJobId}
                   onRunAction={runJobAction}
@@ -1032,6 +1059,7 @@ function App() {
                   onSaveEditorFile={saveEditorFile}
                   onReloadEditorFile={reloadEditorFile}
                   onCloseEditorTab={closeEditorTab}
+                  onClearEditorFocusTarget={() => setEditorFocusTarget(null)}
                   onSelectJob={setSelectedJobId}
                   selectedWorkspace={selectedWorkspace}
                   workspaceInput={workspaceInput}
@@ -1070,6 +1098,7 @@ function WorkbenchScreen({
   workspaceTreeError,
   editorTabs,
   activeEditorPath,
+  editorFocusTarget,
   jobs,
   selectedJobId,
   onRunAction,
@@ -1084,6 +1113,7 @@ function WorkbenchScreen({
   onSaveEditorFile,
   onReloadEditorFile,
   onCloseEditorTab,
+  onClearEditorFocusTarget,
   onSelectJob,
   selectedWorkspace,
   workspaceInput,
@@ -1112,6 +1142,7 @@ function WorkbenchScreen({
   workspaceTreeError: string | null
   editorTabs: EditorTab[]
   activeEditorPath: string | null
+  editorFocusTarget: EditorFocusTarget | null
   jobs: JobRecord[]
   selectedJobId: string | null
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
@@ -1119,13 +1150,14 @@ function WorkbenchScreen({
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   onSpecSearchChange: (value: string) => void
   onSelectSpecPath: (value: string) => void
-  onOpenEditorFile: (relativePath: string) => Promise<void>
+  onOpenEditorFile: (relativePath: string, options?: EditorOpenOptions) => Promise<void>
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
   onRefreshWorkspace: () => Promise<void>
   onSaveEditorFile: (relativePath: string) => Promise<boolean>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
+  onClearEditorFocusTarget: () => void
   onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
   workspaceInput: string
@@ -1217,6 +1249,7 @@ function WorkbenchScreen({
           workspaceTreeError={workspaceTreeError}
           editorTabs={editorTabs}
           activeEditorPath={activeEditorPath}
+          editorFocusTarget={editorFocusTarget}
           workspaceInput={workspaceInput}
           workspaceError={workspaceError}
           workspaceNotice={workspaceNotice}
@@ -1232,9 +1265,10 @@ function WorkbenchScreen({
   onRunAction={onRunAction}
   isActionRunning={isActionRunning}
   onRefreshWorkspace={onRefreshWorkspace}
-  onSaveEditorFile={onSaveEditorFile}
-  onReloadEditorFile={onReloadEditorFile}
-  onCloseEditorTab={onCloseEditorTab}
+          onSaveEditorFile={onSaveEditorFile}
+          onReloadEditorFile={onReloadEditorFile}
+          onCloseEditorTab={onCloseEditorTab}
+          onClearEditorFocusTarget={onClearEditorFocusTarget}
         />
       ) : null}
 
@@ -2816,6 +2850,7 @@ function ProjectPanel({
   workspaceTreeError,
   editorTabs,
   activeEditorPath,
+  editorFocusTarget,
   workspaceInput,
   workspaceError,
   workspaceNotice,
@@ -2834,6 +2869,7 @@ function ProjectPanel({
   onSaveEditorFile,
   onReloadEditorFile,
   onCloseEditorTab,
+  onClearEditorFocusTarget,
 }: {
   adapterContract: AdapterContract | null
   selectedWorkspace: WorkspaceSummary | null
@@ -2842,6 +2878,7 @@ function ProjectPanel({
   workspaceTreeError: string | null
   editorTabs: EditorTab[]
   activeEditorPath: string | null
+  editorFocusTarget: EditorFocusTarget | null
   workspaceInput: string
   workspaceError: string | null
   workspaceNotice: string | null
@@ -2854,7 +2891,7 @@ function ProjectPanel({
     candidate: string,
     options?: boolean | WorkspaceOpenOptions,
   ) => Promise<void>
-  onOpenEditorFile: (relativePath: string) => Promise<void>
+  onOpenEditorFile: (relativePath: string, options?: EditorOpenOptions) => Promise<void>
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
@@ -2863,6 +2900,7 @@ function ProjectPanel({
   onSaveEditorFile: (relativePath: string) => Promise<boolean>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
+  onClearEditorFocusTarget: () => void
 }) {
   const navigate = useNavigate()
   const activeEditorTab =
@@ -2965,6 +3003,7 @@ function ProjectPanel({
   const [smlspResult, setSmlspResult] = useState<SmlspBridgeResult | null>(null)
   const [smlspError, setSmlspError] = useState<string | null>(null)
   const packageManifestRequestIdRef = useRef(0)
+  const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const smlspDefinitionRelativePath =
     smlspResult?.definitionPath && selectedWorkspace
       ? resolveAbsoluteWorkspacePath(
@@ -2983,6 +3022,28 @@ function ProjectPanel({
     setSmlspResult(null)
     setSmlspError(null)
   }, [activeEditorPath])
+
+  useEffect(() => {
+    if (
+      !editorFocusTarget ||
+      !activeEditorTab ||
+      editorFocusTarget.relativePath !== activeEditorTab.relativePath ||
+      !editorTextareaRef.current
+    ) {
+      return
+    }
+
+    const offset = resolveEditorOffsetFromOneBasedLocation(
+      activeEditorTab.content,
+      editorFocusTarget.line,
+      editorFocusTarget.column,
+    )
+
+    editorTextareaRef.current.focus()
+    editorTextareaRef.current.setSelectionRange(offset, offset)
+    setEditorCursor(deriveCursorPosition(activeEditorTab.content, offset))
+    onClearEditorFocusTarget()
+  }, [activeEditorTab, editorFocusTarget, onClearEditorFocusTarget])
 
   async function loadPackageManifestPreview(workspace: WorkspaceSummary | null) {
     const requestId = packageManifestRequestIdRef.current + 1
@@ -3862,6 +3923,7 @@ function ProjectPanel({
                 </p>
               ) : null}
               <textarea
+                ref={editorTextareaRef}
                 className="editor-textarea"
                 value={activeEditorTab.content}
                 onChange={(event) =>
@@ -3986,6 +4048,31 @@ function deriveCursorPosition(content: string, selectionStart: number): EditorCu
   }
 }
 
+function resolveEditorOffsetFromOneBasedLocation(
+  content: string,
+  line: number | null,
+  column: number | null,
+) {
+  if (!line || line < 1) {
+    return 0
+  }
+
+  const normalizedLines = content.split(/\r?\n/)
+  const lineIndex = Math.min(Math.max(line - 1, 0), Math.max(normalizedLines.length - 1, 0))
+  const characterIndex = Math.max((column ?? 1) - 1, 0)
+
+  let offset = 0
+  for (let index = 0; index < lineIndex; index += 1) {
+    offset += normalizedLines[index]?.length ?? 0
+    offset += 1
+  }
+
+  return Math.min(
+    offset + Math.min(characterIndex, normalizedLines[lineIndex]?.length ?? 0),
+    content.length,
+  )
+}
+
 function resolveAbsoluteWorkspacePath(
   absolutePath: string,
   workspace: WorkspaceSummary,
@@ -4080,7 +4167,7 @@ function DiagnosticsPanel({
   jobs: JobRecord[]
   selectedJobId: string | null
   selectedWorkspace: WorkspaceSummary | null
-  onOpenEditorFile: (relativePath: string) => Promise<void>
+  onOpenEditorFile: (relativePath: string, options?: EditorOpenOptions) => Promise<void>
   onSelectJob: (jobId: string) => void
   onSelectSpecPath: (value: string) => void
 }) {
@@ -4306,15 +4393,24 @@ function DiagnosticsPanel({
                   >
                     Focus job in history
                   </button>
-                  {openableRelativePath ? (
-                    <button
-                      type="button"
-                      className="action-button"
-                      onClick={() => void onOpenEditorFile(openableRelativePath)}
-                    >
-                      Open source file
-                    </button>
-                  ) : null}
+                    {openableRelativePath ? (
+                      <button
+                        type="button"
+                        className="action-button"
+                        onClick={() => {
+                          void onOpenEditorFile(openableRelativePath, {
+                            line: selectedDiagnostic.line,
+                            column: selectedDiagnostic.column,
+                            source: 'diagnostic',
+                          })
+                          navigate('/project')
+                        }}
+                      >
+                        {selectedDiagnostic.line !== null
+                          ? `Open source at ${selectedDiagnostic.line}:${selectedDiagnostic.column ?? 1}`
+                          : 'Open source file'}
+                      </button>
+                    ) : null}
                 </div>
 
                 {relatedDocs.length > 0 ? (
