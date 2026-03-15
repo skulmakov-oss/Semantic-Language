@@ -103,6 +103,20 @@ export type ReleaseReportExportResult = {
   repoRelativePath: string
 }
 
+export type ScaffoldProjectRequest = {
+  workspaceRoot: string
+  mode: 'new' | 'init'
+  packageName: string
+}
+
+export type ScaffoldProjectResult = {
+  workspaceRoot: string
+  repoRelativePath: string
+  packageName: string
+  createdPaths: string[]
+  entryRelativePath: string
+}
+
 export type OverviewSnapshot = {
   repoRoot: string
   branch: string
@@ -191,4 +205,8 @@ export async function saveWorkspaceFile(request: SaveWorkspaceFileRequest) {
 
 export async function exportReleaseReportFile(request: ReleaseReportExportRequest) {
   return invoke<ReleaseReportExportResult>('export_release_report_file', { request })
+}
+
+export async function scaffoldSemanticProject(request: ScaffoldProjectRequest) {
+  return invoke<ScaffoldProjectResult>('scaffold_semantic_project', { request })
 }

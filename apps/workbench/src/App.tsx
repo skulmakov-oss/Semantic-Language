@@ -11,11 +11,13 @@ import {
   resolveWorkspaceRoot,
   runCliJob,
   saveWorkspaceFile,
+  scaffoldSemanticProject,
   type AdapterContract,
   type AdapterJobSpec,
   type JobKind,
   type JobResult,
   type OverviewSnapshot,
+  type ScaffoldProjectResult,
   type SpecCatalogSection,
   type SpecDocumentHeading,
   type SpecDocumentView,
@@ -237,6 +239,7 @@ const routeSpecs: ScreenSpec[] = [
     stable: [
       'Workspace resolver over canonical repository paths',
       'Recent projects list and default workspace persistence',
+      'Canonical project bootstrap for Semantic.toml, src/main.sm, and examples/smoke.sm',
       'Workspace file tree, read/write text editor tabs, current-file compile/check, and formatter actions through smc fmt',
     ],
     next: [
@@ -352,6 +355,7 @@ function App() {
     useState<SpecDocumentView | null>(null)
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceTreeNode[]>([])
   const [workspaceTreeError, setWorkspaceTreeError] = useState<string | null>(null)
+  const [workspaceTreeVersion, setWorkspaceTreeVersion] = useState(0)
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeEditorPath, setActiveEditorPath] = useState<string | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
@@ -486,7 +490,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedWorkspace?.resolvedPath])
+  }, [selectedWorkspace?.resolvedPath, workspaceTreeVersion])
 
   useEffect(() => {
     saveWorkbenchState({
@@ -621,6 +625,10 @@ function App() {
     } catch (error) {
       setWorkspaceError(String(error))
     }
+  }
+
+  async function refreshWorkspaceTree() {
+    startTransition(() => setWorkspaceTreeVersion((current) => current + 1))
   }
 
   async function openEditorFile(relativePath: string) {
@@ -886,6 +894,7 @@ function App() {
                   onOpenEditorFile={openEditorFile}
                   onSelectEditorPath={setActiveEditorPath}
                   onUpdateEditorContent={updateEditorContent}
+                  onRefreshWorkspace={refreshWorkspaceTree}
                   onSaveEditorFile={saveEditorFile}
                   onReloadEditorFile={reloadEditorFile}
                   onCloseEditorTab={closeEditorTab}
@@ -933,6 +942,7 @@ function WorkbenchScreen({
   onOpenEditorFile,
   onSelectEditorPath,
   onUpdateEditorContent,
+  onRefreshWorkspace,
   onSaveEditorFile,
   onReloadEditorFile,
   onCloseEditorTab,
@@ -970,6 +980,7 @@ function WorkbenchScreen({
   onOpenEditorFile: (relativePath: string) => Promise<void>
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
+  onRefreshWorkspace: () => Promise<void>
   onSaveEditorFile: (relativePath: string) => Promise<void>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
@@ -1067,6 +1078,7 @@ function WorkbenchScreen({
           onSelectEditorPath={onSelectEditorPath}
           onUpdateEditorContent={onUpdateEditorContent}
           onRunAction={onRunAction}
+          onRefreshWorkspace={onRefreshWorkspace}
           onSaveEditorFile={onSaveEditorFile}
           onReloadEditorFile={onReloadEditorFile}
           onCloseEditorTab={onCloseEditorTab}
@@ -2513,6 +2525,7 @@ function ProjectPanel({
   onSelectEditorPath,
   onUpdateEditorContent,
   onRunAction,
+  onRefreshWorkspace,
   onSaveEditorFile,
   onReloadEditorFile,
   onCloseEditorTab,
@@ -2533,6 +2546,7 @@ function ProjectPanel({
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
+  onRefreshWorkspace: () => Promise<void>
   onSaveEditorFile: (relativePath: string) => Promise<void>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
@@ -2549,6 +2563,16 @@ function ProjectPanel({
   const hasDirtySemanticTabs = editorTabs.some(
     (tab) => isSemanticSource(tab.relativePath) && tab.status !== 'clean',
   )
+  const [scaffoldPackageName, setScaffoldPackageName] = useState(
+    deriveScaffoldPackageName(selectedWorkspace),
+  )
+  const [scaffoldBusy, setScaffoldBusy] = useState(false)
+  const [scaffoldMessage, setScaffoldMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    setScaffoldPackageName(deriveScaffoldPackageName(selectedWorkspace))
+    setScaffoldMessage(null)
+  }, [selectedWorkspace])
 
   async function runCurrentFileAction(mode: 'check' | 'compile') {
     if (!activeEditorTab || !selectedWorkspace || !adapterContract || !activeEditorRepoPath) {
@@ -2637,75 +2661,109 @@ function ProjectPanel({
     }
   }
 
+  async function runScaffold(mode: 'new' | 'init') {
+    if (!selectedWorkspace || scaffoldBusy) {
+      return
+    }
+
+    setScaffoldBusy(true)
+    setScaffoldMessage(null)
+
+    try {
+      const result = await scaffoldSemanticProject({
+        workspaceRoot: selectedWorkspace.resolvedPath,
+        mode,
+        packageName: scaffoldPackageName,
+      })
+
+      if (mode === 'new') {
+        await onOpenWorkspace(result.workspaceRoot, true)
+      } else {
+        await onRefreshWorkspace()
+        await onOpenEditorFile(result.entryRelativePath)
+      }
+
+      setScaffoldPackageName(deriveScaffoldPackageNameFromResult(result))
+      setScaffoldMessage(
+        `Created ${result.createdPaths.length} canonical files under ${result.repoRelativePath}: ${result.createdPaths.join(', ')}`,
+      )
+    } catch (error) {
+      setScaffoldMessage(String(error))
+    } finally {
+      setScaffoldBusy(false)
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="command-grid">
         <article className="screen-card">
-        <p className="card-kicker">Open workspace</p>
-        <h3>Canonical root selection for every job</h3>
-        <p className="screen-summary">
-          Enter an absolute path or repository-relative path. The backend resolver canonicalizes it and refuses anything outside the repository boundary.
-        </p>
-        <label className="field-label" htmlFor="workspace-path">
-          Workspace path
-        </label>
-        <div className="field-row">
-          <input
-            id="workspace-path"
-            className="text-field"
-            type="text"
-            value={workspaceInput}
-            onChange={(event) => onWorkspaceInputChange(event.target.value)}
-            placeholder={adapterContract?.repoRoot ?? 'Loading repository root...'}
-          />
-          <button
-            type="button"
-            className="action-button"
-            onClick={() =>
-              void onOpenWorkspace(
-                workspaceInput.trim() || adapterContract?.repoRoot || '',
-              )
-            }
-            disabled={!adapterContract}
-          >
-            Open
-          </button>
-        </div>
-        <div className="field-actions">
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => void onOpenWorkspace(adapterContract?.repoRoot ?? '')}
-            disabled={!adapterContract}
-          >
-            Use repository root
-          </button>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => void onOpenWorkspace('examples')}
-            disabled={!adapterContract}
-          >
-            Use `examples`
-          </button>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => void onOpenWorkspace('docs')}
-            disabled={!adapterContract}
-          >
-            Use `docs`
-          </button>
-        </div>
-        {workspaceError ? <p className="adapter-error">{workspaceError}</p> : null}
-        <div className="repo-root">
-          <span className="repo-root-label">Selected workspace</span>
-          <code>{selectedWorkspace?.resolvedPath ?? 'No workspace selected yet.'}</code>
-        </div>
-        <p className="job-meta">
-          repo-relative:{' '}
-          <code>{selectedWorkspace?.repoRelativePath ?? '(repository root)'}</code>
-        </p>
+          <p className="card-kicker">Open workspace</p>
+          <h3>Canonical root selection for every job</h3>
+          <p className="screen-summary">
+            Enter an absolute path or repository-relative path. The backend resolver
+            canonicalizes it and refuses anything outside the repository boundary.
+          </p>
+          <label className="field-label" htmlFor="workspace-path">
+            Workspace path
+          </label>
+          <div className="field-row">
+            <input
+              id="workspace-path"
+              className="text-field"
+              type="text"
+              value={workspaceInput}
+              onChange={(event) => onWorkspaceInputChange(event.target.value)}
+              placeholder={adapterContract?.repoRoot ?? 'Loading repository root...'}
+            />
+            <button
+              type="button"
+              className="action-button"
+              onClick={() =>
+                void onOpenWorkspace(
+                  workspaceInput.trim() || adapterContract?.repoRoot || '',
+                )
+              }
+              disabled={!adapterContract}
+            >
+              Open
+            </button>
+          </div>
+          <div className="field-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void onOpenWorkspace(adapterContract?.repoRoot ?? '')}
+              disabled={!adapterContract}
+            >
+              Use repository root
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void onOpenWorkspace('examples')}
+              disabled={!adapterContract}
+            >
+              Use `examples`
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void onOpenWorkspace('docs')}
+              disabled={!adapterContract}
+            >
+              Use `docs`
+            </button>
+          </div>
+          {workspaceError ? <p className="adapter-error">{workspaceError}</p> : null}
+          <div className="repo-root">
+            <span className="repo-root-label">Selected workspace</span>
+            <code>{selectedWorkspace?.resolvedPath ?? 'No workspace selected yet.'}</code>
+          </div>
+          <p className="job-meta">
+            repo-relative:{' '}
+            <code>{selectedWorkspace?.repoRelativePath ?? '(repository root)'}</code>
+          </p>
         </article>
 
         <article className="screen-card">
@@ -2737,6 +2795,62 @@ function ProjectPanel({
               ))
             )}
           </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Project bootstrap</p>
+          <h3>Canonical Semantic project scaffold</h3>
+          <p className="screen-summary">
+            Workbench only creates the canonical layout: <code>Semantic.toml</code>,
+            <code> src/main.sm</code>, and <code>examples/smoke.sm</code>. No extra
+            package magic or hidden layout rules.
+          </p>
+          <label className="field-label" htmlFor="scaffold-package-name">
+            Package name
+          </label>
+          <div className="field-row">
+            <input
+              id="scaffold-package-name"
+              className="text-field"
+              type="text"
+              value={scaffoldPackageName}
+              onChange={(event) => setScaffoldPackageName(event.target.value)}
+              placeholder="semantic-project"
+              disabled={!selectedWorkspace || scaffoldBusy}
+            />
+          </div>
+          <div className="field-actions">
+            <button
+              type="button"
+              className="action-button"
+              onClick={() => void runScaffold('init')}
+              disabled={!selectedWorkspace || scaffoldBusy}
+            >
+              {scaffoldBusy ? 'Scaffolding...' : 'Init current workspace'}
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void runScaffold('new')}
+              disabled={!selectedWorkspace || scaffoldBusy}
+            >
+              Create child project
+            </button>
+          </div>
+          <p className="job-meta">
+            target root:{' '}
+            <code>{selectedWorkspace?.resolvedPath ?? 'Select a workspace first.'}</code>
+          </p>
+          <p className="job-meta">
+            package mode:{' '}
+            <span className="status-pill stable">init</span>{' '}
+            <span className="status-pill draft">new child</span>
+          </p>
+          {scaffoldMessage ? (
+            <p className={scaffoldMessage.startsWith('Created ') ? 'job-meta' : 'adapter-error'}>
+              {scaffoldMessage}
+            </p>
+          ) : null}
         </article>
       </section>
 
@@ -2900,6 +3014,28 @@ function ProjectPanel({
       </section>
     </div>
   )
+}
+
+function deriveScaffoldPackageName(selectedWorkspace: WorkspaceSummary | null) {
+  if (!selectedWorkspace) {
+    return 'semantic-project'
+  }
+
+  const rawSource =
+    selectedWorkspace.repoRelativePath?.split('/').filter(Boolean).pop() ??
+    selectedWorkspace.resolvedPath.split(/[\\/]/).filter(Boolean).pop() ??
+    'semantic-project'
+
+  const normalized = rawSource
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return normalized || 'semantic-project'
+}
+
+function deriveScaffoldPackageNameFromResult(result: ScaffoldProjectResult) {
+  return result.packageName
 }
 
 function DiagnosticsPanel({

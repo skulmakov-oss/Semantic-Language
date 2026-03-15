@@ -1,6 +1,7 @@
 mod adapter;
 mod docs;
 mod reports;
+mod scaffold;
 mod snapshot;
 mod workspace_files;
 
@@ -17,6 +18,7 @@ use docs::{read_spec_catalog, read_spec_document, SpecCatalogSection, SpecDocume
 use reports::{
   export_release_report, ReleaseReportExportRequest, ReleaseReportExportResult,
 };
+use scaffold::{scaffold_project, ScaffoldProjectRequest, ScaffoldProjectResult};
 use snapshot::{read_overview_snapshot, OverviewSnapshot};
 use workspace_files::{
   list_workspace_tree,
@@ -84,6 +86,13 @@ fn export_release_report_file(
   export_release_report(request)
 }
 
+#[tauri::command]
+fn scaffold_semantic_project(
+  request: ScaffoldProjectRequest,
+) -> Result<ScaffoldProjectResult, String> {
+  scaffold_project(request)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -107,7 +116,8 @@ pub fn run() {
       get_workspace_tree,
       get_workspace_file,
       save_workspace_file_contents,
-      export_release_report_file
+      export_release_report_file,
+      scaffold_semantic_project
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
