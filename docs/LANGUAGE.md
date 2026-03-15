@@ -7,6 +7,20 @@ Its purpose is to express meaning-oriented logic with the same rigor that ordina
 
 Semantic is built as a minimal compiler stack that ends in a deterministic virtual machine.
 
+The canonical language-level public contract is now centered in the spec
+bundle:
+
+- `docs/spec/syntax.md`
+- `docs/spec/types.md`
+- `docs/spec/source_semantics.md`
+- `docs/spec/diagnostics.md`
+- `docs/spec/modules.md`
+- `docs/spec/logos.md`
+
+Supporting overview notes such as this page, `docs/imports.md`, and
+`docs/exports.md` should stay aligned with that bundle rather than define a
+separate competing source contract.
+
 ## Core Idea
 
 Semantic is aimed at programs that encode:
@@ -42,6 +56,13 @@ In the current workspace this layer lives primarily in:
 - `crates/sm-sema`
 
 The language is intentionally centered on a constrained set of explicit values and operations. In the current public toolchain, `quad`, `bool`, and integer-oriented execution are central to the model, with the VM and bytecode format kept deliberately simple.
+
+At the public language-contract level, the source surface is currently split
+into:
+
+- a Rust-like executable function surface
+- a declarative Logos surface for `System`, `Entity`, and `Law`
+- a deterministic file/module import and re-export surface
 
 ### 2. Lowering to IR
 
@@ -174,6 +195,12 @@ Examples of the intended idea:
 all becoming equivalent at the parser-profile layer.
 
 This is best understood as a language adaptation mechanism, not as permission for uncontrolled syntax drift.
+
+Current public policy-gated areas include:
+
+- `f64` math availability
+- Logos surface availability
+- selected legacy compatibility paths
 
 ## What Makes Semantic Different
 
