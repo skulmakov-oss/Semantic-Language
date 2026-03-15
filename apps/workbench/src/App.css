@@ -826,6 +826,147 @@
   height: 1.2rem;
 }
 
+.diagnostics-summary-grid,
+.diagnostics-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.diagnostics-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.diagnostics-shell {
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+}
+
+.diagnostics-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.diagnostics-metric,
+.diagnostic-meta-grid > div,
+.diagnostic-callout {
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.diagnostics-metric strong {
+  display: block;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.diagnostics-metric span,
+.diagnostic-meta-label {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5a6675;
+}
+
+.diagnostics-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 1rem 0 0.85rem;
+}
+
+.diagnostics-filter-button {
+  border: 1px solid rgba(15, 23, 32, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #0f1720;
+  padding: 0.55rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.diagnostics-filter-button span {
+  display: inline-flex;
+  margin-left: 0.35rem;
+  opacity: 0.75;
+}
+
+.diagnostics-filter-button-active {
+  border-color: rgba(32, 190, 167, 0.35);
+  background: rgba(32, 190, 167, 0.14);
+  color: #0a5d52;
+}
+
+.diagnostics-list-panel,
+.diagnostics-detail-panel {
+  min-height: 0;
+}
+
+.diagnostics-groups,
+.diagnostics-group-list,
+.diagnostics-detail-stack {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.diagnostics-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.diagnostics-group-header,
+.diagnostic-card-topline,
+.diagnostic-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.diagnostic-card {
+  display: grid;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diagnostic-card-active {
+  border-color: rgba(32, 190, 167, 0.35);
+  box-shadow: 0 0 0 3px rgba(32, 190, 167, 0.12);
+}
+
+.diagnostic-code {
+  display: inline-flex;
+  width: fit-content;
+  padding: 0.2rem 0.45rem;
+  border-radius: 0.55rem;
+  background: rgba(15, 23, 32, 0.08);
+}
+
+.diagnostic-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.diagnostic-meta-grid code {
+  display: block;
+  margin-top: 0.35rem;
+  word-break: break-word;
+}
+
 @media (max-width: 1180px) {
   .workbench-shell {
     grid-template-columns: 1fr;
@@ -839,6 +980,10 @@
   .hero-grid,
   .screen-grid,
   .overview-grid,
+  .diagnostics-summary-grid,
+  .diagnostics-shell,
+  .diagnostics-metrics,
+  .diagnostic-meta-grid,
   .spec-shell,
   .project-shell,
   .spec-document-grid,

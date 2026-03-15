@@ -7,3 +7,4 @@
 *.smc
 !tests/golden/*.smc
 Cargo.lock
+/.semantic-cache/

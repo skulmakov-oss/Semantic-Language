@@ -29,6 +29,13 @@ import {
   type RecentWorkspace,
   type WorkbenchSettings,
 } from './workbench-state'
+import {
+  deriveDiagnosticsFromJobs,
+  diagnosticFamilyLabel,
+  diagnosticFamilyOrder,
+  type DiagnosticFamily,
+  type WorkbenchDiagnostic,
+} from './diagnostics'
 import './App.css'
 
 type ScreenSpec = {
@@ -48,6 +55,7 @@ type JobRecord = {
   status: 'running' | 'success' | 'failed'
   commandLine: string
   cwd: string
+  resolvedCommand: string[]
   durationMs?: number
   exitCode?: number
   stdout: string
@@ -445,6 +453,7 @@ function App() {
           status: 'running',
           commandLine: [action.label, ...action.args].join(' '),
           cwd,
+          resolvedCommand: [],
           stdout: '',
           stderr: '',
         },
@@ -504,6 +513,7 @@ function App() {
                 status: result.success ? 'success' : 'failed',
                 commandLine: result.resolvedCommand.join(' '),
                 cwd: result.cwd,
+                resolvedCommand: result.resolvedCommand,
                 durationMs: result.durationMs,
                 exitCode: result.exitCode,
                 stdout: result.stdout,
@@ -961,6 +971,16 @@ function WorkbenchScreen({
           onSaveEditorFile={onSaveEditorFile}
           onReloadEditorFile={onReloadEditorFile}
           onCloseEditorTab={onCloseEditorTab}
+        />
+      ) : null}
+
+      {route.path === '/diagnostics' ? (
+        <DiagnosticsPanel
+          jobs={jobs}
+          selectedJobId={selectedJobId}
+          selectedWorkspace={selectedWorkspace}
+          onOpenEditorFile={onOpenEditorFile}
+          onSelectJob={onSelectJob}
         />
       ) : null}
 
@@ -1676,6 +1696,72 @@ function compileOutputPath(repoRelativePath: string) {
   return `target/workbench-${stem}.smc`
 }
 
+function severityPillClass(severity: WorkbenchDiagnostic['severity']) {
+  switch (severity) {
+    case 'warning':
+      return 'draft'
+    case 'info':
+      return 'running'
+    default:
+      return 'failed'
+  }
+}
+
+function formatDiagnosticLocation(diagnostic: WorkbenchDiagnostic) {
+  const filePart = diagnostic.filePath ?? 'no file path'
+  if (diagnostic.line !== null && diagnostic.column !== null) {
+    return `${filePart}:${diagnostic.line}:${diagnostic.column}`
+  }
+
+  if (diagnostic.offsetHex) {
+    return `${filePart} @ ${diagnostic.offsetHex}`
+  }
+
+  if (diagnostic.instruction !== null) {
+    return `${filePart} @ instruction ${diagnostic.instruction}`
+  }
+
+  return filePart
+}
+
+function resolveDiagnosticWorkspacePath(
+  filePath: string | null,
+  workspace: WorkspaceSummary,
+) {
+  if (!filePath) {
+    return null
+  }
+
+  const normalizedFilePath = filePath.replace(/\\/g, '/')
+  const normalizedWorkspacePath = workspace.resolvedPath.replace(/\\/g, '/')
+  const normalizedRepoRoot = workspace.repoRoot.replace(/\\/g, '/')
+
+  if (/^[A-Za-z]:\//.test(normalizedFilePath) || normalizedFilePath.startsWith('/')) {
+    if (!normalizedFilePath.toLowerCase().startsWith(normalizedWorkspacePath.toLowerCase())) {
+      return null
+    }
+
+    return normalizedFilePath
+      .slice(normalizedWorkspacePath.length)
+      .replace(/^\/+/, '')
+  }
+
+  const repoRelativePath = normalizedFilePath.startsWith(normalizedRepoRoot)
+    ? normalizedFilePath.slice(normalizedRepoRoot.length).replace(/^\/+/, '')
+    : normalizedFilePath
+
+  if (!workspace.repoRelativePath) {
+    return repoRelativePath
+  }
+
+  const workspacePrefix = workspace.repoRelativePath.replace(/\\/g, '/')
+  if (!repoRelativePath.startsWith(`${workspacePrefix}/`)) {
+    return null
+  }
+
+  return repoRelativePath.slice(workspacePrefix.length + 1)
+}
+
 function renderMarkdown(markdown: string, headings: SpecDocumentHeading[]) {
   const headingAnchors = new Map(headings.map((heading) => [heading.title, heading.anchor]))
   const lines = markdown.split(/\r?\n/)
@@ -2114,6 +2200,280 @@ function ProjectPanel({
           ) : null}
         </article>
       </section>
+    </div>
+  )
+}
+
+function DiagnosticsPanel({
+  jobs,
+  selectedJobId,
+  selectedWorkspace,
+  onOpenEditorFile,
+  onSelectJob,
+}: {
+  jobs: JobRecord[]
+  selectedJobId: string | null
+  selectedWorkspace: WorkspaceSummary | null
+  onOpenEditorFile: (relativePath: string) => Promise<void>
+  onSelectJob: (jobId: string) => void
+}) {
+  const diagnostics = deriveDiagnosticsFromJobs(jobs)
+  const [familyFilter, setFamilyFilter] = useState<DiagnosticFamily | 'all'>('all')
+  const [selectedDiagnosticId, setSelectedDiagnosticId] = useState<string | null>(null)
+
+  const availableFamilies = diagnosticFamilyOrder.filter((family) =>
+    diagnostics.some((diagnostic) => diagnostic.family === family),
+  )
+  const effectiveFamilyFilter =
+    familyFilter !== 'all' && !availableFamilies.includes(familyFilter)
+      ? 'all'
+      : familyFilter
+  const visibleDiagnostics =
+    effectiveFamilyFilter === 'all'
+      ? diagnostics
+      : diagnostics.filter((diagnostic) => diagnostic.family === effectiveFamilyFilter)
+  const effectiveSelectedDiagnosticId =
+    selectedDiagnosticId && visibleDiagnostics.some((entry) => entry.id === selectedDiagnosticId)
+      ? selectedDiagnosticId
+      : visibleDiagnostics[0]?.id ?? null
+  const selectedDiagnostic =
+    visibleDiagnostics.find((diagnostic) => diagnostic.id === effectiveSelectedDiagnosticId) ??
+    visibleDiagnostics[0] ??
+    null
+
+  const diagnosticCounts = diagnosticFamilyOrder
+    .map((family) => ({
+      family,
+      count: diagnostics.filter((diagnostic) => diagnostic.family === family).length,
+    }))
+    .filter((entry) => entry.count > 0)
+
+  const errorCount = diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length
+  const warningCount = diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length
+  const jobsWithDiagnostics = new Set(diagnostics.map((diagnostic) => diagnostic.jobId)).size
+  const openableRelativePath =
+    selectedDiagnostic && selectedWorkspace
+      ? resolveDiagnosticWorkspacePath(selectedDiagnostic.filePath, selectedWorkspace)
+      : null
+
+  return (
+    <div className="screen-stack">
+      <section className="diagnostics-summary-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Diagnostics summary</p>
+          <h3>Derived from real `smc` / `svm` output</h3>
+          <div className="diagnostics-metrics">
+            <div className="diagnostics-metric">
+              <strong>{diagnostics.length}</strong>
+              <span>Total diagnostics</span>
+            </div>
+            <div className="diagnostics-metric">
+              <strong>{errorCount}</strong>
+              <span>Errors</span>
+            </div>
+            <div className="diagnostics-metric">
+              <strong>{warningCount}</strong>
+              <span>Warnings</span>
+            </div>
+            <div className="diagnostics-metric">
+              <strong>{jobsWithDiagnostics}</strong>
+              <span>Jobs with diagnostics</span>
+            </div>
+          </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Family filters</p>
+          <h3>Parse, type, module, verify, runtime</h3>
+          <div className="diagnostics-filter-row">
+            <button
+              type="button"
+              className={`diagnostics-filter-button ${effectiveFamilyFilter === 'all' ? 'diagnostics-filter-button-active' : ''}`}
+              onClick={() => setFamilyFilter('all')}
+            >
+              All
+            </button>
+            {diagnosticCounts.map((entry) => (
+              <button
+                key={entry.family}
+                type="button"
+                className={`diagnostics-filter-button ${effectiveFamilyFilter === entry.family ? 'diagnostics-filter-button-active' : ''}`}
+                onClick={() => setFamilyFilter(entry.family)}
+              >
+                {diagnosticFamilyLabel(entry.family)} <span>{entry.count}</span>
+              </button>
+            ))}
+          </div>
+          <p className="screen-summary">
+            Workbench groups diagnostics from command output, but preserves the original code, line, column, job, and raw message block when those fields exist.
+          </p>
+        </article>
+      </section>
+
+      {visibleDiagnostics.length === 0 ? (
+        <article className="screen-card">
+          <p className="card-kicker">No diagnostics yet</p>
+          <p className="empty-state">
+            Run `smc check`, `smc compile`, `svm run`, or `svm disasm` from the cockpit or current-file actions to populate this panel.
+          </p>
+        </article>
+      ) : (
+        <section className="diagnostics-shell">
+          <article className="screen-card diagnostics-list-panel">
+            <p className="card-kicker">Diagnostics ledger</p>
+            <h3>Grouped by public failure family</h3>
+            <div className="diagnostics-groups">
+              {diagnosticFamilyOrder
+                .filter((family) =>
+                  visibleDiagnostics.some((diagnostic) => diagnostic.family === family),
+                )
+                .map((family) => {
+                  const familyDiagnostics = visibleDiagnostics.filter(
+                    (diagnostic) => diagnostic.family === family,
+                  )
+
+                  return (
+                    <section key={family} className="diagnostics-group">
+                      <div className="diagnostics-group-header">
+                        <h4>{diagnosticFamilyLabel(family)}</h4>
+                        <span className="status-pill stable">{familyDiagnostics.length}</span>
+                      </div>
+                      <div className="diagnostics-group-list">
+                        {familyDiagnostics.map((diagnostic) => (
+                          <button
+                            key={diagnostic.id}
+                            type="button"
+                            className={`diagnostic-card ${selectedDiagnostic?.id === diagnostic.id ? 'diagnostic-card-active' : ''}`}
+                            onClick={() => {
+                              setSelectedDiagnosticId(diagnostic.id)
+                              onSelectJob(diagnostic.jobId)
+                            }}
+                          >
+                            <div className="diagnostic-card-topline">
+                              <span className={`status-pill ${severityPillClass(diagnostic.severity)}`}>
+                                {diagnostic.severity}
+                              </span>
+                              {diagnostic.code ? (
+                                <code className="diagnostic-code">{diagnostic.code}</code>
+                              ) : null}
+                            </div>
+                            <strong>{diagnostic.message}</strong>
+                            <p className="job-meta">{diagnostic.jobLabel}</p>
+                            <p className="job-meta">
+                              {formatDiagnosticLocation(diagnostic)}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  )
+                })}
+            </div>
+          </article>
+
+          <article className="screen-card diagnostics-detail-panel">
+            <p className="card-kicker">Selected diagnostic</p>
+            {selectedDiagnostic ? (
+              <div className="diagnostics-detail-stack">
+                <div className="diagnostic-detail-header">
+                  <div>
+                    <h3>{selectedDiagnostic.message}</h3>
+                    <p className="job-meta">
+                      {diagnosticFamilyLabel(selectedDiagnostic.family)} from {selectedDiagnostic.jobLabel}
+                    </p>
+                  </div>
+                  <div className="status-cluster">
+                    <span className={`status-pill ${severityPillClass(selectedDiagnostic.severity)}`}>
+                      {selectedDiagnostic.severity}
+                    </span>
+                    {selectedDiagnostic.code ? (
+                      <code className="diagnostic-code">{selectedDiagnostic.code}</code>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="diagnostic-meta-grid">
+                  <div>
+                    <span className="diagnostic-meta-label">Location</span>
+                    <code>{formatDiagnosticLocation(selectedDiagnostic)}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Job</span>
+                    <code>{selectedDiagnostic.commandLine}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Working directory</span>
+                    <code>{selectedDiagnostic.cwd}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Output channel</span>
+                    <code>{selectedDiagnostic.sourceChannel}</code>
+                  </div>
+                  {selectedDiagnostic.functionName ? (
+                    <div>
+                      <span className="diagnostic-meta-label">Function</span>
+                      <code>{selectedDiagnostic.functionName}</code>
+                    </div>
+                  ) : null}
+                  {selectedDiagnostic.offsetHex ? (
+                    <div>
+                      <span className="diagnostic-meta-label">Byte offset</span>
+                      <code>{selectedDiagnostic.offsetHex}</code>
+                    </div>
+                  ) : null}
+                  {selectedDiagnostic.instruction !== null ? (
+                    <div>
+                      <span className="diagnostic-meta-label">Instruction</span>
+                      <code>{selectedDiagnostic.instruction}</code>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="field-actions">
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => onSelectJob(selectedDiagnostic.jobId)}
+                  >
+                    Focus job in history
+                  </button>
+                  {openableRelativePath ? (
+                    <button
+                      type="button"
+                      className="action-button"
+                      onClick={() => void onOpenEditorFile(openableRelativePath)}
+                    >
+                      Open source file
+                    </button>
+                  ) : null}
+                </div>
+
+                {selectedDiagnostic.helpText ? (
+                  <div className="diagnostic-callout">
+                    <span className="diagnostic-meta-label">Why this error?</span>
+                    <p>{selectedDiagnostic.helpText}</p>
+                  </div>
+                ) : null}
+
+                <div>
+                  <span className="diagnostic-meta-label">Raw diagnostic block</span>
+                  <pre className="terminal-output terminal-output-error">
+                    {selectedDiagnostic.rawBlock}
+                  </pre>
+                </div>
+
+                {selectedJobId === selectedDiagnostic.jobId ? (
+                  <p className="job-meta">
+                    This diagnostic already points at the currently selected job in the cockpit ledger.
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="empty-state">Select a diagnostic to inspect its preserved fields.</p>
+            )}
+          </article>
+        </section>
+      )}
     </div>
   )
 }
