@@ -2,6 +2,8 @@
 
 #[cfg(feature = "std")]
 mod app;
+#[cfg(feature = "std")]
+mod formatter;
 
 #[cfg(feature = "std")]
 use ton618_core::diagnostics::diagnostic_catalog;
@@ -21,6 +23,8 @@ pub struct CliPipeline;
 
 #[cfg(feature = "std")]
 pub use app::{main_entry, run};
+#[cfg(feature = "std")]
+pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 
 #[cfg(feature = "std")]
 struct CliFsProvider;

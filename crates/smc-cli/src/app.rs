@@ -1,4 +1,5 @@
 use ton618_core::diagnostics::diagnostic_catalog;
+use crate::{format_path, FormatterMode};
 use sm_emit::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug,
     CompileProfile, OptLevel,
@@ -50,6 +51,7 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
         "check" => cmd_check(&args[1..]),
         "lint" => cmd_lint(&args[1..]),
         "watch" => cmd_watch(&args[1..]),
+        "fmt" => cmd_fmt(&args[1..]),
         "dump-ast" => cmd_dump_ast(&args[1..]),
         "dump-ir" => cmd_dump_ir(&args[1..]),
         "dump-bytecode" => cmd_dump_bytecode(&args[1..]),
@@ -518,6 +520,79 @@ fn cmd_watch(args: &[String]) -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(600));
     }
+}
+
+fn cmd_fmt(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: smc fmt [--check] <path>".to_string());
+    }
+
+    let mut check = false;
+    let mut target: Option<&str> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--check" => check = true,
+            value if value.starts_with('-') => {
+                return Err(format!("unknown flag '{}'", value));
+            }
+            value => {
+                if target.is_some() {
+                    return Err("usage: smc fmt [--check] <path>".to_string());
+                }
+                target = Some(value);
+            }
+        }
+        i += 1;
+    }
+
+    let target = target.ok_or_else(|| "usage: smc fmt [--check] <path>".to_string())?;
+    let target_path = Path::new(target);
+    let mode = if check {
+        FormatterMode::Check
+    } else {
+        FormatterMode::Write
+    };
+    let summary = format_path(target_path, mode)?;
+    let display = target_path.display();
+
+    if check {
+        if summary.files_changed == 0 {
+            println!(
+                "format check passed: '{}' ({} file(s) scanned)",
+                display, summary.files_scanned
+            );
+            return Ok(());
+        }
+
+        let changed = summary
+            .changed_paths
+            .iter()
+            .map(|path| format!("  {}", path.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "format check failed: {} file(s) need formatting under '{}'\n{}",
+            summary.files_changed, display, changed
+        ));
+    }
+
+    if summary.files_changed == 0 {
+        println!(
+            "already formatted: '{}' ({} file(s) scanned)",
+            display, summary.files_scanned
+        );
+    } else {
+        println!(
+            "formatted '{}' ({} file(s) changed out of {})",
+            display, summary.files_changed, summary.files_scanned
+        );
+        for path in summary.changed_paths {
+            println!("formatted: {}", path.display());
+        }
+    }
+
+    Ok(())
 }
 
 fn cmd_lint(args: &[String]) -> Result<(), String> {
@@ -2203,6 +2278,7 @@ fn usage() -> String {
         "  smc check <input.sm> [--no-cache] [--trace-cache] [--metrics] [--deny warnings|<CODE>] [--color auto|always|never]",
         "  smc lint <input.sm> [--no-cache] [--trace-cache] [--deny warnings|<CODE>] [--color auto|always|never]",
         "  smc watch <input.sm> [--metrics] [--color auto|always|never]",
+        "  smc fmt [--check] <path>",
         "  smc dump-ast <input.sm>",
         "  smc dump-ir <input.sm> [--profile auto|rust|logos] [--opt-level O0|O1|--opt]",
         "  smc dump-bytecode <input.sm> [--profile auto|rust|logos] [--opt-level O0|O1|--opt] [--debug-symbols]",

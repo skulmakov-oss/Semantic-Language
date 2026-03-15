@@ -161,7 +161,7 @@ const routeSpecs: ScreenSpec[] = [
     stable: [
       'Workspace resolver over canonical repository paths',
       'Recent projects list and default workspace persistence',
-      'Workspace file tree, read/write text editor tabs, and current-file compile/check actions',
+      'Workspace file tree, read/write text editor tabs, current-file compile/check, and formatter actions through smc fmt',
     ],
     next: [
       'Route current-file command results into richer diagnostics views',
@@ -246,7 +246,7 @@ const routeSpecs: ScreenSpec[] = [
     stable: [
       'Settings route with persisted local preferences',
       'Scope guard against hidden runtime or language toggles',
-      'Formatter and shell preference toggles',
+      'Formatter and shell preference toggles wired only to canonical public surfaces',
     ],
     next: [
       'Route settings into later formatter and command surfaces',
@@ -438,7 +438,7 @@ function App() {
     })()
   }, [adapterContract, selectedWorkspace, settings.defaultWorkspacePath])
 
-  async function runJobAction(action: JobActionSpec) {
+  async function runJobAction(action: JobActionSpec): Promise<JobResult | null> {
     const id = crypto.randomUUID()
     const cwd =
       action.cwdMode === 'repo'
@@ -472,6 +472,7 @@ function App() {
       })
       setAdapterError(null)
       commitJob(id, action.label, result)
+      return result
     } catch (error) {
       const message = String(error)
       startTransition(() =>
@@ -488,6 +489,7 @@ function App() {
         ),
       )
       setAdapterError(message)
+      return null
     } finally {
       setActiveJob(null)
     }
@@ -612,12 +614,29 @@ function App() {
         relativePath,
         content: tab.content,
       })
+      let nextDocument = document
+
+      if (settings.formatOnSave && isSemanticSource(relativePath)) {
+        const repoRelativePath = toRepoRelativePath(relativePath, selectedWorkspace)
+        const formatResult = await runJobAction({
+          kind: 'smc',
+          label: `Format ${document.relativePath}`,
+          args: ['fmt', repoRelativePath],
+          notes: 'Format the current Semantic source file through the canonical smc fmt surface.',
+          cwdMode: 'repo',
+        })
+
+        if (formatResult?.success) {
+          nextDocument = await fetchWorkspaceFile({
+            workspaceRoot: selectedWorkspace.resolvedPath,
+            relativePath,
+          })
+        }
+      }
 
       setEditorTabs((current) =>
         current.map((entry) =>
-          entry.relativePath === relativePath
-            ? createEditorTab(document)
-            : entry,
+          entry.relativePath === relativePath ? createEditorTab(nextDocument) : entry,
         ),
       )
       setWorkspaceTreeError(null)
@@ -867,7 +886,7 @@ function WorkbenchScreen({
   jobs: JobRecord[]
   selectedJobId: string | null
   activeJob: JobKind | null
-  onRunAction: (action: JobActionSpec) => Promise<void>
+  onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   onSpecSearchChange: (value: string) => void
   onSelectSpecPath: (value: string) => void
@@ -963,6 +982,7 @@ function WorkbenchScreen({
           workspaceInput={workspaceInput}
           workspaceError={workspaceError}
           recentWorkspaces={recentWorkspaces}
+          settings={settings}
           onWorkspaceInputChange={onWorkspaceInputChange}
           onOpenWorkspace={onOpenWorkspace}
           onOpenEditorFile={onOpenEditorFile}
@@ -1017,7 +1037,7 @@ function CommandBusPanel({
   jobs: JobRecord[]
   selectedJobId: string | null
   activeJob: JobKind | null
-  onRunAction: (action: JobActionSpec) => Promise<void>
+  onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
@@ -1908,6 +1928,7 @@ function ProjectPanel({
   workspaceInput,
   workspaceError,
   recentWorkspaces,
+  settings,
   onWorkspaceInputChange,
   onOpenWorkspace,
   onOpenEditorFile,
@@ -1927,12 +1948,13 @@ function ProjectPanel({
   workspaceInput: string
   workspaceError: string | null
   recentWorkspaces: RecentWorkspace[]
+  settings: WorkbenchSettings
   onWorkspaceInputChange: (value: string) => void
   onOpenWorkspace: (candidate: string, persist?: boolean) => Promise<void>
   onOpenEditorFile: (relativePath: string) => Promise<void>
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
-  onRunAction: (action: JobActionSpec) => Promise<void>
+  onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
   onSaveEditorFile: (relativePath: string) => Promise<void>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
@@ -1945,6 +1967,10 @@ function ProjectPanel({
       : null
   const canRunSemanticFileAction =
     !!activeEditorTab && !!activeEditorRepoPath && isSemanticSource(activeEditorTab.relativePath)
+  const workspaceFormatTarget = selectedWorkspace?.repoRelativePath ?? '.'
+  const hasDirtySemanticTabs = editorTabs.some(
+    (tab) => isSemanticSource(tab.relativePath) && tab.status !== 'clean',
+  )
 
   async function runCurrentFileAction(mode: 'check' | 'compile') {
     if (!activeEditorTab || !selectedWorkspace || !adapterContract || !activeEditorRepoPath) {
@@ -1973,6 +1999,64 @@ function ProjectPanel({
           : 'Compile the active .sm file through the canonical smc compile surface.',
       cwdMode: 'repo',
     })
+  }
+
+  async function runFormatterAction(mode: 'file' | 'workspace' | 'check') {
+    if (!selectedWorkspace || !adapterContract) {
+      return
+    }
+
+    if (mode === 'file') {
+      if (!activeEditorTab || !activeEditorRepoPath || !canRunSemanticFileAction) {
+        return
+      }
+
+      if (activeEditorTab.status !== 'clean') {
+        await onSaveEditorFile(activeEditorTab.relativePath)
+      }
+
+      const result = await onRunAction({
+        kind: 'smc',
+        label: `Format ${activeEditorTab.title}`,
+        args: ['fmt', activeEditorRepoPath],
+        notes: 'Format the active Semantic source file through the canonical smc fmt surface.',
+        cwdMode: 'repo',
+      })
+
+      if (result?.success) {
+        await onReloadEditorFile(activeEditorTab.relativePath)
+      }
+      return
+    }
+
+    if (hasDirtySemanticTabs) {
+      return
+    }
+
+    const result = await onRunAction({
+      kind: 'smc',
+      label:
+        mode === 'check'
+          ? `Format check ${selectedWorkspace.repoRelativePath ?? 'repository root'}`
+          : `Format ${selectedWorkspace.repoRelativePath ?? 'repository root'}`,
+      args:
+        mode === 'check'
+          ? ['fmt', '--check', workspaceFormatTarget]
+          : ['fmt', workspaceFormatTarget],
+      notes:
+        mode === 'check'
+          ? 'Run canonical formatter check for the selected workspace.'
+          : 'Format all Semantic source files under the selected workspace through smc fmt.',
+      cwdMode: 'repo',
+    })
+
+    if (mode === 'workspace' && result?.success) {
+      for (const tab of editorTabs) {
+        if (tab.status === 'clean' && isSemanticSource(tab.relativePath)) {
+          await onReloadEditorFile(tab.relativePath)
+        }
+      }
+    }
   }
 
   return (
@@ -2164,6 +2248,30 @@ function ProjectPanel({
                 <button
                   type="button"
                   className="ghost-button"
+                  onClick={() => void runFormatterAction('file')}
+                  disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
+                >
+                  Format file
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void runFormatterAction('workspace')}
+                  disabled={!selectedWorkspace || hasDirtySemanticTabs}
+                >
+                  Format workspace
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void runFormatterAction('check')}
+                  disabled={!selectedWorkspace || hasDirtySemanticTabs}
+                >
+                  Format check
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
                   onClick={() => void runCurrentFileAction('check')}
                   disabled={!canRunSemanticFileAction || activeEditorTab.status === 'saving'}
                 >
@@ -2185,9 +2293,19 @@ function ProjectPanel({
                 repo path:{' '}
                 <code>{activeEditorRepoPath ?? 'not a repository-scoped semantic source'}</code>
               </p>
+              <p className="job-meta">
+                formatter surface:{' '}
+                <span className="status-pill draft">smc fmt</span>{' '}
+                {settings.formatOnSave ? 'with format-on-save enabled' : 'format-on-save disabled'}
+              </p>
               {!isSemanticSource(activeEditorTab.relativePath) ? (
                 <p className="empty-state">
-                  Current-file compile and check are only enabled for `.sm` source files.
+                  Current-file compile, check, and format actions are only enabled for `.sm` source files.
+                </p>
+              ) : null}
+              {hasDirtySemanticTabs ? (
+                <p className="empty-state">
+                  Workspace format actions stay disabled while Semantic source tabs are dirty, so the formatter only runs against saved repository state.
                 </p>
               ) : null}
               <textarea
@@ -2542,7 +2660,7 @@ function SettingsPanel({
           <label className="toggle-row toggle-row-interactive">
             <span>
               <strong>Format on save</strong>
-              <p className="job-meta">Preference only. Formatter integration arrives in `WB-13`.</p>
+              <p className="job-meta">Uses the canonical `smc fmt` surface after saving `.sm` files.</p>
             </span>
             <input
               type="checkbox"
