@@ -28,8 +28,6 @@ Current documents in this PR:
 
 Adjacent source-surface documents also remain relevant:
 
-- `docs/imports.md`
-- `docs/exports.md`
 - `docs/LANGUAGE.md`
 
 Later PRs may extend this bundle further with richer module, package, CLI,

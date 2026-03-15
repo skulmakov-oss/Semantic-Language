@@ -25,9 +25,8 @@ Semantic currently exposes two distinct source-oriented surfaces:
 - a Logos-oriented declarative surface used for `System`, `Entity`, and `Law`
   forms
 
-This document covers the Rust-like executable surface first. Import/export and
-Logos semantics remain part of the public source contract, but are still
-documented in:
+This document covers the Rust-like executable surface first. The remaining
+public source-surface contracts are specified separately in:
 
 - `source_semantics.md`
 - `diagnostics.md`
@@ -138,11 +137,7 @@ require a separate foreign-call syntax.
 ## Imports And Module Surface
 
 The current repository supports source-level imports and re-exports. That
-surface is part of the language contract, but remains documented in dedicated
-documents until the source contract bundle is widened further:
-
-- `docs/imports.md`
-- `docs/exports.md`
+surface is part of the language contract and is specified in `modules.md`.
 
 ## Current Exclusions
 
