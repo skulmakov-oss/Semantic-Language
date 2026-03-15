@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState, type ReactNode } from 'react'
+import { startTransition, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import {
   exportReleaseReportFile,
@@ -379,7 +379,7 @@ function App() {
     useState<SpecDocumentView | null>(null)
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceTreeNode[]>([])
   const [workspaceTreeError, setWorkspaceTreeError] = useState<string | null>(null)
-  const [workspaceTreeVersion, setWorkspaceTreeVersion] = useState(0)
+  const [workspaceTreeBusy, setWorkspaceTreeBusy] = useState(false)
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeEditorPath, setActiveEditorPath] = useState<string | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
@@ -396,6 +396,7 @@ function App() {
   const [settings, setSettings] = useState<WorkbenchSettings>(
     initialWorkbenchState.settings,
   )
+  const workspaceTreeRequestIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
@@ -491,33 +492,21 @@ function App() {
 
   useEffect(() => {
     if (!selectedWorkspace?.resolvedPath) {
+      setWorkspaceTree([])
+      setWorkspaceTreeError(null)
+      setWorkspaceTreeBusy(false)
       return
     }
-
-    let cancelled = false
-
-    fetchWorkspaceTree(selectedWorkspace.resolvedPath)
-      .then((tree) => {
-        if (!cancelled) {
-          setWorkspaceTree(tree)
-          setWorkspaceTreeError(null)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setWorkspaceTreeError(String(error))
-        }
-      })
 
     startTransition(() => {
       setEditorTabs([])
       setActiveEditorPath(null)
+      setWorkspaceTree([])
+      setWorkspaceTreeError(null)
     })
 
-    return () => {
-      cancelled = true
-    }
-  }, [selectedWorkspace?.resolvedPath, workspaceTreeVersion])
+    void loadWorkspaceTree(selectedWorkspace.resolvedPath)
+  }, [selectedWorkspace?.resolvedPath])
 
   useEffect(() => {
     saveWorkbenchState({
@@ -721,8 +710,38 @@ function App() {
     }
   }
 
+  async function loadWorkspaceTree(workspaceRoot: string) {
+    const requestId = workspaceTreeRequestIdRef.current + 1
+    workspaceTreeRequestIdRef.current = requestId
+    setWorkspaceTreeBusy(true)
+
+    try {
+      const tree = await fetchWorkspaceTree(workspaceRoot)
+      if (workspaceTreeRequestIdRef.current !== requestId) {
+        return
+      }
+
+      setWorkspaceTree(tree)
+      setWorkspaceTreeError(null)
+    } catch (error) {
+      if (workspaceTreeRequestIdRef.current !== requestId) {
+        return
+      }
+
+      setWorkspaceTreeError(String(error))
+    } finally {
+      if (workspaceTreeRequestIdRef.current === requestId) {
+        setWorkspaceTreeBusy(false)
+      }
+    }
+  }
+
   async function refreshWorkspaceTree() {
-    startTransition(() => setWorkspaceTreeVersion((current) => current + 1))
+    if (!selectedWorkspace?.resolvedPath) {
+      return
+    }
+
+    await loadWorkspaceTree(selectedWorkspace.resolvedPath)
   }
 
   async function openEditorFile(relativePath: string) {
@@ -975,6 +994,7 @@ function App() {
                   selectedSpecDocument={selectedSpecDocument}
                   selectedSpecPath={selectedSpecPath}
                   workspaceTree={workspaceTree}
+                  workspaceTreeBusy={workspaceTreeBusy}
                   workspaceTreeError={workspaceTreeError}
                   editorTabs={editorTabs}
                   activeEditorPath={activeEditorPath}
@@ -1026,6 +1046,7 @@ function WorkbenchScreen({
   selectedSpecDocument,
   selectedSpecPath,
   workspaceTree,
+  workspaceTreeBusy,
   workspaceTreeError,
   editorTabs,
   activeEditorPath,
@@ -1067,6 +1088,7 @@ function WorkbenchScreen({
   selectedSpecDocument: SpecDocumentView | null
   selectedSpecPath: string | null
   workspaceTree: WorkspaceTreeNode[]
+  workspaceTreeBusy: boolean
   workspaceTreeError: string | null
   editorTabs: EditorTab[]
   activeEditorPath: string | null
@@ -1171,6 +1193,7 @@ function WorkbenchScreen({
           adapterContract={adapterContract}
           selectedWorkspace={selectedWorkspace}
           workspaceTree={workspaceTree}
+          workspaceTreeBusy={workspaceTreeBusy}
           workspaceTreeError={workspaceTreeError}
           editorTabs={editorTabs}
           activeEditorPath={activeEditorPath}
@@ -2662,6 +2685,7 @@ function ProjectPanel({
   adapterContract,
   selectedWorkspace,
   workspaceTree,
+  workspaceTreeBusy,
   workspaceTreeError,
   editorTabs,
   activeEditorPath,
@@ -2686,6 +2710,7 @@ function ProjectPanel({
   adapterContract: AdapterContract | null
   selectedWorkspace: WorkspaceSummary | null
   workspaceTree: WorkspaceTreeNode[]
+  workspaceTreeBusy: boolean
   workspaceTreeError: string | null
   editorTabs: EditorTab[]
   activeEditorPath: string | null
@@ -2738,6 +2763,7 @@ function ProjectPanel({
   const [smlspBusy, setSmlspBusy] = useState(false)
   const [smlspResult, setSmlspResult] = useState<SmlspBridgeResult | null>(null)
   const [smlspError, setSmlspError] = useState<string | null>(null)
+  const packageManifestRequestIdRef = useRef(0)
   const smlspDefinitionRelativePath =
     smlspResult?.definitionPath && selectedWorkspace
       ? resolveAbsoluteWorkspacePath(
@@ -2757,54 +2783,51 @@ function ProjectPanel({
     setSmlspError(null)
   }, [activeEditorPath])
 
-  useEffect(() => {
-    let cancelled = false
+  async function loadPackageManifestPreview(workspace: WorkspaceSummary | null) {
+    const requestId = packageManifestRequestIdRef.current + 1
+    packageManifestRequestIdRef.current = requestId
 
-    async function loadPackageManifestPreview() {
-      if (!selectedWorkspace) {
-        setPackageManifestState('idle')
-        setPackageManifestPreview(null)
-        setPackageManifestError(null)
+    if (!workspace) {
+      setPackageManifestState('idle')
+      setPackageManifestPreview(null)
+      setPackageManifestError(null)
+      return
+    }
+
+    setPackageManifestState('loading')
+    setPackageManifestError(null)
+
+    try {
+      const document = await fetchWorkspaceFile({
+        workspaceRoot: workspace.resolvedPath,
+        relativePath: 'Semantic.toml',
+      })
+
+      if (packageManifestRequestIdRef.current !== requestId) {
         return
       }
 
-      setPackageManifestState('loading')
-      setPackageManifestError(null)
-
-      try {
-        const document = await fetchWorkspaceFile({
-          workspaceRoot: selectedWorkspace.resolvedPath,
-          relativePath: 'Semantic.toml',
-        })
-
-        if (cancelled) {
-          return
-        }
-
-        setPackageManifestPreview(parsePackageManifest(document.content))
-        setPackageManifestState('ready')
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        const message = String(error)
-        setPackageManifestPreview(null)
-        if (message.toLowerCase().includes('semantic.toml')) {
-          setPackageManifestState('missing')
-          return
-        }
-
-        setPackageManifestState('error')
-        setPackageManifestError(message)
+      setPackageManifestPreview(parsePackageManifest(document.content))
+      setPackageManifestState('ready')
+    } catch (error) {
+      if (packageManifestRequestIdRef.current !== requestId) {
+        return
       }
-    }
 
-    void loadPackageManifestPreview()
+      const message = String(error)
+      setPackageManifestPreview(null)
+      if (message.toLowerCase().includes('semantic.toml')) {
+        setPackageManifestState('missing')
+        return
+      }
 
-    return () => {
-      cancelled = true
+      setPackageManifestState('error')
+      setPackageManifestError(message)
     }
+  }
+
+  useEffect(() => {
+    void loadPackageManifestPreview(selectedWorkspace)
   }, [selectedWorkspace])
 
   async function runCurrentFileAction(mode: 'check' | 'compile') {
@@ -2910,15 +2933,24 @@ function ProjectPanel({
       })
 
       if (mode === 'new') {
-        await onOpenWorkspace(result.workspaceRoot, true)
+        await onOpenWorkspace(result.workspaceRoot, {
+          persist: true,
+          source: 'preset',
+          successMessage: `Created child project ${result.repoRelativePath} and switched Workbench to it.`,
+        })
       } else {
-        await onRefreshWorkspace()
+        await Promise.all([
+          onRefreshWorkspace(),
+          loadPackageManifestPreview(selectedWorkspace),
+        ])
         await onOpenEditorFile(result.entryRelativePath)
       }
 
       setScaffoldPackageName(deriveScaffoldPackageNameFromResult(result))
       setScaffoldMessage(
-        `Created ${result.createdPaths.length} canonical files under ${result.repoRelativePath}: ${result.createdPaths.join(', ')}`,
+        mode === 'init'
+          ? `Created ${result.createdPaths.length} canonical files under ${result.repoRelativePath}, refreshed the tree and manifest preview, and opened ${result.entryRelativePath}.`
+          : `Created ${result.createdPaths.length} canonical files under ${result.repoRelativePath}: ${result.createdPaths.join(', ')}`,
       )
     } catch (error) {
       setScaffoldMessage(String(error))
@@ -3346,9 +3378,23 @@ function ProjectPanel({
           <p className="screen-summary">
             The explorer stays inside the selected workspace root and only exposes text files for the editor shell.
           </p>
+          <div className="field-actions">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void onRefreshWorkspace()}
+              disabled={!selectedWorkspace || workspaceTreeBusy}
+            >
+              {workspaceTreeBusy ? 'Refreshing tree...' : 'Refresh tree'}
+            </button>
+          </div>
           {workspaceTreeError ? <p className="adapter-error">{workspaceTreeError}</p> : null}
           <div className="project-tree">
-            {workspaceTree.length === 0 ? (
+            {workspaceTreeBusy && workspaceTree.length === 0 ? (
+              <p className="empty-state">
+                Refreshing the workspace tree against the current canonical root...
+              </p>
+            ) : workspaceTree.length === 0 ? (
               <p className="empty-state">
                 No editable text files are visible under the selected workspace yet.
               </p>
