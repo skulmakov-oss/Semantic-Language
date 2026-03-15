@@ -1,6 +1,7 @@
 import { startTransition, useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import {
+  exportReleaseReportFile,
   fetchAdapterContract,
   fetchOverviewSnapshot,
   fetchSpecCatalog,
@@ -151,6 +152,56 @@ const workflowActions: JobActionSpec[] = [
   {
     kind: 'release_bundle_verify',
     label: 'Verify release bundle',
+    args: [],
+    notes: 'Run the canonical release bundle verification script on the baseline manifest.',
+    cwdMode: 'repo',
+  },
+]
+
+const releaseValidationPlan: JobActionSpec[] = [
+  {
+    kind: 'cargo',
+    label: 'Clean validation: workspace tests',
+    args: ['test', '--workspace'],
+    notes: 'Run the full repository validation suite from the repository root.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'smc',
+    label: 'Clean validation: compile canonical stress example',
+    args: [
+      'compile',
+      'examples/semantic_policy_overdrive_trace.sm',
+      '-o',
+      'target/semantic_policy_overdrive_trace.smc',
+    ],
+    notes: 'Compile the canonical Semantic stress example to a deterministic SemCode artifact.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'smc',
+    label: 'Clean validation: verify canonical SemCode artifact',
+    args: ['verify', 'target/semantic_policy_overdrive_trace.smc'],
+    notes: 'Run the canonical verifier over the compiled SemCode artifact.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'svm',
+    label: 'Clean validation: disasm canonical SemCode artifact',
+    args: ['disasm', 'target/semantic_policy_overdrive_trace.smc'],
+    notes: 'Inspect the compiled SemCode artifact through the canonical disassembly surface.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'svm',
+    label: 'Clean validation: run canonical SemCode artifact',
+    args: ['run', 'target/semantic_policy_overdrive_trace.smc'],
+    notes: 'Execute the compiled SemCode artifact through the verified svm surface.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'release_bundle_verify',
+    label: 'Clean validation: verify release bundle',
     args: [],
     notes: 'Run the canonical release bundle verification script on the baseline manifest.',
     cwdMode: 'repo',
@@ -994,6 +1045,7 @@ function WorkbenchScreen({
           specCatalog={specCatalog}
           jobs={jobs}
           selectedWorkspace={selectedWorkspace}
+          onRunAction={onRunAction}
         />
       ) : null}
 
@@ -1525,17 +1577,22 @@ function ReleasePanel({
   specCatalog,
   jobs,
   selectedWorkspace,
+  onRunAction,
 }: {
   overviewSnapshot: OverviewSnapshot | null
   specCatalog: SpecCatalogSection[]
   jobs: JobRecord[]
   selectedWorkspace: WorkspaceSummary | null
+  onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
 }) {
+  const [validationMessage, setValidationMessage] = useState<string | null>(null)
+  const [validationRunning, setValidationRunning] = useState(false)
+  const [exportMessage, setExportMessage] = useState<string | null>(null)
   const releaseSection = specCatalog.find((section) => section.key === 'release')
-  const latestCargo = latestJobOfKind(jobs, 'cargo')
-  const latestSmc = latestJobOfKind(jobs, 'smc')
-  const latestSvm = latestJobOfKind(jobs, 'svm')
-  const latestBundle = latestJobOfKind(jobs, 'release_bundle_verify')
+  const releaseJobs = releaseValidationPlan.map((action) => ({
+    action,
+    job: latestJobMatching(jobs, (job) => jobMatchesAction(job, action)),
+  }))
   const latestTrace = latestJobMatching(
     jobs,
     (job) => job.kind === 'smc' && effectiveResolvedCommand(job).includes('--trace-cache'),
@@ -1568,32 +1625,59 @@ function ReleasePanel({
     },
   ]
   const gateRows = [
-    {
-      label: 'Workspace tests',
-      detail: 'cargo test --workspace',
-      job: latestCargo,
-    },
-    {
-      label: 'CLI workflows',
-      detail: 'latest smc compile/check/verify/fmt action',
-      job: latestSmc,
-    },
-    {
-      label: 'Bytecode workflows',
-      detail: 'latest svm run/disasm action',
-      job: latestSvm,
-    },
+    ...releaseJobs.map(({ action, job }) => ({
+      label: action.label.replace(/^Clean validation:\s*/, ''),
+      detail: action.args.join(' '),
+      job,
+    })),
     {
       label: 'Trace workflow',
       detail: 'smc check --trace-cache',
       job: latestTrace,
     },
-    {
-      label: 'Bundle verification',
-      detail: 'verify_release_bundle.ps1',
-      job: latestBundle,
-    },
   ]
+
+  async function runCleanValidationPass() {
+    setValidationRunning(true)
+    setValidationMessage(null)
+
+    try {
+      for (const action of releaseValidationPlan) {
+        const result = await onRunAction(action)
+        if (!result?.success) {
+          setValidationMessage(`Validation stopped at '${action.label}'.`)
+          return
+        }
+      }
+
+      setValidationMessage('Clean validation pass completed successfully.')
+    } finally {
+      setValidationRunning(false)
+    }
+  }
+
+  async function exportReleaseReport() {
+    if (!overviewSnapshot) {
+      setExportMessage('Release snapshot is not loaded yet.')
+      return
+    }
+
+    const markdown = buildReleaseReportMarkdown({
+      overviewSnapshot,
+      gateRows,
+      docsAlignment,
+    })
+
+    try {
+      const result = await exportReleaseReportFile({
+        markdown,
+        fileName: 'workbench-release-console-report.md',
+      })
+      setExportMessage(`Report exported to ${result.repoRelativePath}.`)
+    } catch (error) {
+      setExportMessage(String(error))
+    }
+  }
 
   return (
     <div className="screen-stack">
@@ -1601,6 +1685,25 @@ function ReleasePanel({
         <article className="screen-card">
           <p className="card-kicker">Release identity</p>
           <h3>Current release line anchor</h3>
+          <div className="field-actions">
+            <button
+              type="button"
+              className="action-button"
+              onClick={() => void runCleanValidationPass()}
+              disabled={validationRunning}
+            >
+              {validationRunning ? 'Running validation...' : 'Run clean validation'}
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void exportReleaseReport()}
+            >
+              Export release report
+            </button>
+          </div>
+          {validationMessage ? <p className="job-meta">{validationMessage}</p> : null}
+          {exportMessage ? <p className="job-meta">{exportMessage}</p> : null}
           <dl className="facts-grid">
             <div>
               <dt>Branch</dt>
@@ -3412,6 +3515,81 @@ function latestJobMatching(
   predicate: (job: JobRecord) => boolean,
 ) {
   return jobs.find(predicate)
+}
+
+function jobMatchesAction(job: JobRecord, action: JobActionSpec) {
+  if (job.kind !== action.kind) {
+    return false
+  }
+
+  const command = effectiveResolvedCommand(job)
+  return action.args.every((arg) => command.includes(arg))
+}
+
+function buildReleaseReportMarkdown({
+  overviewSnapshot,
+  gateRows,
+  docsAlignment,
+}: {
+  overviewSnapshot: OverviewSnapshot
+  gateRows: Array<{ label: string; detail: string; job?: JobRecord }>
+  docsAlignment: Array<{ label: string; ok: boolean; detail: string }>
+}) {
+  const lines = [
+    '# Workbench Release Console Report',
+    '',
+    `- branch: \`${overviewSnapshot.branch}\``,
+    `- commit: \`${overviewSnapshot.shortCommit}\``,
+    `- baseline tag: \`${overviewSnapshot.baselineTagName}\``,
+    `- baseline tag on head: ${overviewSnapshot.baselineTagPointsAtHead ? 'yes' : 'no'}`,
+    `- baseline manifest: \`${overviewSnapshot.baselineManifestPath}\``,
+    '',
+    '## Gates',
+    '',
+    ...gateRows.flatMap((gate) => [
+      `### ${gate.label}`,
+      `- status: ${gate.job?.status ?? 'not run'}`,
+      `- detail: \`${gate.detail}\``,
+      `- command: \`${gate.job?.commandLine ?? 'not recorded'}\``,
+      `- cwd: \`${gate.job?.cwd ?? overviewSnapshot.repoRoot}\``,
+      `- exit: ${gate.job?.exitCode ?? 'n/a'}`,
+      `- duration_ms: ${gate.job?.durationMs ?? 'n/a'}`,
+      '',
+    ]),
+    '## Docs Alignment',
+    '',
+    ...docsAlignment.flatMap((item) => [
+      `- ${item.ok ? '[x]' : '[ ]'} ${item.label}: ${item.detail}`,
+    ]),
+    '',
+    '## Known Limits',
+    '',
+    ...(overviewSnapshot.knownLimits.length > 0
+      ? overviewSnapshot.knownLimits.map((limit) => `- ${limit}`)
+      : ['- No known limits extracted from readiness docs.']),
+    '',
+    '## Asset Smoke',
+    '',
+    `- validated tag: \`${overviewSnapshot.assetSmoke?.validatedTag ?? 'not recorded'}\``,
+    ...(overviewSnapshot.assetSmoke?.validatedAssets.length
+      ? overviewSnapshot.assetSmoke.validatedAssets.map((asset) => `- asset: \`${asset}\``)
+      : ['- No validated assets recorded.']),
+    '',
+  ]
+
+  if (overviewSnapshot.assetSmoke?.scenarios.length) {
+    lines.push('## Smoke Scenarios', '')
+    for (const scenario of overviewSnapshot.assetSmoke.scenarios) {
+      lines.push(`### ${scenario.scenario}`)
+      lines.push(`- source: ${scenario.source}`)
+      lines.push(`- validation: ${scenario.validation}`)
+      lines.push(`- expected: ${scenario.expectedSignal}`)
+      lines.push(`- result: ${scenario.currentResult}`)
+      lines.push('')
+    }
+  }
+
+  return `${lines.join('\n').trimEnd()}\n`
 }
 
 export default App

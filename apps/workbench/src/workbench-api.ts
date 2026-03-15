@@ -93,6 +93,16 @@ export type AssetSmokeSnapshot = {
   scenarios: AssetSmokeScenario[]
 }
 
+export type ReleaseReportExportRequest = {
+  markdown: string
+  fileName?: string
+}
+
+export type ReleaseReportExportResult = {
+  absolutePath: string
+  repoRelativePath: string
+}
+
 export type OverviewSnapshot = {
   repoRoot: string
   branch: string
@@ -177,4 +187,8 @@ export async function fetchWorkspaceFile(request: WorkspaceFileRequest) {
 
 export async function saveWorkspaceFile(request: SaveWorkspaceFileRequest) {
   return invoke<WorkspaceFileDocument>('save_workspace_file_contents', { request })
+}
+
+export async function exportReleaseReportFile(request: ReleaseReportExportRequest) {
+  return invoke<ReleaseReportExportResult>('export_release_report_file', { request })
 }
