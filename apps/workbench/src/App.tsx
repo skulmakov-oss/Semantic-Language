@@ -1562,24 +1562,19 @@ function CommandBusPanel({
                   : 'running'}
               </p>
               <div className="job-output-stack">
-                <section>
-                  <p className="card-kicker">stdout</p>
-                  {selectedJob.stdout ? (
-                    <pre className="terminal-output">{selectedJob.stdout}</pre>
-                  ) : (
-                    <p className="empty-state">No stdout captured for this job.</p>
-                  )}
-                </section>
-                <section>
-                  <p className="card-kicker">stderr</p>
-                  {selectedJob.stderr ? (
-                    <pre className="terminal-output terminal-output-error">
-                      {selectedJob.stderr}
-                    </pre>
-                  ) : (
-                    <p className="empty-state">No stderr captured for this job.</p>
-                  )}
-                </section>
+                <OutputPane
+                  key={`${selectedJob.id}-stdout`}
+                  label="stdout"
+                  content={selectedJob.stdout}
+                  emptyMessage="No stdout captured for this job."
+                />
+                <OutputPane
+                  key={`${selectedJob.id}-stderr`}
+                  label="stderr"
+                  content={selectedJob.stderr}
+                  emptyMessage="No stderr captured for this job."
+                  tone="error"
+                />
               </div>
             </div>
           ) : (
@@ -1619,6 +1614,100 @@ function ValidationRow({
       <span className={`status-pill ${job?.status ?? 'draft'}`}>
         {job?.status ?? 'not run'}
       </span>
+    </section>
+  )
+}
+
+function countOutputLines(content: string) {
+  if (content.length === 0) {
+    return 0
+  }
+
+  return content.split(/\r?\n/).length
+}
+
+function OutputPane({
+  label,
+  content,
+  emptyMessage,
+  tone = 'default',
+}: {
+  label: string
+  content: string
+  emptyMessage: string
+  tone?: 'default' | 'error'
+}) {
+  const [wrap, setWrap] = useState(true)
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const outputRef = useRef<HTMLPreElement | null>(null)
+  const hasContent = content.trim().length > 0
+  const lineCount = countOutputLines(content)
+  const charCount = content.length
+
+  async function copyOutput() {
+    if (!hasContent) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopyState('copied')
+    } catch {
+      setCopyState('failed')
+    }
+  }
+
+  function scrollToTop() {
+    outputRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function scrollToBottom() {
+    if (!outputRef.current) {
+      return
+    }
+
+    outputRef.current.scrollTo({
+      top: outputRef.current.scrollHeight,
+      behavior: 'smooth',
+    })
+  }
+
+  return (
+    <section className="output-pane">
+      <div className="output-pane-header">
+        <div>
+          <p className="card-kicker">{label}</p>
+          <p className="job-meta">
+            {hasContent
+              ? `Full capture preserved · ${lineCount.toLocaleString()} line(s) · ${charCount.toLocaleString()} char(s)`
+              : 'Empty capture'}
+          </p>
+        </div>
+        <div className="output-pane-actions">
+          <button type="button" className="ghost-button" onClick={() => setWrap((current) => !current)}>
+            {wrap ? 'No wrap' : 'Wrap'}
+          </button>
+          <button type="button" className="ghost-button" onClick={() => void copyOutput()} disabled={!hasContent}>
+            {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
+          </button>
+          <button type="button" className="ghost-button" onClick={scrollToTop} disabled={!hasContent}>
+            Top
+          </button>
+          <button type="button" className="ghost-button" onClick={scrollToBottom} disabled={!hasContent}>
+            Bottom
+          </button>
+        </div>
+      </div>
+      {hasContent ? (
+        <pre
+          ref={outputRef}
+          className={`terminal-output ${tone === 'error' ? 'terminal-output-error' : ''} ${wrap ? '' : 'terminal-output-nowrap'}`}
+        >
+          {content}
+        </pre>
+      ) : (
+        <p className="empty-state">{emptyMessage}</p>
+      )}
     </section>
   )
 }
@@ -4368,18 +4457,19 @@ function InspectPanel({
                 </div>
 
                 <div className="inspect-output-stack">
-                  <section className="inspect-output-block">
-                    <span className="diagnostic-meta-label">stdout</span>
-                    <pre className="inspect-output-code">
-                      {selectedInspectableJob.stdoutText ?? 'No stdout captured for this job.'}
-                    </pre>
-                  </section>
-                  <section className="inspect-output-block">
-                    <span className="diagnostic-meta-label">stderr</span>
-                    <pre className="inspect-output-code">
-                      {selectedInspectableJob.stderrText ?? 'No stderr captured for this job.'}
-                    </pre>
-                  </section>
+                  <OutputPane
+                    key={`${selectedInspectableJob.job.id}-stdout`}
+                    label="stdout"
+                    content={selectedInspectableJob.stdoutText ?? ''}
+                    emptyMessage="No stdout captured for this job."
+                  />
+                  <OutputPane
+                    key={`${selectedInspectableJob.job.id}-stderr`}
+                    label="stderr"
+                    content={selectedInspectableJob.stderrText ?? ''}
+                    emptyMessage="No stderr captured for this job."
+                    tone="error"
+                  />
                 </div>
               </div>
             ) : (

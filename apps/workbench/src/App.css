@@ -435,6 +435,26 @@
   gap: 0.8rem;
 }
 
+.output-pane {
+  display: grid;
+  gap: 0.65rem;
+  min-height: 0;
+}
+
+.output-pane-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.9rem;
+  align-items: flex-start;
+}
+
+.output-pane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .spec-section-card {
   padding: 1rem;
   border-radius: 1rem;
@@ -730,18 +750,28 @@
 }
 
 .terminal-output {
-  margin: 0.8rem 0 0;
+  margin: 0;
   padding: 0.9rem 1rem;
   border-radius: 0.9rem;
   background: #0f1720;
   color: #d3e4e1;
-  overflow-x: auto;
+  max-height: 26rem;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
   white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  font: 0.88rem/1.5 "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
 .terminal-output-error {
   background: #2a1114;
   color: #ffd8d9;
+}
+
+.terminal-output-nowrap {
+  white-space: pre;
+  word-break: normal;
 }
 
 .adapter-error,
@@ -1173,6 +1203,12 @@
   }
 
   .field-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .output-pane-header,
+  .output-pane-actions {
     flex-direction: column;
     align-items: stretch;
   }
