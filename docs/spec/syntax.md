@@ -28,6 +28,8 @@ Semantic currently exposes two distinct source-oriented surfaces:
 This document covers the Rust-like executable surface first. The remaining
 public source-surface contracts are specified separately in:
 
+- `source_semantics.md`
+- `diagnostics.md`
 - `modules.md`
 - `logos.md`
 - `docs/LANGUAGE.md`
