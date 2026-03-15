@@ -44,7 +44,65 @@ type JobRecord = {
   stderr: string
 }
 
+type JobActionSpec = {
+  kind: JobKind
+  label: string
+  args: string[]
+  notes: string
+  cwdMode: 'repo' | 'workspace'
+}
+
 const initialWorkbenchState = loadWorkbenchState()
+
+const workflowActions: JobActionSpec[] = [
+  {
+    kind: 'cargo',
+    label: 'Run workspace tests',
+    args: ['test', '--workspace'],
+    notes: 'Run the full repository validation suite from the repository root.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'smc',
+    label: 'Compile semantic stress example',
+    args: [
+      'compile',
+      'examples/semantic_policy_overdrive_trace.sm',
+      '-o',
+      'target/semantic_policy_overdrive_trace.smc',
+    ],
+    notes: 'Compile the canonical Workbench stress example into SemCode.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'smc',
+    label: 'Run semantic stress source',
+    args: ['run', 'examples/semantic_policy_overdrive_trace.sm'],
+    notes: 'Run the source example through the public smc surface.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'svm',
+    label: 'Run compiled semantic stress bytecode',
+    args: ['run', 'target/semantic_policy_overdrive_trace.smc'],
+    notes: 'Execute the compiled SemCode artifact through svm.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'svm',
+    label: 'Disassemble semantic stress bytecode',
+    args: ['disasm', 'target/semantic_policy_overdrive_trace.smc'],
+    notes: 'Inspect the compiled SemCode artifact with the public disasm surface.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'release_bundle_verify',
+    label: 'Verify release bundle',
+    args: [],
+    notes: 'Run the canonical release bundle verification script on the baseline manifest.',
+    cwdMode: 'repo',
+  },
+]
 
 const routeSpecs: ScreenSpec[] = [
   {
@@ -58,11 +116,11 @@ const routeSpecs: ScreenSpec[] = [
       'Branch, commit, and baseline tag cards',
       'Source-of-truth callouts for specs, roadmap, and release artifacts',
       'Deterministic command adapter contract for smc, svm, cargo, and release verification',
-      'Real probe actions routed through the backend process adapter',
+      'Real workflow actions and job history routed through the backend process adapter',
     ],
     next: [
-      'Wire git and validation snapshots into overview state',
-      'Add workspace-root selection instead of the fixed repository root',
+      'Split jobs and diagnostics into richer structured views',
+      'Add spec navigation without mutating canonical docs',
     ],
   },
   {
@@ -179,6 +237,7 @@ function App() {
   const [adapterError, setAdapterError] = useState<string | null>(null)
   const [snapshotError, setSnapshotError] = useState<string | null>(null)
   const [jobs, setJobs] = useState<JobRecord[]>([])
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [activeJob, setActiveJob] = useState<JobKind | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
@@ -261,34 +320,39 @@ function App() {
     })()
   }, [adapterContract, selectedWorkspace, settings.defaultWorkspacePath])
 
-  async function runProbe(spec: AdapterJobSpec) {
+  async function runJobAction(action: JobActionSpec) {
     const id = crypto.randomUUID()
+    const cwd =
+      action.cwdMode === 'repo'
+        ? adapterContract?.repoRoot ?? selectedWorkspace?.repoRoot ?? ''
+        : selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? ''
 
     startTransition(() =>
       setJobs((current) => [
         {
           id,
-          kind: spec.kind,
-          label: spec.label,
+          kind: action.kind,
+          label: action.label,
           status: 'running',
-          commandLine: [spec.label, ...spec.exampleArgs].join(' '),
-          cwd: selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? '',
+          commandLine: [action.label, ...action.args].join(' '),
+          cwd,
           stdout: '',
           stderr: '',
         },
         ...current,
       ]),
     )
-    setActiveJob(spec.kind)
+    setSelectedJobId(id)
+    setActiveJob(action.kind)
 
     try {
       const result = await runCliJob({
-        kind: spec.kind,
-        args: spec.exampleArgs,
-        cwd: selectedWorkspace?.resolvedPath,
+        kind: action.kind,
+        args: action.args,
+        cwd,
       })
       setAdapterError(null)
-      commitJob(id, spec.label, result)
+      commitJob(id, action.label, result)
     } catch (error) {
       const message = String(error)
       startTransition(() =>
@@ -308,6 +372,16 @@ function App() {
     } finally {
       setActiveJob(null)
     }
+  }
+
+  async function runProbe(spec: AdapterJobSpec) {
+    await runJobAction({
+      kind: spec.kind,
+      label: `${spec.label} probe`,
+      args: spec.exampleArgs,
+      notes: spec.notes,
+      cwdMode: 'workspace',
+    })
   }
 
   function commitJob(id: string, label: string, result: JobResult) {
@@ -421,9 +495,9 @@ function App() {
         <section className="hero-grid">
           <article className="hero-card">
             <p className="card-kicker">Current slice</p>
-            <h3>Repository identity and release truth surface together</h3>
+            <h3>Repository truth and runnable workflows now sit together</h3>
             <p>
-              The overview now surfaces branch, commit, baseline tag, baseline manifest, release documents, and known limits from real repository sources.
+              The overview now surfaces branch, commit, baseline tag, release documents, known limits, and a command runner over approved public workflows.
             </p>
           </article>
           <article className="hero-card">
@@ -435,9 +509,9 @@ function App() {
           </article>
           <article className="hero-card">
             <p className="card-kicker">Immediate next</p>
-            <h3>Project explorer and authoring shell</h3>
+            <h3>Spec navigation and authoring shell</h3>
             <p>
-              `WB-09` should build the first editor-facing loop on top of this cockpit without inventing parser, verifier, or runtime semantics.
+              `WB-07` and `WB-09` should extend this cockpit into spec browsing and the first editor-facing loop without inventing parser, verifier, or runtime semantics.
             </p>
           </article>
         </section>
@@ -455,8 +529,11 @@ function App() {
                   adapterError={adapterError}
                   snapshotError={snapshotError}
                   jobs={jobs}
+                  selectedJobId={selectedJobId}
                   activeJob={activeJob}
+                  onRunAction={runJobAction}
                   onRunProbe={runProbe}
+                  onSelectJob={setSelectedJobId}
                   selectedWorkspace={selectedWorkspace}
                   workspaceInput={workspaceInput}
                   workspaceError={workspaceError}
@@ -482,8 +559,11 @@ function WorkbenchScreen({
   adapterError,
   snapshotError,
   jobs,
+  selectedJobId,
   activeJob,
+  onRunAction,
   onRunProbe,
+  onSelectJob,
   selectedWorkspace,
   workspaceInput,
   workspaceError,
@@ -499,8 +579,11 @@ function WorkbenchScreen({
   adapterError: string | null
   snapshotError: string | null
   jobs: JobRecord[]
+  selectedJobId: string | null
   activeJob: JobKind | null
+  onRunAction: (action: JobActionSpec) => Promise<void>
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+  onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
   workspaceInput: string
   workspaceError: string | null
@@ -545,8 +628,11 @@ function WorkbenchScreen({
           adapterError={adapterError}
           snapshotError={snapshotError}
           jobs={jobs}
+          selectedJobId={selectedJobId}
           activeJob={activeJob}
+          onRunAction={onRunAction}
           onRunProbe={onRunProbe}
+          onSelectJob={onSelectJob}
           selectedWorkspace={selectedWorkspace}
         />
       ) : null}
@@ -580,8 +666,11 @@ function CommandBusPanel({
   adapterError,
   snapshotError,
   jobs,
+  selectedJobId,
   activeJob,
+  onRunAction,
   onRunProbe,
+  onSelectJob,
   selectedWorkspace,
 }: {
   adapterContract: AdapterContract | null
@@ -589,14 +678,18 @@ function CommandBusPanel({
   adapterError: string | null
   snapshotError: string | null
   jobs: JobRecord[]
+  selectedJobId: string | null
   activeJob: JobKind | null
+  onRunAction: (action: JobActionSpec) => Promise<void>
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+  onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
 }) {
   const latestCargo = latestJobOfKind(jobs, 'cargo')
   const latestSmc = latestJobOfKind(jobs, 'smc')
   const latestSvm = latestJobOfKind(jobs, 'svm')
   const latestBundle = latestJobOfKind(jobs, 'release_bundle_verify')
+  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0]
 
   return (
     <div className="screen-stack">
@@ -658,14 +751,13 @@ function CommandBusPanel({
         </article>
 
         <article className="screen-card">
-          <p className="card-kicker">Latest local validation activity</p>
-          <h3>Signals from real commands</h3>
-          <div className="activity-list">
-            <ValidationRow label="Cargo" job={latestCargo} />
-            <ValidationRow label="smc" job={latestSmc} />
-            <ValidationRow label="svm" job={latestSvm} />
-            <ValidationRow label="Release bundle verify" job={latestBundle} />
-          </div>
+          <p className="card-kicker">Baseline guardrails</p>
+          <h3>What the cockpit is allowed to claim</h3>
+          <ul className="bullet-list">
+            <li>Only git state, release docs, manifests, and real job executions drive the overview.</li>
+            <li>Known limits stay visible even when the last local commands were green.</li>
+            <li>Published readiness still belongs to repository artifacts, not to cached UI percentages.</li>
+          </ul>
         </article>
       </section>
 
@@ -705,85 +797,184 @@ function CommandBusPanel({
       </section>
 
       <section className="command-grid">
-      <article className="screen-card">
-        <p className="card-kicker">Adapter contract</p>
-        <h3>Supported public command surfaces</h3>
-        <p className="screen-summary">
-          The backend adapter resolves only approved tools and keeps all job cwd values inside the repository root.
-        </p>
-        <div className="repo-root">
-          <span className="repo-root-label">Active workspace root</span>
-          <code>{adapterContract?.repoRoot ?? 'Loading adapter contract...'}</code>
-        </div>
-        <p className="job-meta">
-          current workspace:{' '}
-          <code>{selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? 'Loading...'}</code>
-        </p>
-        {adapterError ? (
-          <p className="adapter-error">{adapterError}</p>
-        ) : null}
-        <div className="spec-grid">
-          {(adapterContract?.jobs ?? []).map((spec) => (
-            <section key={spec.kind} className="adapter-spec">
-              <div className="adapter-header">
-                <h4>{spec.label}</h4>
-                <span className="status-pill draft">{spec.kind}</span>
-              </div>
-              <p>{spec.notes}</p>
-              <code className="code-block">{spec.resolution}</code>
-              <button
-                type="button"
-                className="action-button"
-                onClick={() => void onRunProbe(spec)}
-                disabled={activeJob === spec.kind}
-              >
-                {activeJob === spec.kind ? 'Running probe...' : `Run ${spec.label} probe`}
-              </button>
-            </section>
-          ))}
-        </div>
-      </article>
-
-      <article className="screen-card">
-        <p className="card-kicker">Deterministic jobs</p>
-        <h3>Recent adapter executions</h3>
-        <div className="job-list">
-          {jobs.length === 0 ? (
-            <p className="empty-state">
-              No jobs yet. Run a probe to validate the adapter path without touching private crate internals.
-            </p>
-          ) : (
-            jobs.map((job) => (
-              <section key={job.id} className={`job-card job-card-${job.status}`}>
-                <div className="job-topline">
-                  <div>
-                    <strong>{job.label}</strong>
-                    <p className="job-meta">{job.commandLine}</p>
-                  </div>
-                  <span className={`status-pill ${job.status}`}>
-                    {job.status}
-                  </span>
+        <article className="screen-card">
+          <p className="card-kicker">Command runner</p>
+          <h3>Core workflows through approved public surfaces</h3>
+          <p className="screen-summary">
+            These actions run real repository workflows through the backend adapter. Repository-wide validation always executes from the repository root.
+          </p>
+          <div className="workflow-grid">
+            {workflowActions.map((action) => (
+              <section key={action.label} className="workflow-card">
+                <div className="adapter-header">
+                  <h4>{action.label}</h4>
+                  <span className="status-pill stable">{action.kind}</span>
                 </div>
+                <p>{action.notes}</p>
                 <p className="job-meta">
-                  cwd: <code>{job.cwd}</code>
+                  scope:{' '}
+                  <strong>
+                    {action.cwdMode === 'repo' ? 'repository root' : 'current workspace'}
+                  </strong>
                 </p>
-                <p className="job-meta">
-                  exit: {job.exitCode ?? 'pending'} | duration:{' '}
-                  {job.durationMs !== undefined ? `${job.durationMs} ms` : 'running'}
-                </p>
-                {job.stdout ? (
-                  <pre className="terminal-output">{job.stdout}</pre>
-                ) : null}
-                {job.stderr ? (
-                  <pre className="terminal-output terminal-output-error">
-                    {job.stderr}
-                  </pre>
-                ) : null}
+                <code className="code-block">
+                  {action.args.join(' ') || '(default script args)'}
+                </code>
+                <button
+                  type="button"
+                  className="action-button"
+                  onClick={() => void onRunAction(action)}
+                  disabled={activeJob === action.kind}
+                >
+                  {activeJob === action.kind ? 'Running command...' : `Run ${action.label}`}
+                </button>
               </section>
-            ))
+            ))}
+          </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Latest local validation activity</p>
+          <h3>Signals from real commands</h3>
+          <div className="activity-list">
+            <ValidationRow label="Cargo" job={latestCargo} />
+            <ValidationRow label="smc" job={latestSmc} />
+            <ValidationRow label="svm" job={latestSvm} />
+            <ValidationRow label="Release bundle verify" job={latestBundle} />
+          </div>
+        </article>
+      </section>
+
+      <section className="command-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Adapter contract</p>
+          <h3>Supported public command surfaces</h3>
+          <p className="screen-summary">
+            The backend adapter resolves only approved tools and keeps all job cwd values inside the repository root.
+          </p>
+          <div className="repo-root">
+            <span className="repo-root-label">Active workspace root</span>
+            <code>{adapterContract?.repoRoot ?? 'Loading adapter contract...'}</code>
+          </div>
+          <p className="job-meta">
+            current workspace:{' '}
+            <code>{selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? 'Loading...'}</code>
+          </p>
+          {adapterError ? <p className="adapter-error">{adapterError}</p> : null}
+          <div className="spec-grid">
+            {(adapterContract?.jobs ?? []).map((spec) => (
+              <section key={spec.kind} className="adapter-spec">
+                <div className="adapter-header">
+                  <h4>{spec.label}</h4>
+                  <span className="status-pill draft">probe</span>
+                </div>
+                <p>{spec.notes}</p>
+                <code className="code-block">{spec.resolution}</code>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void onRunProbe(spec)}
+                  disabled={activeJob === spec.kind}
+                >
+                  {activeJob === spec.kind ? 'Running probe...' : `Run ${spec.label} probe`}
+                </button>
+              </section>
+            ))}
+          </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Job history</p>
+          <h3>Deterministic execution ledger</h3>
+          <div className="job-list">
+            {jobs.length === 0 ? (
+              <p className="empty-state">
+                No jobs yet. Run a workflow or probe to populate the execution ledger.
+              </p>
+            ) : (
+              jobs.map((job) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  className={`job-card job-card-button ${selectedJob?.id === job.id ? 'job-card-selected' : ''}`}
+                  onClick={() => onSelectJob(job.id)}
+                >
+                  <div className="job-topline">
+                    <div>
+                      <strong>{job.label}</strong>
+                      <p className="job-meta">{job.commandLine}</p>
+                    </div>
+                    <span className={`status-pill ${job.status}`}>{job.status}</span>
+                  </div>
+                  <p className="job-meta">
+                    cwd: <code>{job.cwd}</code>
+                  </p>
+                  <p className="job-meta">
+                    exit: {job.exitCode ?? 'pending'} | duration:{' '}
+                    {job.durationMs !== undefined ? `${job.durationMs} ms` : 'running'}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section className="command-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Command output</p>
+          <h3>Stdout and stderr without terminal archaeology</h3>
+          {selectedJob ? (
+            <div className="job-detail-stack">
+              <p className="job-meta">
+                command: <code>{selectedJob.commandLine}</code>
+              </p>
+              <p className="job-meta">
+                cwd: <code>{selectedJob.cwd}</code>
+              </p>
+              <p className="job-meta">
+                exit: {selectedJob.exitCode ?? 'pending'} | duration:{' '}
+                {selectedJob.durationMs !== undefined
+                  ? `${selectedJob.durationMs} ms`
+                  : 'running'}
+              </p>
+              <div className="job-output-stack">
+                <section>
+                  <p className="card-kicker">stdout</p>
+                  {selectedJob.stdout ? (
+                    <pre className="terminal-output">{selectedJob.stdout}</pre>
+                  ) : (
+                    <p className="empty-state">No stdout captured for this job.</p>
+                  )}
+                </section>
+                <section>
+                  <p className="card-kicker">stderr</p>
+                  {selectedJob.stderr ? (
+                    <pre className="terminal-output terminal-output-error">
+                      {selectedJob.stderr}
+                    </pre>
+                  ) : (
+                    <p className="empty-state">No stderr captured for this job.</p>
+                  )}
+                </section>
+              </div>
+            </div>
+          ) : (
+            <p className="empty-state">
+              Select a job from the history to inspect its resolved command and captured output.
+            </p>
           )}
-        </div>
-      </article>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Execution rule</p>
+          <h3>Jobs remain explainable and reproducible</h3>
+          <ul className="bullet-list">
+            <li>Every command records its resolved invocation, cwd, exit code, and duration.</li>
+            <li>Repository-wide workflows run from the repository root even if the active workspace points deeper.</li>
+            <li>Workbench still does not interpret Semantic semantics; it only runs and presents public surfaces.</li>
+          </ul>
+        </article>
       </section>
     </div>
   )

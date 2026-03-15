@@ -300,12 +300,27 @@
   gap: 0.85rem;
 }
 
+.workflow-grid,
+.job-output-stack {
+  display: grid;
+  gap: 0.9rem;
+}
+
 .adapter-spec,
 .job-card {
   padding: 1rem;
   border-radius: 1rem;
   border: 1px solid rgba(15, 23, 32, 0.09);
   background: rgba(255, 255, 255, 0.62);
+}
+
+.workflow-card {
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.09);
+  background:
+    linear-gradient(145deg, rgba(32, 190, 167, 0.08), rgba(255, 255, 255, 0.92)),
+    rgba(255, 255, 255, 0.62);
 }
 
 .adapter-header,
@@ -355,6 +370,32 @@
 
 .validation-row strong {
   color: #0f1720;
+}
+
+.job-card-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.job-card-button:hover,
+.job-card-button:focus-visible {
+  border-color: rgba(32, 190, 167, 0.45);
+  outline: none;
+  box-shadow: 0 12px 22px rgba(15, 23, 32, 0.08);
+}
+
+.job-card-selected {
+  border-color: rgba(32, 190, 167, 0.55);
+  background:
+    linear-gradient(145deg, rgba(32, 190, 167, 0.1), rgba(255, 255, 255, 0.9)),
+    rgba(255, 255, 255, 0.62);
+}
+
+.job-detail-stack {
+  display: grid;
+  gap: 0.8rem;
 }
 
 .action-button {
