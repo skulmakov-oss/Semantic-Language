@@ -1536,13 +1536,71 @@ function ReleasePanel({
   const latestSmc = latestJobOfKind(jobs, 'smc')
   const latestSvm = latestJobOfKind(jobs, 'svm')
   const latestBundle = latestJobOfKind(jobs, 'release_bundle_verify')
+  const latestTrace = latestJobMatching(
+    jobs,
+    (job) => job.kind === 'smc' && effectiveResolvedCommand(job).includes('--trace-cache'),
+  )
+  const releaseManifest = overviewSnapshot?.releaseManifest ?? null
+  const assetSmoke = overviewSnapshot?.assetSmoke ?? null
+  const releaseDocuments = releaseSection?.documents ?? []
+  const docsAlignment = [
+    {
+      label: 'Baseline manifest present',
+      ok: overviewSnapshot?.baselineManifestExists ?? false,
+      detail: overviewSnapshot?.baselineManifestPath ?? 'No baseline manifest path resolved.',
+    },
+    {
+      label: 'Release docs indexed',
+      ok: releaseDocuments.length >= 5,
+      detail: `${releaseDocuments.length} release document(s) indexed in the canonical navigator.`,
+    },
+    {
+      label: 'Stable policy doc present',
+      ok: releaseDocuments.some((document) =>
+        document.relativePath.endsWith('stable_release_policy.md'),
+      ),
+      detail: 'The release console expects stable_release_policy.md to remain in the indexed release bundle.',
+    },
+    {
+      label: 'Asset smoke tag recorded',
+      ok: Boolean(assetSmoke?.validatedTag),
+      detail: assetSmoke?.validatedTag ?? 'No validated asset tag found in release_asset_smoke_matrix.md.',
+    },
+  ]
+  const gateRows = [
+    {
+      label: 'Workspace tests',
+      detail: 'cargo test --workspace',
+      job: latestCargo,
+    },
+    {
+      label: 'CLI workflows',
+      detail: 'latest smc compile/check/verify/fmt action',
+      job: latestSmc,
+    },
+    {
+      label: 'Bytecode workflows',
+      detail: 'latest svm run/disasm action',
+      job: latestSvm,
+    },
+    {
+      label: 'Trace workflow',
+      detail: 'smc check --trace-cache',
+      job: latestTrace,
+    },
+    {
+      label: 'Bundle verification',
+      detail: 'verify_release_bundle.ps1',
+      job: latestBundle,
+    },
+  ]
 
   return (
     <div className="screen-stack">
-      <section className="overview-grid">
+      <section className="release-console-grid">
         <article className="screen-card">
           <p className="card-kicker">Release identity</p>
-          <h3>What the current line is anchored to</h3>
+          <h3>Current release line anchor</h3>
           <dl className="facts-grid">
             <div>
               <dt>Branch</dt>
@@ -1582,27 +1640,62 @@ function ReleasePanel({
                 <code>{selectedWorkspace?.resolvedPath ?? overviewSnapshot?.repoRoot ?? 'Loading...'}</code>
               </dd>
             </div>
+            {releaseManifest ? (
+              <>
+                <div>
+                  <dt>Manifest generated</dt>
+                  <dd>{releaseManifest.generatedAt}</dd>
+                </div>
+                <div className="facts-grid-wide">
+                  <dt>Current scope</dt>
+                  <dd>{releaseManifest.currentScope}</dd>
+                </div>
+              </>
+            ) : null}
           </dl>
         </article>
 
         <article className="screen-card">
-          <p className="card-kicker">Release-critical jobs</p>
-          <h3>Signals from actual command history</h3>
-          <div className="activity-list">
-            <ValidationRow label="Workspace tests" job={latestCargo} />
-            <ValidationRow label="smc workflows" job={latestSmc} />
-            <ValidationRow label="svm workflows" job={latestSvm} />
-            <ValidationRow label="Bundle verification" job={latestBundle} />
+          <p className="card-kicker">Release gates</p>
+          <h3>Status from actual jobs only</h3>
+          <div className="release-gate-list">
+            {gateRows.map((gate) => (
+              <section key={gate.label} className="release-gate-card">
+                <div className="document-topline">
+                  <strong>{gate.label}</strong>
+                  <span className={`status-pill ${gate.job?.status ?? 'draft'}`}>
+                    {gate.job?.status ?? 'not run'}
+                  </span>
+                </div>
+                <p className="job-meta">{gate.detail}</p>
+                <p className="job-meta">
+                  {gate.job ? gate.job.commandLine : 'No local job recorded for this gate yet.'}
+                </p>
+              </section>
+            ))}
           </div>
         </article>
       </section>
 
-      <section className="command-grid">
+      <section className="release-console-grid">
         <article className="screen-card">
-          <p className="card-kicker">Release-facing docs</p>
-          <h3>Source paths and freshness from repository files</h3>
+          <p className="card-kicker">Docs alignment</p>
+          <h3>Canonical release docs remain the truth</h3>
+          <div className="release-checklist">
+            {docsAlignment.map((item) => (
+              <section key={item.label} className="release-check-card">
+                <div className="document-topline">
+                  <strong>{item.label}</strong>
+                  <span className={`status-pill ${item.ok ? 'stable' : 'draft'}`}>
+                    {item.ok ? 'aligned' : 'attention'}
+                  </span>
+                </div>
+                <p className="job-meta">{item.detail}</p>
+              </section>
+            ))}
+          </div>
           <div className="document-list">
-            {(releaseSection?.documents ?? []).map((document) => (
+            {releaseDocuments.map((document) => (
               <section key={document.relativePath} className="document-card">
                 <div className="document-topline">
                   <strong>{document.title}</strong>
@@ -1622,9 +1715,78 @@ function ReleasePanel({
         </article>
 
         <article className="screen-card">
-          <p className="card-kicker">Readiness truths</p>
-          <h3>Known limits and validated tag callouts</h3>
+          <p className="card-kicker">Artifacts and asset smoke</p>
+          <h3>Release inventory from manifest and smoke matrix</h3>
           <div className="screen-stack">
+            {releaseManifest ? (
+              <section className="document-card">
+                <div className="document-topline">
+                  <strong>Baseline artifact inventory</strong>
+                  <span className="status-pill stable">manifest</span>
+                </div>
+                <p className="job-meta">documentation bundle</p>
+                <ul className="bullet-list">
+                  {releaseManifest.documentationBundle.map((path) => (
+                    <li key={path}>
+                      <code>{path}</code>
+                    </li>
+                  ))}
+                </ul>
+                <p className="job-meta">validation tests</p>
+                <ul className="bullet-list">
+                  {releaseManifest.validationTests.map((command) => (
+                    <li key={command}>
+                      <code>{command}</code>
+                    </li>
+                  ))}
+                </ul>
+                <p className="job-meta">snapshot directories</p>
+                <ul className="bullet-list">
+                  {releaseManifest.snapshotDirectories.map((path) => (
+                    <li key={path}>
+                      <code>{path}</code>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            <section className="document-card">
+              <div className="document-topline">
+                <strong>Asset smoke status</strong>
+                <span className={`status-pill ${assetSmoke?.validatedTag ? 'stable' : 'draft'}`}>
+                  {assetSmoke?.validatedTag ? 'recorded' : 'missing'}
+                </span>
+              </div>
+              <p className="job-meta">
+                validated tag: <code>{assetSmoke?.validatedTag ?? 'not recorded'}</code>
+              </p>
+              <ul className="bullet-list">
+                {(assetSmoke?.validatedAssets ?? []).map((asset) => (
+                  <li key={asset}>
+                    <code>{asset}</code>
+                  </li>
+                ))}
+              </ul>
+              <div className="smoke-scenario-list">
+                {(assetSmoke?.scenarios ?? []).map((scenario) => (
+                  <section key={scenario.scenario} className="smoke-scenario-card">
+                    <div className="document-topline">
+                      <strong>{scenario.scenario}</strong>
+                      <span
+                        className={`status-pill ${scenario.currentResult.toLowerCase() === 'pass' ? 'stable' : 'draft'}`}
+                      >
+                        {scenario.currentResult}
+                      </span>
+                    </div>
+                    <p className="job-meta">source: {scenario.source}</p>
+                    <p className="job-meta">validation: {scenario.validation}</p>
+                    <p className="job-meta">expected: {scenario.expectedSignal}</p>
+                  </section>
+                ))}
+              </div>
+            </section>
+
             <section className="document-card">
               <div className="document-topline">
                 <strong>Known limits</strong>
@@ -1635,33 +1797,25 @@ function ReleasePanel({
                   <li key={limit}>{limit}</li>
                 ))}
               </ul>
-            </section>
-            <section className="document-card">
-              <div className="document-topline">
-                <strong>Current validated tag</strong>
-                <span className="status-pill stable">derived</span>
-              </div>
-              <div className="document-list">
-                {(overviewSnapshot?.releaseDocs ?? [])
-                  .filter((document) => document.highlight)
-                  .map((document) => (
-                    <div key={document.key}>
-                      <p className="job-meta">
-                        <code>{document.path}</code>
-                      </p>
-                      <p className="document-highlight">{document.highlight}</p>
-                    </div>
-                  ))}
-              </div>
+              {(overviewSnapshot?.releaseDocs ?? [])
+                .filter((document) => document.highlight)
+                .map((document) => (
+                  <div key={document.key}>
+                    <p className="job-meta">
+                      <code>{document.path}</code>
+                    </p>
+                    <p className="document-highlight">{document.highlight}</p>
+                  </div>
+                ))}
             </section>
           </div>
         </article>
       </section>
 
-      <section className="command-grid">
+      <section className="release-console-grid">
         <article className="screen-card">
-          <p className="card-kicker">No second release model</p>
-          <h3>What the UI must not do</h3>
+          <p className="card-kicker">Release honesty guard</p>
+          <h3>What the console must not do</h3>
           <ul className="bullet-list">
             <li>Do not invent a release score that is not backed by repository docs or job output.</li>
             <li>Do not hide known limits behind green local commands.</li>
@@ -1673,9 +1827,9 @@ function ReleasePanel({
           <p className="card-kicker">Next operate slices</p>
           <h3>What still belongs to later PRs</h3>
           <ul className="bullet-list">
-            <li>`WB-16` will formalize the release console around gate views and artifact lists.</li>
-            <li>`WB-17` will add one-click validation runs and report export.</li>
-            <li>This slice stays presentation-only over current release artifacts.</li>
+            <li>`WB-17` adds one-click validation runs and report export.</li>
+            <li>`WB-18` and `WB-19` stay downstream from the release contract and should not reopen scope.</li>
+            <li>This slice remains read-only over current release artifacts, docs, and job history.</li>
           </ul>
         </article>
       </section>
@@ -3251,6 +3405,13 @@ function SettingsPanel({
 
 function latestJobOfKind(jobs: JobRecord[], kind: JobKind) {
   return jobs.find((job) => job.kind === kind)
+}
+
+function latestJobMatching(
+  jobs: JobRecord[],
+  predicate: (job: JobRecord) => boolean,
+) {
+  return jobs.find(predicate)
 }
 
 export default App

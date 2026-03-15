@@ -71,6 +71,28 @@ export type OverviewDocument = {
   highlight: string | null
 }
 
+export type ReleaseBundleManifest = {
+  generatedAt: string
+  documentationBundle: string[]
+  validationTests: string[]
+  snapshotDirectories: string[]
+  currentScope: string
+}
+
+export type AssetSmokeScenario = {
+  scenario: string
+  source: string
+  validation: string
+  expectedSignal: string
+  currentResult: string
+}
+
+export type AssetSmokeSnapshot = {
+  validatedTag: string | null
+  validatedAssets: string[]
+  scenarios: AssetSmokeScenario[]
+}
+
 export type OverviewSnapshot = {
   repoRoot: string
   branch: string
@@ -81,6 +103,8 @@ export type OverviewSnapshot = {
   baselineTagPointsAtHead: boolean
   baselineManifestPath: string
   baselineManifestExists: boolean
+  releaseManifest: ReleaseBundleManifest | null
+  assetSmoke: AssetSmokeSnapshot | null
   releaseDocs: OverviewDocument[]
   knownLimits: string[]
 }
