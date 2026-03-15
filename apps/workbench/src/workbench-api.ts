@@ -39,6 +39,30 @@ export type WorkspaceSummary = {
   isRepoRoot: boolean
 }
 
+export type WorkspaceTreeNode = {
+  name: string
+  relativePath: string
+  nodeType: 'dir' | 'file'
+  children: WorkspaceTreeNode[]
+}
+
+export type WorkspaceFileRequest = {
+  workspaceRoot: string
+  relativePath: string
+}
+
+export type WorkspaceFileDocument = {
+  relativePath: string
+  absolutePath: string
+  content: string
+}
+
+export type SaveWorkspaceFileRequest = {
+  workspaceRoot: string
+  relativePath: string
+  content: string
+}
+
 export type OverviewDocument = {
   key: string
   title: string
@@ -117,4 +141,16 @@ export async function fetchSpecCatalog() {
 
 export async function fetchSpecDocument(relativePath: string) {
   return invoke<SpecDocumentView>('get_spec_document', { relativePath })
+}
+
+export async function fetchWorkspaceTree(workspaceRoot: string) {
+  return invoke<WorkspaceTreeNode[]>('get_workspace_tree', { workspaceRoot })
+}
+
+export async function fetchWorkspaceFile(request: WorkspaceFileRequest) {
+  return invoke<WorkspaceFileDocument>('get_workspace_file', { request })
+}
+
+export async function saveWorkspaceFile(request: SaveWorkspaceFileRequest) {
+  return invoke<WorkspaceFileDocument>('save_workspace_file_contents', { request })
 }

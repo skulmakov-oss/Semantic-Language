@@ -5,8 +5,11 @@ import {
   fetchOverviewSnapshot,
   fetchSpecCatalog,
   fetchSpecDocument,
+  fetchWorkspaceFile,
+  fetchWorkspaceTree,
   resolveWorkspaceRoot,
   runCliJob,
+  saveWorkspaceFile,
   type AdapterContract,
   type AdapterJobSpec,
   type JobKind,
@@ -15,6 +18,8 @@ import {
   type SpecCatalogSection,
   type SpecDocumentHeading,
   type SpecDocumentView,
+  type WorkspaceFileDocument,
+  type WorkspaceTreeNode,
   type WorkspaceSummary,
 } from './workbench-api'
 import {
@@ -55,6 +60,15 @@ type JobActionSpec = {
   args: string[]
   notes: string
   cwdMode: 'repo' | 'workspace'
+}
+
+type EditorTab = {
+  relativePath: string
+  absolutePath: string
+  title: string
+  content: string
+  savedContent: string
+  status: 'clean' | 'dirty' | 'saving'
 }
 
 const initialWorkbenchState = loadWorkbenchState()
@@ -131,18 +145,18 @@ const routeSpecs: ScreenSpec[] = [
   {
     path: '/project',
     label: 'Project',
-    eyebrow: 'WB-0 Bootstrap',
-    title: 'Workspace context before orchestration.',
+    eyebrow: 'WB-0.2 Authoring',
+    title: 'Project explorer and editor shell without hidden semantics.',
     summary:
-      'Project owns workspace selection, recent roots, and local settings. It does not create an alternate package or repository model.',
+      'Project owns workspace selection, file-tree navigation, tabs, and text editing. It does not create an alternate package, parser, or repository model.',
     stable: [
       'Workspace resolver over canonical repository paths',
       'Recent projects list and default workspace persistence',
-      'Explicit rule that all jobs inherit the selected root',
+      'Workspace file tree and read/write text editor tabs for authoring shell',
     ],
     next: [
-      'Add native directory-pick affordances if needed',
-      'Keep project context read-only with respect to repository semantics',
+      'Add compile and check current file actions through the shared jobs pipeline',
+      'Keep editor shell intentionally lighter than a full IDE until later slices arrive',
     ],
   },
   {
@@ -250,6 +264,10 @@ function App() {
   const [selectedSpecPath, setSelectedSpecPath] = useState<string | null>(null)
   const [selectedSpecDocument, setSelectedSpecDocument] =
     useState<SpecDocumentView | null>(null)
+  const [workspaceTree, setWorkspaceTree] = useState<WorkspaceTreeNode[]>([])
+  const [workspaceTreeError, setWorkspaceTreeError] = useState<string | null>(null)
+  const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
+  const [activeEditorPath, setActiveEditorPath] = useState<string | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary | null>(
@@ -353,6 +371,36 @@ function App() {
       cancelled = true
     }
   }, [selectedSpecPath])
+
+  useEffect(() => {
+    if (!selectedWorkspace?.resolvedPath) {
+      return
+    }
+
+    let cancelled = false
+
+    fetchWorkspaceTree(selectedWorkspace.resolvedPath)
+      .then((tree) => {
+        if (!cancelled) {
+          setWorkspaceTree(tree)
+          setWorkspaceTreeError(null)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setWorkspaceTreeError(String(error))
+        }
+      })
+
+    startTransition(() => {
+      setEditorTabs([])
+      setActiveEditorPath(null)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedWorkspace?.resolvedPath])
 
   useEffect(() => {
     saveWorkbenchState({
@@ -485,6 +533,129 @@ function App() {
     }
   }
 
+  async function openEditorFile(relativePath: string) {
+    if (!selectedWorkspace) {
+      return
+    }
+
+    const existingTab = editorTabs.find((tab) => tab.relativePath === relativePath)
+    if (existingTab) {
+      setActiveEditorPath(relativePath)
+      return
+    }
+
+    try {
+      const document = await fetchWorkspaceFile({
+        workspaceRoot: selectedWorkspace.resolvedPath,
+        relativePath,
+      })
+
+      startTransition(() => {
+        setEditorTabs((current) => [
+          ...current,
+          createEditorTab(document),
+        ])
+        setActiveEditorPath(relativePath)
+        setWorkspaceTreeError(null)
+      })
+    } catch (error) {
+      setWorkspaceTreeError(String(error))
+    }
+  }
+
+  function updateEditorContent(relativePath: string, content: string) {
+    setEditorTabs((current) =>
+      current.map((tab) =>
+        tab.relativePath === relativePath
+          ? {
+              ...tab,
+              content,
+              status: content === tab.savedContent ? 'clean' : 'dirty',
+            }
+          : tab,
+      ),
+    )
+  }
+
+  async function saveEditorFile(relativePath: string) {
+    if (!selectedWorkspace) {
+      return
+    }
+
+    const tab = editorTabs.find((entry) => entry.relativePath === relativePath)
+    if (!tab) {
+      return
+    }
+
+    setEditorTabs((current) =>
+      current.map((entry) =>
+        entry.relativePath === relativePath
+          ? { ...entry, status: 'saving' }
+          : entry,
+      ),
+    )
+
+    try {
+      const document = await saveWorkspaceFile({
+        workspaceRoot: selectedWorkspace.resolvedPath,
+        relativePath,
+        content: tab.content,
+      })
+
+      setEditorTabs((current) =>
+        current.map((entry) =>
+          entry.relativePath === relativePath
+            ? createEditorTab(document)
+            : entry,
+        ),
+      )
+      setWorkspaceTreeError(null)
+    } catch (error) {
+      setWorkspaceTreeError(String(error))
+      setEditorTabs((current) =>
+        current.map((entry) =>
+          entry.relativePath === relativePath
+            ? { ...entry, status: entry.content === entry.savedContent ? 'clean' : 'dirty' }
+            : entry,
+        ),
+      )
+    }
+  }
+
+  async function reloadEditorFile(relativePath: string) {
+    if (!selectedWorkspace) {
+      return
+    }
+
+    try {
+      const document = await fetchWorkspaceFile({
+        workspaceRoot: selectedWorkspace.resolvedPath,
+        relativePath,
+      })
+
+      setEditorTabs((current) =>
+        current.map((entry) =>
+          entry.relativePath === relativePath
+            ? createEditorTab(document)
+            : entry,
+        ),
+      )
+      setWorkspaceTreeError(null)
+    } catch (error) {
+      setWorkspaceTreeError(String(error))
+    }
+  }
+
+  function closeEditorTab(relativePath: string) {
+    setEditorTabs((current) => {
+      const remaining = current.filter((tab) => tab.relativePath !== relativePath)
+      if (activeEditorPath === relativePath) {
+        setActiveEditorPath(remaining[remaining.length - 1]?.relativePath ?? null)
+      }
+      return remaining
+    })
+  }
+
   function updateSettings(next: Partial<WorkbenchSettings>) {
     setSettings((current) => ({
       ...current,
@@ -594,6 +765,10 @@ function App() {
                   specSearch={specSearch}
                   selectedSpecDocument={selectedSpecDocument}
                   selectedSpecPath={selectedSpecPath}
+                  workspaceTree={workspaceTree}
+                  workspaceTreeError={workspaceTreeError}
+                  editorTabs={editorTabs}
+                  activeEditorPath={activeEditorPath}
                   jobs={jobs}
                   selectedJobId={selectedJobId}
                   activeJob={activeJob}
@@ -601,6 +776,12 @@ function App() {
                   onRunProbe={runProbe}
                   onSpecSearchChange={setSpecSearch}
                   onSelectSpecPath={setSelectedSpecPath}
+                  onOpenEditorFile={openEditorFile}
+                  onSelectEditorPath={setActiveEditorPath}
+                  onUpdateEditorContent={updateEditorContent}
+                  onSaveEditorFile={saveEditorFile}
+                  onReloadEditorFile={reloadEditorFile}
+                  onCloseEditorTab={closeEditorTab}
                   onSelectJob={setSelectedJobId}
                   selectedWorkspace={selectedWorkspace}
                   workspaceInput={workspaceInput}
@@ -631,6 +812,10 @@ function WorkbenchScreen({
   specSearch,
   selectedSpecDocument,
   selectedSpecPath,
+  workspaceTree,
+  workspaceTreeError,
+  editorTabs,
+  activeEditorPath,
   jobs,
   selectedJobId,
   activeJob,
@@ -638,6 +823,12 @@ function WorkbenchScreen({
   onRunProbe,
   onSpecSearchChange,
   onSelectSpecPath,
+  onOpenEditorFile,
+  onSelectEditorPath,
+  onUpdateEditorContent,
+  onSaveEditorFile,
+  onReloadEditorFile,
+  onCloseEditorTab,
   onSelectJob,
   selectedWorkspace,
   workspaceInput,
@@ -658,6 +849,10 @@ function WorkbenchScreen({
   specSearch: string
   selectedSpecDocument: SpecDocumentView | null
   selectedSpecPath: string | null
+  workspaceTree: WorkspaceTreeNode[]
+  workspaceTreeError: string | null
+  editorTabs: EditorTab[]
+  activeEditorPath: string | null
   jobs: JobRecord[]
   selectedJobId: string | null
   activeJob: JobKind | null
@@ -665,6 +860,12 @@ function WorkbenchScreen({
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   onSpecSearchChange: (value: string) => void
   onSelectSpecPath: (value: string) => void
+  onOpenEditorFile: (relativePath: string) => Promise<void>
+  onSelectEditorPath: (relativePath: string | null) => void
+  onUpdateEditorContent: (relativePath: string, content: string) => void
+  onSaveEditorFile: (relativePath: string) => Promise<void>
+  onReloadEditorFile: (relativePath: string) => Promise<void>
+  onCloseEditorTab: (relativePath: string) => void
   onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
   workspaceInput: string
@@ -744,11 +945,21 @@ function WorkbenchScreen({
         <ProjectPanel
           adapterContract={adapterContract}
           selectedWorkspace={selectedWorkspace}
+          workspaceTree={workspaceTree}
+          workspaceTreeError={workspaceTreeError}
+          editorTabs={editorTabs}
+          activeEditorPath={activeEditorPath}
           workspaceInput={workspaceInput}
           workspaceError={workspaceError}
           recentWorkspaces={recentWorkspaces}
           onWorkspaceInputChange={onWorkspaceInputChange}
           onOpenWorkspace={onOpenWorkspace}
+          onOpenEditorFile={onOpenEditorFile}
+          onSelectEditorPath={onSelectEditorPath}
+          onUpdateEditorContent={onUpdateEditorContent}
+          onSaveEditorFile={onSaveEditorFile}
+          onReloadEditorFile={onReloadEditorFile}
+          onCloseEditorTab={onCloseEditorTab}
         />
       ) : null}
 
@@ -1438,6 +1649,17 @@ function formatFreshness(modifiedEpochMs: number | null) {
   return `${Math.max(1, Math.round(deltaMs / day))} day ago`
 }
 
+function createEditorTab(document: WorkspaceFileDocument): EditorTab {
+  return {
+    relativePath: document.relativePath,
+    absolutePath: document.absolutePath,
+    title: document.relativePath.split('/').pop() ?? document.relativePath,
+    content: document.content,
+    savedContent: document.content,
+    status: 'clean',
+  }
+}
+
 function renderMarkdown(markdown: string, headings: SpecDocumentHeading[]) {
   const headingAnchors = new Map(headings.map((heading) => [heading.title, heading.anchor]))
   const lines = markdown.split(/\r?\n/)
@@ -1533,26 +1755,89 @@ function renderMarkdown(markdown: string, headings: SpecDocumentHeading[]) {
   return nodes
 }
 
+function WorkspaceTreeBranch({
+  node,
+  activePath,
+  onOpenFile,
+}: {
+  node: WorkspaceTreeNode
+  activePath: string | null
+  onOpenFile: (relativePath: string) => Promise<void>
+}) {
+  if (node.nodeType === 'file') {
+    return (
+      <button
+        type="button"
+        className={`tree-file-button ${activePath === node.relativePath ? 'tree-file-button-active' : ''}`}
+        onClick={() => void onOpenFile(node.relativePath)}
+      >
+        <span className="tree-node-label">{node.name}</span>
+        <span className="tree-node-path">{node.relativePath}</span>
+      </button>
+    )
+  }
+
+  return (
+    <section className="tree-branch">
+      <p className="tree-branch-label">{node.name}</p>
+      <div className="tree-children">
+        {node.children.map((child) => (
+          <WorkspaceTreeBranch
+            key={child.relativePath || child.name}
+            node={child}
+            activePath={activePath}
+            onOpenFile={onOpenFile}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function ProjectPanel({
   adapterContract,
   selectedWorkspace,
+  workspaceTree,
+  workspaceTreeError,
+  editorTabs,
+  activeEditorPath,
   workspaceInput,
   workspaceError,
   recentWorkspaces,
   onWorkspaceInputChange,
   onOpenWorkspace,
+  onOpenEditorFile,
+  onSelectEditorPath,
+  onUpdateEditorContent,
+  onSaveEditorFile,
+  onReloadEditorFile,
+  onCloseEditorTab,
 }: {
   adapterContract: AdapterContract | null
   selectedWorkspace: WorkspaceSummary | null
+  workspaceTree: WorkspaceTreeNode[]
+  workspaceTreeError: string | null
+  editorTabs: EditorTab[]
+  activeEditorPath: string | null
   workspaceInput: string
   workspaceError: string | null
   recentWorkspaces: RecentWorkspace[]
   onWorkspaceInputChange: (value: string) => void
   onOpenWorkspace: (candidate: string, persist?: boolean) => Promise<void>
+  onOpenEditorFile: (relativePath: string) => Promise<void>
+  onSelectEditorPath: (relativePath: string | null) => void
+  onUpdateEditorContent: (relativePath: string, content: string) => void
+  onSaveEditorFile: (relativePath: string) => Promise<void>
+  onReloadEditorFile: (relativePath: string) => Promise<void>
+  onCloseEditorTab: (relativePath: string) => void
 }) {
+  const activeEditorTab =
+    editorTabs.find((tab) => tab.relativePath === activeEditorPath) ?? editorTabs[0] ?? null
+
   return (
-    <section className="command-grid">
-      <article className="screen-card">
+    <div className="screen-stack">
+      <section className="command-grid">
+        <article className="screen-card">
         <p className="card-kicker">Open workspace</p>
         <h3>Canonical root selection for every job</h3>
         <p className="screen-summary">
@@ -1618,39 +1903,140 @@ function ProjectPanel({
           repo-relative:{' '}
           <code>{selectedWorkspace?.repoRelativePath ?? '(repository root)'}</code>
         </p>
-      </article>
+        </article>
 
-      <article className="screen-card">
-        <p className="card-kicker">Recent projects</p>
-        <h3>Persisted local workspace history</h3>
-        <div className="job-list">
-          {recentWorkspaces.length === 0 ? (
-            <p className="empty-state">
-              No recent workspaces yet. Opening a canonical root stores it locally for future sessions.
-            </p>
-          ) : (
-            recentWorkspaces.map((workspace) => (
-              <section key={workspace.path} className="job-card">
-                <div className="job-topline">
-                  <div>
-                    <strong>{workspace.repoRelativePath ?? 'repository root'}</strong>
-                    <p className="job-meta">{workspace.path}</p>
+        <article className="screen-card">
+          <p className="card-kicker">Recent projects</p>
+          <h3>Persisted local workspace history</h3>
+          <div className="job-list">
+            {recentWorkspaces.length === 0 ? (
+              <p className="empty-state">
+                No recent workspaces yet. Opening a canonical root stores it locally for future sessions.
+              </p>
+            ) : (
+              recentWorkspaces.map((workspace) => (
+                <section key={workspace.path} className="job-card">
+                  <div className="job-topline">
+                    <div>
+                      <strong>{workspace.repoRelativePath ?? 'repository root'}</strong>
+                      <p className="job-meta">{workspace.path}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void onOpenWorkspace(workspace.path)}
+                    >
+                      Reopen
+                    </button>
                   </div>
+                  <p className="job-meta">last opened: {workspace.openedAtIso}</p>
+                </section>
+              ))
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section className="project-shell">
+        <article className="screen-card project-tree-panel">
+          <p className="card-kicker">Project explorer</p>
+          <h3>Workspace file tree</h3>
+          <p className="screen-summary">
+            The explorer stays inside the selected workspace root and only exposes text files for the editor shell.
+          </p>
+          {workspaceTreeError ? <p className="adapter-error">{workspaceTreeError}</p> : null}
+          <div className="project-tree">
+            {workspaceTree.length === 0 ? (
+              <p className="empty-state">
+                No editable text files are visible under the selected workspace yet.
+              </p>
+            ) : (
+              workspaceTree.map((node) => (
+                <WorkspaceTreeBranch
+                  key={node.relativePath || node.name}
+                  node={node}
+                  activePath={activeEditorPath}
+                  onOpenFile={onOpenEditorFile}
+                />
+              ))
+            )}
+          </div>
+        </article>
+
+        <article className="screen-card editor-shell-panel">
+          <p className="card-kicker">Editor shell</p>
+          <h3>Tabs, dirty state, and safe file actions</h3>
+          <div className="editor-tab-strip">
+            {editorTabs.length === 0 ? (
+              <p className="empty-state">
+                Open a file from the project explorer to start the authoring loop.
+              </p>
+            ) : (
+              editorTabs.map((tab) => (
+                <div
+                  key={tab.relativePath}
+                  className={`editor-tab ${activeEditorTab?.relativePath === tab.relativePath ? 'editor-tab-active' : ''}`}
+                >
                   <button
                     type="button"
-                    className="ghost-button"
-                    onClick={() => void onOpenWorkspace(workspace.path)}
+                    className="editor-tab-select"
+                    onClick={() => onSelectEditorPath(tab.relativePath)}
                   >
-                    Reopen
+                    <span>{tab.title}</span>
+                    {tab.status !== 'clean' ? (
+                      <span className={`status-pill ${tab.status === 'saving' ? 'running' : 'draft'}`}>
+                        {tab.status}
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="editor-tab-close"
+                    onClick={() => onCloseEditorTab(tab.relativePath)}
+                    aria-label={`Close ${tab.title}`}
+                  >
+                    x
                   </button>
                 </div>
-                <p className="job-meta">last opened: {workspace.openedAtIso}</p>
-              </section>
-            ))
-          )}
-        </div>
-      </article>
-    </section>
+              ))
+            )}
+          </div>
+
+          {activeEditorTab ? (
+            <div className="editor-shell-stack">
+              <div className="field-actions">
+                <button
+                  type="button"
+                  className="action-button"
+                  onClick={() => void onSaveEditorFile(activeEditorTab.relativePath)}
+                  disabled={activeEditorTab.status === 'saving'}
+                >
+                  {activeEditorTab.status === 'saving' ? 'Saving...' : 'Save file'}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void onReloadEditorFile(activeEditorTab.relativePath)}
+                >
+                  Reload from disk
+                </button>
+              </div>
+              <p className="job-meta">
+                path: <code>{activeEditorTab.absolutePath}</code>
+              </p>
+              <textarea
+                className="editor-textarea"
+                value={activeEditorTab.content}
+                onChange={(event) =>
+                  onUpdateEditorContent(activeEditorTab.relativePath, event.target.value)
+                }
+                spellCheck={false}
+              />
+            </div>
+          ) : null}
+        </article>
+      </section>
+    </div>
   )
 }
 

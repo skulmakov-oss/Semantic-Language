@@ -1,6 +1,7 @@
 mod adapter;
 mod docs;
 mod snapshot;
+mod workspace_files;
 
 use adapter::{
   adapter_contract,
@@ -11,8 +12,17 @@ use adapter::{
   JobResult,
   WorkspaceSummary,
 };
-use snapshot::{read_overview_snapshot, OverviewSnapshot};
 use docs::{read_spec_catalog, read_spec_document, SpecCatalogSection, SpecDocumentView};
+use snapshot::{read_overview_snapshot, OverviewSnapshot};
+use workspace_files::{
+  list_workspace_tree,
+  read_workspace_file,
+  save_workspace_file,
+  SaveWorkspaceFileRequest,
+  WorkspaceFileDocument,
+  WorkspaceFileRequest,
+  WorkspaceTreeNode,
+};
 
 #[tauri::command]
 fn get_adapter_contract() -> Result<AdapterContract, String> {
@@ -46,6 +56,23 @@ fn get_spec_document(relative_path: String) -> Result<SpecDocumentView, String> 
   read_spec_document(relative_path)
 }
 
+#[tauri::command]
+fn get_workspace_tree(workspace_root: String) -> Result<Vec<WorkspaceTreeNode>, String> {
+  list_workspace_tree(workspace_root)
+}
+
+#[tauri::command]
+fn get_workspace_file(request: WorkspaceFileRequest) -> Result<WorkspaceFileDocument, String> {
+  read_workspace_file(request)
+}
+
+#[tauri::command]
+fn save_workspace_file_contents(
+  request: SaveWorkspaceFileRequest,
+) -> Result<WorkspaceFileDocument, String> {
+  save_workspace_file(request)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -65,7 +92,10 @@ pub fn run() {
       resolve_workspace_root,
       get_overview_snapshot,
       get_spec_catalog,
-      get_spec_document
+      get_spec_document,
+      get_workspace_tree,
+      get_workspace_file,
+      save_workspace_file_contents
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
