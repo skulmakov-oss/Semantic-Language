@@ -55,6 +55,7 @@ The detailed tooling map is defined in:
 
 - `docs/roadmap/language_maturity/tooling_layers.md`
 - `docs/roadmap/language_maturity/tooling_workflows.md`
+- `docs/roadmap/language_maturity/formatter_contract.md`
 
 ## Current Layering Rule
 
@@ -117,10 +118,15 @@ This workstream should be considered materially started only when:
 
 ## Immediate Next Slice
 
-The immediate next slice for this PR is to define:
+This PR now defines:
 
 - the tooling responsibility map
 - the status matrix for current and proposed tooling
 - the canonical workflows users should follow
+- one first concrete public tooling contract
 
-because those pieces turn "tooling maturity" into an actual platform plan.
+The next slice after this PR should define:
+
+- the first editor-facing protocol contract, likely `smlsp`
+- formatter implementation milestones against `smc fmt`
+- the first trace/debug workflow contract above `svm disasm`

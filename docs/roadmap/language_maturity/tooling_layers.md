@@ -31,9 +31,13 @@ Current state:
 
 ## Layer 2: Formatter
 
-Proposed tool:
+Canonical first tool:
 
-- `smfmt` or formatter subcommand under `smc`
+- `smc fmt`
+
+Possible later convenience shell:
+
+- `smfmt`
 
 Purpose:
 
@@ -43,13 +47,14 @@ Purpose:
 
 Current state:
 
-- missing as a public contract
+- first public contract defined, but not implemented
 
 First expectation:
 
 - formatter should normalize Rust-like source consistently
 - Logos indentation rules should be formatted intentionally, not left to manual
   editing accidents
+- formatter and editor integrations should share one canonical layout authority
 
 ## Layer 3: Editor And Language Server
 
@@ -169,3 +174,4 @@ This layer map works together with:
 
 - `docs/roadmap/language_maturity/tooling_maturity.md`
 - `docs/roadmap/language_maturity/tooling_workflows.md`
+- `docs/roadmap/language_maturity/formatter_contract.md`

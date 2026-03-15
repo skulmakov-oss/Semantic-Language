@@ -54,14 +54,19 @@ Status: `draft target`
 
 Target path:
 
-- `smfmt <file.sm>`
-  or
 - `smc fmt <file.sm>`
+- `smc fmt --check <file.sm>`
 
 Why it matters:
 
 - users need one canonical source layout
 - examples and docs should stop depending on manual formatting
+
+Canonical rule:
+
+- `smc fmt` is the first public formatter surface
+- any later `smfmt` wrapper should remain a thin convenience shell around the
+  same formatting contract
 
 ## Workflow 4: Debug And Trace
 
@@ -141,3 +146,4 @@ This workflow map depends on:
 
 - `docs/roadmap/language_maturity/tooling_maturity.md`
 - `docs/roadmap/language_maturity/tooling_layers.md`
+- `docs/roadmap/language_maturity/formatter_contract.md`
