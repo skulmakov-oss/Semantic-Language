@@ -27,6 +27,16 @@ npm run build
 npm run tauri:build -- --debug --no-bundle
 ```
 
+## Beta Packaging
+
+```powershell
+pwsh -File ..\..\scripts\package_workbench_beta.ps1
+```
+
+This builds the release executable, creates a portable beta zip, launches the
+packaged app for a short smoke window, and records evidence under
+`artifacts/workbench/beta-smoke/`.
+
 ## Scope Guard
 
 The first implementation waves must continue to respect the repository rule that

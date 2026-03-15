@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-03-16T01:55:56+05:00",
+  "documentation_bundle": [
+    "docs/architecture",
+    "docs/spec",
+    "docs/roadmap/v1_readiness.md",
+    "docs/roadmap/runtime_validation_policy.md",
+    "docs/roadmap/release_bundle_checklist.md",
+    "docs/roadmap/compatibility_statement.md"
+  ],
+  "validation_tests": [
+    "cargo test --workspace",
+    "cargo test --test public_api_contracts",
+    "cargo test --test golden_semcode",
+    "cargo test --test prometheus_runtime_matrix",
+    "cargo test --test prometheus_runtime_goldens",
+    "cargo test --test prometheus_runtime_negative_goldens",
+    "cargo test --test prometheus_runtime_compat_matrix"
+  ],
+  "snapshot_directories": [
+    "tests/golden_snapshots/public_api",
+    "tests/golden_snapshots/runtime"
+  ],
+  "current_scope": "Semantic v1 narrow PROMETHEUS boundary"
+}

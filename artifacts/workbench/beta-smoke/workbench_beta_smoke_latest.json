@@ -1,0 +1,277 @@
+{
+  "generatedAtUtc": "2026-03-15T20:55:56.7653411Z",
+  "gitBranch": "codex/wb-bh-13-beta-packaging-smoke",
+  "gitCommit": "4f42588a46249f4861b23fcc3a022c21f533365f",
+  "outputRoot": "artifacts/workbench/beta-smoke",
+  "workspaceRoot": "artifacts/workbench/beta-smoke/workspace",
+  "portablePackage": {
+    "generatedAtUtc": "2026-03-15T20:55:56.6623669Z",
+    "productName": "Semantic Workbench",
+    "version": "0.1.0",
+    "packageFormat": "portable-zip",
+    "releaseExecutable": {
+      "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\apps\\workbench\\src-tauri\\target\\release\\semantic-workbench-app.exe",
+      "fileName": "semantic-workbench-app.exe",
+      "sizeBytes": 9077248,
+      "sha256": "70126083f3868942d09f8855ba793db13396f2da96f6e8012274e769ab81c4ff"
+    },
+    "portableZip": {
+      "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\package\\semantic-workbench-beta-portable.zip",
+      "fileName": "semantic-workbench-beta-portable.zip",
+      "sizeBytes": 2895680,
+      "sha256": "73c67c6af525fd8b18132f0847121858f3220602c754c7f7a9038e4216177a75"
+    },
+    "extractedExecutable": {
+      "absolutePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\package-extract\\semantic-workbench-app.exe",
+      "fileName": "semantic-workbench-app.exe",
+      "sizeBytes": 9077248,
+      "sha256": "70126083f3868942d09f8855ba793db13396f2da96f6e8012274e769ab81c4ff"
+    }
+  },
+  "launchSmoke": {
+    "launched": true,
+    "launchSmokeSeconds": 8,
+    "durationMs": 8120,
+    "executable": "artifacts/workbench/beta-smoke/package-extract/semantic-workbench-app.exe",
+    "exitCodeBeforeStop": null
+  },
+  "steps": [
+    {
+      "name": "workbench lint",
+      "filePath": "npm.cmd",
+      "arguments": [
+        "run",
+        "lint"
+      ],
+      "commandLine": "npm.cmd run lint",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\apps\\workbench",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 6031,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-lint.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-lint.stderr.txt"
+    },
+    {
+      "name": "workbench build",
+      "filePath": "npm.cmd",
+      "arguments": [
+        "run",
+        "build"
+      ],
+      "commandLine": "npm.cmd run build",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\apps\\workbench",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 6028,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-build.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-build.stderr.txt"
+    },
+    {
+      "name": "workbench tauri tests",
+      "filePath": "cargo",
+      "arguments": [
+        "test",
+        "--manifest-path",
+        "apps/workbench/src-tauri/Cargo.toml"
+      ],
+      "commandLine": "cargo test --manifest-path apps/workbench/src-tauri/Cargo.toml",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 2030,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-tauri-tests.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-tauri-tests.stderr.txt"
+    },
+    {
+      "name": "semantic release binaries",
+      "filePath": "cargo",
+      "arguments": [
+        "build",
+        "--release",
+        "--bin",
+        "smc",
+        "--bin",
+        "svm"
+      ],
+      "commandLine": "cargo build --release --bin smc --bin svm",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1039,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\semantic-release-binaries.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\semantic-release-binaries.stderr.txt"
+    },
+    {
+      "name": "workbench release build",
+      "filePath": "npm.cmd",
+      "arguments": [
+        "run",
+        "tauri:build",
+        "--",
+        "--no-bundle"
+      ],
+      "commandLine": "npm.cmd run tauri:build -- --no-bundle",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\apps\\workbench",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 79015,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-release-build.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\workbench-release-build.stderr.txt"
+    },
+    {
+      "name": "smoke diagnostics check",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe",
+      "arguments": [
+        "check",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe check C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 1,
+      "expectFailure": true,
+      "succeeded": true,
+      "durationMs": 1024,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-diagnostics-check.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-diagnostics-check.stderr.txt"
+    },
+    {
+      "name": "smoke format check before write",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe",
+      "arguments": [
+        "fmt",
+        "--check",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe fmt --check C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 1,
+      "expectFailure": true,
+      "succeeded": true,
+      "durationMs": 1021,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-before-write.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-before-write.stderr.txt"
+    },
+    {
+      "name": "smoke format write",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe",
+      "arguments": [
+        "fmt",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe fmt C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1023,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-write.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-write.stderr.txt"
+    },
+    {
+      "name": "smoke format check after write",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe",
+      "arguments": [
+        "fmt",
+        "--check",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe fmt --check C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1024,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-after-write.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-format-check-after-write.stderr.txt"
+    },
+    {
+      "name": "smoke compile",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe",
+      "arguments": [
+        "compile",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm",
+        "-o",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe compile C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\src\\main.sm -o C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1018,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-compile.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-compile.stderr.txt"
+    },
+    {
+      "name": "smoke verify",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe",
+      "arguments": [
+        "verify",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\smc.exe verify C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1025,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-verify.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-verify.stderr.txt"
+    },
+    {
+      "name": "smoke disasm",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\svm.exe",
+      "arguments": [
+        "disasm",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\svm.exe disasm C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1013,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-disasm.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-disasm.stderr.txt"
+    },
+    {
+      "name": "smoke run",
+      "filePath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\svm.exe",
+      "arguments": [
+        "run",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc"
+      ],
+      "commandLine": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\target\\release\\svm.exe run C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workspace\\build\\main.smc",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1026,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-run.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\smoke-run.stderr.txt"
+    },
+    {
+      "name": "release bundle verify",
+      "filePath": "pwsh",
+      "arguments": [
+        "-File",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\scripts\\verify_release_bundle.ps1",
+        "-ManifestPath",
+        "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workbench_beta_release_bundle_manifest.json"
+      ],
+      "commandLine": "pwsh -File C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\scripts\\verify_release_bundle.ps1 -ManifestPath C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\workbench_beta_release_bundle_manifest.json",
+      "workingDirectory": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode",
+      "exitCode": 0,
+      "expectFailure": false,
+      "succeeded": true,
+      "durationMs": 1027,
+      "stdoutPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\release-bundle-verify.stdout.txt",
+      "stderrPath": "C:\\Users\\said3\\Desktop\\EXOcode\\EXOcode\\artifacts\\workbench\\beta-smoke\\logs\\release-bundle-verify.stderr.txt"
+    }
+  ]
+}
