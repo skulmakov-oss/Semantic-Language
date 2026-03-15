@@ -45,6 +45,11 @@ export type WorkbenchDiagnostic = {
   cwd: string
 }
 
+export type DiagnosticDocLink = {
+  label: string
+  relativePath: string
+}
+
 const sourceDiagnosticPattern =
   /^(Error|Warning)\s+\[([A-Z]\d{4})\]:\s*(.*?)(?:\s+at line\s+(\d+):(\d+))?$/i
 const verifyDiagnosticPattern =
@@ -93,6 +98,52 @@ export function diagnosticFamilyLabel(family: DiagnosticFamily) {
     default:
       return 'Other'
   }
+}
+
+export function diagnosticDocLinks(
+  diagnostic: WorkbenchDiagnostic,
+): DiagnosticDocLink[] {
+  const links = new Map<string, DiagnosticDocLink>()
+
+  addDocLink(links, 'Language diagnostics spec', 'docs/spec/diagnostics.md')
+
+  switch (diagnostic.family) {
+    case 'parse':
+      addDocLink(links, 'Syntax spec', 'docs/spec/syntax.md')
+      addDocLink(links, 'Source semantics', 'docs/spec/source_semantics.md')
+      break
+    case 'policy':
+      addDocLink(links, 'Logos spec', 'docs/spec/logos.md')
+      addDocLink(links, 'Source semantics', 'docs/spec/source_semantics.md')
+      break
+    case 'type':
+      addDocLink(links, 'Types spec', 'docs/spec/types.md')
+      addDocLink(links, 'Source semantics', 'docs/spec/source_semantics.md')
+      break
+    case 'module':
+      addDocLink(links, 'Modules spec', 'docs/spec/modules.md')
+      addDocLink(links, 'Imports guide', 'docs/imports.md')
+      addDocLink(links, 'Exports guide', 'docs/exports.md')
+      addModuleErrorDocLink(links, diagnostic.code)
+      break
+    case 'verify':
+      addDocLink(links, 'Verifier spec', 'docs/spec/verifier.md')
+      addDocLink(links, 'SemCode spec', 'docs/spec/semcode.md')
+      break
+    case 'runtime':
+      addDocLink(links, 'VM spec', 'docs/spec/vm.md')
+      if (
+        diagnostic.code?.toLowerCase().includes('quota') ||
+        diagnostic.message.toLowerCase().includes('quota')
+      ) {
+        addDocLink(links, 'Quotas spec', 'docs/spec/quotas.md')
+      }
+      break
+    default:
+      break
+  }
+
+  return Array.from(links.values())
 }
 
 function parseChannel(
@@ -303,6 +354,30 @@ function classifySourceFamily(code: string, message: string): DiagnosticFamily {
   }
 
   return 'parse'
+}
+
+function addModuleErrorDocLink(
+  links: Map<string, DiagnosticDocLink>,
+  code: string | null,
+) {
+  if (!code) {
+    addDocLink(links, 'Error index', 'docs/errors/index.md')
+    return
+  }
+
+  if (['E0242', 'E0243', 'E0244', 'E0245'].includes(code)) {
+    addDocLink(links, `Error ${code}`, `docs/errors/${code}.md`)
+  } else {
+    addDocLink(links, 'Error index', 'docs/errors/index.md')
+  }
+}
+
+function addDocLink(
+  links: Map<string, DiagnosticDocLink>,
+  label: string,
+  relativePath: string,
+) {
+  links.set(relativePath, { label, relativePath })
 }
 
 function inferJobPrimaryPath(job: DiagnosticSourceJob) {

@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useState, type ReactNode } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import {
   fetchAdapterContract,
   fetchOverviewSnapshot,
@@ -31,6 +31,7 @@ import {
 } from './workbench-state'
 import {
   deriveDiagnosticsFromJobs,
+  diagnosticDocLinks,
   diagnosticFamilyLabel,
   diagnosticFamilyOrder,
   type DiagnosticFamily,
@@ -981,6 +982,7 @@ function WorkbenchScreen({
           selectedWorkspace={selectedWorkspace}
           onOpenEditorFile={onOpenEditorFile}
           onSelectJob={onSelectJob}
+          onSelectSpecPath={onSelectSpecPath}
         />
       ) : null}
 
@@ -2210,13 +2212,16 @@ function DiagnosticsPanel({
   selectedWorkspace,
   onOpenEditorFile,
   onSelectJob,
+  onSelectSpecPath,
 }: {
   jobs: JobRecord[]
   selectedJobId: string | null
   selectedWorkspace: WorkspaceSummary | null
   onOpenEditorFile: (relativePath: string) => Promise<void>
   onSelectJob: (jobId: string) => void
+  onSelectSpecPath: (value: string) => void
 }) {
+  const navigate = useNavigate()
   const diagnostics = deriveDiagnosticsFromJobs(jobs)
   const [familyFilter, setFamilyFilter] = useState<DiagnosticFamily | 'all'>('all')
   const [selectedDiagnosticId, setSelectedDiagnosticId] = useState<string | null>(null)
@@ -2255,6 +2260,7 @@ function DiagnosticsPanel({
     selectedDiagnostic && selectedWorkspace
       ? resolveDiagnosticWorkspacePath(selectedDiagnostic.filePath, selectedWorkspace)
       : null
+  const relatedDocs = selectedDiagnostic ? diagnosticDocLinks(selectedDiagnostic) : []
 
   return (
     <div className="screen-stack">
@@ -2447,6 +2453,28 @@ function DiagnosticsPanel({
                     </button>
                   ) : null}
                 </div>
+
+                {relatedDocs.length > 0 ? (
+                  <div className="diagnostic-related-docs">
+                    <span className="diagnostic-meta-label">Related spec and error docs</span>
+                    <div className="diagnostic-doc-links">
+                      {relatedDocs.map((document) => (
+                        <button
+                          key={document.relativePath}
+                          type="button"
+                          className="diagnostic-doc-button"
+                          onClick={() => {
+                            onSelectSpecPath(document.relativePath)
+                            navigate('/spec')
+                          }}
+                        >
+                          <strong>{document.label}</strong>
+                          <span>{document.relativePath}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {selectedDiagnostic.helpText ? (
                   <div className="diagnostic-callout">
