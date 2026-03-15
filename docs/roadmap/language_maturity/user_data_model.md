@@ -82,6 +82,7 @@ Reason:
 The detailed design for this stage is defined in:
 
 - `docs/roadmap/language_maturity/record_data_model.md`
+- `docs/roadmap/language_maturity/record_scenarios.md`
 
 ### Stage 2: Tuples
 

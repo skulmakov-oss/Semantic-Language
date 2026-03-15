@@ -154,6 +154,10 @@ fn trusted(snapshot: SignalSnapshot) -> bool {
 This keeps `quad` as a first-class field family instead of forcing users to
 spread semantically related values across parallel locals.
 
+Concrete motivating workloads are collected in:
+
+- `docs/roadmap/language_maturity/record_scenarios.md`
+
 ## Non-Goals
 
 This phase does not attempt to provide:
