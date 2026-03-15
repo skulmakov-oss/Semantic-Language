@@ -71,7 +71,7 @@ type JobActionSpec = {
   cwdMode: 'repo' | 'workspace'
 }
 
-type InspectFamily = 'verify' | 'disasm' | 'verified-run'
+type InspectFamily = 'trace' | 'verify' | 'disasm' | 'verified-run'
 
 type InspectableJob = {
   job: JobRecord
@@ -118,6 +118,13 @@ const workflowActions: JobActionSpec[] = [
     label: 'Run semantic stress source',
     args: ['run', 'examples/semantic_policy_overdrive_trace.sm'],
     notes: 'Run the source example through the public smc surface.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'smc',
+    label: 'Trace semantic stress cache path',
+    args: ['check', 'examples/semantic_policy_overdrive_trace.sm', '--trace-cache'],
+    notes: 'Inspect the canonical cache-trace surface through smc check --trace-cache.',
     cwdMode: 'repo',
   },
   {
@@ -228,12 +235,13 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Inspect is where Workbench will render SemCode, verifier output, and runtime summaries. It stays downstream from existing execution contracts.',
     stable: [
+      'Dedicated trace, verify, disasm, and verified-run inspectors over real CLI jobs',
       'Dedicated inspector over smc verify, svm disasm, and verified-run jobs',
       'Raw command output is preserved as the only bytecode, verifier, and runtime source of truth',
       'Clear note that source-level debugging is not promised yet',
     ],
     next: [
-      'Fold richer trace and quota summaries into the same inspect route',
+      'Extend the same inspect route with richer quota and capability context when public outputs grow',
       'Add trace and runtime summaries without inventing VM semantics',
     ],
   },
@@ -1772,10 +1780,12 @@ function formatDiagnosticLocation(diagnostic: WorkbenchDiagnostic) {
   return filePart
 }
 
-const inspectFamilyOrder: InspectFamily[] = ['verify', 'disasm', 'verified-run']
+const inspectFamilyOrder: InspectFamily[] = ['trace', 'verify', 'disasm', 'verified-run']
 
 function inspectFamilyLabel(family: InspectFamily) {
   switch (family) {
+    case 'trace':
+      return 'Trace'
     case 'verify':
       return 'Verify'
     case 'disasm':
@@ -1787,6 +1797,8 @@ function inspectFamilyLabel(family: InspectFamily) {
 
 function inspectFamilyDescription(family: InspectFamily) {
   switch (family) {
+    case 'trace':
+      return 'Cache-trace and inspection metadata from public smc workflows.'
     case 'verify':
       return 'Verification reports over compiled SemCode artifacts.'
     case 'disasm':
@@ -1822,6 +1834,13 @@ function deriveInspectableJobs(jobs: JobRecord[]): InspectableJob[] {
 function classifyInspectFamily(job: JobRecord): InspectFamily | null {
   const command = effectiveResolvedCommand(job)
 
+  if (
+    job.kind === 'smc' &&
+    (command.includes('--trace-cache') || command.some((token) => token.includes("cache_")))
+  ) {
+    return 'trace'
+  }
+
   if (job.kind === 'smc' && command.includes('verify')) {
     return 'verify'
   }
@@ -1851,7 +1870,9 @@ function effectiveResolvedCommand(job: JobRecord) {
 function extractInspectArtifactPath(job: JobRecord, family: InspectFamily) {
   const command = effectiveResolvedCommand(job)
   const subcommand =
-    family === 'verify'
+    family === 'trace'
+      ? 'check'
+      : family === 'verify'
       ? 'verify'
       : family === 'disasm'
         ? 'disasm'
@@ -1892,6 +1913,158 @@ function summarizeInspectJob(
   }
 
   return 'Command failed without captured output.'
+}
+
+type InspectSignal = {
+  label: string
+  tone: 'stable' | 'draft' | 'failed'
+  detail: string
+}
+
+function deriveInspectSignals(entry: InspectableJob): InspectSignal[] {
+  if (entry.family === 'trace') {
+    const signals = parseTraceSignals(entry.stdoutText)
+    if (signals.length > 0) {
+      return signals
+    }
+    return [
+      {
+        label: 'Trace output preserved',
+        tone: entry.job.status === 'success' ? 'stable' : 'draft',
+        detail: 'Workbench captured raw trace-cache output without reinterpreting compiler ownership.',
+      },
+    ]
+  }
+
+  if (entry.family === 'verify') {
+    const verifiedMatch = entry.stdoutText?.match(
+      /verified '(.+)' \((\d+) function\(s\), header=([^,]+), epoch=([^)]+)\)/,
+    )
+    if (verifiedMatch) {
+      return [
+        {
+          label: 'Verification passed',
+          tone: 'stable',
+          detail: `${verifiedMatch[2]} function(s), header ${verifiedMatch[3]}, epoch ${verifiedMatch[4]}.`,
+        },
+      ]
+    }
+
+    if (entry.stderrText) {
+      return [
+        {
+          label: 'Verification failed',
+          tone: 'failed',
+          detail: entry.stderrText.split(/\r?\n/, 1)[0] ?? 'Verifier output captured in stderr.',
+        },
+      ]
+    }
+  }
+
+  const runtimeSignals = parseRuntimeSignals(entry)
+  if (runtimeSignals.length > 0) {
+    return runtimeSignals
+  }
+
+  return [
+    {
+      label: entry.job.status === 'success' ? 'No runtime faults captured' : 'No derived runtime summary',
+      tone: entry.job.status === 'success' ? 'stable' : 'draft',
+      detail:
+        entry.job.status === 'success'
+          ? 'The current public output does not report quota, capability, or runtime failures for this job.'
+          : 'Captured output is still preserved below even when no derived summary rule matched.',
+    },
+  ]
+}
+
+function parseTraceSignals(stdoutText: string | null): InspectSignal[] {
+  if (!stdoutText) {
+    return []
+  }
+
+  const signals: InspectSignal[] = []
+  for (const line of stdoutText.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) {
+      continue
+    }
+
+    try {
+      const event = JSON.parse(trimmed) as Record<string, string>
+      const label = event.event === 'cache_miss'
+        ? 'Cache miss'
+        : event.event === 'invalidate'
+          ? 'Invalidation'
+          : 'Trace event'
+      const detailParts = [event.reason, event.module, event.pack_kind].filter(Boolean)
+      signals.push({
+        label,
+        tone: event.event === 'cache_miss' ? 'draft' : 'stable',
+        detail: detailParts.join(' | '),
+      })
+    } catch {
+      // Preserve raw output below; ignore non-JSON trace lines here.
+    }
+  }
+
+  return signals
+}
+
+function parseRuntimeSignals(entry: InspectableJob): InspectSignal[] {
+  const output = [entry.stdoutText, entry.stderrText].filter(Boolean).join('\n')
+  if (!output) {
+    return []
+  }
+
+  const signals: InspectSignal[] = []
+  const quotaMatch = output.match(/quota exceeded: ([^ ]+) limit=(\d+) used=(\d+)/i)
+  if (quotaMatch) {
+    signals.push({
+      label: 'Quota exceeded',
+      tone: 'failed',
+      detail: `${quotaMatch[1]} limit=${quotaMatch[2]} used=${quotaMatch[3]}`,
+    })
+  }
+
+  const capabilityLine = output
+    .split(/\r?\n/)
+    .find((line) => /capability/i.test(line) && /(denied|missing|blocked)/i.test(line))
+  if (capabilityLine) {
+    signals.push({
+      label: 'Capability denied',
+      tone: 'failed',
+      detail: capabilityLine.trim(),
+    })
+  }
+
+  const stackLine = output.split(/\r?\n/).find((line) => /stack overflow/i.test(line))
+  if (stackLine) {
+    signals.push({
+      label: 'Stack overflow',
+      tone: 'failed',
+      detail: stackLine.trim(),
+    })
+  }
+
+  const verifierLine = output.split(/\r?\n/).find((line) => /verify error|verifier rejected/i.test(line))
+  if (verifierLine) {
+    signals.push({
+      label: 'Verifier rejected input',
+      tone: 'failed',
+      detail: verifierLine.trim(),
+    })
+  }
+
+  if (signals.length === 0 && entry.family === 'verified-run' && entry.job.status === 'success') {
+    signals.push({
+      label: 'Verified execution completed',
+      tone: 'stable',
+      detail: 'Verified bytecode execution completed without emitted runtime faults.',
+    })
+  }
+
+  return signals
 }
 
 function resolveDiagnosticWorkspacePath(
@@ -2799,6 +2972,9 @@ function InspectPanel({
       : inspectableJobs.filter((entry) => entry.family === effectiveFilter)
   const selectedInspectableJob =
     visibleJobs.find((entry) => entry.job.id === selectedJobId) ?? visibleJobs[0] ?? null
+  const inspectSignals = selectedInspectableJob
+    ? deriveInspectSignals(selectedInspectableJob)
+    : []
   const disasmLineCount =
     selectedInspectableJob?.family === 'disasm' && selectedInspectableJob.stdoutText
       ? selectedInspectableJob.stdoutText
@@ -2860,7 +3036,7 @@ function InspectPanel({
         <article className="screen-card">
           <p className="card-kicker">No inspectable jobs yet</p>
           <p className="empty-state">
-            Run `smc verify`, `svm disasm`, or a verified bytecode execution from the cockpit to populate the inspector.
+            Run `smc check --trace-cache`, `smc verify`, `svm disasm`, or a verified bytecode execution from the cockpit to populate the inspector.
           </p>
         </article>
       ) : (
@@ -2947,12 +3123,26 @@ function InspectPanel({
                 <div className="inspect-callout">
                   <span className="diagnostic-meta-label">Inspector contract</span>
                   <p>
-                    {selectedInspectableJob.family === 'verify'
+                    {selectedInspectableJob.family === 'trace'
+                      ? 'Workbench displays trace-cache output exactly as emitted by the public smc check surface. It does not infer compiler ownership or cache semantics beyond that output.'
+                      : selectedInspectableJob.family === 'verify'
                       ? 'Workbench displays the verifier result exactly as emitted by smc verify. It does not recompute verification.'
                       : selectedInspectableJob.family === 'disasm'
                         ? 'Workbench displays raw SemCode disassembly from the public CLI surface. It does not own a second bytecode model.'
                         : 'Workbench displays verified execution status from the public run surface. It does not infer runtime semantics beyond exit code and captured output.'}
                   </p>
+                </div>
+
+                <div className="inspect-signals-grid">
+                  {inspectSignals.map((signal) => (
+                    <section key={`${signal.label}-${signal.detail}`} className="inspect-signal-card">
+                      <div className="diagnostic-card-topline">
+                        <strong>{signal.label}</strong>
+                        <span className={`status-pill ${signal.tone}`}>{signal.tone}</span>
+                      </div>
+                      <p className="job-meta">{signal.detail}</p>
+                    </section>
+                  ))}
                 </div>
 
                 <div className="inspect-output-stack">

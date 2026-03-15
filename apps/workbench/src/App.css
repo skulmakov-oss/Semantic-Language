@@ -996,7 +996,8 @@
 .inspect-shell,
 .inspect-job-list,
 .inspect-detail-stack,
-.inspect-output-stack {
+.inspect-output-stack,
+.inspect-signals-grid {
   display: grid;
   gap: 1rem;
 }
@@ -1018,7 +1019,8 @@
 
 .inspect-metric,
 .inspect-callout,
-.inspect-output-block {
+.inspect-output-block,
+.inspect-signal-card {
   padding: 0.95rem 1rem;
   border-radius: 1rem;
   border: 1px solid rgba(15, 23, 32, 0.1);
