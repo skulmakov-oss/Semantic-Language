@@ -915,6 +915,15 @@
   background: rgba(255, 255, 255, 0.72);
 }
 
+.document-truth-callout {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.document-truth-callout code {
+  word-break: break-all;
+}
+
 .diagnostics-metric strong {
   display: block;
   font-size: 1.4rem;

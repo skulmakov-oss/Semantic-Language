@@ -36,6 +36,7 @@ import {
 } from './workbench-state'
 import {
   deriveDiagnosticsFromJobs,
+  diagnosticDocMapping,
   diagnosticDocLinks,
   diagnosticFamilyLabel,
   diagnosticFamilyOrder,
@@ -1882,9 +1883,23 @@ function SpecNavigatorPanel({
                   </span>
                 ) : null}
               </div>
-              <p className="job-meta">
-                source path: <code>{selectedSpecDocument.absolutePath}</code>
-              </p>
+              <section className="diagnostic-callout document-truth-callout">
+                <div className="document-topline">
+                  <span className="diagnostic-meta-label">Repository truth</span>
+                  <span
+                    className={`status-pill ${selectedSpecDocument.status ? statusTone(selectedSpecDocument.status) : 'draft'}`}
+                  >
+                    {selectedSpecDocument.status ?? 'status unlabelled'}
+                  </span>
+                </div>
+                <p className="job-meta">
+                  source path: <code>{selectedSpecDocument.absolutePath}</code>
+                </p>
+                <p className="job-meta">
+                  Workbench reads this document directly from the repository and does not keep an alternative spec
+                  mirror.
+                </p>
+              </section>
               <div className="spec-document-grid">
                 <aside className="spec-outline-panel">
                   <p className="card-kicker">Section navigator</p>
@@ -2306,6 +2321,17 @@ function statusTone(status: string) {
   }
 
   return 'draft'
+}
+
+function diagnosticDocMappingLabel(status: 'exact' | 'family' | 'generic') {
+  switch (status) {
+    case 'exact':
+      return 'exact mapping'
+    case 'family':
+      return 'family mapping'
+    default:
+      return 'generic only'
+  }
 }
 
 function formatFreshness(modifiedEpochMs: number | null) {
@@ -4210,6 +4236,7 @@ function DiagnosticsPanel({
     selectedDiagnostic && selectedWorkspace
       ? resolveDiagnosticWorkspacePath(selectedDiagnostic.filePath, selectedWorkspace)
       : null
+  const docMapping = selectedDiagnostic ? diagnosticDocMapping(selectedDiagnostic) : null
   const relatedDocs = selectedDiagnostic ? diagnosticDocLinks(selectedDiagnostic) : []
 
   return (
@@ -4413,9 +4440,29 @@ function DiagnosticsPanel({
                     ) : null}
                 </div>
 
+                {docMapping ? (
+                  <div className="diagnostic-callout">
+                    <div className="document-topline">
+                      <span className="diagnostic-meta-label">Canonical mapping status</span>
+                      <span
+                        className={`status-pill ${docMapping.status === 'generic' ? 'draft' : 'stable'}`}
+                      >
+                        {diagnosticDocMappingLabel(docMapping.status)}
+                      </span>
+                    </div>
+                    <p>{docMapping.detail}</p>
+                    {docMapping.status === 'generic' ? (
+                      <p className="job-meta">
+                        No exact code or family mapping is recorded yet, so Workbench does not guess additional
+                        spec links.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {relatedDocs.length > 0 ? (
                   <div className="diagnostic-related-docs">
-                    <span className="diagnostic-meta-label">Related spec and error docs</span>
+                    <span className="diagnostic-meta-label">Canonical spec and error docs</span>
                     <div className="diagnostic-doc-links">
                       {relatedDocs.map((document) => (
                         <button

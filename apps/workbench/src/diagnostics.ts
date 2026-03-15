@@ -50,6 +50,14 @@ export type DiagnosticDocLink = {
   relativePath: string
 }
 
+export type DiagnosticDocMappingStatus = 'exact' | 'family' | 'generic'
+
+export type DiagnosticDocMapping = {
+  links: DiagnosticDocLink[]
+  status: DiagnosticDocMappingStatus
+  detail: string
+}
+
 const sourceDiagnosticPattern =
   /^(Error|Warning)\s+\[([A-Z]\d{4})\]:\s*(.*?)(?:\s+at line\s+(\d+):(\d+))?$/i
 const verifyDiagnosticPattern =
@@ -100,50 +108,80 @@ export function diagnosticFamilyLabel(family: DiagnosticFamily) {
   }
 }
 
-export function diagnosticDocLinks(
+export function diagnosticDocMapping(
   diagnostic: WorkbenchDiagnostic,
-): DiagnosticDocLink[] {
+): DiagnosticDocMapping {
   const links = new Map<string, DiagnosticDocLink>()
+  let status: DiagnosticDocMappingStatus = 'generic'
+  let detail =
+    'No exact diagnostic-code or family-specific mapping exists yet. Workbench exposes only the generic diagnostics contract instead of guessing deeper links.'
 
   addDocLink(links, 'Language diagnostics spec', 'docs/spec/diagnostics.md')
 
   switch (diagnostic.family) {
     case 'parse':
+      status = 'family'
+      detail = 'Mapped from parse diagnostics to the canonical syntax and source-semantics documents.'
       addDocLink(links, 'Syntax spec', 'docs/spec/syntax.md')
       addDocLink(links, 'Source semantics', 'docs/spec/source_semantics.md')
       break
     case 'policy':
+      status = 'family'
+      detail = 'Mapped from policy diagnostics to the canonical logos and source-semantics documents.'
       addDocLink(links, 'Logos spec', 'docs/spec/logos.md')
       addDocLink(links, 'Source semantics', 'docs/spec/source_semantics.md')
       break
     case 'type':
+      status = 'family'
+      detail = 'Mapped from type diagnostics to the canonical types and source-semantics documents.'
       addDocLink(links, 'Types spec', 'docs/spec/types.md')
       addDocLink(links, 'Source semantics', 'docs/spec/source_semantics.md')
       break
     case 'module':
+      status = 'family'
+      detail = 'Mapped from module diagnostics to the canonical modules/imports/exports documents.'
       addDocLink(links, 'Modules spec', 'docs/spec/modules.md')
       addDocLink(links, 'Imports guide', 'docs/imports.md')
       addDocLink(links, 'Exports guide', 'docs/exports.md')
       addModuleErrorDocLink(links, diagnostic.code)
+      if (diagnostic.code && ['E0242', 'E0243', 'E0244', 'E0245'].includes(diagnostic.code)) {
+        status = 'exact'
+        detail = `Mapped from exact diagnostic code ${diagnostic.code} to its canonical error document and module-contract references.`
+      }
       break
     case 'verify':
+      status = 'family'
+      detail = 'Mapped from verifier diagnostics to the canonical verifier and SemCode specifications.'
       addDocLink(links, 'Verifier spec', 'docs/spec/verifier.md')
       addDocLink(links, 'SemCode spec', 'docs/spec/semcode.md')
       break
     case 'runtime':
+      status = 'family'
+      detail = 'Mapped from runtime diagnostics to the canonical VM contract.'
       addDocLink(links, 'VM spec', 'docs/spec/vm.md')
       if (
         diagnostic.code?.toLowerCase().includes('quota') ||
         diagnostic.message.toLowerCase().includes('quota')
       ) {
         addDocLink(links, 'Quotas spec', 'docs/spec/quotas.md')
+        detail = 'Mapped from a runtime quota signal to the canonical VM and quota specifications.'
       }
       break
     default:
       break
   }
 
-  return Array.from(links.values())
+  return {
+    links: Array.from(links.values()),
+    status,
+    detail,
+  }
+}
+
+export function diagnosticDocLinks(
+  diagnostic: WorkbenchDiagnostic,
+): DiagnosticDocLink[] {
+  return diagnosticDocMapping(diagnostic).links
 }
 
 function parseChannel(
