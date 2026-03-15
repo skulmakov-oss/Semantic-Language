@@ -1,8 +1,8 @@
 # Semantic v1 Release Bundle Checklist
 
-Status: release-candidate baseline
+Status: active beta release baseline
 
-Use this checklist before assembling a release-facing v1 bundle.
+Use this checklist before assembling or publishing a release-facing beta or final `v1` bundle.
 
 ## Required Documentation Bundle
 
@@ -13,6 +13,7 @@ Verify the bundle includes:
 - `docs/roadmap/v1_readiness.md`
 - `docs/roadmap/runtime_validation_policy.md`
 - `docs/roadmap/compatibility_statement.md`
+- published asset notes for `smc.exe`, `svm.exe`, and the Windows zip when a GitHub beta release is cut
 
 Reproducible check command:
 
@@ -50,6 +51,15 @@ Verify the release notes include:
 - known limits that remain explicit non-commitments for the current narrow `v1`
 - explicit snapshot regeneration rule
 - compatibility-sensitive contract families
+- which packaged assets were published for the current tag
+
+## Required Asset Smoke
+
+Verify published assets are checked against at least:
+
+- one minimal compile-run-disasm source
+- one verified-path `f64` builtin case
+- one representative semantic policy example from `examples/`
 
 ## Blocking Rule
 

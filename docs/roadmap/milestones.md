@@ -24,7 +24,7 @@
   - spec bundle
   - stable CLI
   - version contracts
-  - current status: broad formalization baseline exists; owner decisions are fixed and implementation alignment remains
+  - current status: broad formalization baseline exists and owner alignment is already reflected in code
   - optimizer owner is fixed to `sm-ir` for the current `v1` baseline
   - SemCode format owner is fixed to `sm-ir` for the current `v1` baseline
   - public CLI owner is fixed to `smc-cli` for the current `v1` baseline
@@ -71,5 +71,5 @@
   - `docs/roadmap/v1_readiness.md`
   - `docs/roadmap/release_bundle_checklist.md`
   - `docs/roadmap/compatibility_statement.md`
-  - current state: validation artifacts exist
-  - current gap: CI enforcement and release process are not yet at planned strength
+  - current state: validation artifacts and CI-enforced release gates exist on the active beta line
+  - current follow-up gap: keep release-facing docs and packaged beta assets aligned with the actual `main` branch state

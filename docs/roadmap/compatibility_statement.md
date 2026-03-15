@@ -1,8 +1,8 @@
 # Semantic v1 Compatibility Statement
 
-Status: release-candidate baseline
+Status: active beta release baseline
 
-This document summarizes the current compatibility commitments for the repository state that is moving toward Semantic v1.
+This document summarizes the current compatibility commitments for the repository state published on the active Semantic beta line.
 
 ## SemCode Compatibility
 
@@ -74,7 +74,7 @@ The repository does not yet claim final compatibility guarantees for:
 - persistence backends
 - multi-session replay archives
 - rule-side effect execution semantics beyond the current narrow orchestration contract
-- final packaged release layout
+- final stable packaged release layout beyond the current beta assets
 
 ## Release Honesty Rule
 
@@ -85,3 +85,9 @@ This compatibility statement must stay aligned with:
 - `docs/roadmap/runtime_validation_policy.md`
 
 If a surface is not yet fully stabilized, it must remain listed as a non-commitment rather than being implied as release-stable.
+
+Published beta releases should keep this statement aligned with:
+
+- the current tag notes
+- packaged Windows assets (`smc.exe`, `svm.exe`, and bundled zip)
+- the active `main` branch behavior

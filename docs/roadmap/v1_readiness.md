@@ -1,6 +1,6 @@
 # Semantic v1 Readiness
 
-Status: release-candidate baseline
+Status: active beta release line
 
 This document summarizes the current release-facing readiness state for Semantic v1.
 
@@ -18,13 +18,14 @@ Current repository state has working coverage for:
 - semantic runtime validation matrix and golden baselines
 - CI-enforced boundary, public API, runtime, and release-bundle gates
 
-This means the repository has crossed from architecture-only planning into release-shaped validation for the current contract surfaces.
+This means the repository has crossed from architecture-only planning into a published beta release line for the current contract surfaces.
 
 Current `v1` boundary decision:
 
 - the official `v1` PROMETHEUS scope is the existing narrow ABI/capability/gate boundary
 - wider planned host calls are not part of the current `v1` commitment
 - ownership alignment for optimizer, SemCode, and CLI is already implemented in code
+- the active beta line is published from `main`
 
 ## Current Artifact List
 
@@ -43,6 +44,10 @@ Current v1-facing artifact families in the repository:
 - CLI/tooling surface
   - `smc`
   - `svm`
+- published beta assets
+  - `smc.exe`
+  - `svm.exe`
+  - Windows release zip
 - semantic runtime validation
   - `tests/prometheus_runtime_matrix.rs`
   - `tests/prometheus_runtime_goldens.rs`
@@ -75,11 +80,11 @@ The following limits remain explicit and should be treated as release-facing hon
 - semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
 - persistence backends are not part of the current runtime/audit contract
 - rollback persistence semantics are not yet formalized beyond current orchestration notes
-- release packaging is not yet assembled into a final bundled distribution process
+- final stable packaging and tag policy remain narrower than the long-term distribution plan
 
 ## Current Release Gate
 
-The repository should be treated as v1-candidate only if all of the following stay green:
+The repository should be treated as release-valid only if all of the following stay green:
 
 - `cargo test --workspace`
 - boundary and ownership guard tests
@@ -90,15 +95,14 @@ The repository should be treated as v1-candidate only if all of the following st
 - semantic runtime negative golden tests
 - semantic runtime compatibility matrix tests
 
-## Next Remaining v1 Steps
+## Next Remaining Release Steps
 
-Current highest-signal remaining work before a final v1 tag:
+Current highest-signal remaining work before a final stable `v1` tag:
 
-1. promote the integrated narrow `v1` line onto official `main`
-2. keep release-facing docs aligned with the actual integrated repository state
-3. freeze tag and release packaging expectations
-4. publish `v1.0.0-rc1`
-5. perform one final clean validation pass before `v1.0.0`
+1. keep release-facing docs aligned with the actual published beta line on `main`
+2. keep packaged beta assets validated against representative source programs
+3. freeze final stable tag and packaging expectations without reopening scope
+4. perform one final clean validation pass before a stable `v1` tag
 
 ## Contract Rule
 

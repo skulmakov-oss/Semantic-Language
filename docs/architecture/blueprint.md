@@ -15,14 +15,20 @@ Current repository state:
 - active integration crates: `prom-abi`, `prom-cap`, `prom-gates`, `prom-runtime`, `prom-state`, `prom-rules`, `prom-audit`
 - `prom-*` crates remain separate from compiler and VM internals
 
-Current repository gaps that remain before an honest `v1` claim:
+Current repository limits that remain before a final stable `v1` tag:
 
 - richer `fx` arithmetic remains intentionally narrower than the `f64` surface in the canonical Rust-like execution path
-- optimizer surface is fixed to `sm-ir` for `v1`; no separate `sm-opt` owner exists in the current repository baseline
-- SemCode format surface is fixed to `sm-ir` for `v1`; `sm-emit` remains a producer facade over that contract in the current repository baseline
-- public CLI surface is fixed to `smc-cli` for `v1`; root `smc` is a thin process entrypoint over the canonical CLI owner
+- optimizer surface is fixed to `sm-ir` for the current `v1`; no separate `sm-opt` owner is planned inside the current baseline
+- SemCode format surface is fixed to `sm-ir` for the current `v1`; `sm-emit` remains a producer facade over that contract
+- public CLI surface is fixed to `smc-cli` for the current `v1`; root `smc` remains a thin process entrypoint over the canonical CLI owner
 - PROMETHEUS `v1` scope is fixed to the current narrow ABI/capability/gate boundary; wider planned calls remain post-`v1`
-- CI enforcement is still weaker than the planned `M6` boundary and release gates
+- stable release packaging policy remains narrower than the long-term planned distribution story
+
+Current release-line state:
+
+- `main` carries the active narrow `v1` beta line
+- release validation runs through boundary guards, public API inventory, runtime matrix/goldens, and the release-bundle verifier
+- published beta releases are expected to ship `smc.exe`, `svm.exe`, and a bundled Windows archive
 
 Non-negotiable architecture rules:
 

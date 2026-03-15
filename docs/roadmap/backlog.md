@@ -2,24 +2,26 @@
 
 Current release-control wave:
 
-- stabilize repository history for current `M3-M6` state
-- keep new feature work paused until baseline and ownership decisions are fixed
+- keep the active beta release line stable on `main`
+- keep new feature work paused while release-facing docs, asset smoke checks, and packaging stay aligned
 
-Current decision wave:
+Current release-maintenance wave:
 
-- decide optimizer owner: `sm-opt` vs `sm-ir`
-- decide SemCode format owner: `sm-emit` vs `sm-ir/local_format`
-- decide CLI owner: `smc-cli` vs root `smc`
-- decide narrow vs full `M4` scope for `v1`
+- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with the published beta line
+- keep published release assets validated against representative source programs
+- keep release notes and compatibility statements honest about current narrow `v1` limits
 
-Current blocking implementation wave:
+Current remaining `v1` wave:
 
 - tighten remaining `fx` numeric contract notes now that the canonical value path is end-to-end
-- align code layout with chosen owners
-- add `M6` CI enforcement and release gates
+- keep stable release/tag policy explicit as the repository moves from beta to final
 
-Current non-blocking hygiene wave:
+Current post-`v1` wave:
 
+- richer `fx` arithmetic beyond the current value path
+- wider PROMETHEUS host-call families beyond the narrow `v1` boundary
+- persistence and replay backends
+- richer rule-side effect execution semantics
 - keep the explicit `ton618_core` / `support` / `ton618-core` compatibility perimeter narrow and documented
 
 Foundational work already in place:
@@ -28,12 +30,14 @@ Foundational work already in place:
 - verifier and admit-then-execute baseline
 - `SymbolId` runtime model and quota enforcement
 - type completeness matrix and `u32` completion
+- `fx` end-to-end value path and verified-path `f64` builtin coverage
 - canonical `sm-profile`
 - narrow PROMETHEUS boundary and owner-split semantic runtime baseline
+- CI-enforced release bundle and compatibility checks
 
 Rule of execution:
 
 - do not start semantic runtime before verifier, runtime purity, and quotas are in place;
-- do not start ownership cleanup before the ownership decision issues land;
+- do not reopen scope while the active beta line is being validated;
 - one PR equals one logical step;
 - contract/spec/tests come before cleanup and optimization.
