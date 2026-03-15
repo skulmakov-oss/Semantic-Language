@@ -94,6 +94,13 @@ type EditorTab = {
   status: 'clean' | 'dirty' | 'saving'
 }
 
+type PackageManifestPreview = {
+  name: string | null
+  version: string | null
+  edition: string | null
+  entry: string | null
+}
+
 const initialWorkbenchState = loadWorkbenchState()
 
 const workflowActions: JobActionSpec[] = [
@@ -240,6 +247,7 @@ const routeSpecs: ScreenSpec[] = [
       'Workspace resolver over canonical repository paths',
       'Recent projects list and default workspace persistence',
       'Canonical project bootstrap for Semantic.toml, src/main.sm, and examples/smoke.sm',
+      'Read-only package metadata preview derived from Semantic.toml',
       'Workspace file tree, read/write text editor tabs, current-file compile/check, and formatter actions through smc fmt',
     ],
     next: [
@@ -255,6 +263,7 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Spec navigation is a presentation layer over docs/spec and docs/roadmap. Workbench points at the documents; it does not fork them.',
     stable: [
+      'Docs entry cards for language, execution, and release anchors',
       'Canonical tree over docs/spec, docs/roadmap, and synced language overview documents',
       'Title/path search and section navigator driven by repository markdown',
       'Source-path discipline called out directly in the UI',
@@ -1473,6 +1482,16 @@ function SpecNavigatorPanel({
   onSelectSpecPath: (value: string) => void
 }) {
   const query = specSearch.trim().toLowerCase()
+  const docsEntryDocuments = [
+    'docs/spec/index.md',
+    'docs/LANGUAGE.md',
+    'docs/spec/vm.md',
+    'docs/roadmap/v1_readiness.md',
+    'docs/roadmap/stable_release_policy.md',
+    'docs/roadmap/release_asset_smoke_matrix.md',
+  ]
+    .map((relativePath) => findCatalogDocument(specCatalog, relativePath))
+    .filter((document): document is NonNullable<typeof document> => Boolean(document))
   const filteredSections = specCatalog
     .map((section) => ({
       ...section,
@@ -1488,99 +1507,130 @@ function SpecNavigatorPanel({
     .filter((section) => section.documents.length > 0)
 
   return (
-    <section className="spec-shell">
-      <article className="screen-card spec-sidebar-panel">
-        <p className="card-kicker">Canonical document tree</p>
-        <h3>Spec and roadmap navigator</h3>
-        <label className="field-label" htmlFor="spec-search">
-          Search titles and paths
-        </label>
-        <input
-          id="spec-search"
-          className="text-field"
-          type="text"
-          value={specSearch}
-          onChange={(event) => onSpecSearchChange(event.target.value)}
-          placeholder="Search syntax, vm, readiness, release..."
-        />
-        {specError ? <p className="adapter-error">{specError}</p> : null}
-        <div className="spec-section-list">
-          {filteredSections.length === 0 ? (
-            <p className="empty-state">No canonical documents match the current search.</p>
-          ) : (
-            filteredSections.map((section) => (
-              <section key={section.key} className="spec-section-card">
-                <p className="card-kicker">{section.title}</p>
-                <div className="spec-doc-list">
-                  {section.documents.map((document) => (
-                    <button
-                      key={document.relativePath}
-                      type="button"
-                      className={`spec-doc-button ${selectedSpecPath === document.relativePath ? 'spec-doc-button-active' : ''}`}
-                      onClick={() => onSelectSpecPath(document.relativePath)}
-                    >
-                      <span className="spec-doc-title">{document.title}</span>
-                      <span className="spec-doc-path">{document.relativePath}</span>
-                      {document.status ? (
-                        <span className={`status-pill ${statusTone(document.status)}`}>
-                          {document.status}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ))
-          )}
-        </div>
-      </article>
-
-      <article className="screen-card spec-document-panel">
-        {selectedSpecDocument ? (
-          <div className="screen-stack">
-            <div className="document-topline">
-              <div>
-                <p className="card-kicker">{selectedSpecDocument.sectionTitle}</p>
-                <h3>{selectedSpecDocument.title}</h3>
-              </div>
-              {selectedSpecDocument.status ? (
-                <span className={`status-pill ${statusTone(selectedSpecDocument.status)}`}>
-                  {selectedSpecDocument.status}
-                </span>
-              ) : null}
-            </div>
-            <p className="job-meta">
-              source path: <code>{selectedSpecDocument.absolutePath}</code>
-            </p>
-            <div className="spec-document-grid">
-              <aside className="spec-outline-panel">
-                <p className="card-kicker">Section navigator</p>
-                <div className="spec-outline-list">
-                  {selectedSpecDocument.headings.map((heading) => (
-                    <button
-                      key={heading.anchor}
-                      type="button"
-                      className={`spec-outline-button spec-outline-level-${heading.level}`}
-                      onClick={() => jumpToHeading(heading.anchor)}
-                    >
-                      {heading.title}
-                    </button>
-                  ))}
-                </div>
-              </aside>
-
-              <div className="markdown-sheet">
-                {renderMarkdown(selectedSpecDocument.markdown, selectedSpecDocument.headings)}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <p className="empty-state">
-            Select a canonical document to inspect its headings and body.
+    <div className="screen-stack">
+      <section className="command-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Docs entry</p>
+          <h3>Start from the canonical anchors</h3>
+          <p className="screen-summary">
+            These entry points are derived from the indexed repository docs, not maintained as a
+            separate Workbench knowledge base.
           </p>
-        )}
-      </article>
-    </section>
+          <div className="spec-doc-list">
+            {docsEntryDocuments.map((document) => (
+              <button
+                key={document.relativePath}
+                type="button"
+                className={`spec-doc-button ${selectedSpecPath === document.relativePath ? 'spec-doc-button-active' : ''}`}
+                onClick={() => onSelectSpecPath(document.relativePath)}
+              >
+                <span className="spec-doc-title">{document.title}</span>
+                <span className="spec-doc-path">{document.relativePath}</span>
+                {document.status ? (
+                  <span className={`status-pill ${statusTone(document.status)}`}>
+                    {document.status}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="spec-shell">
+        <article className="screen-card spec-sidebar-panel">
+          <p className="card-kicker">Canonical document tree</p>
+          <h3>Spec and roadmap navigator</h3>
+          <label className="field-label" htmlFor="spec-search">
+            Search titles and paths
+          </label>
+          <input
+            id="spec-search"
+            className="text-field"
+            type="text"
+            value={specSearch}
+            onChange={(event) => onSpecSearchChange(event.target.value)}
+            placeholder="Search syntax, vm, readiness, release..."
+          />
+          {specError ? <p className="adapter-error">{specError}</p> : null}
+          <div className="spec-section-list">
+            {filteredSections.length === 0 ? (
+              <p className="empty-state">No canonical documents match the current search.</p>
+            ) : (
+              filteredSections.map((section) => (
+                <section key={section.key} className="spec-section-card">
+                  <p className="card-kicker">{section.title}</p>
+                  <div className="spec-doc-list">
+                    {section.documents.map((document) => (
+                      <button
+                        key={document.relativePath}
+                        type="button"
+                        className={`spec-doc-button ${selectedSpecPath === document.relativePath ? 'spec-doc-button-active' : ''}`}
+                        onClick={() => onSelectSpecPath(document.relativePath)}
+                      >
+                        <span className="spec-doc-title">{document.title}</span>
+                        <span className="spec-doc-path">{document.relativePath}</span>
+                        {document.status ? (
+                          <span className={`status-pill ${statusTone(document.status)}`}>
+                            {document.status}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))
+            )}
+          </div>
+        </article>
+
+        <article className="screen-card spec-document-panel">
+          {selectedSpecDocument ? (
+            <div className="screen-stack">
+              <div className="document-topline">
+                <div>
+                  <p className="card-kicker">{selectedSpecDocument.sectionTitle}</p>
+                  <h3>{selectedSpecDocument.title}</h3>
+                </div>
+                {selectedSpecDocument.status ? (
+                  <span className={`status-pill ${statusTone(selectedSpecDocument.status)}`}>
+                    {selectedSpecDocument.status}
+                  </span>
+                ) : null}
+              </div>
+              <p className="job-meta">
+                source path: <code>{selectedSpecDocument.absolutePath}</code>
+              </p>
+              <div className="spec-document-grid">
+                <aside className="spec-outline-panel">
+                  <p className="card-kicker">Section navigator</p>
+                  <div className="spec-outline-list">
+                    {selectedSpecDocument.headings.map((heading) => (
+                      <button
+                        key={heading.anchor}
+                        type="button"
+                        className={`spec-outline-button spec-outline-level-${heading.level}`}
+                        onClick={() => jumpToHeading(heading.anchor)}
+                      >
+                        {heading.title}
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+
+                <div className="markdown-sheet">
+                  {renderMarkdown(selectedSpecDocument.markdown, selectedSpecDocument.headings)}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="empty-state">
+              Select a canonical document to inspect its headings and body.
+            </p>
+          )}
+        </article>
+      </section>
+    </div>
   )
 }
 
@@ -2568,10 +2618,67 @@ function ProjectPanel({
   )
   const [scaffoldBusy, setScaffoldBusy] = useState(false)
   const [scaffoldMessage, setScaffoldMessage] = useState<string | null>(null)
+  const [packageManifestPreview, setPackageManifestPreview] = useState<PackageManifestPreview | null>(
+    null,
+  )
+  const [packageManifestState, setPackageManifestState] = useState<
+    'idle' | 'loading' | 'ready' | 'missing' | 'error'
+  >('idle')
+  const [packageManifestError, setPackageManifestError] = useState<string | null>(null)
 
   useEffect(() => {
     setScaffoldPackageName(deriveScaffoldPackageName(selectedWorkspace))
     setScaffoldMessage(null)
+  }, [selectedWorkspace])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPackageManifestPreview() {
+      if (!selectedWorkspace) {
+        setPackageManifestState('idle')
+        setPackageManifestPreview(null)
+        setPackageManifestError(null)
+        return
+      }
+
+      setPackageManifestState('loading')
+      setPackageManifestError(null)
+
+      try {
+        const document = await fetchWorkspaceFile({
+          workspaceRoot: selectedWorkspace.resolvedPath,
+          relativePath: 'Semantic.toml',
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setPackageManifestPreview(parsePackageManifest(document.content))
+        setPackageManifestState('ready')
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        const message = String(error)
+        setPackageManifestPreview(null)
+        if (message.toLowerCase().includes('semantic.toml')) {
+          setPackageManifestState('missing')
+          return
+        }
+
+        setPackageManifestState('error')
+        setPackageManifestError(message)
+      }
+    }
+
+    void loadPackageManifestPreview()
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedWorkspace])
 
   async function runCurrentFileAction(mode: 'check' | 'compile') {
@@ -2852,6 +2959,57 @@ function ProjectPanel({
             </p>
           ) : null}
         </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Package metadata</p>
+          <h3>Derived preview from Semantic.toml</h3>
+          <p className="screen-summary">
+            This preview reads the selected workspace manifest as-is and surfaces first-wave package
+            metadata without creating a second package model in the UI.
+          </p>
+          <p className="job-meta">
+            manifest path:{' '}
+            <code>
+              {selectedWorkspace
+                ? `${selectedWorkspace.resolvedPath.replace(/\\/g, '/')}/Semantic.toml`
+                : 'Select a workspace first.'}
+            </code>
+          </p>
+          {packageManifestState === 'loading' ? (
+            <p className="empty-state">Loading manifest preview...</p>
+          ) : null}
+          {packageManifestState === 'missing' ? (
+            <p className="empty-state">
+              No <code>Semantic.toml</code> found in this workspace yet. Use project bootstrap to
+              initialize one.
+            </p>
+          ) : null}
+          {packageManifestState === 'error' ? (
+            <p className="adapter-error">{packageManifestError}</p>
+          ) : null}
+          {packageManifestPreview ? (
+            <dl className="facts-grid">
+              <div>
+                <dt>Name</dt>
+                <dd>{packageManifestPreview.name ?? 'not declared'}</dd>
+              </div>
+              <div>
+                <dt>Version</dt>
+                <dd>{packageManifestPreview.version ?? 'not declared'}</dd>
+              </div>
+              <div>
+                <dt>Edition</dt>
+                <dd>{packageManifestPreview.edition ?? 'not declared'}</dd>
+              </div>
+              <div className="facts-grid-wide">
+                <dt>Entry</dt>
+                <dd>
+                  <code>{packageManifestPreview.entry ?? 'not declared'}</code>
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+        </article>
       </section>
 
       <section className="project-shell">
@@ -3036,6 +3194,70 @@ function deriveScaffoldPackageName(selectedWorkspace: WorkspaceSummary | null) {
 
 function deriveScaffoldPackageNameFromResult(result: ScaffoldProjectResult) {
   return result.packageName
+}
+
+function parsePackageManifest(content: string): PackageManifestPreview {
+  const preview: PackageManifestPreview = {
+    name: null,
+    version: null,
+    edition: null,
+    entry: null,
+  }
+
+  let inPackageSection = false
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*/, '').trim()
+    if (!line) {
+      continue
+    }
+
+    const sectionMatch = line.match(/^\[(.+)\]$/)
+    if (sectionMatch) {
+      inPackageSection = sectionMatch[1].trim() === 'package'
+      continue
+    }
+
+    if (!inPackageSection) {
+      continue
+    }
+
+    const fieldMatch = line.match(/^([A-Za-z0-9_-]+)\s*=\s*"(.*)"$/)
+    if (!fieldMatch) {
+      continue
+    }
+
+    const [, key, value] = fieldMatch
+    switch (key) {
+      case 'name':
+        preview.name = value
+        break
+      case 'version':
+        preview.version = value
+        break
+      case 'edition':
+        preview.edition = value
+        break
+      case 'entry':
+        preview.entry = value
+        break
+      default:
+        break
+    }
+  }
+
+  return preview
+}
+
+function findCatalogDocument(specCatalog: SpecCatalogSection[], relativePath: string) {
+  for (const section of specCatalog) {
+    const match = section.documents.find((document) => document.relativePath === relativePath)
+    if (match) {
+      return match
+    }
+  }
+
+  return null
 }
 
 function DiagnosticsPanel({
