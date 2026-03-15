@@ -13,6 +13,8 @@ Verify the bundle includes:
 - `docs/roadmap/v1_readiness.md`
 - `docs/roadmap/runtime_validation_policy.md`
 - `docs/roadmap/compatibility_statement.md`
+- `docs/roadmap/release_asset_smoke_matrix.md`
+- `docs/roadmap/stable_release_policy.md`
 - published asset notes for `smc.exe`, `svm.exe`, and the Windows zip when a GitHub beta release is cut
 
 Reproducible check command:

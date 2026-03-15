@@ -39,6 +39,8 @@ Current v1-facing artifact families in the repository:
   - `docs/roadmap/runtime_validation_policy.md`
   - `docs/roadmap/release_bundle_checklist.md`
   - `docs/roadmap/compatibility_statement.md`
+  - `docs/roadmap/release_asset_smoke_matrix.md`
+  - `docs/roadmap/stable_release_policy.md`
 - spec bundle
   - `docs/spec/`
 - CLI/tooling surface
