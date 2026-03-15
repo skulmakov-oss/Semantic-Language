@@ -1,4 +1,13 @@
+import { startTransition, useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
+import {
+  fetchAdapterContract,
+  runCliJob,
+  type AdapterContract,
+  type AdapterJobSpec,
+  type JobKind,
+  type JobResult,
+} from './workbench-api'
 import './App.css'
 
 type ScreenSpec = {
@@ -11,6 +20,18 @@ type ScreenSpec = {
   next: string[]
 }
 
+type JobRecord = {
+  id: string
+  label: string
+  status: 'running' | 'success' | 'failed'
+  commandLine: string
+  cwd: string
+  durationMs?: number
+  exitCode?: number
+  stdout: string
+  stderr: string
+}
+
 const routeSpecs: ScreenSpec[] = [
   {
     path: '/',
@@ -21,12 +42,13 @@ const routeSpecs: ScreenSpec[] = [
       'Overview is the command-and-readiness cockpit. It exists to surface branch, baseline tag, recent validation signals, and known limits from real repository sources.',
     stable: [
       'Branch, commit, and baseline tag cards',
-      'Release and readiness status derived from repository docs',
       'Source-of-truth callouts for specs, roadmap, and release artifacts',
+      'Deterministic command adapter contract for smc, svm, cargo, and release verification',
+      'Real probe actions routed through the backend process adapter',
     ],
     next: [
-      'Wire real git and validation snapshots through the CLI adapter',
-      'Show known-limit notes from readiness and compatibility docs',
+      'Wire git and validation snapshots into overview state',
+      'Add workspace-root selection instead of the fixed repository root',
     ],
   },
   {
@@ -134,6 +156,103 @@ const routeSpecs: ScreenSpec[] = [
 ]
 
 function App() {
+  const [adapterContract, setAdapterContract] = useState<AdapterContract | null>(
+    null,
+  )
+  const [adapterError, setAdapterError] = useState<string | null>(null)
+  const [jobs, setJobs] = useState<JobRecord[]>([])
+  const [activeJob, setActiveJob] = useState<JobKind | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchAdapterContract()
+      .then((contract) => {
+        if (!cancelled) {
+          startTransition(() => setAdapterContract(contract))
+          setAdapterError(null)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAdapterError(String(error))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function runProbe(spec: AdapterJobSpec) {
+    const id = crypto.randomUUID()
+
+    startTransition(() =>
+      setJobs((current) => [
+        {
+          id,
+          label: spec.label,
+          status: 'running',
+          commandLine: [spec.label, ...spec.exampleArgs].join(' '),
+          cwd: adapterContract?.repoRoot ?? '',
+          stdout: '',
+          stderr: '',
+        },
+        ...current,
+      ]),
+    )
+    setActiveJob(spec.kind)
+
+    try {
+      const result = await runCliJob({
+        kind: spec.kind,
+        args: spec.exampleArgs,
+      })
+      setAdapterError(null)
+      commitJob(id, spec.label, result)
+    } catch (error) {
+      const message = String(error)
+      startTransition(() =>
+        setJobs((current) =>
+          current.map((job) =>
+            job.id === id
+              ? {
+                  ...job,
+                  status: 'failed',
+                  stderr: message,
+                }
+              : job,
+          ),
+        ),
+      )
+      setAdapterError(message)
+    } finally {
+      setActiveJob(null)
+    }
+  }
+
+  function commitJob(id: string, label: string, result: JobResult) {
+    startTransition(() =>
+      setJobs((current) =>
+        current.map((job) =>
+          job.id === id
+            ? {
+                ...job,
+                label,
+                status: result.success ? 'success' : 'failed',
+                commandLine: result.resolvedCommand.join(' '),
+                cwd: result.cwd,
+                durationMs: result.durationMs,
+                exitCode: result.exitCode,
+                stdout: result.stdout,
+                stderr: result.stderr,
+              }
+            : job,
+        ),
+      ),
+    )
+  }
+
   return (
     <div className="workbench-shell">
       <aside className="sidebar">
@@ -174,12 +293,12 @@ function App() {
       <main className="main-panel">
         <header className="topbar">
           <div>
-            <p className="eyebrow">WB-02 Bootstrap</p>
-            <h2>React + TypeScript + Tauri desktop shell</h2>
+            <p className="eyebrow">WB-03 Command bus and CLI adapter</p>
+            <h2>Deterministic process orchestration over public Semantic tools</h2>
           </div>
           <div className="status-cluster">
-            <span className="status-pill stable">Stable now: shell and routes</span>
-            <span className="status-pill draft">Draft target: command adapter</span>
+            <span className="status-pill stable">Stable now: shell, routes, adapter contract</span>
+            <span className="status-pill draft">Draft target: project open and workspace settings</span>
           </div>
         </header>
 
@@ -188,21 +307,21 @@ function App() {
             <p className="card-kicker">Current slice</p>
             <h3>Foundation before behavior</h3>
             <p>
-              The app shell exists, routes are real, and the layout already encodes the distinction between repository truth and Workbench presentation.
+              The shell now owns a deterministic job model and backend adapter while still refusing to absorb compiler, verifier, VM, or runtime semantics.
             </p>
           </article>
           <article className="hero-card">
             <p className="card-kicker">Do not cross</p>
             <h3>No second compiler, verifier, or runtime</h3>
             <p>
-              The next PRs will add orchestration over public commands only. Private crate internals stay outside this application boundary.
+              Command execution is limited to `smc`, `svm`, `cargo`, and the release verification script. Private crate internals remain outside this boundary.
             </p>
           </article>
           <article className="hero-card">
             <p className="card-kicker">Immediate next</p>
-            <h3>Command bus and CLI adapter</h3>
+            <h3>Project open and workspace settings</h3>
             <p>
-              `WB-03` wires deterministic jobs and process adapters over `smc`, `svm`, `cargo`, and release scripts.
+              `WB-04` should replace the fixed repository root with user-selected workspace context and local settings.
             </p>
           </article>
         </section>
@@ -212,7 +331,16 @@ function App() {
             <Route
               key={route.path}
               path={route.path}
-              element={<WorkbenchScreen route={route} />}
+              element={
+                <WorkbenchScreen
+                  route={route}
+                  adapterContract={adapterContract}
+                  adapterError={adapterError}
+                  jobs={jobs}
+                  activeJob={activeJob}
+                  onRunProbe={runProbe}
+                />
+              }
             />
           ))}
         </Routes>
@@ -221,31 +349,151 @@ function App() {
   )
 }
 
-function WorkbenchScreen({ route }: { route: ScreenSpec }) {
+function WorkbenchScreen({
+  route,
+  adapterContract,
+  adapterError,
+  jobs,
+  activeJob,
+  onRunProbe,
+}: {
+  route: ScreenSpec
+  adapterContract: AdapterContract | null
+  adapterError: string | null
+  jobs: JobRecord[]
+  activeJob: JobKind | null
+  onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+}) {
   return (
-    <section className="screen-grid">
-      <article className="screen-card screen-card-primary">
-        <p className="card-kicker">{route.eyebrow}</p>
-        <h3>{route.title}</h3>
-        <p className="screen-summary">{route.summary}</p>
+    <div className="screen-stack">
+      <section className="screen-grid">
+        <article className="screen-card screen-card-primary">
+          <p className="card-kicker">{route.eyebrow}</p>
+          <h3>{route.title}</h3>
+          <p className="screen-summary">{route.summary}</p>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">In this slice</p>
+          <ul className="bullet-list">
+            {route.stable.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Next implementation steps</p>
+          <ul className="bullet-list">
+            {route.next.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+      </section>
+
+      {route.path === '/' ? (
+        <CommandBusPanel
+          adapterContract={adapterContract}
+          adapterError={adapterError}
+          jobs={jobs}
+          activeJob={activeJob}
+          onRunProbe={onRunProbe}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function CommandBusPanel({
+  adapterContract,
+  adapterError,
+  jobs,
+  activeJob,
+  onRunProbe,
+}: {
+  adapterContract: AdapterContract | null
+  adapterError: string | null
+  jobs: JobRecord[]
+  activeJob: JobKind | null
+  onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+}) {
+  return (
+    <section className="command-grid">
+      <article className="screen-card">
+        <p className="card-kicker">Adapter contract</p>
+        <h3>Supported public command surfaces</h3>
+        <p className="screen-summary">
+          The backend adapter resolves only approved tools and keeps all job cwd values inside the repository root.
+        </p>
+        <div className="repo-root">
+          <span className="repo-root-label">Repository root</span>
+          <code>{adapterContract?.repoRoot ?? 'Loading adapter contract...'}</code>
+        </div>
+        {adapterError ? (
+          <p className="adapter-error">{adapterError}</p>
+        ) : null}
+        <div className="spec-grid">
+          {(adapterContract?.jobs ?? []).map((spec) => (
+            <section key={spec.kind} className="adapter-spec">
+              <div className="adapter-header">
+                <h4>{spec.label}</h4>
+                <span className="status-pill draft">{spec.kind}</span>
+              </div>
+              <p>{spec.notes}</p>
+              <code className="code-block">{spec.resolution}</code>
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => void onRunProbe(spec)}
+                disabled={activeJob === spec.kind}
+              >
+                {activeJob === spec.kind ? 'Running probe...' : `Run ${spec.label} probe`}
+              </button>
+            </section>
+          ))}
+        </div>
       </article>
 
       <article className="screen-card">
-        <p className="card-kicker">In this slice</p>
-        <ul className="bullet-list">
-          {route.stable.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      </article>
-
-      <article className="screen-card">
-        <p className="card-kicker">Next implementation steps</p>
-        <ul className="bullet-list">
-          {route.next.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
+        <p className="card-kicker">Deterministic jobs</p>
+        <h3>Recent adapter executions</h3>
+        <div className="job-list">
+          {jobs.length === 0 ? (
+            <p className="empty-state">
+              No jobs yet. Run a probe to validate the adapter path without touching private crate internals.
+            </p>
+          ) : (
+            jobs.map((job) => (
+              <section key={job.id} className={`job-card job-card-${job.status}`}>
+                <div className="job-topline">
+                  <div>
+                    <strong>{job.label}</strong>
+                    <p className="job-meta">{job.commandLine}</p>
+                  </div>
+                  <span className={`status-pill ${job.status}`}>
+                    {job.status}
+                  </span>
+                </div>
+                <p className="job-meta">
+                  cwd: <code>{job.cwd}</code>
+                </p>
+                <p className="job-meta">
+                  exit: {job.exitCode ?? 'pending'} | duration:{' '}
+                  {job.durationMs !== undefined ? `${job.durationMs} ms` : 'running'}
+                </p>
+                {job.stdout ? (
+                  <pre className="terminal-output">{job.stdout}</pre>
+                ) : null}
+                {job.stderr ? (
+                  <pre className="terminal-output terminal-output-error">
+                    {job.stderr}
+                  </pre>
+                ) : null}
+              </section>
+            ))
+          )}
+        </div>
       </article>
     </section>
   )

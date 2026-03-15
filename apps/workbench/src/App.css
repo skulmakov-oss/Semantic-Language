@@ -177,6 +177,11 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.screen-stack {
+  display: grid;
+  gap: 1rem;
+}
+
 .screen-card-primary {
   background:
     linear-gradient(145deg, rgba(32, 190, 167, 0.12), rgba(255, 255, 255, 0.92)),
@@ -201,6 +206,141 @@
   margin-top: 0.45rem;
 }
 
+.command-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.repo-root {
+  display: grid;
+  gap: 0.35rem;
+  margin: 1rem 0 1.2rem;
+}
+
+.repo-root-label,
+.job-meta {
+  margin: 0;
+  color: #5a6675;
+}
+
+.repo-root code,
+.code-block,
+.terminal-output {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+
+.repo-root code,
+.code-block {
+  display: block;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.85rem;
+  background: rgba(15, 23, 32, 0.08);
+  color: #0f1720;
+  overflow-x: auto;
+}
+
+.spec-grid,
+.job-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.adapter-spec,
+.job-card {
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.09);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.adapter-header,
+.job-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.adapter-spec h4,
+.job-topline strong {
+  margin: 0;
+  font-size: 1.02rem;
+  color: #0f1720;
+}
+
+.action-button {
+  margin-top: 0.9rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.12);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0f1720, #1d2a3f);
+  color: #ecf5f4;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+.action-button:hover,
+.action-button:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 32, 0.18);
+  outline: none;
+}
+
+.action-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+}
+
+.status-pill.running {
+  background: rgba(15, 23, 32, 0.1);
+  color: #374151;
+  border-color: rgba(15, 23, 32, 0.14);
+}
+
+.status-pill.success {
+  background: rgba(32, 190, 167, 0.15);
+  color: #0a5d52;
+  border-color: rgba(32, 190, 167, 0.35);
+}
+
+.status-pill.failed {
+  background: rgba(191, 51, 61, 0.14);
+  color: #8f1d29;
+  border-color: rgba(191, 51, 61, 0.3);
+}
+
+.terminal-output {
+  margin: 0.8rem 0 0;
+  padding: 0.9rem 1rem;
+  border-radius: 0.9rem;
+  background: #0f1720;
+  color: #d3e4e1;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.terminal-output-error {
+  background: #2a1114;
+  color: #ffd8d9;
+}
+
+.adapter-error,
+.empty-state {
+  margin: 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.9rem;
+  background: rgba(191, 51, 61, 0.1);
+  color: #8f1d29;
+}
+
 @media (max-width: 1180px) {
   .workbench-shell {
     grid-template-columns: 1fr;
@@ -212,7 +352,8 @@
   }
 
   .hero-grid,
-  .screen-grid {
+  .screen-grid,
+  .command-grid {
     grid-template-columns: 1fr;
   }
 }
