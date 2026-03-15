@@ -1,8 +1,10 @@
-import { startTransition, useEffect, useState } from 'react'
+import { startTransition, useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import {
   fetchAdapterContract,
   fetchOverviewSnapshot,
+  fetchSpecCatalog,
+  fetchSpecDocument,
   resolveWorkspaceRoot,
   runCliJob,
   type AdapterContract,
@@ -10,6 +12,9 @@ import {
   type JobKind,
   type JobResult,
   type OverviewSnapshot,
+  type SpecCatalogSection,
+  type SpecDocumentHeading,
+  type SpecDocumentView,
   type WorkspaceSummary,
 } from './workbench-api'
 import {
@@ -148,13 +153,13 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Spec navigation is a presentation layer over docs/spec and docs/roadmap. Workbench points at the documents; it does not fork them.',
     stable: [
-      'Route and layout for spec and roadmap navigation',
-      'Placeholder panels for trees, sections, and freshness indicators',
+      'Canonical tree over docs/spec, docs/roadmap, and synced language overview documents',
+      'Title/path search and section navigator driven by repository markdown',
       'Source-path discipline called out directly in the UI',
     ],
     next: [
-      'Index canonical spec and roadmap documents',
-      'Add search and section navigation without mutating docs',
+      'Add freshness hints and stronger release-document callouts',
+      'Keep navigator read-only even when authoring shell arrives',
     ],
   },
   {
@@ -236,9 +241,15 @@ function App() {
   )
   const [adapterError, setAdapterError] = useState<string | null>(null)
   const [snapshotError, setSnapshotError] = useState<string | null>(null)
+  const [specError, setSpecError] = useState<string | null>(null)
   const [jobs, setJobs] = useState<JobRecord[]>([])
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [activeJob, setActiveJob] = useState<JobKind | null>(null)
+  const [specCatalog, setSpecCatalog] = useState<SpecCatalogSection[]>([])
+  const [specSearch, setSpecSearch] = useState('')
+  const [selectedSpecPath, setSelectedSpecPath] = useState<string | null>(null)
+  const [selectedSpecDocument, setSelectedSpecDocument] =
+    useState<SpecDocumentView | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSummary | null>(
@@ -292,6 +303,56 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchSpecCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          setSpecCatalog(catalog)
+          setSpecError(null)
+          const firstPath = catalog[0]?.documents[0]?.relativePath
+          if (firstPath) {
+            setSelectedSpecPath((current) => current ?? firstPath)
+          }
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSpecError(String(error))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedSpecPath) {
+      return
+    }
+
+    let cancelled = false
+
+    fetchSpecDocument(selectedSpecPath)
+      .then((document) => {
+        if (!cancelled) {
+          setSelectedSpecDocument(document)
+          setSpecError(null)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSpecError(String(error))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSpecPath])
 
   useEffect(() => {
     saveWorkbenchState({
@@ -528,11 +589,18 @@ function App() {
                   overviewSnapshot={overviewSnapshot}
                   adapterError={adapterError}
                   snapshotError={snapshotError}
+                  specCatalog={specCatalog}
+                  specError={specError}
+                  specSearch={specSearch}
+                  selectedSpecDocument={selectedSpecDocument}
+                  selectedSpecPath={selectedSpecPath}
                   jobs={jobs}
                   selectedJobId={selectedJobId}
                   activeJob={activeJob}
                   onRunAction={runJobAction}
                   onRunProbe={runProbe}
+                  onSpecSearchChange={setSpecSearch}
+                  onSelectSpecPath={setSelectedSpecPath}
                   onSelectJob={setSelectedJobId}
                   selectedWorkspace={selectedWorkspace}
                   workspaceInput={workspaceInput}
@@ -558,11 +626,18 @@ function WorkbenchScreen({
   overviewSnapshot,
   adapterError,
   snapshotError,
+  specCatalog,
+  specError,
+  specSearch,
+  selectedSpecDocument,
+  selectedSpecPath,
   jobs,
   selectedJobId,
   activeJob,
   onRunAction,
   onRunProbe,
+  onSpecSearchChange,
+  onSelectSpecPath,
   onSelectJob,
   selectedWorkspace,
   workspaceInput,
@@ -578,11 +653,18 @@ function WorkbenchScreen({
   overviewSnapshot: OverviewSnapshot | null
   adapterError: string | null
   snapshotError: string | null
+  specCatalog: SpecCatalogSection[]
+  specError: string | null
+  specSearch: string
+  selectedSpecDocument: SpecDocumentView | null
+  selectedSpecPath: string | null
   jobs: JobRecord[]
   selectedJobId: string | null
   activeJob: JobKind | null
   onRunAction: (action: JobActionSpec) => Promise<void>
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
+  onSpecSearchChange: (value: string) => void
+  onSelectSpecPath: (value: string) => void
   onSelectJob: (jobId: string) => void
   selectedWorkspace: WorkspaceSummary | null
   workspaceInput: string
@@ -634,6 +716,18 @@ function WorkbenchScreen({
           onRunProbe={onRunProbe}
           onSelectJob={onSelectJob}
           selectedWorkspace={selectedWorkspace}
+        />
+      ) : null}
+
+      {route.path === '/spec' ? (
+        <SpecNavigatorPanel
+          specCatalog={specCatalog}
+          specError={specError}
+          specSearch={specSearch}
+          selectedSpecDocument={selectedSpecDocument}
+          selectedSpecPath={selectedSpecPath}
+          onSpecSearchChange={onSpecSearchChange}
+          onSelectSpecPath={onSelectSpecPath}
         />
       ) : null}
 
@@ -998,6 +1092,252 @@ function ValidationRow({
       </span>
     </section>
   )
+}
+
+function SpecNavigatorPanel({
+  specCatalog,
+  specError,
+  specSearch,
+  selectedSpecDocument,
+  selectedSpecPath,
+  onSpecSearchChange,
+  onSelectSpecPath,
+}: {
+  specCatalog: SpecCatalogSection[]
+  specError: string | null
+  specSearch: string
+  selectedSpecDocument: SpecDocumentView | null
+  selectedSpecPath: string | null
+  onSpecSearchChange: (value: string) => void
+  onSelectSpecPath: (value: string) => void
+}) {
+  const query = specSearch.trim().toLowerCase()
+  const filteredSections = specCatalog
+    .map((section) => ({
+      ...section,
+      documents: section.documents.filter((document) => {
+        if (!query) {
+          return true
+        }
+
+        const haystack = `${document.title} ${document.relativePath}`.toLowerCase()
+        return haystack.includes(query)
+      }),
+    }))
+    .filter((section) => section.documents.length > 0)
+
+  return (
+    <section className="spec-shell">
+      <article className="screen-card spec-sidebar-panel">
+        <p className="card-kicker">Canonical document tree</p>
+        <h3>Spec and roadmap navigator</h3>
+        <label className="field-label" htmlFor="spec-search">
+          Search titles and paths
+        </label>
+        <input
+          id="spec-search"
+          className="text-field"
+          type="text"
+          value={specSearch}
+          onChange={(event) => onSpecSearchChange(event.target.value)}
+          placeholder="Search syntax, vm, readiness, release..."
+        />
+        {specError ? <p className="adapter-error">{specError}</p> : null}
+        <div className="spec-section-list">
+          {filteredSections.length === 0 ? (
+            <p className="empty-state">No canonical documents match the current search.</p>
+          ) : (
+            filteredSections.map((section) => (
+              <section key={section.key} className="spec-section-card">
+                <p className="card-kicker">{section.title}</p>
+                <div className="spec-doc-list">
+                  {section.documents.map((document) => (
+                    <button
+                      key={document.relativePath}
+                      type="button"
+                      className={`spec-doc-button ${selectedSpecPath === document.relativePath ? 'spec-doc-button-active' : ''}`}
+                      onClick={() => onSelectSpecPath(document.relativePath)}
+                    >
+                      <span className="spec-doc-title">{document.title}</span>
+                      <span className="spec-doc-path">{document.relativePath}</span>
+                      {document.status ? (
+                        <span className={`status-pill ${statusTone(document.status)}`}>
+                          {document.status}
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      </article>
+
+      <article className="screen-card spec-document-panel">
+        {selectedSpecDocument ? (
+          <div className="screen-stack">
+            <div className="document-topline">
+              <div>
+                <p className="card-kicker">{selectedSpecDocument.sectionTitle}</p>
+                <h3>{selectedSpecDocument.title}</h3>
+              </div>
+              {selectedSpecDocument.status ? (
+                <span className={`status-pill ${statusTone(selectedSpecDocument.status)}`}>
+                  {selectedSpecDocument.status}
+                </span>
+              ) : null}
+            </div>
+            <p className="job-meta">
+              source path: <code>{selectedSpecDocument.absolutePath}</code>
+            </p>
+            <div className="spec-document-grid">
+              <aside className="spec-outline-panel">
+                <p className="card-kicker">Section navigator</p>
+                <div className="spec-outline-list">
+                  {selectedSpecDocument.headings.map((heading) => (
+                    <button
+                      key={heading.anchor}
+                      type="button"
+                      className={`spec-outline-button spec-outline-level-${heading.level}`}
+                      onClick={() => jumpToHeading(heading.anchor)}
+                    >
+                      {heading.title}
+                    </button>
+                  ))}
+                </div>
+              </aside>
+
+              <div className="markdown-sheet">
+                {renderMarkdown(selectedSpecDocument.markdown, selectedSpecDocument.headings)}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="empty-state">
+            Select a canonical document to inspect its headings and body.
+          </p>
+        )}
+      </article>
+    </section>
+  )
+}
+
+function jumpToHeading(anchor: string) {
+  const element = globalThis.document?.getElementById(anchor)
+  element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function statusTone(status: string) {
+  const normalized = status.toLowerCase()
+  if (
+    normalized.includes('stable') ||
+    normalized.includes('validated') ||
+    normalized.includes('ready')
+  ) {
+    return 'stable'
+  }
+
+  if (normalized.includes('failed')) {
+    return 'failed'
+  }
+
+  return 'draft'
+}
+
+function renderMarkdown(markdown: string, headings: SpecDocumentHeading[]) {
+  const headingAnchors = new Map(headings.map((heading) => [heading.title, heading.anchor]))
+  const lines = markdown.split(/\r?\n/)
+  const nodes: ReactNode[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index]
+    const trimmed = line.trim()
+
+    if (!trimmed) {
+      index += 1
+      continue
+    }
+
+    if (trimmed.startsWith('```')) {
+      const codeLines: string[] = []
+      index += 1
+      while (index < lines.length && !lines[index].trim().startsWith('```')) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+      index += 1
+      nodes.push(
+        <pre key={`code-${index}`} className="terminal-output">
+          {codeLines.join('\n')}
+        </pre>,
+      )
+      continue
+    }
+
+    const headingMatch = /^(#{1,3})\s+(.*)$/.exec(trimmed)
+    if (headingMatch) {
+      const level = headingMatch[1].length
+      const title = headingMatch[2].trim()
+      const anchor = headingAnchors.get(title) ?? `heading-${index}`
+      if (level === 1) {
+        nodes.push(
+          <h1 key={anchor} id={anchor} className="markdown-heading markdown-heading-1">
+            {title}
+          </h1>,
+        )
+      } else if (level === 2) {
+        nodes.push(
+          <h2 key={anchor} id={anchor} className="markdown-heading markdown-heading-2">
+            {title}
+          </h2>,
+        )
+      } else {
+        nodes.push(
+          <h3 key={anchor} id={anchor} className="markdown-heading markdown-heading-3">
+            {title}
+          </h3>,
+        )
+      }
+      index += 1
+      continue
+    }
+
+    if (trimmed.startsWith('- ')) {
+      const bullets: string[] = []
+      while (index < lines.length && lines[index].trim().startsWith('- ')) {
+        bullets.push(lines[index].trim().slice(2))
+        index += 1
+      }
+      nodes.push(
+        <ul key={`list-${index}`} className="bullet-list">
+          {bullets.map((bullet) => (
+            <li key={`${bullet}-${index}`}>{bullet}</li>
+          ))}
+        </ul>,
+      )
+      continue
+    }
+
+    const paragraphLines: string[] = []
+    while (index < lines.length) {
+      const next = lines[index].trim()
+      if (!next || next.startsWith('#') || next.startsWith('- ') || next.startsWith('```')) {
+        break
+      }
+      paragraphLines.push(lines[index].trim())
+      index += 1
+    }
+
+    nodes.push(
+      <p key={`p-${index}`} className="markdown-paragraph">
+        {paragraphLines.join(' ')}
+      </p>,
+    )
+  }
+
+  return nodes
 }
 
 function ProjectPanel({

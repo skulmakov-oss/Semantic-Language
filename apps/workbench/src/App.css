@@ -183,6 +183,13 @@
   gap: 1rem;
 }
 
+.spec-shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.4fr);
+  gap: 1rem;
+  align-items: start;
+}
+
 .screen-stack {
   display: grid;
   gap: 1rem;
@@ -300,6 +307,13 @@
   gap: 0.85rem;
 }
 
+.spec-section-list,
+.spec-doc-list,
+.spec-outline-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .workflow-grid,
 .job-output-stack {
   display: grid;
@@ -396,6 +410,114 @@
 .job-detail-stack {
   display: grid;
   gap: 0.8rem;
+}
+
+.spec-section-card {
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.09);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.spec-doc-button,
+.spec-outline-button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(15, 23, 32, 0.1);
+  border-radius: 0.95rem;
+  background: rgba(255, 255, 255, 0.75);
+  color: #0f1720;
+  font: inherit;
+  cursor: pointer;
+}
+
+.spec-doc-button {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+}
+
+.spec-doc-button:hover,
+.spec-doc-button:focus-visible,
+.spec-outline-button:hover,
+.spec-outline-button:focus-visible {
+  border-color: rgba(32, 190, 167, 0.45);
+  outline: none;
+}
+
+.spec-doc-button-active {
+  border-color: rgba(32, 190, 167, 0.55);
+  background:
+    linear-gradient(145deg, rgba(32, 190, 167, 0.1), rgba(255, 255, 255, 0.92)),
+    rgba(255, 255, 255, 0.75);
+}
+
+.spec-doc-title {
+  font-weight: 700;
+}
+
+.spec-doc-path {
+  color: #5a6675;
+  font-size: 0.88rem;
+  word-break: break-word;
+}
+
+.spec-document-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.5fr) minmax(0, 1.5fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.spec-outline-panel {
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.09);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.spec-outline-button {
+  padding: 0.75rem 0.9rem;
+}
+
+.spec-outline-level-2 {
+  padding-left: 1.25rem;
+}
+
+.spec-outline-level-3 {
+  padding-left: 1.75rem;
+}
+
+.markdown-sheet {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem 1.15rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.09);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.markdown-heading {
+  margin: 0.2rem 0 0;
+  color: #0f1720;
+}
+
+.markdown-heading-1 {
+  font-size: 1.35rem;
+}
+
+.markdown-heading-2 {
+  font-size: 1.15rem;
+}
+
+.markdown-heading-3 {
+  font-size: 1rem;
+}
+
+.markdown-paragraph {
+  margin: 0;
+  color: var(--text-soft-strong);
+  line-height: 1.6;
 }
 
 .action-button {
@@ -573,6 +695,8 @@
   .hero-grid,
   .screen-grid,
   .overview-grid,
+  .spec-shell,
+  .spec-document-grid,
   .command-grid {
     grid-template-columns: 1fr;
   }
