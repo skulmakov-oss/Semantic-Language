@@ -2,12 +2,14 @@ import { startTransition, useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import {
   fetchAdapterContract,
+  fetchOverviewSnapshot,
   resolveWorkspaceRoot,
   runCliJob,
   type AdapterContract,
   type AdapterJobSpec,
   type JobKind,
   type JobResult,
+  type OverviewSnapshot,
   type WorkspaceSummary,
 } from './workbench-api'
 import {
@@ -31,6 +33,7 @@ type ScreenSpec = {
 
 type JobRecord = {
   id: string
+  kind: JobKind
   label: string
   status: 'running' | 'success' | 'failed'
   commandLine: string
@@ -170,7 +173,11 @@ function App() {
   const [adapterContract, setAdapterContract] = useState<AdapterContract | null>(
     null,
   )
+  const [overviewSnapshot, setOverviewSnapshot] = useState<OverviewSnapshot | null>(
+    null,
+  )
   const [adapterError, setAdapterError] = useState<string | null>(null)
+  const [snapshotError, setSnapshotError] = useState<string | null>(null)
   const [jobs, setJobs] = useState<JobRecord[]>([])
   const [activeJob, setActiveJob] = useState<JobKind | null>(null)
   const [workspaceInput, setWorkspaceInput] = useState('')
@@ -198,6 +205,27 @@ function App() {
       .catch((error) => {
         if (!cancelled) {
           setAdapterError(String(error))
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchOverviewSnapshot()
+      .then((snapshot) => {
+        if (!cancelled) {
+          startTransition(() => setOverviewSnapshot(snapshot))
+          setSnapshotError(null)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSnapshotError(String(error))
         }
       })
 
@@ -240,6 +268,7 @@ function App() {
       setJobs((current) => [
         {
           id,
+          kind: spec.kind,
           label: spec.label,
           status: 'running',
           commandLine: [spec.label, ...spec.exampleArgs].join(' '),
@@ -380,35 +409,35 @@ function App() {
       <main className="main-panel">
         <header className="topbar">
           <div>
-            <p className="eyebrow">WB-04 Project open and workspace settings</p>
-            <h2>Workspace-aware jobs without inventing project metadata</h2>
+            <p className="eyebrow">WB-0.1 Cockpit</p>
+            <h2>Operations cockpit from repository truth, not UI guesswork</h2>
           </div>
           <div className="status-cluster">
             <span className="status-pill stable">Stable now: shell, adapter contract, workspace context</span>
-            <span className="status-pill draft">Draft target: cockpit signals from real git and validation state</span>
+            <span className="status-pill draft">Draft target: richer diagnostics, formatter, and inspectors</span>
           </div>
         </header>
 
         <section className="hero-grid">
           <article className="hero-card">
             <p className="card-kicker">Current slice</p>
-            <h3>Jobs now inherit explicit workspace context</h3>
+            <h3>Repository identity and release truth surface together</h3>
             <p>
-              The shell now resolves and persists a canonical workspace root, keeps recent projects, and feeds that root into every adapter execution.
+              The overview now surfaces branch, commit, baseline tag, baseline manifest, release documents, and known limits from real repository sources.
             </p>
           </article>
           <article className="hero-card">
             <p className="card-kicker">Do not cross</p>
-            <h3>No alternate package or repository semantics</h3>
+            <h3>No alternate readiness model inside the UI</h3>
             <p>
-              Workbench stores only local UI state. Workspace roots are canonicalized by the backend adapter and still constrained to the repository tree.
+              Workbench stores only local UI state. Readiness, compatibility, and release validity still come from repository docs and real command output.
             </p>
           </article>
           <article className="hero-card">
             <p className="card-kicker">Immediate next</p>
-            <h3>Operations cockpit on top of real state</h3>
+            <h3>Project explorer and authoring shell</h3>
             <p>
-              `WB-05` should surface branch, commit, baseline tag, and validation signals from real commands and documents.
+              `WB-09` should build the first editor-facing loop on top of this cockpit without inventing parser, verifier, or runtime semantics.
             </p>
           </article>
         </section>
@@ -422,7 +451,9 @@ function App() {
                 <WorkbenchScreen
                   route={route}
                   adapterContract={adapterContract}
+                  overviewSnapshot={overviewSnapshot}
                   adapterError={adapterError}
+                  snapshotError={snapshotError}
                   jobs={jobs}
                   activeJob={activeJob}
                   onRunProbe={runProbe}
@@ -447,7 +478,9 @@ function App() {
 function WorkbenchScreen({
   route,
   adapterContract,
+  overviewSnapshot,
   adapterError,
+  snapshotError,
   jobs,
   activeJob,
   onRunProbe,
@@ -462,7 +495,9 @@ function WorkbenchScreen({
 }: {
   route: ScreenSpec
   adapterContract: AdapterContract | null
+  overviewSnapshot: OverviewSnapshot | null
   adapterError: string | null
+  snapshotError: string | null
   jobs: JobRecord[]
   activeJob: JobKind | null
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
@@ -506,7 +541,9 @@ function WorkbenchScreen({
       {route.path === '/' ? (
         <CommandBusPanel
           adapterContract={adapterContract}
+          overviewSnapshot={overviewSnapshot}
           adapterError={adapterError}
+          snapshotError={snapshotError}
           jobs={jobs}
           activeJob={activeJob}
           onRunProbe={onRunProbe}
@@ -539,21 +576,135 @@ function WorkbenchScreen({
 
 function CommandBusPanel({
   adapterContract,
+  overviewSnapshot,
   adapterError,
+  snapshotError,
   jobs,
   activeJob,
   onRunProbe,
   selectedWorkspace,
 }: {
   adapterContract: AdapterContract | null
+  overviewSnapshot: OverviewSnapshot | null
   adapterError: string | null
+  snapshotError: string | null
   jobs: JobRecord[]
   activeJob: JobKind | null
   onRunProbe: (spec: AdapterJobSpec) => Promise<void>
   selectedWorkspace: WorkspaceSummary | null
 }) {
+  const latestCargo = latestJobOfKind(jobs, 'cargo')
+  const latestSmc = latestJobOfKind(jobs, 'smc')
+  const latestSvm = latestJobOfKind(jobs, 'svm')
+  const latestBundle = latestJobOfKind(jobs, 'release_bundle_verify')
+
   return (
-    <section className="command-grid">
+    <div className="screen-stack">
+      <section className="overview-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Repository snapshot</p>
+          <h3>Current git and baseline identity</h3>
+          {snapshotError ? <p className="adapter-error">{snapshotError}</p> : null}
+          <dl className="facts-grid">
+            <div>
+              <dt>Branch</dt>
+              <dd>{overviewSnapshot?.branch ?? 'Loading...'}</dd>
+            </div>
+            <div>
+              <dt>Commit</dt>
+              <dd>
+                <code>{overviewSnapshot?.shortCommit ?? 'Loading...'}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>Head tags</dt>
+              <dd>
+                {overviewSnapshot?.headTags.length ? (
+                  overviewSnapshot.headTags.join(', ')
+                ) : (
+                  'No tags on HEAD'
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Baseline tag</dt>
+              <dd>
+                {overviewSnapshot
+                  ? overviewSnapshot.baselineTagPointsAtHead
+                    ? `${overviewSnapshot.baselineTagName} on HEAD`
+                    : `${overviewSnapshot.baselineTagName} exists off HEAD`
+                  : 'Loading...'}
+              </dd>
+            </div>
+            <div className="facts-grid-wide">
+              <dt>Baseline manifest</dt>
+              <dd>
+                {overviewSnapshot?.baselineManifestExists ? 'Present' : 'Missing'}
+                {overviewSnapshot ? (
+                  <>
+                    {' '}
+                    <code>{overviewSnapshot.baselineManifestPath}</code>
+                  </>
+                ) : null}
+              </dd>
+            </div>
+            <div className="facts-grid-wide">
+              <dt>Workspace root</dt>
+              <dd>
+                <code>{selectedWorkspace?.resolvedPath ?? adapterContract?.repoRoot ?? 'Loading...'}</code>
+              </dd>
+            </div>
+          </dl>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Latest local validation activity</p>
+          <h3>Signals from real commands</h3>
+          <div className="activity-list">
+            <ValidationRow label="Cargo" job={latestCargo} />
+            <ValidationRow label="smc" job={latestSmc} />
+            <ValidationRow label="svm" job={latestSvm} />
+            <ValidationRow label="Release bundle verify" job={latestBundle} />
+          </div>
+        </article>
+      </section>
+
+      <section className="overview-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Release docs</p>
+          <h3>Readiness and compatibility pointers</h3>
+          <div className="document-list">
+            {(overviewSnapshot?.releaseDocs ?? []).map((document) => (
+              <section key={document.key} className="document-card">
+                <div className="document-topline">
+                  <strong>{document.title}</strong>
+                  {document.status ? (
+                    <span className="status-pill stable">{document.status}</span>
+                  ) : null}
+                </div>
+                <p className="job-meta">
+                  <code>{document.path}</code>
+                </p>
+                {document.highlight ? (
+                  <p className="document-highlight">{document.highlight}</p>
+                ) : null}
+              </section>
+            ))}
+          </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Current known limits</p>
+          <h3>Honesty rules carried from readiness</h3>
+          <ul className="bullet-list">
+            {(overviewSnapshot?.knownLimits ?? []).map((limit) => (
+              <li key={limit}>{limit}</li>
+            ))}
+          </ul>
+        </article>
+      </section>
+
+      <section className="command-grid">
       <article className="screen-card">
         <p className="card-kicker">Adapter contract</p>
         <h3>Supported public command surfaces</h3>
@@ -633,6 +784,27 @@ function CommandBusPanel({
           )}
         </div>
       </article>
+      </section>
+    </div>
+  )
+}
+
+function ValidationRow({
+  label,
+  job,
+}: {
+  label: string
+  job?: JobRecord
+}) {
+  return (
+    <section className="validation-row">
+      <div>
+        <strong>{label}</strong>
+        <p className="job-meta">{job ? job.commandLine : 'No local run yet'}</p>
+      </div>
+      <span className={`status-pill ${job?.status ?? 'draft'}`}>
+        {job?.status ?? 'not run'}
+      </span>
     </section>
   )
 }
@@ -833,6 +1005,10 @@ function SettingsPanel({
       </article>
     </section>
   )
+}
+
+function latestJobOfKind(jobs: JobRecord[], kind: JobKind) {
+  return jobs.find((job) => job.kind === kind)
 }
 
 export default App

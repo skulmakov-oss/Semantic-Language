@@ -39,6 +39,28 @@ export type WorkspaceSummary = {
   isRepoRoot: boolean
 }
 
+export type OverviewDocument = {
+  key: string
+  title: string
+  path: string
+  status: string | null
+  highlight: string | null
+}
+
+export type OverviewSnapshot = {
+  repoRoot: string
+  branch: string
+  headCommit: string
+  shortCommit: string
+  headTags: string[]
+  baselineTagName: string
+  baselineTagPointsAtHead: boolean
+  baselineManifestPath: string
+  baselineManifestExists: boolean
+  releaseDocs: OverviewDocument[]
+  knownLimits: string[]
+}
+
 export async function fetchAdapterContract() {
   return invoke<AdapterContract>('get_adapter_contract')
 }
@@ -49,4 +71,8 @@ export async function runCliJob(request: JobRequest) {
 
 export async function resolveWorkspaceRoot(candidate?: string) {
   return invoke<WorkspaceSummary>('resolve_workspace_root', { candidate })
+}
+
+export async function fetchOverviewSnapshot() {
+  return invoke<OverviewSnapshot>('get_overview_snapshot')
 }

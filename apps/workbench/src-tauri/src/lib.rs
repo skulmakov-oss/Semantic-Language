@@ -1,4 +1,5 @@
 mod adapter;
+mod snapshot;
 
 use adapter::{
   adapter_contract,
@@ -9,6 +10,7 @@ use adapter::{
   JobResult,
   WorkspaceSummary,
 };
+use snapshot::{read_overview_snapshot, OverviewSnapshot};
 
 #[tauri::command]
 fn get_adapter_contract() -> Result<AdapterContract, String> {
@@ -27,6 +29,11 @@ fn resolve_workspace_root(candidate: Option<String>) -> Result<WorkspaceSummary,
   resolve_workspace(candidate)
 }
 
+#[tauri::command]
+fn get_overview_snapshot() -> Result<OverviewSnapshot, String> {
+  read_overview_snapshot()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -43,7 +50,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       get_adapter_contract,
       run_cli_job,
-      resolve_workspace_root
+      resolve_workspace_root,
+      get_overview_snapshot
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

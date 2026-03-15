@@ -217,7 +217,7 @@ fn resolve_semantic_cli(
   ("cargo".into(), fallback_args)
 }
 
-fn repo_root() -> Result<PathBuf, String> {
+pub fn repo_root() -> Result<PathBuf, String> {
   let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   base
     .join("..")
