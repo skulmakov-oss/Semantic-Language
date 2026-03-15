@@ -204,13 +204,13 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Release is the eventual command center for gates, bundle verification, asset smoke, docs alignment, and known limits. Every signal must remain explainable.',
     stable: [
-      'Release route anchored around gates, assets, and docs alignment',
+      'Release route anchored around canonical release docs and baseline artifacts',
       'Known-limits panel separated from pass/fail gates',
-      'Reminder that release-valid comes only from real checks',
+      'Freshness hints and source paths shown for release-facing documents',
     ],
     next: [
-      'Wire release bundle verification and smoke matrix status',
       'Export a validation report from real job history',
+      'Keep release map in sync with future operate slices without adding UI-owned scoring',
     ],
   },
   {
@@ -731,6 +731,15 @@ function WorkbenchScreen({
         />
       ) : null}
 
+      {route.path === '/release' ? (
+        <ReleasePanel
+          overviewSnapshot={overviewSnapshot}
+          specCatalog={specCatalog}
+          jobs={jobs}
+          selectedWorkspace={selectedWorkspace}
+        />
+      ) : null}
+
       {route.path === '/project' ? (
         <ProjectPanel
           adapterContract={adapterContract}
@@ -1223,6 +1232,169 @@ function SpecNavigatorPanel({
   )
 }
 
+function ReleasePanel({
+  overviewSnapshot,
+  specCatalog,
+  jobs,
+  selectedWorkspace,
+}: {
+  overviewSnapshot: OverviewSnapshot | null
+  specCatalog: SpecCatalogSection[]
+  jobs: JobRecord[]
+  selectedWorkspace: WorkspaceSummary | null
+}) {
+  const releaseSection = specCatalog.find((section) => section.key === 'release')
+  const latestCargo = latestJobOfKind(jobs, 'cargo')
+  const latestSmc = latestJobOfKind(jobs, 'smc')
+  const latestSvm = latestJobOfKind(jobs, 'svm')
+  const latestBundle = latestJobOfKind(jobs, 'release_bundle_verify')
+
+  return (
+    <div className="screen-stack">
+      <section className="overview-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Release identity</p>
+          <h3>What the current line is anchored to</h3>
+          <dl className="facts-grid">
+            <div>
+              <dt>Branch</dt>
+              <dd>{overviewSnapshot?.branch ?? 'Loading...'}</dd>
+            </div>
+            <div>
+              <dt>HEAD</dt>
+              <dd>
+                <code>{overviewSnapshot?.shortCommit ?? 'Loading...'}</code>
+              </dd>
+            </div>
+            <div className="facts-grid-wide">
+              <dt>Baseline tag</dt>
+              <dd>
+                {overviewSnapshot
+                  ? overviewSnapshot.baselineTagPointsAtHead
+                    ? `${overviewSnapshot.baselineTagName} on HEAD`
+                    : `${overviewSnapshot.baselineTagName} exists off HEAD`
+                  : 'Loading...'}
+              </dd>
+            </div>
+            <div className="facts-grid-wide">
+              <dt>Baseline manifest</dt>
+              <dd>
+                {overviewSnapshot?.baselineManifestExists ? 'Present' : 'Missing'}
+                {overviewSnapshot ? (
+                  <>
+                    {' '}
+                    <code>{overviewSnapshot.baselineManifestPath}</code>
+                  </>
+                ) : null}
+              </dd>
+            </div>
+            <div className="facts-grid-wide">
+              <dt>Active workspace</dt>
+              <dd>
+                <code>{selectedWorkspace?.resolvedPath ?? overviewSnapshot?.repoRoot ?? 'Loading...'}</code>
+              </dd>
+            </div>
+          </dl>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Release-critical jobs</p>
+          <h3>Signals from actual command history</h3>
+          <div className="activity-list">
+            <ValidationRow label="Workspace tests" job={latestCargo} />
+            <ValidationRow label="smc workflows" job={latestSmc} />
+            <ValidationRow label="svm workflows" job={latestSvm} />
+            <ValidationRow label="Bundle verification" job={latestBundle} />
+          </div>
+        </article>
+      </section>
+
+      <section className="command-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Release-facing docs</p>
+          <h3>Source paths and freshness from repository files</h3>
+          <div className="document-list">
+            {(releaseSection?.documents ?? []).map((document) => (
+              <section key={document.relativePath} className="document-card">
+                <div className="document-topline">
+                  <strong>{document.title}</strong>
+                  <span className={`status-pill ${statusTone(document.status ?? 'draft')}`}>
+                    {document.status ?? 'draft'}
+                  </span>
+                </div>
+                <p className="job-meta">
+                  path: <code>{document.absolutePath}</code>
+                </p>
+                <p className="job-meta">
+                  freshness: {formatFreshness(document.modifiedEpochMs)}
+                </p>
+              </section>
+            ))}
+          </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Readiness truths</p>
+          <h3>Known limits and validated tag callouts</h3>
+          <div className="screen-stack">
+            <section className="document-card">
+              <div className="document-topline">
+                <strong>Known limits</strong>
+                <span className="status-pill draft">honesty</span>
+              </div>
+              <ul className="bullet-list">
+                {(overviewSnapshot?.knownLimits ?? []).map((limit) => (
+                  <li key={limit}>{limit}</li>
+                ))}
+              </ul>
+            </section>
+            <section className="document-card">
+              <div className="document-topline">
+                <strong>Current validated tag</strong>
+                <span className="status-pill stable">derived</span>
+              </div>
+              <div className="document-list">
+                {(overviewSnapshot?.releaseDocs ?? [])
+                  .filter((document) => document.highlight)
+                  .map((document) => (
+                    <div key={document.key}>
+                      <p className="job-meta">
+                        <code>{document.path}</code>
+                      </p>
+                      <p className="document-highlight">{document.highlight}</p>
+                    </div>
+                  ))}
+              </div>
+            </section>
+          </div>
+        </article>
+      </section>
+
+      <section className="command-grid">
+        <article className="screen-card">
+          <p className="card-kicker">No second release model</p>
+          <h3>What the UI must not do</h3>
+          <ul className="bullet-list">
+            <li>Do not invent a release score that is not backed by repository docs or job output.</li>
+            <li>Do not hide known limits behind green local commands.</li>
+            <li>Do not claim stable readiness unless the canonical release documents and bundle checks say so.</li>
+          </ul>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Next operate slices</p>
+          <h3>What still belongs to later PRs</h3>
+          <ul className="bullet-list">
+            <li>`WB-16` will formalize the release console around gate views and artifact lists.</li>
+            <li>`WB-17` will add one-click validation runs and report export.</li>
+            <li>This slice stays presentation-only over current release artifacts.</li>
+          </ul>
+        </article>
+      </section>
+    </div>
+  )
+}
+
 function jumpToHeading(anchor: string) {
   const element = globalThis.document?.getElementById(anchor)
   element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -1243,6 +1415,27 @@ function statusTone(status: string) {
   }
 
   return 'draft'
+}
+
+function formatFreshness(modifiedEpochMs: number | null) {
+  if (!modifiedEpochMs) {
+    return 'unknown'
+  }
+
+  const deltaMs = Date.now() - modifiedEpochMs
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+
+  if (deltaMs < hour) {
+    return `${Math.max(1, Math.round(deltaMs / minute))} min ago`
+  }
+
+  if (deltaMs < day) {
+    return `${Math.max(1, Math.round(deltaMs / hour))} hr ago`
+  }
+
+  return `${Math.max(1, Math.round(deltaMs / day))} day ago`
 }
 
 function renderMarkdown(markdown: string, headings: SpecDocumentHeading[]) {

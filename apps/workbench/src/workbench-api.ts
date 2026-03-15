@@ -67,6 +67,7 @@ export type SpecCatalogDocument = {
   relativePath: string
   absolutePath: string
   status: string | null
+  modifiedEpochMs: number | null
 }
 
 export type SpecCatalogSection = {
@@ -89,6 +90,7 @@ export type SpecDocumentView = {
   relativePath: string
   absolutePath: string
   status: string | null
+  modifiedEpochMs: number | null
   markdown: string
   headings: SpecDocumentHeading[]
 }

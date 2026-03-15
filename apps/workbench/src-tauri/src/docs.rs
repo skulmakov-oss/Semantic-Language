@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 struct DocEntryDef {
   key: &'static str,
@@ -247,6 +248,7 @@ pub struct SpecCatalogDocument {
   pub relative_path: String,
   pub absolute_path: String,
   pub status: Option<String>,
+  pub modified_epoch_ms: Option<u128>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -275,6 +277,7 @@ pub struct SpecDocumentView {
   pub relative_path: String,
   pub absolute_path: String,
   pub status: Option<String>,
+  pub modified_epoch_ms: Option<u128>,
   pub markdown: String,
   pub headings: Vec<SpecDocumentHeading>,
 }
@@ -298,6 +301,7 @@ pub fn read_spec_catalog() -> Result<Vec<SpecCatalogSection>, String> {
         relative_path: entry.relative_path.to_owned(),
         absolute_path: path.to_string_lossy().into_owned(),
         status: status_line(&markdown),
+        modified_epoch_ms: modified_epoch_ms(&path),
       });
   }
 
@@ -331,6 +335,7 @@ pub fn read_spec_document(relative_path: String) -> Result<SpecDocumentView, Str
     relative_path: entry.relative_path.to_owned(),
     absolute_path: path.to_string_lossy().into_owned(),
     status: status_line(&markdown),
+    modified_epoch_ms: modified_epoch_ms(&path),
     markdown: markdown.clone(),
     headings: extract_headings(&markdown),
   })
@@ -416,4 +421,12 @@ fn slugify(input: &str) -> String {
   }
 
   slug.trim_matches('-').to_owned()
+}
+
+fn modified_epoch_ms(path: &Path) -> Option<u128> {
+  fs::metadata(path)
+    .ok()
+    .and_then(|metadata| metadata.modified().ok())
+    .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+    .map(|duration| duration.as_millis())
 }
