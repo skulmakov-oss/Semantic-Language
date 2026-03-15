@@ -4,6 +4,9 @@ Workbench beta packaging is intentionally a thin release layer over the
 integrated desktop shell. It does not introduce a second installer-specific
 workflow or alternate runtime model.
 
+Release posture, stable-versus-experimental workflow labels, and known limits
+for the beta line are tracked in `docs/workbench/beta_release_notes.md`.
+
 ## Current Beta Package
 
 The current beta-facing package is a portable zip built from the Tauri release

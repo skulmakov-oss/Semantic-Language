@@ -37,6 +37,16 @@ This builds the release executable, creates a portable beta zip, launches the
 packaged app for a short smoke window, and records evidence under
 `artifacts/workbench/beta-smoke/`.
 
+## Beta Notes
+
+See:
+
+- `docs/workbench/beta_release_notes.md`
+- `docs/workbench/beta_packaging.md`
+
+These pages distinguish stable-now versus experimental workflows and document
+the current beta known limits without promising behavior beyond `main`.
+
 ## Scope Guard
 
 The first implementation waves must continue to respect the repository rule that
