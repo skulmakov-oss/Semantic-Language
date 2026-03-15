@@ -124,6 +124,10 @@ The first family that should move from roadmap to detailed contract is probably
 The second likely family is `std.text`, because strings are one of the biggest
 maturity gaps for the language today.
 
+The concrete first-family contract is defined in:
+
+- `docs/roadmap/language_maturity/std_math_surface.md`
+
 ## Cross-References
 
 This family map depends on:

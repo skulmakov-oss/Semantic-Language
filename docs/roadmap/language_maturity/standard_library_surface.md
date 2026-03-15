@@ -115,6 +115,10 @@ The first intentional stdlib family map is defined in:
 
 - `docs/roadmap/language_maturity/stdlib_module_families.md`
 
+The first concrete family contract is:
+
+- `docs/roadmap/language_maturity/std_math_surface.md`
+
 ## Compatibility Rules
 
 The stdlib cannot be treated as loose examples. Once a family is stabilized, it
@@ -147,6 +151,5 @@ This workstream should be considered materially started only when:
 
 ## Immediate Next Slice
 
-The immediate next slice for this PR is to define the first module-family map
-and the builtin-vs-stdlib boundary, because that turns "stdlib" from a slogan
-into an actual library plan.
+The immediate next slice after that boundary work is the first concrete family
+contract, starting with `std.math`.
