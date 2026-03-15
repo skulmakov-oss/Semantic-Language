@@ -71,6 +71,17 @@ type JobActionSpec = {
   cwdMode: 'repo' | 'workspace'
 }
 
+type InspectFamily = 'verify' | 'disasm' | 'verified-run'
+
+type InspectableJob = {
+  job: JobRecord
+  family: InspectFamily
+  artifactPath: string | null
+  summary: string
+  stdoutText: string | null
+  stderrText: string | null
+}
+
 type EditorTab = {
   relativePath: string
   absolutePath: string
@@ -121,6 +132,13 @@ const workflowActions: JobActionSpec[] = [
     label: 'Disassemble semantic stress bytecode',
     args: ['disasm', 'target/semantic_policy_overdrive_trace.smc'],
     notes: 'Inspect the compiled SemCode artifact with the public disasm surface.',
+    cwdMode: 'repo',
+  },
+  {
+    kind: 'smc',
+    label: 'Verify compiled semantic stress bytecode',
+    args: ['verify', 'target/semantic_policy_overdrive_trace.smc'],
+    notes: 'Verify the compiled SemCode artifact through the canonical smc verify surface.',
     cwdMode: 'repo',
   },
   {
@@ -210,12 +228,12 @@ const routeSpecs: ScreenSpec[] = [
     summary:
       'Inspect is where Workbench will render SemCode, verifier output, and runtime summaries. It stays downstream from existing execution contracts.',
     stable: [
-      'Route reserved for disasm, verify, trace, and quota summaries',
+      'Dedicated inspector over smc verify, svm disasm, and verified-run jobs',
+      'Raw command output is preserved as the only bytecode, verifier, and runtime source of truth',
       'Clear note that source-level debugging is not promised yet',
-      'Explicit separation between inspection and execution ownership',
     ],
     next: [
-      'Render real svm disasm output and verified-path summaries',
+      'Fold richer trace and quota summaries into the same inspect route',
       'Add trace and runtime summaries without inventing VM semantics',
     ],
   },
@@ -1006,6 +1024,14 @@ function WorkbenchScreen({
         />
       ) : null}
 
+      {route.path === '/inspect' ? (
+        <InspectPanel
+          jobs={jobs}
+          selectedJobId={selectedJobId}
+          onSelectJob={onSelectJob}
+        />
+      ) : null}
+
       {route.path === '/settings' ? (
         <SettingsPanel
           settings={settings}
@@ -1744,6 +1770,128 @@ function formatDiagnosticLocation(diagnostic: WorkbenchDiagnostic) {
   }
 
   return filePart
+}
+
+const inspectFamilyOrder: InspectFamily[] = ['verify', 'disasm', 'verified-run']
+
+function inspectFamilyLabel(family: InspectFamily) {
+  switch (family) {
+    case 'verify':
+      return 'Verify'
+    case 'disasm':
+      return 'Disasm'
+    case 'verified-run':
+      return 'Verified run'
+  }
+}
+
+function inspectFamilyDescription(family: InspectFamily) {
+  switch (family) {
+    case 'verify':
+      return 'Verification reports over compiled SemCode artifacts.'
+    case 'disasm':
+      return 'Read-only SemCode inspection from the public disassembly surface.'
+    case 'verified-run':
+      return 'Execution results for bytecode that passed the verified path.'
+  }
+}
+
+function deriveInspectableJobs(jobs: JobRecord[]): InspectableJob[] {
+  return jobs.flatMap((job) => {
+    const family = classifyInspectFamily(job)
+    if (!family) {
+      return []
+    }
+
+    const stdoutText = normalizeInspectOutput(job.stdout)
+    const stderrText = normalizeInspectOutput(job.stderr)
+
+    return [
+      {
+        job,
+        family,
+        artifactPath: extractInspectArtifactPath(job, family),
+        summary: summarizeInspectJob(job, stdoutText, stderrText),
+        stdoutText,
+        stderrText,
+      },
+    ]
+  })
+}
+
+function classifyInspectFamily(job: JobRecord): InspectFamily | null {
+  const command = effectiveResolvedCommand(job)
+
+  if (job.kind === 'smc' && command.includes('verify')) {
+    return 'verify'
+  }
+
+  if ((job.kind === 'smc' || job.kind === 'svm') && command.includes('disasm')) {
+    return 'disasm'
+  }
+
+  if (
+    (job.kind === 'svm' && command.includes('run')) ||
+    (job.kind === 'smc' && command.includes('run-smc'))
+  ) {
+    return 'verified-run'
+  }
+
+  return null
+}
+
+function effectiveResolvedCommand(job: JobRecord) {
+  if (job.resolvedCommand.length > 0) {
+    return job.resolvedCommand
+  }
+
+  return job.commandLine.split(/\s+/).filter(Boolean)
+}
+
+function extractInspectArtifactPath(job: JobRecord, family: InspectFamily) {
+  const command = effectiveResolvedCommand(job)
+  const subcommand =
+    family === 'verify'
+      ? 'verify'
+      : family === 'disasm'
+        ? 'disasm'
+        : job.kind === 'smc'
+          ? 'run-smc'
+          : 'run'
+  const subcommandIndex = command.findIndex((token) => token === subcommand)
+
+  if (subcommandIndex === -1) {
+    return null
+  }
+
+  return command[subcommandIndex + 1] ?? null
+}
+
+function normalizeInspectOutput(output: string) {
+  const trimmed = output.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function summarizeInspectJob(
+  job: JobRecord,
+  stdoutText: string | null,
+  stderrText: string | null,
+) {
+  const firstLine = stdoutText?.split(/\r?\n/, 1)[0] ?? stderrText?.split(/\r?\n/, 1)[0] ?? null
+
+  if (firstLine) {
+    return firstLine
+  }
+
+  if (job.status === 'success') {
+    return 'Completed without captured stdout or stderr.'
+  }
+
+  if (job.status === 'running') {
+    return 'Command still running.'
+  }
+
+  return 'Command failed without captured output.'
 }
 
 function resolveDiagnosticWorkspacePath(
@@ -2616,6 +2764,216 @@ function DiagnosticsPanel({
               </div>
             ) : (
               <p className="empty-state">Select a diagnostic to inspect its preserved fields.</p>
+            )}
+          </article>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function InspectPanel({
+  jobs,
+  selectedJobId,
+  onSelectJob,
+}: {
+  jobs: JobRecord[]
+  selectedJobId: string | null
+  onSelectJob: (jobId: string) => void
+}) {
+  const [familyFilter, setFamilyFilter] = useState<InspectFamily | 'all'>('all')
+  const inspectableJobs = deriveInspectableJobs(jobs)
+  const familyCounts = inspectFamilyOrder
+    .map((family) => ({
+      family,
+      count: inspectableJobs.filter((entry) => entry.family === family).length,
+    }))
+    .filter((entry) => entry.count > 0)
+  const effectiveFilter =
+    familyFilter !== 'all' && !familyCounts.some((entry) => entry.family === familyFilter)
+      ? 'all'
+      : familyFilter
+  const visibleJobs =
+    effectiveFilter === 'all'
+      ? inspectableJobs
+      : inspectableJobs.filter((entry) => entry.family === effectiveFilter)
+  const selectedInspectableJob =
+    visibleJobs.find((entry) => entry.job.id === selectedJobId) ?? visibleJobs[0] ?? null
+  const disasmLineCount =
+    selectedInspectableJob?.family === 'disasm' && selectedInspectableJob.stdoutText
+      ? selectedInspectableJob.stdoutText
+          .split(/\r?\n/)
+          .filter((line) => line.trim().length > 0).length
+      : 0
+
+  return (
+    <div className="screen-stack">
+      <section className="inspect-summary-grid">
+        <article className="screen-card">
+          <p className="card-kicker">Inspectable jobs</p>
+          <h3>Disasm, verify, and verified-path execution</h3>
+          <div className="inspect-metrics">
+            <div className="inspect-metric">
+              <strong>{inspectableJobs.length}</strong>
+              <span>Total inspectable jobs</span>
+            </div>
+            {familyCounts.map((entry) => (
+              <div key={entry.family} className="inspect-metric">
+                <strong>{entry.count}</strong>
+                <span>{inspectFamilyLabel(entry.family)}</span>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="screen-card">
+          <p className="card-kicker">Scope guard</p>
+          <h3>What this panel is allowed to claim</h3>
+          <ul className="bullet-list">
+            <li>SemCode text comes only from real `svm disasm` or `smc disasm` stdout.</li>
+            <li>Verification status comes only from `smc verify` stdout and stderr.</li>
+            <li>Verified-run status comes only from real CLI exit codes and captured output.</li>
+          </ul>
+          <div className="diagnostics-filter-row">
+            <button
+              type="button"
+              className={`diagnostics-filter-button ${effectiveFilter === 'all' ? 'diagnostics-filter-button-active' : ''}`}
+              onClick={() => setFamilyFilter('all')}
+            >
+              All
+            </button>
+            {familyCounts.map((entry) => (
+              <button
+                key={entry.family}
+                type="button"
+                className={`diagnostics-filter-button ${effectiveFilter === entry.family ? 'diagnostics-filter-button-active' : ''}`}
+                onClick={() => setFamilyFilter(entry.family)}
+              >
+                {inspectFamilyLabel(entry.family)} <span>{entry.count}</span>
+              </button>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      {visibleJobs.length === 0 ? (
+        <article className="screen-card">
+          <p className="card-kicker">No inspectable jobs yet</p>
+          <p className="empty-state">
+            Run `smc verify`, `svm disasm`, or a verified bytecode execution from the cockpit to populate the inspector.
+          </p>
+        </article>
+      ) : (
+        <section className="inspect-shell">
+          <article className="screen-card inspect-list-panel">
+            <p className="card-kicker">Inspect ledger</p>
+            <h3>Real jobs only</h3>
+            <div className="inspect-job-list">
+              {visibleJobs.map((entry) => (
+                <button
+                  key={entry.job.id}
+                  type="button"
+                  className={`inspect-job-card ${selectedInspectableJob?.job.id === entry.job.id ? 'inspect-job-card-active' : ''}`}
+                  onClick={() => onSelectJob(entry.job.id)}
+                >
+                  <div className="diagnostic-card-topline">
+                    <span className="status-pill stable">{inspectFamilyLabel(entry.family)}</span>
+                    <span
+                      className={`status-pill ${entry.job.status === 'success' ? 'stable' : entry.job.status === 'running' ? 'running' : 'draft'}`}
+                    >
+                      {entry.job.status}
+                    </span>
+                  </div>
+                  <strong>{entry.job.label}</strong>
+                  <p className="job-meta">{entry.summary}</p>
+                  <p className="job-meta">{entry.artifactPath ?? entry.job.commandLine}</p>
+                </button>
+              ))}
+            </div>
+          </article>
+
+          <article className="screen-card inspect-detail-panel">
+            <p className="card-kicker">Selected inspection</p>
+            {selectedInspectableJob ? (
+              <div className="inspect-detail-stack">
+                <div className="diagnostic-detail-header">
+                  <div>
+                    <h3>{selectedInspectableJob.job.label}</h3>
+                    <p className="job-meta">{inspectFamilyDescription(selectedInspectableJob.family)}</p>
+                  </div>
+                  <div className="status-cluster">
+                    <span className="status-pill stable">{inspectFamilyLabel(selectedInspectableJob.family)}</span>
+                    <span
+                      className={`status-pill ${selectedInspectableJob.job.status === 'success' ? 'stable' : selectedInspectableJob.job.status === 'running' ? 'running' : 'draft'}`}
+                    >
+                      {selectedInspectableJob.job.status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="diagnostic-meta-grid">
+                  <div>
+                    <span className="diagnostic-meta-label">Artifact</span>
+                    <code>{selectedInspectableJob.artifactPath ?? 'derived from raw command'}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Command</span>
+                    <code>{selectedInspectableJob.job.commandLine}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Working directory</span>
+                    <code>{selectedInspectableJob.job.cwd}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Exit code</span>
+                    <code>{selectedInspectableJob.job.exitCode ?? 'running'}</code>
+                  </div>
+                  <div>
+                    <span className="diagnostic-meta-label">Duration</span>
+                    <code>
+                      {selectedInspectableJob.job.durationMs
+                        ? `${selectedInspectableJob.job.durationMs} ms`
+                        : 'n/a'}
+                    </code>
+                  </div>
+                  {selectedInspectableJob.family === 'disasm' ? (
+                    <div>
+                      <span className="diagnostic-meta-label">Disasm lines</span>
+                      <code>{disasmLineCount}</code>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="inspect-callout">
+                  <span className="diagnostic-meta-label">Inspector contract</span>
+                  <p>
+                    {selectedInspectableJob.family === 'verify'
+                      ? 'Workbench displays the verifier result exactly as emitted by smc verify. It does not recompute verification.'
+                      : selectedInspectableJob.family === 'disasm'
+                        ? 'Workbench displays raw SemCode disassembly from the public CLI surface. It does not own a second bytecode model.'
+                        : 'Workbench displays verified execution status from the public run surface. It does not infer runtime semantics beyond exit code and captured output.'}
+                  </p>
+                </div>
+
+                <div className="inspect-output-stack">
+                  <section className="inspect-output-block">
+                    <span className="diagnostic-meta-label">stdout</span>
+                    <pre className="inspect-output-code">
+                      {selectedInspectableJob.stdoutText ?? 'No stdout captured for this job.'}
+                    </pre>
+                  </section>
+                  <section className="inspect-output-block">
+                    <span className="diagnostic-meta-label">stderr</span>
+                    <pre className="inspect-output-code">
+                      {selectedInspectableJob.stderrText ?? 'No stderr captured for this job.'}
+                    </pre>
+                  </section>
+                </div>
+              </div>
+            ) : (
+              <p className="empty-state">
+                Select an inspectable job to view raw disasm, verify, or verified-run output.
+              </p>
             )}
           </article>
         </section>

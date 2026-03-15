@@ -992,6 +992,82 @@
   word-break: break-word;
 }
 
+.inspect-summary-grid,
+.inspect-shell,
+.inspect-job-list,
+.inspect-detail-stack,
+.inspect-output-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.inspect-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.inspect-shell {
+  grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
+}
+
+.inspect-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.inspect-metric,
+.inspect-callout,
+.inspect-output-block {
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.inspect-metric strong {
+  display: block;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.inspect-metric span {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5a6675;
+}
+
+.inspect-job-card {
+  display: grid;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 23, 32, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspect-job-card-active {
+  border-color: rgba(32, 190, 167, 0.35);
+  box-shadow: 0 0 0 3px rgba(32, 190, 167, 0.12);
+}
+
+.inspect-output-code {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 0.88rem/1.45 "Cascadia Code", "Fira Code", Consolas, monospace;
+}
+
 @media (max-width: 1180px) {
   .workbench-shell {
     grid-template-columns: 1fr;
@@ -1005,6 +1081,9 @@
   .hero-grid,
   .screen-grid,
   .overview-grid,
+  .inspect-summary-grid,
+  .inspect-shell,
+  .inspect-metrics,
   .diagnostics-summary-grid,
   .diagnostics-shell,
   .diagnostics-metrics,
