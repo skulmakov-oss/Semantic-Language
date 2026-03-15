@@ -808,12 +808,12 @@ function App() {
 
   async function saveEditorFile(relativePath: string) {
     if (!selectedWorkspace) {
-      return
+      return false
     }
 
     const tab = editorTabs.find((entry) => entry.relativePath === relativePath)
     if (!tab) {
-      return
+      return false
     }
 
     setEditorTabs((current) =>
@@ -856,6 +856,7 @@ function App() {
         ),
       )
       setWorkspaceTreeError(null)
+      return true
     } catch (error) {
       setWorkspaceTreeError(String(error))
       setEditorTabs((current) =>
@@ -865,6 +866,7 @@ function App() {
             : entry,
         ),
       )
+      return false
     }
   }
 
@@ -1121,7 +1123,7 @@ function WorkbenchScreen({
   onSelectEditorPath: (relativePath: string | null) => void
   onUpdateEditorContent: (relativePath: string, content: string) => void
   onRefreshWorkspace: () => Promise<void>
-  onSaveEditorFile: (relativePath: string) => Promise<void>
+  onSaveEditorFile: (relativePath: string) => Promise<boolean>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
   onSelectJob: (jobId: string) => void
@@ -1224,15 +1226,15 @@ function WorkbenchScreen({
           settings={settings}
           onWorkspaceInputChange={onWorkspaceInputChange}
           onOpenWorkspace={onOpenWorkspace}
-          onOpenEditorFile={onOpenEditorFile}
-          onSelectEditorPath={onSelectEditorPath}
-          onUpdateEditorContent={onUpdateEditorContent}
-          onRunAction={onRunAction}
-          isActionRunning={isActionRunning}
-          onRefreshWorkspace={onRefreshWorkspace}
-          onSaveEditorFile={onSaveEditorFile}
-          onReloadEditorFile={onReloadEditorFile}
-          onCloseEditorTab={onCloseEditorTab}
+  onOpenEditorFile={onOpenEditorFile}
+  onSelectEditorPath={onSelectEditorPath}
+  onUpdateEditorContent={onUpdateEditorContent}
+  onRunAction={onRunAction}
+  isActionRunning={isActionRunning}
+  onRefreshWorkspace={onRefreshWorkspace}
+  onSaveEditorFile={onSaveEditorFile}
+  onReloadEditorFile={onReloadEditorFile}
+  onCloseEditorTab={onCloseEditorTab}
         />
       ) : null}
 
@@ -2858,16 +2860,20 @@ function ProjectPanel({
   onRunAction: (action: JobActionSpec) => Promise<JobResult | null>
   isActionRunning: (action: JobActionSpec) => boolean
   onRefreshWorkspace: () => Promise<void>
-  onSaveEditorFile: (relativePath: string) => Promise<void>
+  onSaveEditorFile: (relativePath: string) => Promise<boolean>
   onReloadEditorFile: (relativePath: string) => Promise<void>
   onCloseEditorTab: (relativePath: string) => void
 }) {
+  const navigate = useNavigate()
   const activeEditorTab =
     editorTabs.find((tab) => tab.relativePath === activeEditorPath) ?? editorTabs[0] ?? null
   const activeEditorRepoPath =
     activeEditorTab && selectedWorkspace
       ? toRepoRelativePath(activeEditorTab.relativePath, selectedWorkspace)
       : null
+  const currentFileArtifactPath = activeEditorRepoPath
+    ? compileOutputPath(activeEditorRepoPath)
+    : null
   const canRunSemanticFileAction =
     !!activeEditorTab && !!activeEditorRepoPath && isSemanticSource(activeEditorTab.relativePath)
   const currentFileCheckAction =
@@ -2885,8 +2891,28 @@ function ProjectPanel({
       ? {
           kind: 'smc' as const,
           label: `Compile ${activeEditorTab.title}`,
-          args: ['compile', activeEditorRepoPath, '-o', compileOutputPath(activeEditorRepoPath)],
+          args: ['compile', activeEditorRepoPath, '-o', currentFileArtifactPath ?? compileOutputPath(activeEditorRepoPath)],
           notes: 'Compile the active .sm file through the canonical smc compile surface.',
+          cwdMode: 'repo' as const,
+        }
+      : null
+  const currentFileRunAction =
+    canRunSemanticFileAction && activeEditorTab && currentFileArtifactPath
+      ? {
+          kind: 'svm' as const,
+          label: `Run ${activeEditorTab.title}`,
+          args: ['run', currentFileArtifactPath],
+          notes: 'Run the compiled artifact for the active .sm file through the canonical svm run surface.',
+          cwdMode: 'repo' as const,
+        }
+      : null
+  const currentFileDisasmAction =
+    canRunSemanticFileAction && activeEditorTab && currentFileArtifactPath
+      ? {
+          kind: 'svm' as const,
+          label: `Disasm ${activeEditorTab.title}`,
+          args: ['disasm', currentFileArtifactPath],
+          notes: 'Disassemble the compiled artifact for the active .sm file through the canonical svm disasm surface.',
           cwdMode: 'repo' as const,
         }
       : null
@@ -3005,37 +3031,74 @@ function ProjectPanel({
     void loadPackageManifestPreview(selectedWorkspace)
   }, [selectedWorkspace])
 
-  async function runCurrentFileAction(mode: 'check' | 'compile') {
+  async function runCurrentFileAction(mode: 'check' | 'compile' | 'run' | 'disasm') {
     if (!activeEditorTab || !selectedWorkspace || !adapterContract || !activeEditorRepoPath) {
       return
     }
 
     if (activeEditorTab.status !== 'clean') {
-      await onSaveEditorFile(activeEditorTab.relativePath)
+      const saved = await onSaveEditorFile(activeEditorTab.relativePath)
+      if (!saved) {
+        return
+      }
     }
 
-    const args =
-      mode === 'check'
-        ? ['check', activeEditorRepoPath]
-        : ['compile', activeEditorRepoPath, '-o', compileOutputPath(activeEditorRepoPath)]
+    if (mode === 'check') {
+      await onRunAction(
+        currentFileCheckAction ?? {
+          kind: 'smc',
+          label: `Check ${activeEditorTab.title}`,
+          args: ['check', activeEditorRepoPath],
+          notes: 'Check the active .sm file through the canonical smc check surface.',
+          cwdMode: 'repo',
+        },
+      )
+      navigate('/diagnostics')
+      return
+    }
 
-    await onRunAction(
-      mode === 'check'
-        ? currentFileCheckAction ?? {
-            kind: 'smc',
-            label: `Check ${activeEditorTab.title}`,
-            args,
-            notes: 'Check the active .sm file through the canonical smc check surface.',
+    const compileResult = await onRunAction(
+      currentFileCompileAction ?? {
+        kind: 'smc',
+        label: `Compile ${activeEditorTab.title}`,
+        args: ['compile', activeEditorRepoPath, '-o', currentFileArtifactPath ?? compileOutputPath(activeEditorRepoPath)],
+        notes: 'Compile the active .sm file through the canonical smc compile surface.',
+        cwdMode: 'repo',
+      },
+    )
+
+    if (compileResult === null) {
+      return
+    }
+
+    if (!compileResult.success) {
+      navigate('/diagnostics')
+      return
+    }
+
+    if (mode === 'compile') {
+      return
+    }
+
+    const downstreamAction =
+      mode === 'run'
+        ? currentFileRunAction ?? {
+            kind: 'svm',
+            label: `Run ${activeEditorTab.title}`,
+            args: ['run', currentFileArtifactPath ?? compileOutputPath(activeEditorRepoPath)],
+            notes: 'Run the compiled artifact for the active .sm file through the canonical svm run surface.',
             cwdMode: 'repo',
           }
-        : currentFileCompileAction ?? {
-            kind: 'smc',
-            label: `Compile ${activeEditorTab.title}`,
-            args,
-            notes: 'Compile the active .sm file through the canonical smc compile surface.',
+        : currentFileDisasmAction ?? {
+            kind: 'svm',
+            label: `Disasm ${activeEditorTab.title}`,
+            args: ['disasm', currentFileArtifactPath ?? compileOutputPath(activeEditorRepoPath)],
+            notes: 'Disassemble the compiled artifact for the active .sm file through the canonical svm disasm surface.',
             cwdMode: 'repo',
-          },
-    )
+          }
+
+    await onRunAction(downstreamAction)
+    navigate('/inspect')
   }
 
   async function runFormatterAction(mode: 'file' | 'workspace' | 'check') {
@@ -3043,14 +3106,17 @@ function ProjectPanel({
       return
     }
 
-    if (mode === 'file') {
-      if (!activeEditorTab || !activeEditorRepoPath || !canRunSemanticFileAction) {
-        return
-      }
+      if (mode === 'file') {
+        if (!activeEditorTab || !activeEditorRepoPath || !canRunSemanticFileAction) {
+          return
+        }
 
-      if (activeEditorTab.status !== 'clean') {
-        await onSaveEditorFile(activeEditorTab.relativePath)
-      }
+        if (activeEditorTab.status !== 'clean') {
+          const saved = await onSaveEditorFile(activeEditorTab.relativePath)
+          if (!saved) {
+            return
+          }
+        }
 
       const result = await onRunAction(
         currentFileFormatAction ?? {
@@ -3725,6 +3791,44 @@ function ProjectPanel({
                     ? 'Compiling current file...'
                     : 'Compile current file'}
                 </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void runCurrentFileAction('run')}
+                  disabled={
+                    !canRunSemanticFileAction ||
+                    activeEditorTab.status === 'saving' ||
+                    !currentFileRunAction ||
+                    !currentFileCompileAction ||
+                    isActionRunning(currentFileCompileAction) ||
+                    isActionRunning(currentFileRunAction)
+                  }
+                >
+                  {currentFileRunAction &&
+                  (isActionRunning(currentFileCompileAction ?? currentFileRunAction) ||
+                    isActionRunning(currentFileRunAction))
+                    ? 'Running current build...'
+                    : 'Run current build'}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => void runCurrentFileAction('disasm')}
+                  disabled={
+                    !canRunSemanticFileAction ||
+                    activeEditorTab.status === 'saving' ||
+                    !currentFileDisasmAction ||
+                    !currentFileCompileAction ||
+                    isActionRunning(currentFileCompileAction) ||
+                    isActionRunning(currentFileDisasmAction)
+                  }
+                >
+                  {currentFileDisasmAction &&
+                  (isActionRunning(currentFileCompileAction ?? currentFileDisasmAction) ||
+                    isActionRunning(currentFileDisasmAction))
+                    ? 'Disassembling current build...'
+                    : 'Disasm current build'}
+                </button>
               </div>
               <p className="job-meta">
                 path: <code>{activeEditorTab.absolutePath}</code>
@@ -3738,14 +3842,23 @@ function ProjectPanel({
                 <span className="status-pill draft">smc fmt</span>{' '}
                 {settings.formatOnSave ? 'with format-on-save enabled' : 'format-on-save disabled'}
               </p>
+              <p className="job-meta">
+                compiled artifact:{' '}
+                <code>{currentFileArtifactPath ?? 'open a repository-scoped .sm file to derive a canonical .smc path'}</code>
+              </p>
               {!isSemanticSource(activeEditorTab.relativePath) ? (
                 <p className="empty-state">
-                  Current-file compile, check, and format actions are only enabled for `.sm` source files.
+                  Current-file compile, check, run, disasm, and format actions are only enabled for `.sm` source files.
                 </p>
               ) : null}
               {hasDirtySemanticTabs ? (
                 <p className="empty-state">
                   Workspace format actions stay disabled while Semantic source tabs are dirty, so the formatter only runs against saved repository state.
+                </p>
+              ) : null}
+              {canRunSemanticFileAction ? (
+                <p className="screen-summary">
+                  Current-file check routes to Diagnostics. Current-file run and disasm save and compile the active buffer first, then route to Inspect over the canonical compiled artifact.
                 </p>
               ) : null}
               <textarea
