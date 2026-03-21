@@ -213,6 +213,9 @@ fn check_stmt(
             check_return_payload(*v, arena, env, table, ret_ty)
         }
         Stmt::Expr(e) => {
+            if check_builtin_assert_stmt(*e, arena, env, table, ret_ty)? {
+                return Ok(());
+            }
             let _ = infer_expr_type(*e, arena, env, table, ret_ty)?;
             Ok(())
         }
@@ -262,6 +265,13 @@ fn infer_expr_type(
         }
         Expr::Match(match_expr) => infer_match_expr_type(match_expr, arena, env, table, ret_ty),
         Expr::Call(name, args) => {
+            if is_builtin_assert_name(*name, arena, table)? {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "assert builtin is statement-only and cannot be used as expression value"
+                        .to_string(),
+                });
+            }
             let sig = if let Some(s) = table.get(name) {
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
@@ -756,6 +766,99 @@ mod tests {
             typecheck_source(src).expect_err("compound assignment operator mismatch must reject");
         assert!(err.message.contains("f64 arithmetic requires f64 operands"));
     }
+
+    #[test]
+    fn assert_builtin_statement_typechecks() {
+        let src = r#"
+            fn main() {
+                assert(true);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("assert builtin statement should typecheck");
+    }
+
+    #[test]
+    fn assert_builtin_requires_bool_condition() {
+        let src = r#"
+            fn main() {
+                assert(1.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("assert builtin must require bool");
+        assert!(err.message.contains("assert builtin requires bool condition"));
+    }
+
+    #[test]
+    fn assert_builtin_requires_single_argument() {
+        let src = r#"
+            fn main() {
+                assert(true, false);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("assert builtin arity must reject");
+        assert!(err.message.contains("assert builtin expects 1 arg"));
+    }
+
+    #[test]
+    fn assert_builtin_is_statement_only() {
+        let src = r#"
+            fn main() {
+                let ok: bool = assert(true);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("assert builtin should reject value position");
+        assert!(err
+            .message
+            .contains("assert builtin is statement-only and cannot be used as expression value"));
+    }
+}
+
+fn is_builtin_assert_name(
+    name: SymbolId,
+    arena: &AstArena,
+    table: &FnTable,
+) -> Result<bool, FrontendError> {
+    Ok(!table.contains_key(&name) && resolve_symbol_name(arena, name)? == "assert")
+}
+
+fn check_builtin_assert_stmt(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+) -> Result<bool, FrontendError> {
+    let Expr::Call(name, args) = arena.expr(expr_id) else {
+        return Ok(false);
+    };
+    if !is_builtin_assert_name(*name, arena, table)? {
+        return Ok(false);
+    }
+    if args.len() != 1 {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!("assert builtin expects 1 arg, got {}", args.len()),
+        });
+    }
+    let cond_ty = infer_expr_type(args[0], arena, env, table, ret_ty)?;
+    if cond_ty != Type::Bool {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "assert builtin requires bool condition, got {:?}",
+                cond_ty
+            ),
+        });
+    }
+    Ok(true)
 }
 
 fn infer_value_block_type(

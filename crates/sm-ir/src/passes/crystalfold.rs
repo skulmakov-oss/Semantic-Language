@@ -55,6 +55,10 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.clear();
                 out.push(IrInstr::JmpIf { cond, label });
             }
+            IrInstr::Assert { cond } => {
+                cst.clear();
+                out.push(IrInstr::Assert { cond });
+            }
             IrInstr::Call { dst, name, args } => {
                 cst.clear();
                 out.push(IrInstr::Call { dst, name, args });

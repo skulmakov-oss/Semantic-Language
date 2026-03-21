@@ -1426,6 +1426,29 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_assert_statement_surface() {
+        let src = r#"
+fn main() {
+    assert(true);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("assert statement should parse");
+        let func = &program.functions[0];
+        let Stmt::Expr(expr_id) = program.arena.stmt(func.body[0]) else {
+            panic!("expected expression statement");
+        };
+        let Expr::Call(name, args) = program.arena.expr(*expr_id) else {
+            panic!("expected call-shaped assert surface");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "assert");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(program.arena.expr(args[0]), Expr::BoolLiteral(true)));
+    }
+
+    #[test]
     fn logos_parser_smoke() {
         let src = r#"
 Entity Sensor:

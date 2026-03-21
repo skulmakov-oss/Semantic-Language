@@ -73,6 +73,7 @@ Current statement forms:
 - `name ||= expr;`
 - `guard condition else return;`
 - `guard condition else return expr;`
+- `assert(condition);`
 - `if condition { ... } else { ... }`
 - `match quad_expr { T => { ... } ... _ => { ... } }`
 - `match quad_expr { T if ready == true => { ... } ... _ => { ... } }`
@@ -85,6 +86,7 @@ Current statement rules:
 - semicolons terminate executable statements
 - compound assignment is statement-level sugar only
 - `guard` currently supports only the `else return` form
+- `assert(condition);` is a statement-level builtin contract form
 - `if` conditions must be `bool`
 - `match` is currently restricted to `quad`
 - `match` requires an explicit default arm `_ => { ... }`
@@ -158,10 +160,12 @@ Builtin calls currently share call syntax with ordinary functions:
 sqrt(9.0)
 pow(2.0, 3.0)
 abs(-1.0)
+assert(ready == true);
 ```
 
 Current builtins are resolved as part of the public source surface and must not
-require a separate foreign-call syntax.
+require a separate foreign-call syntax. `assert` shares ordinary call-like
+syntax but is statement-only in the current contract.
 
 ## Imports And Module Surface
 

@@ -534,6 +534,11 @@ fn decode_operands(
                 mark_reg(arg);
             }
         }
+        Opcode::Assert => {
+            let cond = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated assert condition register"))?;
+            mark_reg(cond);
+        }
         Opcode::GateRead => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated gate dst register"))?;
             mark_reg(dst);
@@ -681,6 +686,19 @@ mod tests {
         .expect("compile");
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.header.rev, 2);
+    }
+
+    #[test]
+    fn verifier_accepts_assert_opcode() {
+        let src = r#"
+            fn main() {
+                assert(true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 1);
     }
 
     #[test]

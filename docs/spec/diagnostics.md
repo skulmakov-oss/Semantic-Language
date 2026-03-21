@@ -82,6 +82,9 @@ Current message families include:
 - unknown function
 - argument count mismatch
 - argument type mismatch
+- invalid `assert` argument count
+- invalid `assert` condition type
+- statement-only `assert` used in value position
 - let-binding type mismatch
 - return type mismatch
 - invalid `guard` condition type

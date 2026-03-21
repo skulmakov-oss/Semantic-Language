@@ -106,6 +106,9 @@ pub enum IrInstr {
         cond: u16,
         label: String,
     },
+    Assert {
+        cond: u16,
+    },
     Call {
         dst: Option<u16>,
         name: String,
@@ -208,6 +211,14 @@ fn try_encode_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> Result<Optio
         }
         _ => Ok(None),
     }
+}
+
+fn is_builtin_assert_name(
+    name: SymbolId,
+    arena: &AstArena,
+    fn_table: &FnTable,
+) -> Result<bool, FrontendError> {
+    Ok(!fn_table.contains_key(&name) && resolve_symbol_name(arena, name)? == "assert")
 }
 
 pub fn lower_logos_laws_to_ir(program: &LogosProgram) -> Vec<LogosIrLaw> {
@@ -616,6 +627,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::QNot { .. } | IrInstr::BoolNot { .. } => 1 + 2 + 2,
         IrInstr::Jmp { .. } => 1 + 4,
         IrInstr::JmpIf { .. } => 1 + 2 + 4,
+        IrInstr::Assert { .. } => 1 + 2,
         IrInstr::Call { args, .. } => 1 + 1 + 2 + 2 + 2 + (args.len() * 2),
         IrInstr::GateRead { .. } => 1 + 2 + 2 + 2,
         IrInstr::GateWrite { .. } => 1 + 2 + 2 + 2,
@@ -703,6 +715,10 @@ fn emit_instr(
                 message: format!("unknown label '{}'", label),
             })?;
             write_u32_le(out, addr);
+        }
+        IrInstr::Assert { cond } => {
+            out.push(Opcode::Assert.byte());
+            write_u16_le(out, *cond);
         }
         IrInstr::Call { dst, name, args } => {
             out.push(Opcode::Call.byte());
@@ -1020,6 +1036,13 @@ fn lower_expr_with_expected(
             lower_match_expr(match_expr, arena, next, out, env, fn_table, expected, ret_ty)
         }
         Expr::Call(name, args) => {
+            if is_builtin_assert_name(*name, arena, fn_table)? {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "assert builtin is statement-only and cannot be used as expression value"
+                        .to_string(),
+                });
+            }
             let sig = if let Some(s) = fn_table.get(name) {
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
@@ -1919,6 +1942,35 @@ fn lower_expr_stmt_with_parts(
 ) -> Result<(), FrontendError> {
     let expr = arena.expr(expr_id);
     if let Expr::Call(name, args) = expr {
+        if is_builtin_assert_name(*name, arena, fn_table)? {
+            if args.len() != 1 {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!("assert builtin expects 1 arg, got {}", args.len()),
+                });
+            }
+            let (cond, cond_ty) = lower_expr_with_expected(
+                args[0],
+                arena,
+                next,
+                out,
+                env,
+                fn_table,
+                Some(Type::Bool),
+                ret_ty,
+            )?;
+            if cond_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "assert builtin requires bool condition, got {:?}",
+                        cond_ty
+                    ),
+                });
+            }
+            out.push(IrInstr::Assert { cond });
+            return Ok(());
+        }
         let sig = if let Some(s) = fn_table.get(name) {
             s.clone()
         } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
@@ -2211,6 +2263,23 @@ mod opt_tests {
             .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "total"))
             .count()
             >= 2);
+    }
+
+    #[test]
+    fn lower_assert_statement_to_assert_ir() {
+        let src = r#"
+            fn main() {
+                assert(true);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("assert statement should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::Assert { .. })));
     }
 
     #[test]

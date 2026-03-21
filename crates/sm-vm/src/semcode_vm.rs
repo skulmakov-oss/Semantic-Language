@@ -6,7 +6,7 @@ use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
 use prom_cap::{CapabilityChecker, CapabilityDenied};
 use sm_runtime_core::{
-    ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas,
+    ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas, RuntimeTrap,
     RuntimeSymbolTable, SymbolId,
 };
 use sm_verify::RejectReport;
@@ -80,6 +80,7 @@ pub enum RuntimeError {
     InvalidStringId(u16),
     HostAbi(AbiError),
     CapabilityDenied(CapabilityDenied),
+    Trap(RuntimeTrap),
 }
 
 impl core::fmt::Display for RuntimeError {
@@ -109,6 +110,8 @@ impl core::fmt::Display for RuntimeError {
             RuntimeError::InvalidStringId(id) => write!(f, "invalid string id {}", id),
             RuntimeError::HostAbi(err) => write!(f, "{err}"),
             RuntimeError::CapabilityDenied(err) => write!(f, "{err}"),
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed) => write!(f, "assertion failed"),
+            RuntimeError::Trap(trap) => write!(f, "runtime trap: {:?}", trap),
         }
     }
 }
@@ -462,6 +465,9 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::Assert => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::GateRead => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -792,6 +798,23 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     vm.callstack[frame_idx].pc = cur - f.instr_start;
                     push_frame(vm, &callee, args, if has_dst { Some(dst) } else { None })?;
                     continue;
+                }
+            }
+            Opcode::Assert => {
+                let cond = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                match get_reg(vm, frame_idx, cond)? {
+                    Value::Bool(true) => {
+                        next_pc = cur - f.instr_start;
+                    }
+                    Value::Bool(false) => {
+                        return Err(RuntimeError::Trap(RuntimeTrap::AssertionFailed));
+                    }
+                    other => {
+                        return Err(RuntimeError::TypeMismatchRuntime(format!(
+                            "ASSERT requires bool register, got {:?}",
+                            other
+                        )));
+                    }
                 }
             }
             Opcode::GateRead => {
@@ -1173,6 +1196,10 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             }
             format!("CALL dst?{} r{} fn#{} argc={}", has, d, n, argc)
         }
+        Opcode::Assert => {
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("ASSERT r{}", r)
+        }
         Opcode::GateRead => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let dev = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1206,13 +1233,38 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
 mod tests {
     use super::*;
     use sm_emit::compile_program_to_semcode;
-    use sm_runtime_core::{ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind};
+    use sm_runtime_core::{ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeTrap};
 
     #[test]
     fn vm_runs_empty_main() {
         let src = "fn main() { return; }";
         let bytes = compile_program_to_semcode(src).expect("compile");
         run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_assert_statement_when_condition_holds() {
+        let src = r#"
+            fn main() {
+                assert(true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        run_semcode(&bytes).expect("assert(true) should pass");
+    }
+
+    #[test]
+    fn vm_traps_on_failed_assert() {
+        let src = r#"
+            fn main() {
+                assert(false);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let err = run_semcode(&bytes).expect_err("assert(false) should trap");
+        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
     }
 
     #[test]

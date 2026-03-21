@@ -67,6 +67,7 @@ Current builtin names in the Rust-like surface are:
 - `sqrt`
 - `abs`
 - `pow`
+- `assert`
 
 ## Scope And Binding Rules
 
@@ -95,6 +96,9 @@ Current statement meaning:
 - `guard condition else return ...;` continues when the condition is `true`
 - when the guard condition is `false`, the `else return` path terminates the
   current function immediately
+- `assert(condition);` continues when `condition` is `true`
+- `assert(condition);` terminates through the core fail-fast trap path when
+  `condition` is `false`
 - expression statements evaluate for effect and then discard any produced value
 - `return expr;` terminates the current function with that value
 - `return;` terminates a `unit`-returning function
@@ -207,7 +211,9 @@ Builtin math calls are part of the source contract, not a foreign escape hatch.
 Current rules:
 
 - builtins are type-checked before lowering
-- builtins lower through the same call surface as ordinary functions
+- builtin math calls lower through the same call surface as ordinary functions
+- `assert` shares ordinary call-like syntax but lowers to a dedicated core
+  assertion opcode rather than an ordinary function call
 - the verified execution path recognizes the supported builtin set explicitly
 
 Current builtin signatures:
@@ -218,6 +224,7 @@ Current builtin signatures:
 - `sqrt(f64) -> f64`
 - `abs(f64) -> f64`
 - `pow(f64, f64) -> f64`
+- `assert(bool);` as a statement-level builtin contract
 
 ## Pipeline
 
