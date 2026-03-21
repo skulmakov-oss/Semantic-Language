@@ -145,8 +145,13 @@ fn tokenize_line(
             }
             b'&' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'&' {
-                    push_tok(out, TokenKind::AndAnd, "&&", abs_pos, line_no, col);
-                    i += 2;
+                    if i + 2 < bytes.len() && bytes[i + 2] == b'=' {
+                        push_tok(out, TokenKind::AndAndAssign, "&&=", abs_pos, line_no, col);
+                        i += 3;
+                    } else {
+                        push_tok(out, TokenKind::AndAnd, "&&", abs_pos, line_no, col);
+                        i += 2;
+                    }
                 } else {
                     return Err(fmt_mark_error(
                         "E0002",
@@ -160,8 +165,13 @@ fn tokenize_line(
             }
             b'|' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
-                    push_tok(out, TokenKind::OrOr, "||", abs_pos, line_no, col);
-                    i += 2;
+                    if i + 2 < bytes.len() && bytes[i + 2] == b'=' {
+                        push_tok(out, TokenKind::OrOrAssign, "||=", abs_pos, line_no, col);
+                        i += 3;
+                    } else {
+                        push_tok(out, TokenKind::OrOr, "||", abs_pos, line_no, col);
+                        i += 2;
+                    }
                 } else if i + 1 < bytes.len() && bytes[i + 1] == b'>' {
                     push_tok(out, TokenKind::PipeForward, "|>", abs_pos, line_no, col);
                     i += 2;
@@ -177,20 +187,38 @@ fn tokenize_line(
                 }
             }
             b'+' => {
-                push_tok(out, TokenKind::Plus, "+", abs_pos, line_no, col);
-                i += 1;
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::PlusAssign, "+=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::Plus, "+", abs_pos, line_no, col);
+                    i += 1;
+                }
             }
             b'*' => {
-                push_tok(out, TokenKind::Star, "*", abs_pos, line_no, col);
-                i += 1;
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::StarAssign, "*=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::Star, "*", abs_pos, line_no, col);
+                    i += 1;
+                }
             }
             b'/' => {
-                push_tok(out, TokenKind::Slash, "/", abs_pos, line_no, col);
-                i += 1;
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::SlashAssign, "/=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::Slash, "/", abs_pos, line_no, col);
+                    i += 1;
+                }
             }
             b'-' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'>' {
                     push_tok(out, TokenKind::Implies, "->", abs_pos, line_no, col);
+                    i += 2;
+                } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::MinusAssign, "-=", abs_pos, line_no, col);
                     i += 2;
                 } else {
                     push_tok(out, TokenKind::Minus, "-", abs_pos, line_no, col);

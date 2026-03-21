@@ -135,6 +135,17 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Semi, "expected ';'")?;
             return Ok(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
         }
+        if self.check(TokenKind::Ident) {
+            if let Some(op) = self.peek_compound_assign_op() {
+                let name = self.expect_symbol()?;
+                let _ = self.advance();
+                let rhs = self.parse_expr()?;
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                let lhs = self.arena.alloc_expr(Expr::Var(name));
+                let value = self.arena.alloc_expr(Expr::Binary(lhs, op, rhs));
+                return Ok(self.arena.alloc_stmt(Stmt::Assign { name, value }));
+            }
+        }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
             if !self.eat(TokenKind::KwElse) {
@@ -194,6 +205,24 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semi, "expected ';'")?;
         Ok(self.arena.alloc_stmt(Stmt::Expr(expr)))
+    }
+
+    fn peek_compound_assign_op(&self) -> Option<BinaryOp> {
+        let current = self.next_non_layout_idx();
+        let mut next_idx = current + 1;
+        while next_idx < self.tokens.len() && Self::is_layout(self.tokens[next_idx].kind) {
+            next_idx += 1;
+        }
+        let next = self.tokens.get(next_idx)?;
+        match next.kind {
+            TokenKind::PlusAssign => Some(BinaryOp::Add),
+            TokenKind::MinusAssign => Some(BinaryOp::Sub),
+            TokenKind::StarAssign => Some(BinaryOp::Mul),
+            TokenKind::SlashAssign => Some(BinaryOp::Div),
+            TokenKind::AndAndAssign => Some(BinaryOp::AndAnd),
+            TokenKind::OrOrAssign => Some(BinaryOp::OrOr),
+            _ => None,
+        }
     }
 
     fn parse_if_after_kw_if(&mut self) -> Result<Stmt, FrontendError> {
@@ -1145,6 +1174,30 @@ fn main() { return; }
         assert!(err
             .message
             .contains("expected ';' after expression-bodied function"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_compound_assignment() {
+        let src = r#"
+fn main() {
+    let total: f64 = 1.0;
+    total += 2.0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("compound assignment should parse");
+        let func = &program.functions[0];
+        let Stmt::Assign { name, value } = program.arena.stmt(func.body[1]) else {
+            panic!("expected compound assignment statement");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "total");
+        let Expr::Binary(lhs, BinaryOp::Add, rhs) = program.arena.expr(*value) else {
+            panic!("expected desugared additive assignment");
+        };
+        assert!(matches!(program.arena.expr(*lhs), Expr::Var(_)));
+        assert!(matches!(program.arena.expr(*rhs), Expr::Float(_)));
     }
 
     #[test]

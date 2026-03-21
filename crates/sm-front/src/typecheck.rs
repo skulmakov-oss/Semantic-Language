@@ -97,39 +97,36 @@ fn check_stmt(
         Stmt::Let { name, ty, value } => {
             let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
             let final_ty = if let Some(ann) = ty {
-                if *ann != vt {
-                    if *ann == Type::Fx && is_numeric_for_fx_gap(vt) {
-                        if is_fx_literal_expr(*value, arena) {
-                            Type::Fx
-                        } else {
-                            return Err(FrontendError {
-                                pos: 0,
-                                message: format!(
-                                    "{}; let '{}' currently accepts only fx literals or existing fx-typed values",
-                                    fx_coercion_gap_message(),
-                                    resolve_symbol_name(arena, *name)?,
-                                ),
-                            });
-                        }
-                    } else {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: format!(
-                                "type mismatch in let '{}': {:?} vs {:?}",
-                                resolve_symbol_name(arena, *name)?,
-                                ann,
-                                vt
-                            ),
-                        });
-                    }
-                } else {
-                    *ann
-                }
+                ensure_binding_value_type(
+                    *ann,
+                    vt,
+                    *value,
+                    arena,
+                    format!("let '{}'", resolve_symbol_name(arena, *name)?),
+                )?;
+                *ann
             } else {
                 vt
             };
             env.insert(*name, final_ty);
             Ok(())
+        }
+        Stmt::Assign { name, value } => {
+            let target_ty = env.get(*name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown assignment target '{}'",
+                    resolve_symbol_name(arena, *name)?
+                ),
+            })?;
+            let value_ty = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            ensure_binding_value_type(
+                target_ty,
+                value_ty,
+                *value,
+                arena,
+                format!("assignment to '{}'", resolve_symbol_name(arena, *name)?),
+            )
         }
         Stmt::Guard {
             condition,
@@ -716,6 +713,49 @@ mod tests {
 
         typecheck_source(src).expect("pipeline desugaring should typecheck");
     }
+
+    #[test]
+    fn compound_assignment_typechecks_for_existing_scalar_rules() {
+        let src = r#"
+            fn main() {
+                let total: f64 = 1.0;
+                total += 2.0;
+                let ready: bool = true;
+                ready &&= false;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("compound assignment should typecheck");
+    }
+
+    #[test]
+    fn compound_assignment_requires_existing_binding() {
+        let src = r#"
+            fn main() {
+                total += 1.0;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("unknown assignment target must reject");
+        assert!(err.message.contains("unknown assignment target 'total'"));
+    }
+
+    #[test]
+    fn compound_assignment_reuses_operator_type_rules() {
+        let src = r#"
+            fn main() {
+                let total: f64 = 1.0;
+                total += true;
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("compound assignment operator mismatch must reject");
+        assert!(err.message.contains("f64 arithmetic requires f64 operands"));
+    }
 }
 
 fn infer_value_block_type(
@@ -853,4 +893,33 @@ fn check_return_payload(
         });
     }
     Ok(())
+}
+
+fn ensure_binding_value_type(
+    expected: Type,
+    actual: Type,
+    value_expr: ExprId,
+    arena: &AstArena,
+    context: String,
+) -> Result<(), FrontendError> {
+    if expected == actual {
+        return Ok(());
+    }
+    if expected == Type::Fx && is_numeric_for_fx_gap(actual) {
+        if is_fx_literal_expr(value_expr, arena) {
+            return Ok(());
+        }
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "{}; {} currently accepts only fx literals or existing fx-typed values",
+                fx_coercion_gap_message(),
+                context,
+            ),
+        });
+    }
+    Err(FrontendError {
+        pos: 0,
+        message: format!("type mismatch in {}: {:?} vs {:?}", context, expected, actual),
+    })
 }

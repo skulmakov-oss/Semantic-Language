@@ -78,6 +78,7 @@ messages rather than as a stable numeric code family.
 Current message families include:
 
 - unknown variable
+- unknown assignment target
 - unknown function
 - argument count mismatch
 - argument type mismatch

@@ -90,6 +90,8 @@ Current honest limit:
 Current statement meaning:
 
 - `let` evaluates the right-hand side before binding the name
+- `name op= expr;` evaluates as read-modify-write over the existing binding
+- the current v0 compound forms are `+=`, `-=`, `*=`, `/=`, `&&=`, and `||=`
 - `guard condition else return ...;` continues when the condition is `true`
 - when the guard condition is `false`, the `else return` path terminates the
   current function immediately
@@ -102,6 +104,7 @@ Current non-goal:
 - the source contract does not claim deferred execution, generators, or
   coroutine-style statement behavior
 - `guard` does not yet support arbitrary `else { ... }` recovery blocks
+- plain reassignment `name = expr;` is not yet part of the public surface
 
 ## Block Expressions
 

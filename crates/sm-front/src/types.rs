@@ -66,6 +66,10 @@ pub enum Stmt {
         ty: Option<Type>,
         value: ExprId,
     },
+    Assign {
+        name: SymbolId,
+        value: ExprId,
+    },
     Guard {
         condition: ExprId,
         else_return: Option<ExprId>,
@@ -219,6 +223,12 @@ pub enum TokenKind {
     AndAnd,
     OrOr,
     PipeForward,
+    AndAndAssign,
+    OrOrAssign,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
     Plus,
     Minus,
     Star,

@@ -1312,6 +1312,30 @@ fn lower_stmt(
             });
             Ok(())
         }
+        Stmt::Assign { name, value } => {
+            let target_ty = env.get(*name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown assignment target '{}'",
+                    resolve_symbol_name(arena, *name)?
+                ),
+            })?;
+            let (reg, _) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                Some(target_ty),
+                ret_ty,
+            )?;
+            ctx.instrs.push(IrInstr::StoreVar {
+                name: resolve_symbol_name(arena, *name)?.to_string(),
+                src: reg,
+            });
+            Ok(())
+        }
         Stmt::Guard {
             condition,
             else_return,
@@ -2159,6 +2183,34 @@ mod opt_tests {
             .collect();
         assert!(call_names.contains(&"inc"));
         assert!(call_names.contains(&"scale"));
+    }
+
+    #[test]
+    fn lower_compound_assignment_to_read_modify_write() {
+        let src = r#"
+            fn main() {
+                let total: f64 = 1.0;
+                total += 2.0;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("compound assignment should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadVar { name, .. } if name == "total")));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "total"))
+            .count()
+            >= 2);
     }
 
     #[test]
