@@ -18,8 +18,8 @@ pub mod types;
 pub use types::{
     AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, FrontendErrorKind, Function,
     IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
-    LogosSystem, LogosWhen, MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token,
-    TokenKind, Type, UnaryOp,
+    LogosSystem, LogosWhen, MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt, StmtId,
+    SymbolId, Token, TokenKind, Type, UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};

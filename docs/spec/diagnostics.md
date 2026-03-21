@@ -37,6 +37,7 @@ Current examples include:
 - block-expression parse failures such as missing trailing tail values
 - `if`-expression parse failures such as missing `else` or rejected `else if`
   sugar in value position
+- `match`-expression parse failures such as invalid literal arm patterns
 
 Current guarantees:
 
@@ -81,6 +82,7 @@ Current message families include:
 - return type mismatch
 - invalid `if` condition type
 - `if`-expression branch type mismatch
+- `match`-expression branch type mismatch
 - invalid `match` scrutinee or missing `_` arm
 - unsupported statement forms inside a value-producing block
 - unsupported operator for a type family

@@ -9,8 +9,8 @@ mod frontend {
         build_fn_table, builtin_sig, parse_logos_program_with_profile,
         parse_program_with_profile, resolve_symbol_name,
         type_check_function_with_table, type_check_program, AstArena, BinaryOp, BlockExpr,
-        CompileProfile, Expr, ExprId, FnTable, FrontendError, Function, LogosProgram, OptLevel,
-        QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,
+        CompileProfile, Expr, ExprId, FnTable, FrontendError, Function, LogosProgram, MatchExpr,
+        OptLevel, QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,
     };
     pub use sm_profile::ParserProfile;
 }

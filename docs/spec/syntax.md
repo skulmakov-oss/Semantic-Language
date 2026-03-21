@@ -87,6 +87,8 @@ Current expression forms:
   - `{ let x = 1; x }`
 - `if` expressions with explicit `else` blocks:
   - `if ready { 1.0 } else { 0.0 }`
+- `match` expressions with value-producing arms:
+  - `match state { T => { 1.0 } _ => { 0.0 } }`
 - parenthesized expressions
 - unary operators:
   - `!`
@@ -147,7 +149,6 @@ surface is part of the language contract and is specified in `modules.md`.
 
 The current source contract does not yet claim stable support for:
 
-- `match` as a value-producing expression
 - relational operators such as `>`, `<`, `>=`, `<=`
 - user-defined aggregate types
 - collections as first-class language forms

@@ -272,6 +272,7 @@ fn infer_expr_type(
             }
             Ok(then_ty)
         }
+        Expr::Match(match_expr) => infer_match_expr_type(match_expr, arena, env, table, ret_ty),
         Expr::Call(name, args) => {
             let sig = if let Some(s) = table.get(name) {
                 s.clone()
@@ -555,6 +556,77 @@ mod tests {
             .message
             .contains("if expression condition must be bool"));
     }
+
+    #[test]
+    fn match_expression_typechecks_when_arms_match() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match T {
+                    T => { 1.0 }
+                    F => { 2.0 }
+                    _ => { 3.0 }
+                };
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("match expression should typecheck");
+    }
+
+    #[test]
+    fn match_expression_requires_quad_scrutinee() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match true {
+                    T => { 1.0 }
+                    _ => { 2.0 }
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-quad match expression must reject");
+        assert!(err
+            .message
+            .contains("match expression is allowed only for quad scrutinee"));
+    }
+
+    #[test]
+    fn match_expression_requires_default_arm() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match T {
+                    T => { 1.0 }
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("match expression without default must reject");
+        assert!(err
+            .message
+            .contains("match expression requires default arm '_'"));
+    }
+
+    #[test]
+    fn match_expression_rejects_branch_type_mismatch() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match T {
+                    T => { 1.0 }
+                    _ => { true }
+                };
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("mismatched match expression branches must reject");
+        assert!(err
+            .message
+            .contains("match expression branch type mismatch"));
+    }
 }
 
 fn infer_value_block_type(
@@ -582,4 +654,58 @@ fn infer_value_block_type(
     let tail_ty = infer_expr_type(block.tail, arena, &block_env, table, ret_ty)?;
     block_env.pop_scope();
     Ok(tail_ty)
+}
+
+fn infer_match_expr_type(
+    match_expr: &MatchExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+) -> Result<Type, FrontendError> {
+    let scrutinee_ty = infer_expr_type(match_expr.scrutinee, arena, env, table, ret_ty)?;
+    if scrutinee_ty != Type::Quad {
+        return Err(FrontendError {
+            pos: 0,
+            message: "match expression is allowed only for quad scrutinee".to_string(),
+        });
+    }
+    let default = match_expr.default.as_ref().ok_or(FrontendError {
+        pos: 0,
+        message: "match expression requires default arm '_'".to_string(),
+    })?;
+
+    let mut result_ty = None;
+    for arm in &match_expr.arms {
+        let arm_ty = infer_value_block_type(&arm.block, arena, env, table, ret_ty)?;
+        if let Some(expected) = result_ty {
+            if expected != arm_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "match expression branch type mismatch: expected {:?}, got {:?}",
+                        expected, arm_ty
+                    ),
+                });
+            }
+        } else {
+            result_ty = Some(arm_ty);
+        }
+    }
+
+    let default_ty = infer_value_block_type(default, arena, env, table, ret_ty)?;
+    if let Some(expected) = result_ty {
+        if expected != default_ty {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "match expression branch type mismatch: expected {:?}, got {:?}",
+                    expected, default_ty
+                ),
+            });
+        }
+        Ok(expected)
+    } else {
+        Ok(default_ty)
+    }
 }

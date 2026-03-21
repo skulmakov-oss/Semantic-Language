@@ -7,7 +7,8 @@ use crate::CompilePolicyView;
 use crate::types::{
     AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+    MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token,
+    TokenKind, Type, UnaryOp,
 };
 use sm_profile::{CompatibilityMode, ParserProfile};
 use ton618_core::diagnostics::{
@@ -145,41 +146,7 @@ impl<'a> Parser<'a> {
             }));
         }
         if self.eat(TokenKind::KwMatch) {
-            let scrutinee = self.parse_expr()?;
-            self.expect(TokenKind::LBrace, "expected '{' after match expr")?;
-            let mut arms = Vec::new();
-            let mut default: Option<Vec<StmtId>> = None;
-            while !self.check(TokenKind::RBrace) {
-                if self.eat(TokenKind::Underscore) {
-                    self.expect(TokenKind::FatArrow, "expected '=>' after '_'")?;
-                    let block = self.parse_block()?;
-                    default = Some(block);
-                    continue;
-                }
-                let pat = if self.eat(TokenKind::QuadN) {
-                    QuadVal::N
-                } else if self.eat(TokenKind::QuadF) {
-                    QuadVal::F
-                } else if self.eat(TokenKind::QuadT) {
-                    QuadVal::T
-                } else if self.eat(TokenKind::QuadS) {
-                    QuadVal::S
-                } else {
-                    return Err(FrontendError {
-                        pos: self.pos(),
-                        message: "expected match pattern N|F|T|S|_".to_string(),
-                    });
-                };
-                self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
-                let block = self.parse_block()?;
-                arms.push(MatchArm { pat, block });
-            }
-            self.expect(TokenKind::RBrace, "expected '}' after match arms")?;
-            return Ok(self.arena.alloc_stmt(Stmt::Match {
-                scrutinee,
-                arms,
-                default: default.unwrap_or_default(),
-            }));
+            return self.parse_match_stmt_after_kw_match();
         }
         if self.eat(TokenKind::KwReturn) {
             if self.eat(TokenKind::Semi) {
@@ -323,6 +290,9 @@ impl<'a> Parser<'a> {
         if self.eat(TokenKind::KwIf) {
             return self.parse_if_expr_after_kw_if();
         }
+        if self.eat(TokenKind::KwMatch) {
+            return self.parse_match_expr_after_kw_match();
+        }
         if self.check(TokenKind::LBrace) {
             return self.parse_block_expr();
         }
@@ -422,6 +392,73 @@ impl<'a> Parser<'a> {
         })))
     }
 
+    fn parse_match_stmt_after_kw_match(&mut self) -> Result<StmtId, FrontendError> {
+        let scrutinee = self.parse_expr()?;
+        self.expect(TokenKind::LBrace, "expected '{' after match expr")?;
+        let mut arms = Vec::new();
+        let mut default: Option<Vec<StmtId>> = None;
+        while !self.check(TokenKind::RBrace) {
+            if self.eat(TokenKind::Underscore) {
+                self.expect(TokenKind::FatArrow, "expected '=>' after '_'")?;
+                let block = self.parse_block()?;
+                default = Some(block);
+                continue;
+            }
+            let pat = self.parse_quad_match_pattern()?;
+            self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
+            let block = self.parse_block()?;
+            arms.push(MatchArm { pat, block });
+        }
+        self.expect(TokenKind::RBrace, "expected '}' after match arms")?;
+        Ok(self.arena.alloc_stmt(Stmt::Match {
+            scrutinee,
+            arms,
+            default: default.unwrap_or_default(),
+        }))
+    }
+
+    fn parse_match_expr_after_kw_match(&mut self) -> Result<ExprId, FrontendError> {
+        let scrutinee = self.parse_expr()?;
+        self.expect(TokenKind::LBrace, "expected '{' after match expr")?;
+        let mut arms = Vec::new();
+        let mut default: Option<BlockExpr> = None;
+        while !self.check(TokenKind::RBrace) {
+            if self.eat(TokenKind::Underscore) {
+                self.expect(TokenKind::FatArrow, "expected '=>' after '_'")?;
+                let block = self.parse_value_block()?;
+                default = Some(block);
+                continue;
+            }
+            let pat = self.parse_quad_match_pattern()?;
+            self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
+            let block = self.parse_value_block()?;
+            arms.push(MatchExprArm { pat, block });
+        }
+        self.expect(TokenKind::RBrace, "expected '}' after match arms")?;
+        Ok(self.arena.alloc_expr(Expr::Match(MatchExpr {
+            scrutinee,
+            arms,
+            default,
+        })))
+    }
+
+    fn parse_quad_match_pattern(&mut self) -> Result<QuadVal, FrontendError> {
+        if self.eat(TokenKind::QuadN) {
+            Ok(QuadVal::N)
+        } else if self.eat(TokenKind::QuadF) {
+            Ok(QuadVal::F)
+        } else if self.eat(TokenKind::QuadT) {
+            Ok(QuadVal::T)
+        } else if self.eat(TokenKind::QuadS) {
+            Ok(QuadVal::S)
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: "expected match pattern N|F|T|S|_".to_string(),
+            })
+        }
+    }
+
     fn parse_value_block(&mut self) -> Result<BlockExpr, FrontendError> {
         self.expect(TokenKind::LBrace, "expected '{'")?;
         let mut statements = Vec::new();
@@ -440,7 +477,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if self.check(TokenKind::KwMatch) || self.check(TokenKind::KwReturn) {
+            if self.check(TokenKind::KwReturn) {
                 return Err(FrontendError {
                     pos: self.pos(),
                     message:
@@ -1085,6 +1122,35 @@ fn main() {
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("else-if sugar must reject in value position");
         assert!(err.message.contains("else-if sugar is not supported in if expressions yet"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_match_expression() {
+        let src = r#"
+fn main() {
+    let value: f64 = match T {
+        T => { 1.0 }
+        _ => { 2.0 }
+    };
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("match expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Match(match_expr) = program.arena.expr(*value) else {
+            panic!("expected match expression");
+        };
+        assert!(matches!(
+            program.arena.expr(match_expr.scrutinee),
+            Expr::QuadLiteral(QuadVal::T)
+        ));
+        assert_eq!(match_expr.arms.len(), 1);
+        assert!(match_expr.default.is_some());
     }
 
     #[test]

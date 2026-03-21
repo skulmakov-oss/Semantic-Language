@@ -934,7 +934,9 @@ fn lower_expr_with_expected(
             });
             Ok((r, ty))
         }
-        Expr::Block(block) => lower_value_block_expr(block, arena, next, out, env, fn_table, expected, ret_ty),
+        Expr::Block(block) => {
+            lower_value_block_expr(block, arena, next, out, env, fn_table, expected, ret_ty)
+        }
         Expr::If(if_expr) => {
             let (cond_reg, cond_ty) =
                 lower_expr(if_expr.condition, arena, next, out, env, fn_table, ret_ty)?;
@@ -1013,6 +1015,9 @@ fn lower_expr_with_expected(
                 name: result_name,
             });
             Ok((dst, then_ty))
+        }
+        Expr::Match(match_expr) => {
+            lower_match_expr(match_expr, arena, next, out, env, fn_table, expected, ret_ty)
         }
         Expr::Call(name, args) => {
             let sig = if let Some(s) = fn_table.get(name) {
@@ -1555,6 +1560,121 @@ fn lower_value_block_expr(
     Ok(tail)
 }
 
+fn lower_match_expr(
+    match_expr: &MatchExpr,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    expected: Option<Type>,
+    ret_ty: Type,
+) -> Result<(u16, Type), FrontendError> {
+    let (scr_reg, scr_ty) = lower_expr(match_expr.scrutinee, arena, next, out, env, fn_table, ret_ty)?;
+    if scr_ty != Type::Quad {
+        return Err(FrontendError {
+            pos: 0,
+            message: "match expression scrutinee must be quad".to_string(),
+        });
+    }
+    let default = match_expr.default.as_ref().ok_or(FrontendError {
+        pos: 0,
+        message: "match expression requires default arm '_'".to_string(),
+    })?;
+
+    let id = alloc_match_expr_id(next);
+    let end_label = format!("match_expr_{}_end", id);
+    let default_label = format!("match_expr_{}_default", id);
+    let arm_labels: Vec<String> = (0..match_expr.arms.len())
+        .map(|i| format!("match_expr_{}_arm_{}", id, i))
+        .collect();
+    let result_name = format!("__match_expr_{}_result", id);
+
+    for (i, arm) in match_expr.arms.iter().enumerate() {
+        let lit_reg = alloc(next);
+        out.push(IrInstr::LoadQ {
+            dst: lit_reg,
+            val: arm.pat,
+        });
+        let cmp_reg = alloc(next);
+        out.push(IrInstr::CmpEq {
+            dst: cmp_reg,
+            lhs: scr_reg,
+            rhs: lit_reg,
+        });
+        out.push(IrInstr::JmpIf {
+            cond: cmp_reg,
+            label: arm_labels[i].clone(),
+        });
+    }
+    out.push(IrInstr::Jmp {
+        label: default_label.clone(),
+    });
+
+    let mut result_ty = None;
+    for (i, arm) in match_expr.arms.iter().enumerate() {
+        out.push(IrInstr::Label {
+            name: arm_labels[i].clone(),
+        });
+        let (arm_reg, arm_ty) =
+            lower_value_block_expr(&arm.block, arena, next, out, env, fn_table, expected, ret_ty)?;
+        if let Some(expected_ty) = result_ty {
+            if expected_ty != arm_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "match expression branch type mismatch in lowering: expected {:?}, got {:?}",
+                        expected_ty, arm_ty
+                    ),
+                });
+            }
+        } else {
+            result_ty = Some(arm_ty);
+        }
+        out.push(IrInstr::StoreVar {
+            name: result_name.clone(),
+            src: arm_reg,
+        });
+        out.push(IrInstr::Jmp {
+            label: end_label.clone(),
+        });
+    }
+
+    out.push(IrInstr::Label {
+        name: default_label,
+    });
+    let (default_reg, default_ty) =
+        lower_value_block_expr(default, arena, next, out, env, fn_table, expected, ret_ty)?;
+    if let Some(expected_ty) = result_ty {
+        if expected_ty != default_ty {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "match expression branch type mismatch in lowering: expected {:?}, got {:?}",
+                    expected_ty, default_ty
+                ),
+            });
+        }
+    } else {
+        result_ty = Some(default_ty);
+    }
+    out.push(IrInstr::StoreVar {
+        name: result_name.clone(),
+        src: default_reg,
+    });
+    out.push(IrInstr::Jmp {
+        label: end_label.clone(),
+    });
+
+    out.push(IrInstr::Label { name: end_label });
+    let dst = alloc(next);
+    out.push(IrInstr::LoadVar {
+        dst,
+        name: result_name,
+    });
+    Ok((dst, result_ty.expect("default arm guarantees result type")))
+}
+
 fn lower_expr_stmt(
     expr_id: ExprId,
     arena: &AstArena,
@@ -1575,6 +1695,12 @@ fn lower_expr_stmt(
 }
 
 fn alloc_if_expr_id(next: &mut u16) -> u16 {
+    let id = *next;
+    *next += 1;
+    id
+}
+
+fn alloc_match_expr_id(next: &mut u16) -> u16 {
     let id = *next;
     *next += 1;
     id
@@ -1773,6 +1899,53 @@ mod opt_tests {
         assert!(err
             .message
             .contains("if expression branch type mismatch"));
+    }
+
+    #[test]
+    fn lower_match_expression_to_ir() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match T {
+                    T => { 1.0 }
+                    _ => { 2.0 }
+                };
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("match expression should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("match_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name.starts_with("__match_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::LoadVar { name, .. } if name.starts_with("__match_expr_")
+        )));
+    }
+
+    #[test]
+    fn lowering_match_expression_rejects_branch_type_mismatch() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match T {
+                    T => { 1.0 }
+                    _ => { true }
+                };
+                return;
+            }
+        "#;
+
+        let err =
+            compile_program_to_ir(src).expect_err("mismatched match expression branches must reject");
+        assert!(err
+            .message
+            .contains("match expression branch type mismatch"));
     }
 
     #[test]

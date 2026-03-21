@@ -108,8 +108,8 @@ Current v0 limit:
 
 - block-expression bodies currently accept only `let` bindings and expression
   statements before the tail value
-- `match` and `return` are not yet supported inside value-producing block
-  bodies as a stable source contract
+- `return` is not yet supported inside value-producing block bodies as a
+  stable source contract
 
 ## Control Flow
 
@@ -146,8 +146,20 @@ Current `match` semantics:
 - `_` is required as the default arm
 - the first matching arm is selected deterministically
 
+Current `match` expression semantics:
+
+- `match scrutinee { ... }` may appear in value position
+- each non-default arm uses a value-producing block after `=>`
+- `_` is required as the default arm for value-producing `match`
+- all arms, including `_`, must produce the same type
+
 This is a deliberately narrow source contract rather than a full general
 pattern-matching system.
+
+Current v0 limit:
+
+- `match` expression arms do not yet support guards
+- only literal `quad` patterns and `_` are part of the stable source contract
 
 ## Operator Meaning
 

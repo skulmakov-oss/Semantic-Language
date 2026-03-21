@@ -56,6 +56,7 @@ pub enum Expr {
     Binary(ExprId, BinaryOp, ExprId),
     Block(BlockExpr),
     If(IfExpr),
+    Match(MatchExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +91,19 @@ pub struct IfExpr {
     pub condition: ExprId,
     pub then_block: BlockExpr,
     pub else_block: BlockExpr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchExpr {
+    pub scrutinee: ExprId,
+    pub arms: Vec<MatchExprArm>,
+    pub default: Option<BlockExpr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchExprArm {
+    pub pat: QuadVal,
+    pub block: BlockExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
