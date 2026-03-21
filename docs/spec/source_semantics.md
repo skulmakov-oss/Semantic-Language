@@ -143,6 +143,7 @@ Current `match` semantics:
 
 - `match` is currently restricted to `quad`
 - arms match only the literal patterns `N`, `F`, `T`, `S`
+- non-default arms may attach a `bool` guard with `if guard_expr`
 - `_` is required as the default arm
 - the first matching arm is selected deterministically
 
@@ -150,6 +151,7 @@ Current `match` expression semantics:
 
 - `match scrutinee { ... }` may appear in value position
 - each non-default arm uses a value-producing block after `=>`
+- expression arms may use the same `if guard_expr` form as statement-side arms
 - `_` is required as the default arm for value-producing `match`
 - all arms, including `_`, must produce the same type
 
@@ -158,7 +160,7 @@ pattern-matching system.
 
 Current v0 limit:
 
-- `match` expression arms do not yet support guards
+- the default `_` arm does not yet support guards
 - only literal `quad` patterns and `_` are part of the stable source contract
 
 ## Operator Meaning

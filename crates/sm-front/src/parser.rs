@@ -399,15 +399,22 @@ impl<'a> Parser<'a> {
         let mut default: Option<Vec<StmtId>> = None;
         while !self.check(TokenKind::RBrace) {
             if self.eat(TokenKind::Underscore) {
+                if self.check(TokenKind::KwIf) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "default '_' arm in match currently cannot have guard".to_string(),
+                    });
+                }
                 self.expect(TokenKind::FatArrow, "expected '=>' after '_'")?;
                 let block = self.parse_block()?;
                 default = Some(block);
                 continue;
             }
             let pat = self.parse_quad_match_pattern()?;
+            let guard = self.parse_match_guard_opt()?;
             self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
             let block = self.parse_block()?;
-            arms.push(MatchArm { pat, block });
+            arms.push(MatchArm { pat, guard, block });
         }
         self.expect(TokenKind::RBrace, "expected '}' after match arms")?;
         Ok(self.arena.alloc_stmt(Stmt::Match {
@@ -424,15 +431,22 @@ impl<'a> Parser<'a> {
         let mut default: Option<BlockExpr> = None;
         while !self.check(TokenKind::RBrace) {
             if self.eat(TokenKind::Underscore) {
+                if self.check(TokenKind::KwIf) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "default '_' arm in match currently cannot have guard".to_string(),
+                    });
+                }
                 self.expect(TokenKind::FatArrow, "expected '=>' after '_'")?;
                 let block = self.parse_value_block()?;
                 default = Some(block);
                 continue;
             }
             let pat = self.parse_quad_match_pattern()?;
+            let guard = self.parse_match_guard_opt()?;
             self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
             let block = self.parse_value_block()?;
-            arms.push(MatchExprArm { pat, block });
+            arms.push(MatchExprArm { pat, guard, block });
         }
         self.expect(TokenKind::RBrace, "expected '}' after match arms")?;
         Ok(self.arena.alloc_expr(Expr::Match(MatchExpr {
@@ -457,6 +471,13 @@ impl<'a> Parser<'a> {
                 message: "expected match pattern N|F|T|S|_".to_string(),
             })
         }
+    }
+
+    fn parse_match_guard_opt(&mut self) -> Result<Option<ExprId>, FrontendError> {
+        if self.eat(TokenKind::KwIf) {
+            return Ok(Some(self.parse_expr()?));
+        }
+        Ok(None)
     }
 
     fn parse_value_block(&mut self) -> Result<BlockExpr, FrontendError> {
@@ -1129,7 +1150,7 @@ fn main() {
         let src = r#"
 fn main() {
     let value: f64 = match T {
-        T => { 1.0 }
+        T if true => { 1.0 }
         _ => { 2.0 }
     };
     return;
@@ -1150,7 +1171,26 @@ fn main() {
             Expr::QuadLiteral(QuadVal::T)
         ));
         assert_eq!(match_expr.arms.len(), 1);
+        assert!(match_expr.arms[0].guard.is_some());
         assert!(match_expr.default.is_some());
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_guarded_default_match_arm() {
+        let src = r#"
+fn main() {
+    let value: f64 = match T {
+        _ if true => { 2.0 }
+    };
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("guarded default arm must reject");
+        assert!(err
+            .message
+            .contains("default '_' arm in match currently cannot have guard"));
     }
 
     #[test]

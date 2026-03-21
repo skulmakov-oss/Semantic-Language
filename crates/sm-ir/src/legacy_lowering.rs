@@ -1447,41 +1447,106 @@ fn lower_stmt(
             let arm_labels: Vec<String> = (0..arms.len())
                 .map(|i| format!("match_{}_arm_{}", mid, i))
                 .collect();
-
-            for (i, arm) in arms.iter().enumerate() {
-                let lit_reg = alloc(&mut ctx.next_reg);
-                ctx.instrs.push(IrInstr::LoadQ {
-                    dst: lit_reg,
-                    val: arm.pat,
-                });
-                let cmp_reg = alloc(&mut ctx.next_reg);
-                ctx.instrs.push(IrInstr::CmpEq {
-                    dst: cmp_reg,
-                    lhs: scr_reg,
-                    rhs: lit_reg,
-                });
-                ctx.instrs.push(IrInstr::JmpIf {
-                    cond: cmp_reg,
-                    label: arm_labels[i].clone(),
-                });
-            }
-            ctx.instrs.push(IrInstr::Jmp {
-                label: default_label.clone(),
-            });
-
-            for (i, arm) in arms.iter().enumerate() {
-                ctx.instrs.push(IrInstr::Label {
-                    name: arm_labels[i].clone(),
-                });
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for s in &arm.block {
-                    lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty, fn_table)?;
+            if arms.iter().all(|arm| arm.guard.is_none()) {
+                for (i, arm) in arms.iter().enumerate() {
+                    let lit_reg = alloc(&mut ctx.next_reg);
+                    ctx.instrs.push(IrInstr::LoadQ {
+                        dst: lit_reg,
+                        val: arm.pat,
+                    });
+                    let cmp_reg = alloc(&mut ctx.next_reg);
+                    ctx.instrs.push(IrInstr::CmpEq {
+                        dst: cmp_reg,
+                        lhs: scr_reg,
+                        rhs: lit_reg,
+                    });
+                    ctx.instrs.push(IrInstr::JmpIf {
+                        cond: cmp_reg,
+                        label: arm_labels[i].clone(),
+                    });
                 }
-                arm_env.pop_scope();
                 ctx.instrs.push(IrInstr::Jmp {
-                    label: end_label.clone(),
+                    label: default_label.clone(),
                 });
+
+                for (i, arm) in arms.iter().enumerate() {
+                    ctx.instrs.push(IrInstr::Label {
+                        name: arm_labels[i].clone(),
+                    });
+                    let mut arm_env = env.clone();
+                    arm_env.push_scope();
+                    for s in &arm.block {
+                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty, fn_table)?;
+                    }
+                    arm_env.pop_scope();
+                    ctx.instrs.push(IrInstr::Jmp {
+                        label: end_label.clone(),
+                    });
+                }
+            } else {
+                for (i, arm) in arms.iter().enumerate() {
+                    if i > 0 {
+                        ctx.instrs.push(IrInstr::Label {
+                            name: format!("match_{}_check_{}", mid, i),
+                        });
+                    }
+                    let next_label = if i + 1 < arms.len() {
+                        format!("match_{}_check_{}", mid, i + 1)
+                    } else {
+                        default_label.clone()
+                    };
+
+                    let lit_reg = alloc(&mut ctx.next_reg);
+                    ctx.instrs.push(IrInstr::LoadQ {
+                        dst: lit_reg,
+                        val: arm.pat,
+                    });
+                    let cmp_reg = alloc(&mut ctx.next_reg);
+                    ctx.instrs.push(IrInstr::CmpEq {
+                        dst: cmp_reg,
+                        lhs: scr_reg,
+                        rhs: lit_reg,
+                    });
+                    ctx.instrs.push(IrInstr::JmpIf {
+                        cond: cmp_reg,
+                        label: arm_labels[i].clone(),
+                    });
+                    ctx.instrs.push(IrInstr::Jmp {
+                        label: next_label.clone(),
+                    });
+
+                    ctx.instrs.push(IrInstr::Label {
+                        name: arm_labels[i].clone(),
+                    });
+                    let mut arm_env = env.clone();
+                    arm_env.push_scope();
+                    if let Some(guard_reg) = lower_match_guard(
+                        arm.guard,
+                        arena,
+                        &mut ctx.next_reg,
+                        &mut ctx.instrs,
+                        &arm_env,
+                        fn_table,
+                        ret_ty,
+                    )? {
+                        let guarded_body_label = format!("match_{}_body_{}", mid, i);
+                        ctx.instrs.push(IrInstr::JmpIf {
+                            cond: guard_reg,
+                            label: guarded_body_label.clone(),
+                        });
+                        ctx.instrs.push(IrInstr::Jmp { label: next_label });
+                        ctx.instrs.push(IrInstr::Label {
+                            name: guarded_body_label,
+                        });
+                    }
+                    for s in &arm.block {
+                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty, fn_table)?;
+                    }
+                    arm_env.pop_scope();
+                    ctx.instrs.push(IrInstr::Jmp {
+                        label: end_label.clone(),
+                    });
+                }
             }
 
             ctx.instrs.push(IrInstr::Label {
@@ -1560,6 +1625,28 @@ fn lower_value_block_expr(
     Ok(tail)
 }
 
+fn lower_match_guard(
+    guard: Option<ExprId>,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    ret_ty: Type,
+) -> Result<Option<u16>, FrontendError> {
+    let Some(guard_expr) = guard else {
+        return Ok(None);
+    };
+    let (guard_reg, guard_ty) = lower_expr(guard_expr, arena, next, out, env, fn_table, ret_ty)?;
+    if guard_ty != Type::Bool {
+        return Err(FrontendError {
+            pos: 0,
+            message: "match guard condition must be bool".to_string(),
+        });
+    }
+    Ok(Some(guard_reg))
+}
+
 fn lower_match_expr(
     match_expr: &MatchExpr,
     arena: &AstArena,
@@ -1590,7 +1677,19 @@ fn lower_match_expr(
         .collect();
     let result_name = format!("__match_expr_{}_result", id);
 
+    let mut result_ty = None;
     for (i, arm) in match_expr.arms.iter().enumerate() {
+        if i > 0 {
+            out.push(IrInstr::Label {
+                name: format!("match_expr_{}_check_{}", id, i),
+            });
+        }
+        let next_label = if i + 1 < match_expr.arms.len() {
+            format!("match_expr_{}_check_{}", id, i + 1)
+        } else {
+            default_label.clone()
+        };
+
         let lit_reg = alloc(next);
         out.push(IrInstr::LoadQ {
             dst: lit_reg,
@@ -1606,18 +1705,39 @@ fn lower_match_expr(
             cond: cmp_reg,
             label: arm_labels[i].clone(),
         });
-    }
-    out.push(IrInstr::Jmp {
-        label: default_label.clone(),
-    });
+        out.push(IrInstr::Jmp {
+            label: next_label.clone(),
+        });
 
-    let mut result_ty = None;
-    for (i, arm) in match_expr.arms.iter().enumerate() {
         out.push(IrInstr::Label {
             name: arm_labels[i].clone(),
         });
-        let (arm_reg, arm_ty) =
-            lower_value_block_expr(&arm.block, arena, next, out, env, fn_table, expected, ret_ty)?;
+        let mut arm_env = env.clone();
+        arm_env.push_scope();
+        if let Some(guard_reg) =
+            lower_match_guard(arm.guard, arena, next, out, &arm_env, fn_table, ret_ty)?
+        {
+            let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
+            out.push(IrInstr::JmpIf {
+                cond: guard_reg,
+                label: guarded_body_label.clone(),
+            });
+            out.push(IrInstr::Jmp { label: next_label });
+            out.push(IrInstr::Label {
+                name: guarded_body_label,
+            });
+        }
+        let (arm_reg, arm_ty) = lower_value_block_expr(
+            &arm.block,
+            arena,
+            next,
+            out,
+            &arm_env,
+            fn_table,
+            expected,
+            ret_ty,
+        )?;
+        arm_env.pop_scope();
         if let Some(expected_ty) = result_ty {
             if expected_ty != arm_ty {
                 return Err(FrontendError {
@@ -1906,7 +2026,7 @@ mod opt_tests {
         let src = r#"
             fn main() {
                 let total: f64 = match T {
-                    T => { 1.0 }
+                    T if true => { 1.0 }
                     _ => { 2.0 }
                 };
                 return;
@@ -1918,6 +2038,10 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::Label { name } if name.starts_with("match_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::LoadBool { .. }
         )));
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,

@@ -182,6 +182,7 @@ fn check_stmt(
             for arm in arms {
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
+                check_match_guard(arm.guard, arena, &arm_env, table, ret_ty)?;
                 for s in &arm.block {
                     check_stmt(*s, arena, &mut arm_env, ret_ty, table)?;
                 }
@@ -627,6 +628,22 @@ mod tests {
             .message
             .contains("match expression branch type mismatch"));
     }
+
+    #[test]
+    fn match_expression_guard_requires_bool() {
+        let src = r#"
+            fn main() {
+                let total: f64 = match T {
+                    T if T => { 1.0 }
+                    _ => { 2.0 }
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-bool guard must reject");
+        assert!(err.message.contains("match guard condition must be bool"));
+    }
 }
 
 fn infer_value_block_type(
@@ -677,6 +694,7 @@ fn infer_match_expr_type(
 
     let mut result_ty = None;
     for arm in &match_expr.arms {
+        check_match_guard(arm.guard, arena, env, table, ret_ty)?;
         let arm_ty = infer_value_block_type(&arm.block, arena, env, table, ret_ty)?;
         if let Some(expected) = result_ty {
             if expected != arm_ty {
@@ -708,4 +726,24 @@ fn infer_match_expr_type(
     } else {
         Ok(default_ty)
     }
+}
+
+fn check_match_guard(
+    guard: Option<ExprId>,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    if let Some(expr_id) = guard {
+        let guard_ty = infer_expr_type(expr_id, arena, env, table, ret_ty)?;
+        if guard_ty != Type::Bool {
+            return Err(FrontendError {
+                pos: 0,
+                message: "match guard condition must be bool; explicit compare is required for quad"
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
 }

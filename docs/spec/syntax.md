@@ -60,6 +60,7 @@ Current statement forms:
 - `let name: type = expr;`
 - `if condition { ... } else { ... }`
 - `match quad_expr { T => { ... } ... _ => { ... } }`
+- `match quad_expr { T if ready == true => { ... } ... _ => { ... } }`
 - `return;`
 - `return expr;`
 - expression statements: `expr;`
@@ -89,6 +90,7 @@ Current expression forms:
   - `if ready { 1.0 } else { 0.0 }`
 - `match` expressions with value-producing arms:
   - `match state { T => { 1.0 } _ => { 0.0 } }`
+  - `match state { T if ready == true => { 1.0 } _ => { 0.0 } }`
 - parenthesized expressions
 - unary operators:
   - `!`

@@ -82,6 +82,7 @@ Current message families include:
 - return type mismatch
 - invalid `if` condition type
 - `if`-expression branch type mismatch
+- invalid `match` guard condition type
 - `match`-expression branch type mismatch
 - invalid `match` scrutinee or missing `_` arm
 - unsupported statement forms inside a value-producing block

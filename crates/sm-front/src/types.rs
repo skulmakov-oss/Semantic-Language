@@ -103,12 +103,14 @@ pub struct MatchExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchExprArm {
     pub pat: QuadVal,
+    pub guard: Option<ExprId>,
     pub block: BlockExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pat: QuadVal,
+    pub guard: Option<ExprId>,
     pub block: Vec<StmtId>,
 }
 
