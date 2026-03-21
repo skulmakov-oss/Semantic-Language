@@ -248,25 +248,29 @@ fn infer_expr_type(
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
         }),
-        Expr::Block(block) => {
-            let mut block_env = env.clone();
-            block_env.push_scope();
-            for stmt in &block.statements {
-                match arena.stmt(*stmt) {
-                    Stmt::Let { .. } | Stmt::Expr(_) => {
-                        check_stmt(*stmt, arena, &mut block_env, ret_ty, table)?;
-                    }
-                    _ => {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: "block expression body currently supports only let-bindings and expression statements before the tail value".to_string(),
-                        });
-                    }
-                }
+        Expr::Block(block) => infer_value_block_type(block, arena, env, table, ret_ty),
+        Expr::If(if_expr) => {
+            let cond_ty = infer_expr_type(if_expr.condition, arena, env, table, ret_ty)?;
+            if cond_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "if expression condition must be bool; explicit compare is required for quad"
+                            .to_string(),
+                });
             }
-            let tail_ty = infer_expr_type(block.tail, arena, &block_env, table, ret_ty)?;
-            block_env.pop_scope();
-            Ok(tail_ty)
+            let then_ty = infer_value_block_type(&if_expr.then_block, arena, env, table, ret_ty)?;
+            let else_ty = infer_value_block_type(&if_expr.else_block, arena, env, table, ret_ty)?;
+            if then_ty != else_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "if expression branch type mismatch: then {:?}, else {:?}",
+                        then_ty, else_ty
+                    ),
+                });
+            }
+            Ok(then_ty)
         }
         Expr::Call(name, args) => {
             let sig = if let Some(s) = table.get(name) {
@@ -508,4 +512,74 @@ mod tests {
         let err = typecheck_source(src).expect_err("block-local name must not escape");
         assert!(err.message.contains("unknown variable 'base'"));
     }
+
+    #[test]
+    fn if_expression_typechecks_when_branches_match() {
+        let src = r#"
+            fn main() {
+                let total: f64 = if true { 1.0 } else { 2.0 };
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("if expression should typecheck");
+    }
+
+    #[test]
+    fn if_expression_rejects_branch_type_mismatch() {
+        let src = r#"
+            fn main() {
+                let total: f64 = if true { 1.0 } else { true };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("mismatched if expression branches must reject");
+        assert!(err
+            .message
+            .contains("if expression branch type mismatch"));
+    }
+
+    #[test]
+    fn if_expression_requires_bool_condition() {
+        let src = r#"
+            fn main() {
+                let total: f64 = if T { 1.0 } else { 2.0 };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("quad condition must reject");
+        assert!(err
+            .message
+            .contains("if expression condition must be bool"));
+    }
+}
+
+fn infer_value_block_type(
+    block: &BlockExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+) -> Result<Type, FrontendError> {
+    let mut block_env = env.clone();
+    block_env.push_scope();
+    for stmt in &block.statements {
+        match arena.stmt(*stmt) {
+            Stmt::Let { .. } | Stmt::Expr(_) => {
+                check_stmt(*stmt, arena, &mut block_env, ret_ty, table)?;
+            }
+            _ => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "value-producing block currently supports only let-bindings and expression statements before the tail value".to_string(),
+                });
+            }
+        }
+    }
+    let tail_ty = infer_expr_type(block.tail, arena, &block_env, table, ret_ty)?;
+    block_env.pop_scope();
+    Ok(tail_ty)
 }

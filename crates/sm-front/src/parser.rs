@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use crate::lexer::lex_tokens;
 use crate::CompilePolicyView;
 use crate::types::{
-    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, LogosEntity,
+    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
     MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
 };
@@ -320,6 +320,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
+        if self.eat(TokenKind::KwIf) {
+            return self.parse_if_expr_after_kw_if();
+        }
         if self.check(TokenKind::LBrace) {
             return self.parse_block_expr();
         }
@@ -387,6 +390,39 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block_expr(&mut self) -> Result<ExprId, FrontendError> {
+        let block = self.parse_value_block()?;
+        Ok(self.arena.alloc_expr(Expr::Block(block)))
+    }
+
+    fn starts_stmt_only_in_block_expr(&self) -> bool {
+        self.check(TokenKind::KwLet)
+    }
+
+    fn parse_if_expr_after_kw_if(&mut self) -> Result<ExprId, FrontendError> {
+        let condition = self.parse_expr()?;
+        let then_block = self.parse_value_block()?;
+        if !self.eat(TokenKind::KwElse) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "if expression requires explicit else branch".to_string(),
+            });
+        }
+        if self.check(TokenKind::KwIf) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "else-if sugar is not supported in if expressions yet; use else { if ... }"
+                    .to_string(),
+            });
+        }
+        let else_block = self.parse_value_block()?;
+        Ok(self.arena.alloc_expr(Expr::If(IfExpr {
+            condition,
+            then_block,
+            else_block,
+        })))
+    }
+
+    fn parse_value_block(&mut self) -> Result<BlockExpr, FrontendError> {
         self.expect(TokenKind::LBrace, "expected '{'")?;
         let mut statements = Vec::new();
 
@@ -394,7 +430,7 @@ impl<'a> Parser<'a> {
             if self.check(TokenKind::RBrace) {
                 return Err(FrontendError {
                     pos: self.pos(),
-                    message: "block expression requires trailing value expression before '}'"
+                    message: "value-producing block requires trailing value expression before '}'"
                         .to_string(),
                 });
             }
@@ -404,14 +440,11 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if self.check(TokenKind::KwIf)
-                || self.check(TokenKind::KwMatch)
-                || self.check(TokenKind::KwReturn)
-            {
+            if self.check(TokenKind::KwMatch) || self.check(TokenKind::KwReturn) {
                 return Err(FrontendError {
                     pos: self.pos(),
                     message:
-                        "block expression body currently supports only let-bindings and expression statements before the tail value"
+                        "value-producing block currently supports only let-bindings and expression statements before the tail value"
                             .to_string(),
                 });
             }
@@ -422,16 +455,12 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            self.expect(TokenKind::RBrace, "expected '}' after block expression")?;
-            return Ok(self.arena.alloc_expr(Expr::Block(BlockExpr {
+            self.expect(TokenKind::RBrace, "expected '}' after value-producing block")?;
+            return Ok(BlockExpr {
                 statements,
                 tail: expr,
-            })));
+            });
         }
-    }
-
-    fn starts_stmt_only_in_block_expr(&self) -> bool {
-        self.check(TokenKind::KwLet)
     }
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
@@ -1003,9 +1032,59 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("block expression without tail must reject");
-        assert!(err
-            .message
-            .contains("block expression requires trailing value expression"));
+        assert!(err.message.contains("value-producing block requires trailing value expression"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_if_expression() {
+        let src = r#"
+fn main() {
+    let value: f64 = if true { 1.0 } else { 2.0 };
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("if expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::If(if_expr) = program.arena.expr(*value) else {
+            panic!("expected if expression");
+        };
+        assert!(matches!(
+            program.arena.expr(if_expr.condition),
+            Expr::BoolLiteral(true)
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_if_expression_without_else() {
+        let src = r#"
+fn main() {
+    let value: f64 = if true { 1.0 };
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("if expression without else must reject");
+        assert!(err.message.contains("if expression requires explicit else branch"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_else_if_sugar_in_if_expression() {
+        let src = r#"
+fn main() {
+    let value: f64 = if true { 1.0 } else if false { 2.0 } else { 3.0 };
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("else-if sugar must reject in value position");
+        assert!(err.message.contains("else-if sugar is not supported in if expressions yet"));
     }
 
     #[test]

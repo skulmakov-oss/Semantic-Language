@@ -934,60 +934,85 @@ fn lower_expr_with_expected(
             });
             Ok((r, ty))
         }
-        Expr::Block(block) => {
-            let mut block_env = env.clone();
-            block_env.push_scope();
-            for stmt in &block.statements {
-                match arena.stmt(*stmt) {
-                    Stmt::Let { name, ty, value } => {
-                        let (reg, vty) = lower_expr_with_expected(
-                            *value,
-                            arena,
-                            next,
-                            out,
-                            &block_env,
-                            fn_table,
-                            *ty,
-                            ret_ty,
-                        )?;
-                        let final_ty = if let Some(ann) = ty { *ann } else { vty };
-                        block_env.insert(*name, final_ty);
-                        out.push(IrInstr::StoreVar {
-                            name: resolve_symbol_name(arena, *name)?.to_string(),
-                            src: reg,
-                        });
-                    }
-                    Stmt::Expr(expr) => {
-                        lower_expr_stmt_with_parts(
-                            *expr,
-                            arena,
-                            next,
-                            out,
-                            &block_env,
-                            fn_table,
-                            ret_ty,
-                        )?;
-                    }
-                    _ => {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: "block expression body currently supports only let-bindings and expression statements before the tail value".to_string(),
-                        });
-                    }
-                }
+        Expr::Block(block) => lower_value_block_expr(block, arena, next, out, env, fn_table, expected, ret_ty),
+        Expr::If(if_expr) => {
+            let (cond_reg, cond_ty) =
+                lower_expr(if_expr.condition, arena, next, out, env, fn_table, ret_ty)?;
+            if cond_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "if expression condition must be bool".to_string(),
+                });
             }
-            let tail = lower_expr_with_expected(
-                block.tail,
+
+            let id = alloc_if_expr_id(next);
+            let then_label = format!("if_expr_{}_then", id);
+            let else_label = format!("if_expr_{}_else", id);
+            let end_label = format!("if_expr_{}_end", id);
+            let result_name = format!("__if_expr_{}_result", id);
+
+            out.push(IrInstr::JmpIf {
+                cond: cond_reg,
+                label: then_label.clone(),
+            });
+            out.push(IrInstr::Jmp {
+                label: else_label.clone(),
+            });
+
+            out.push(IrInstr::Label { name: then_label });
+            let (then_reg, then_ty) = lower_value_block_expr(
+                &if_expr.then_block,
                 arena,
                 next,
                 out,
-                &block_env,
+                env,
                 fn_table,
                 expected,
                 ret_ty,
             )?;
-            block_env.pop_scope();
-            Ok(tail)
+            out.push(IrInstr::StoreVar {
+                name: result_name.clone(),
+                src: then_reg,
+            });
+            out.push(IrInstr::Jmp {
+                label: end_label.clone(),
+            });
+
+            out.push(IrInstr::Label { name: else_label });
+            let (else_reg, else_ty) = lower_value_block_expr(
+                &if_expr.else_block,
+                arena,
+                next,
+                out,
+                env,
+                fn_table,
+                expected,
+                ret_ty,
+            )?;
+            if then_ty != else_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "if expression branch type mismatch in lowering: then {:?}, else {:?}",
+                        then_ty, else_ty
+                    ),
+                });
+            }
+            out.push(IrInstr::StoreVar {
+                name: result_name.clone(),
+                src: else_reg,
+            });
+            out.push(IrInstr::Jmp {
+                label: end_label.clone(),
+            });
+
+            out.push(IrInstr::Label { name: end_label });
+            let dst = alloc(next);
+            out.push(IrInstr::LoadVar {
+                dst,
+                name: result_name,
+            });
+            Ok((dst, then_ty))
         }
         Expr::Call(name, args) => {
             let sig = if let Some(s) = fn_table.get(name) {
@@ -1473,6 +1498,63 @@ fn lower_stmt(
     }
 }
 
+fn lower_value_block_expr(
+    block: &BlockExpr,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    expected: Option<Type>,
+    ret_ty: Type,
+) -> Result<(u16, Type), FrontendError> {
+    let mut block_env = env.clone();
+    block_env.push_scope();
+    for stmt in &block.statements {
+        match arena.stmt(*stmt) {
+            Stmt::Let { name, ty, value } => {
+                let (reg, vty) = lower_expr_with_expected(
+                    *value,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    fn_table,
+                    *ty,
+                    ret_ty,
+                )?;
+                let final_ty = if let Some(ann) = ty { *ann } else { vty };
+                block_env.insert(*name, final_ty);
+                out.push(IrInstr::StoreVar {
+                    name: resolve_symbol_name(arena, *name)?.to_string(),
+                    src: reg,
+                });
+            }
+            Stmt::Expr(expr) => {
+                lower_expr_stmt_with_parts(*expr, arena, next, out, &block_env, fn_table, ret_ty)?;
+            }
+            _ => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "value-producing block currently supports only let-bindings and expression statements before the tail value".to_string(),
+                });
+            }
+        }
+    }
+    let tail = lower_expr_with_expected(
+        block.tail,
+        arena,
+        next,
+        out,
+        &block_env,
+        fn_table,
+        expected,
+        ret_ty,
+    )?;
+    block_env.pop_scope();
+    Ok(tail)
+}
+
 fn lower_expr_stmt(
     expr_id: ExprId,
     arena: &AstArena,
@@ -1490,6 +1572,12 @@ fn lower_expr_stmt(
         fn_table,
         ret_ty,
     )
+}
+
+fn alloc_if_expr_id(next: &mut u16) -> u16 {
+    let id = *next;
+    *next += 1;
+    id
 }
 
 fn lower_expr_stmt_with_parts(
@@ -1643,8 +1731,48 @@ mod opt_tests {
 
         let err = compile_program_to_ir(src).expect_err("control statements must reject");
         assert!(err.message.contains(
-            "block expression body currently supports only let-bindings and expression statements before the tail value"
+            "value-producing block currently supports only let-bindings and expression statements before the tail value"
         ));
+    }
+
+    #[test]
+    fn lower_if_expression_to_ir() {
+        let src = r#"
+            fn main() {
+                let total: f64 = if true { 1.0 } else { 2.0 };
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("if expression should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("if_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name.starts_with("__if_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::LoadVar { name, .. } if name.starts_with("__if_expr_")
+        )));
+    }
+
+    #[test]
+    fn lowering_if_expression_rejects_branch_type_mismatch() {
+        let src = r#"
+            fn main() {
+                let total: f64 = if true { 1.0 } else { true };
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src).expect_err("mismatched branch types must reject");
+        assert!(err
+            .message
+            .contains("if expression branch type mismatch"));
     }
 
     #[test]

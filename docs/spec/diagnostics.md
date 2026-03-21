@@ -35,6 +35,8 @@ Current examples include:
 - `E0220` to `E0233` for `Law` and `When` parsing
 - `E0234` to `E0237` for type/expression-level parser expectations
 - block-expression parse failures such as missing trailing tail values
+- `if`-expression parse failures such as missing `else` or rejected `else if`
+  sugar in value position
 
 Current guarantees:
 
@@ -78,8 +80,9 @@ Current message families include:
 - let-binding type mismatch
 - return type mismatch
 - invalid `if` condition type
+- `if`-expression branch type mismatch
 - invalid `match` scrutinee or missing `_` arm
-- unsupported statement forms inside a block-expression body
+- unsupported statement forms inside a value-producing block
 - unsupported operator for a type family
 - explicit `fx` gap messages for still-narrow source cases
 

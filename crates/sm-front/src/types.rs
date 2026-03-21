@@ -55,6 +55,7 @@ pub enum Expr {
     Unary(UnaryOp, ExprId),
     Binary(ExprId, BinaryOp, ExprId),
     Block(BlockExpr),
+    If(IfExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +83,13 @@ pub enum Stmt {
 pub struct BlockExpr {
     pub statements: Vec<StmtId>,
     pub tail: ExprId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfExpr {
+    pub condition: ExprId,
+    pub then_block: BlockExpr,
+    pub else_block: BlockExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]

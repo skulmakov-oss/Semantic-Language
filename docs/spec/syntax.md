@@ -85,6 +85,8 @@ Current expression forms:
 - function calls
 - block expressions with a trailing tail value:
   - `{ let x = 1; x }`
+- `if` expressions with explicit `else` blocks:
+  - `if ready { 1.0 } else { 0.0 }`
 - parenthesized expressions
 - unary operators:
   - `!`
@@ -145,7 +147,7 @@ surface is part of the language contract and is specified in `modules.md`.
 
 The current source contract does not yet claim stable support for:
 
-- `if` or `match` as value-producing expressions
+- `match` as a value-producing expression
 - relational operators such as `>`, `<`, `>=`, `<=`
 - user-defined aggregate types
 - collections as first-class language forms

@@ -16,9 +16,10 @@ use alloc::vec::Vec;
 pub mod types;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
-    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, FrontendErrorKind, Function, LogosEntity,
-    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, FrontendErrorKind, Function,
+    IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
+    LogosSystem, LogosWhen, MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token,
+    TokenKind, Type, UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};

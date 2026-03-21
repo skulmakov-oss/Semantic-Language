@@ -108,7 +108,7 @@ Current v0 limit:
 
 - block-expression bodies currently accept only `let` bindings and expression
   statements before the tail value
-- `if`, `match`, and `return` are not yet supported inside block-expression
+- `match` and `return` are not yet supported inside value-producing block
   bodies as a stable source contract
 
 ## Control Flow
@@ -122,8 +122,20 @@ Current `if` semantics:
 - otherwise the `else` branch runs
 - `else if` is treated as nested `if` inside the `else` branch
 
+Current `if` expression semantics:
+
+- `if condition { ... } else { ... }` may appear in value position
+- both branches are evaluated through value-producing block semantics
+- both branches must produce the same type
+- `else` is required for value-producing `if`
+
 `quad` is intentionally not treated as an implicit condition type. Users must
 write explicit comparisons.
+
+Current v0 limit:
+
+- `else if` sugar is not yet supported for value-producing `if`; users must
+  write `else { if ... }`
 
 ### Match
 
