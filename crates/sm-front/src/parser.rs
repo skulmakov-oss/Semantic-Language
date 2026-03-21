@@ -126,6 +126,32 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Semi, "expected ';'")?;
             return Ok(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
         }
+        if self.eat(TokenKind::KwGuard) {
+            let condition = self.parse_expr()?;
+            if !self.eat(TokenKind::KwElse) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "guard clause requires else return branch".to_string(),
+                });
+            }
+            if !self.eat(TokenKind::KwReturn) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "guard clause currently supports only else return".to_string(),
+                });
+            }
+            let else_return = if self.eat(TokenKind::Semi) {
+                None
+            } else {
+                let expr = self.parse_expr()?;
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                Some(expr)
+            };
+            return Ok(self.arena.alloc_stmt(Stmt::Guard {
+                condition,
+                else_return,
+            }));
+        }
         if self.eat(TokenKind::KwIf) {
             let condition = self.parse_expr()?;
             let then_block = self.parse_block()?;
@@ -498,7 +524,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if self.check(TokenKind::KwReturn) {
+            if self.check(TokenKind::KwGuard) || self.check(TokenKind::KwReturn) {
                 return Err(FrontendError {
                     pos: self.pos(),
                     message:
@@ -1191,6 +1217,42 @@ fn main() {
         assert!(err
             .message
             .contains("default '_' arm in match currently cannot have guard"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_guard_clause() {
+        let src = r#"
+fn main() {
+    guard true else return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("guard clause should parse");
+        let func = &program.functions[0];
+        let Stmt::Guard {
+            condition,
+            else_return,
+        } = program.arena.stmt(func.body[0]) else {
+            panic!("expected guard statement");
+        };
+        assert!(matches!(program.arena.expr(*condition), Expr::BoolLiteral(true)));
+        assert!(else_return.is_none());
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_guard_without_else_return() {
+        let src = r#"
+fn main() {
+    guard true else { return; }
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("guard clause without else return should reject");
+        assert!(err
+            .message
+            .contains("guard clause currently supports only else return"));
     }
 
     #[test]

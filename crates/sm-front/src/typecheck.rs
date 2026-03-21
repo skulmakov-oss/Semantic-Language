@@ -131,6 +131,21 @@ fn check_stmt(
             env.insert(*name, final_ty);
             Ok(())
         }
+        Stmt::Guard {
+            condition,
+            else_return,
+        } => {
+            let condition_ty = infer_expr_type(*condition, arena, env, table, ret_ty)?;
+            if condition_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "guard clause condition must be bool; explicit compare is required for quad"
+                            .to_string(),
+                });
+            }
+            check_return_payload(*else_return, arena, env, table, ret_ty)
+        }
         Stmt::If {
             condition,
             then_block,
@@ -198,32 +213,7 @@ fn check_stmt(
             Ok(())
         }
         Stmt::Return(v) => {
-            let got = if let Some(e) = v {
-                infer_expr_type(*e, arena, env, table, ret_ty)?
-            } else {
-                Type::Unit
-            };
-            if got != ret_ty {
-                if ret_ty == Type::Fx && is_numeric_for_fx_gap(got) {
-                    if let Some(expr_id) = v {
-                        if is_fx_literal_expr(*expr_id, arena) {
-                            return Ok(());
-                        }
-                    }
-                    return Err(FrontendError {
-                        pos: 0,
-                        message: format!(
-                            "{}; function return currently requires an fx literal or an existing fx-typed value",
-                            fx_coercion_gap_message(),
-                        ),
-                    });
-                }
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!("return type mismatch: expected {:?}, got {:?}", ret_ty, got),
-                });
-            }
-            Ok(())
+            check_return_payload(*v, arena, env, table, ret_ty)
         }
         Stmt::Expr(e) => {
             let _ = infer_expr_type(*e, arena, env, table, ret_ty)?;
@@ -644,6 +634,43 @@ mod tests {
         let err = typecheck_source(src).expect_err("non-bool guard must reject");
         assert!(err.message.contains("match guard condition must be bool"));
     }
+
+    #[test]
+    fn guard_clause_typechecks_with_unit_return() {
+        let src = r#"
+            fn main() {
+                guard true else return;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("guard clause should typecheck");
+    }
+
+    #[test]
+    fn guard_clause_requires_bool_condition() {
+        let src = r#"
+            fn main() {
+                guard T else return;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-bool guard clause must reject");
+        assert!(err.message.contains("guard clause condition must be bool"));
+    }
+
+    #[test]
+    fn guard_clause_reuses_return_type_contract() {
+        let src = r#"
+            fn main() {
+                guard true else return true;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("guard return payload must typecheck");
+        assert!(err.message.contains("return type mismatch"));
+    }
 }
 
 fn infer_value_block_type(
@@ -744,6 +771,41 @@ fn check_match_guard(
                     .to_string(),
             });
         }
+    }
+    Ok(())
+}
+
+fn check_return_payload(
+    value: Option<ExprId>,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    let got = if let Some(expr_id) = value {
+        infer_expr_type(expr_id, arena, env, table, ret_ty)?
+    } else {
+        Type::Unit
+    };
+    if got != ret_ty {
+        if ret_ty == Type::Fx && is_numeric_for_fx_gap(got) {
+            if let Some(expr_id) = value {
+                if is_fx_literal_expr(expr_id, arena) {
+                    return Ok(());
+                }
+            }
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "{}; function return currently requires an fx literal or an existing fx-typed value",
+                    fx_coercion_gap_message(),
+                ),
+            });
+        }
+        return Err(FrontendError {
+            pos: 0,
+            message: format!("return type mismatch: expected {:?}, got {:?}", ret_ty, got),
+        });
     }
     Ok(())
 }

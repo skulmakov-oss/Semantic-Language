@@ -66,6 +66,10 @@ pub enum Stmt {
         ty: Option<Type>,
         value: ExprId,
     },
+    Guard {
+        condition: ExprId,
+        else_return: Option<ExprId>,
+    },
     If {
         condition: ExprId,
         then_block: Vec<StmtId>,
@@ -185,6 +189,7 @@ pub struct Token {
 pub enum TokenKind {
     KwFn,
     KwLet,
+    KwGuard,
     KwIf,
     KwElse,
     KwReturn,

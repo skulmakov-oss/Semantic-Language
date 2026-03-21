@@ -37,6 +37,7 @@ Current examples include:
 - block-expression parse failures such as missing trailing tail values
 - `if`-expression parse failures such as missing `else` or rejected `else if`
   sugar in value position
+- `guard`-clause parse failures such as missing `else return`
 - `match`-expression parse failures such as invalid literal arm patterns
 
 Current guarantees:
@@ -80,6 +81,7 @@ Current message families include:
 - argument type mismatch
 - let-binding type mismatch
 - return type mismatch
+- invalid `guard` condition type
 - invalid `if` condition type
 - `if`-expression branch type mismatch
 - invalid `match` guard condition type

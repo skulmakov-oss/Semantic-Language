@@ -58,6 +58,8 @@ Current statement forms:
 
 - `let name = expr;`
 - `let name: type = expr;`
+- `guard condition else return;`
+- `guard condition else return expr;`
 - `if condition { ... } else { ... }`
 - `match quad_expr { T => { ... } ... _ => { ... } }`
 - `match quad_expr { T if ready == true => { ... } ... _ => { ... } }`
@@ -68,6 +70,7 @@ Current statement forms:
 Current statement rules:
 
 - semicolons terminate executable statements
+- `guard` currently supports only the `else return` form
 - `if` conditions must be `bool`
 - `match` is currently restricted to `quad`
 - `match` requires an explicit default arm `_ => { ... }`

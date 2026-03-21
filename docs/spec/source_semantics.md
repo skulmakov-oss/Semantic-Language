@@ -86,6 +86,9 @@ Current honest limit:
 Current statement meaning:
 
 - `let` evaluates the right-hand side before binding the name
+- `guard condition else return ...;` continues when the condition is `true`
+- when the guard condition is `false`, the `else return` path terminates the
+  current function immediately
 - expression statements evaluate for effect and then discard any produced value
 - `return expr;` terminates the current function with that value
 - `return;` terminates a `unit`-returning function
@@ -94,6 +97,7 @@ Current non-goal:
 
 - the source contract does not claim deferred execution, generators, or
   coroutine-style statement behavior
+- `guard` does not yet support arbitrary `else { ... }` recovery blocks
 
 ## Block Expressions
 
@@ -136,6 +140,16 @@ Current v0 limit:
 
 - `else if` sugar is not yet supported for value-producing `if`; users must
   write `else { if ... }`
+
+### Guard
+
+Current `guard` semantics:
+
+- `guard condition else return;` is allowed in `unit`-returning functions
+- `guard condition else return expr;` is allowed when `expr` matches the
+  function return type
+- `guard` requires a `bool` condition
+- `guard` is purely statement-level in the current source contract
 
 ### Match
 

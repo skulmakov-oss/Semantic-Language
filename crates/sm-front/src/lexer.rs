@@ -242,6 +242,7 @@ fn tokenize_line(
                 let kind = match text {
                     "fn" => TokenKind::KwFn,
                     "let" => TokenKind::KwLet,
+                    "guard" => TokenKind::KwGuard,
                     "if" => TokenKind::KwIf,
                     "else" => TokenKind::KwElse,
                     "return" => TokenKind::KwReturn,

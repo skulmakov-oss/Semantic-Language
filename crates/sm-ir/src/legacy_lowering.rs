@@ -1312,48 +1312,60 @@ fn lower_stmt(
             });
             Ok(())
         }
+        Stmt::Guard {
+            condition,
+            else_return,
+        } => {
+            let (cond_reg, cond_ty) = lower_expr(
+                *condition,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                ret_ty,
+            )?;
+            if cond_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "guard clause condition must be bool".to_string(),
+                });
+            }
+
+            let id = ctx.next_if_id();
+            let continue_label = format!("guard_{}_continue", id);
+            ctx.instrs.push(IrInstr::JmpIf {
+                cond: cond_reg,
+                label: continue_label.clone(),
+            });
+            lower_return_payload(
+                *else_return,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                ret_ty,
+            )?;
+            ctx.instrs.push(IrInstr::Label {
+                name: continue_label,
+            });
+            Ok(())
+        }
         Stmt::Expr(expr) => {
             lower_expr_stmt(*expr, arena, ctx, env, fn_table, ret_ty)?;
             Ok(())
         }
         Stmt::Return(v) => {
-            match v {
-                Some(e) => {
-                    let (reg, ty) = lower_expr_with_expected(
-                        *e,
-                        arena,
-                        &mut ctx.next_reg,
-                        &mut ctx.instrs,
-                        env,
-                        fn_table,
-                        Some(ret_ty),
-                        ret_ty,
-                    )?;
-                    if ty != ret_ty {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: format!(
-                                "return type mismatch in lowering: expected {:?}, got {:?}",
-                                ret_ty, ty
-                            ),
-                        });
-                    }
-                    ctx.instrs.push(IrInstr::Ret { src: Some(reg) });
-                }
-                None => {
-                    if ret_ty != Type::Unit {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: format!(
-                                "return without value in non-unit function ({:?})",
-                                ret_ty
-                            ),
-                        });
-                    }
-                    ctx.instrs.push(IrInstr::Ret { src: None });
-                }
-            }
-            Ok(())
+            lower_return_payload(
+                *v,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                ret_ty,
+            )
         }
         Stmt::If {
             condition,
@@ -1645,6 +1657,52 @@ fn lower_match_guard(
         });
     }
     Ok(Some(guard_reg))
+}
+
+fn lower_return_payload(
+    value: Option<ExprId>,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    match value {
+        Some(expr_id) => {
+            let (reg, ty) = lower_expr_with_expected(
+                expr_id,
+                arena,
+                next,
+                out,
+                env,
+                fn_table,
+                Some(ret_ty),
+                ret_ty,
+            )?;
+            if ty != ret_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "return type mismatch in lowering: expected {:?}, got {:?}",
+                        ret_ty, ty
+                    ),
+                });
+            }
+            out.push(IrInstr::Ret { src: Some(reg) });
+            Ok(())
+        }
+        None => {
+            if ret_ty != Type::Unit {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!("return without value in non-unit function ({:?})", ret_ty),
+                });
+            }
+            out.push(IrInstr::Ret { src: None });
+            Ok(())
+        }
+    }
 }
 
 fn lower_match_expr(
@@ -2051,6 +2109,29 @@ mod opt_tests {
             instr,
             IrInstr::LoadVar { name, .. } if name.starts_with("__match_expr_")
         )));
+    }
+
+    #[test]
+    fn lower_guard_clause_to_ir() {
+        let src = r#"
+            fn main() {
+                guard true else return;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("guard clause should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::JmpIf { label, .. } if label.starts_with("guard_")
+        )));
+        assert!(main
+            .instrs
+            .iter()
+            .filter(|instr| matches!(instr, IrInstr::Ret { .. }))
+            .count()
+            >= 2);
     }
 
     #[test]
