@@ -94,7 +94,16 @@ impl<'a> Parser<'a> {
         } else {
             Type::Unit
         };
-        let body = self.parse_block()?;
+        let body = if self.eat(TokenKind::Assign) {
+            let expr = self.parse_expr()?;
+            self.expect(
+                TokenKind::Semi,
+                "expected ';' after expression-bodied function",
+            )?;
+            vec![self.arena.alloc_stmt(Stmt::Return(Some(expr)))]
+        } else {
+            self.parse_block()?
+        };
         Ok(Function {
             name,
             params,
@@ -1073,6 +1082,36 @@ fn main() { let x: quad = idq(T); return; }
         let a = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect("frontend rustlike");
         assert_eq!(a.functions.len(), 2);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_expression_bodied_function() {
+        let src = r#"
+fn idq(q: quad) -> quad = q;
+fn main() { return; }
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("expression-bodied function should parse");
+        let func = &program.functions[0];
+        let Stmt::Return(Some(value)) = program.arena.stmt(func.body[0]) else {
+            panic!("expected desugared return statement");
+        };
+        assert!(matches!(program.arena.expr(*value), Expr::Var(_)));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_expression_bodied_function_without_semi() {
+        let src = r#"
+fn idq(q: quad) -> quad = q
+fn main() { return; }
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("missing semicolon must reject");
+        assert!(err
+            .message
+            .contains("expected ';' after expression-bodied function"));
     }
 
     #[test]

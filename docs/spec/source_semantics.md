@@ -28,6 +28,8 @@ Current rules:
 - execution begins at `fn main()`
 - `main` must currently have signature `fn main()`
 - there is no dynamic entrypoint discovery or module-level executable code
+- `fn name(...) -> ret = expr;` is semantically equivalent to a body containing
+  only `return expr;`
 
 ## Deterministic Evaluation Order
 

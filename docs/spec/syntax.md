@@ -44,12 +44,19 @@ fn name(arg: type, ...) -> ret_type {
 }
 ```
 
+Expression-bodied sugar is also part of the current v0 surface:
+
+```sm
+fn name(arg: type, ...) -> ret_type = expr;
+```
+
 Current rules:
 
 - `fn` introduces a function
 - parameters are named and typed explicitly
 - the return type is optional; omitted return type means `unit`
 - function bodies are block-delimited with `{ ... }`
+- `fn ... = expr;` is accepted as shorthand for a single returned expression
 - the public program entrypoint is `fn main()`
 
 ## Statements

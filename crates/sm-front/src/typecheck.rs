@@ -671,6 +671,35 @@ mod tests {
         let err = typecheck_source(src).expect_err("guard return payload must typecheck");
         assert!(err.message.contains("return type mismatch"));
     }
+
+    #[test]
+    fn expression_bodied_function_reuses_return_typing() {
+        let src = r#"
+            fn id(x: f64) -> f64 = x;
+
+            fn main() {
+                let same: f64 = id(1.0);
+                let ok = same == same;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("expression-bodied function should typecheck");
+    }
+
+    #[test]
+    fn expression_bodied_function_reports_return_mismatch() {
+        let src = r#"
+            fn bad() -> f64 = true;
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("expression-bodied return mismatch must reject");
+        assert!(err.message.contains("return type mismatch"));
+    }
 }
 
 fn infer_value_block_type(
