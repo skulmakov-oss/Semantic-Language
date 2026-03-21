@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use crate::lexer::lex_tokens;
 use crate::CompilePolicyView;
 use crate::types::{
-    AstArena, BinaryOp, Expr, ExprId, FrontendError, Function, LogosEntity, LogosEntityField,
-    LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, Program,
-    QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, LogosEntity,
+    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
+    MatchArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
 };
 use sm_profile::{CompatibilityMode, ParserProfile};
 use ton618_core::diagnostics::{
@@ -320,6 +320,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
+        if self.check(TokenKind::LBrace) {
+            return self.parse_block_expr();
+        }
         if self.eat(TokenKind::LParen) {
             let e = self.parse_expr()?;
             self.expect(TokenKind::RParen, "expected ')'")?;
@@ -381,6 +384,54 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected primary expression".to_string(),
         })
+    }
+
+    fn parse_block_expr(&mut self) -> Result<ExprId, FrontendError> {
+        self.expect(TokenKind::LBrace, "expected '{'")?;
+        let mut statements = Vec::new();
+
+        loop {
+            if self.check(TokenKind::RBrace) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "block expression requires trailing value expression before '}'"
+                        .to_string(),
+                });
+            }
+
+            if self.starts_stmt_only_in_block_expr() {
+                statements.push(self.parse_stmt()?);
+                continue;
+            }
+
+            if self.check(TokenKind::KwIf)
+                || self.check(TokenKind::KwMatch)
+                || self.check(TokenKind::KwReturn)
+            {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "block expression body currently supports only let-bindings and expression statements before the tail value"
+                            .to_string(),
+                });
+            }
+
+            let expr = self.parse_expr()?;
+            if self.eat(TokenKind::Semi) {
+                statements.push(self.arena.alloc_stmt(Stmt::Expr(expr)));
+                continue;
+            }
+
+            self.expect(TokenKind::RBrace, "expected '}' after block expression")?;
+            return Ok(self.arena.alloc_expr(Expr::Block(BlockExpr {
+                statements,
+                tail: expr,
+            })));
+        }
+    }
+
+    fn starts_stmt_only_in_block_expr(&self) -> bool {
+        self.check(TokenKind::KwLet)
     }
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
@@ -909,6 +960,52 @@ fn main() { let x: quad = idq(T); return; }
         let a = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect("frontend rustlike");
         assert_eq!(a.functions.len(), 2);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_block_expression_tail() {
+        let src = r#"
+fn main() {
+    let value: f64 = {
+        let base: f64 = 1.0;
+        base + 2.0
+    };
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("block expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Block(block) = program.arena.expr(*value) else {
+            panic!("expected block expression");
+        };
+        assert_eq!(block.statements.len(), 1);
+        match program.arena.expr(block.tail) {
+            Expr::Binary(_, BinaryOp::Add, _) => {}
+            other => panic!("expected additive tail expression, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_block_expression_without_tail() {
+        let src = r#"
+fn main() {
+    let value: i32 = {
+        let base: i32 = 1;
+    };
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("block expression without tail must reject");
+        assert!(err
+            .message
+            .contains("block expression requires trailing value expression"));
     }
 
     #[test]

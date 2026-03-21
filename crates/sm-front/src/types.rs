@@ -54,6 +54,7 @@ pub enum Expr {
     Call(SymbolId, Vec<ExprId>),
     Unary(UnaryOp, ExprId),
     Binary(ExprId, BinaryOp, ExprId),
+    Block(BlockExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +76,12 @@ pub enum Stmt {
     },
     Return(Option<ExprId>),
     Expr(ExprId),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockExpr {
+    pub statements: Vec<StmtId>,
+    pub tail: ExprId,
 }
 
 #[derive(Debug, Clone, PartialEq)]

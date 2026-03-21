@@ -95,6 +95,22 @@ Current non-goal:
 - the source contract does not claim deferred execution, generators, or
   coroutine-style statement behavior
 
+## Block Expressions
+
+Current block-expression semantics:
+
+- `{ ... tail }` evaluates its body in a fresh lexical block scope
+- body statements run in source order before the tail expression
+- the final unterminated tail expression becomes the value of the block
+- block-local bindings do not escape the block expression
+
+Current v0 limit:
+
+- block-expression bodies currently accept only `let` bindings and expression
+  statements before the tail value
+- `if`, `match`, and `return` are not yet supported inside block-expression
+  bodies as a stable source contract
+
 ## Control Flow
 
 ### If

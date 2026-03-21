@@ -234,7 +234,7 @@ pub fn lower_expr_to_ir(
     for (name, ty) in var_types {
         env.insert(*name, *ty);
     }
-    let _ = lower_expr(expr, arena, &mut next, &mut out, &env, fn_table)?;
+    let _ = lower_expr(expr, arena, &mut next, &mut out, &env, fn_table, Type::Unit)?;
     Ok(out)
 }
 
@@ -865,8 +865,9 @@ fn lower_expr(
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
     fn_table: &FnTable,
+    ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
-    lower_expr_with_expected(expr_id, arena, next, out, env, fn_table, None)
+    lower_expr_with_expected(expr_id, arena, next, out, env, fn_table, None, ret_ty)
 }
 
 fn lower_expr_with_expected(
@@ -877,6 +878,7 @@ fn lower_expr_with_expected(
     env: &ScopeEnv,
     fn_table: &FnTable,
     expected: Option<Type>,
+    ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
     match arena.expr(expr_id) {
         Expr::QuadLiteral(v) => {
@@ -932,6 +934,61 @@ fn lower_expr_with_expected(
             });
             Ok((r, ty))
         }
+        Expr::Block(block) => {
+            let mut block_env = env.clone();
+            block_env.push_scope();
+            for stmt in &block.statements {
+                match arena.stmt(*stmt) {
+                    Stmt::Let { name, ty, value } => {
+                        let (reg, vty) = lower_expr_with_expected(
+                            *value,
+                            arena,
+                            next,
+                            out,
+                            &block_env,
+                            fn_table,
+                            *ty,
+                            ret_ty,
+                        )?;
+                        let final_ty = if let Some(ann) = ty { *ann } else { vty };
+                        block_env.insert(*name, final_ty);
+                        out.push(IrInstr::StoreVar {
+                            name: resolve_symbol_name(arena, *name)?.to_string(),
+                            src: reg,
+                        });
+                    }
+                    Stmt::Expr(expr) => {
+                        lower_expr_stmt_with_parts(
+                            *expr,
+                            arena,
+                            next,
+                            out,
+                            &block_env,
+                            fn_table,
+                            ret_ty,
+                        )?;
+                    }
+                    _ => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "block expression body currently supports only let-bindings and expression statements before the tail value".to_string(),
+                        });
+                    }
+                }
+            }
+            let tail = lower_expr_with_expected(
+                block.tail,
+                arena,
+                next,
+                out,
+                &block_env,
+                fn_table,
+                expected,
+                ret_ty,
+            )?;
+            block_env.pop_scope();
+            Ok(tail)
+        }
         Expr::Call(name, args) => {
             let sig = if let Some(s) = fn_table.get(name) {
                 s.clone()
@@ -957,7 +1014,16 @@ fn lower_expr_with_expected(
             let mut regs = Vec::new();
             for (i, arg) in args.iter().enumerate() {
                 let (r, t) =
-                    lower_expr_with_expected(*arg, arena, next, out, env, fn_table, Some(sig.params[i]))?;
+                    lower_expr_with_expected(
+                        *arg,
+                        arena,
+                        next,
+                        out,
+                        env,
+                        fn_table,
+                        Some(sig.params[i]),
+                        ret_ty,
+                    )?;
                 if t != sig.params[i] {
                     return Err(FrontendError {
                         pos: 0,
@@ -997,7 +1063,8 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Fx));
                 }
             }
-            let (src, ty) = lower_expr_with_expected(*inner, arena, next, out, env, fn_table, expected)?;
+            let (src, ty) =
+                lower_expr_with_expected(*inner, arena, next, out, env, fn_table, expected, ret_ty)?;
             match op {
                 UnaryOp::Not => {
                     let dst = alloc(next);
@@ -1046,8 +1113,10 @@ fn lower_expr_with_expected(
             }
         }
         Expr::Binary(left, op, right) => {
-            let (lr, lt) = lower_expr_with_expected(*left, arena, next, out, env, fn_table, expected)?;
-            let (rr, rt) = lower_expr_with_expected(*right, arena, next, out, env, fn_table, expected)?;
+            let (lr, lt) =
+                lower_expr_with_expected(*left, arena, next, out, env, fn_table, expected, ret_ty)?;
+            let (rr, rt) =
+                lower_expr_with_expected(*right, arena, next, out, env, fn_table, expected, ret_ty)?;
             if lt != rt {
                 return Err(FrontendError {
                     pos: 0,
@@ -1203,6 +1272,7 @@ fn lower_stmt(
                 env,
                 fn_table,
                 *ty,
+                ret_ty,
             )?;
             let final_ty = if let Some(ann) = ty { *ann } else { vty };
             env.insert(*name, final_ty);
@@ -1213,7 +1283,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::Expr(expr) => {
-            lower_expr_stmt(*expr, arena, ctx, env, fn_table)?;
+            lower_expr_stmt(*expr, arena, ctx, env, fn_table, ret_ty)?;
             Ok(())
         }
         Stmt::Return(v) => {
@@ -1227,6 +1297,7 @@ fn lower_stmt(
                         env,
                         fn_table,
                         Some(ret_ty),
+                        ret_ty,
                     )?;
                     if ty != ret_ty {
                         return Err(FrontendError {
@@ -1266,6 +1337,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
+                ret_ty,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1324,6 +1396,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
+                ret_ty,
             )?;
             if scr_ty != Type::Quad {
                 return Err(FrontendError {
@@ -1406,6 +1479,27 @@ fn lower_expr_stmt(
     ctx: &mut LoweringCtx,
     env: &ScopeEnv,
     fn_table: &FnTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    lower_expr_stmt_with_parts(
+        expr_id,
+        arena,
+        &mut ctx.next_reg,
+        &mut ctx.instrs,
+        env,
+        fn_table,
+        ret_ty,
+    )
+}
+
+fn lower_expr_stmt_with_parts(
+    expr_id: ExprId,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    ret_ty: Type,
 ) -> Result<(), FrontendError> {
     let expr = arena.expr(expr_id);
     if let Expr::Call(name, args) = expr {
@@ -1435,11 +1529,12 @@ fn lower_expr_stmt(
             let (r, t) = lower_expr_with_expected(
                 *arg,
                 arena,
-                &mut ctx.next_reg,
-                &mut ctx.instrs,
+                next,
+                out,
                 env,
                 fn_table,
                 Some(sig.params[i]),
+                ret_ty,
             )?;
             if t != sig.params[i] {
                 return Err(FrontendError {
@@ -1456,9 +1551,9 @@ fn lower_expr_stmt(
         let dst = if sig.ret == Type::Unit {
             None
         } else {
-            Some(alloc(&mut ctx.next_reg))
+            Some(alloc(next))
         };
-        ctx.instrs.push(IrInstr::Call {
+        out.push(IrInstr::Call {
             dst,
             name: resolve_symbol_name(arena, *name)?.to_string(),
             args: regs,
@@ -1466,7 +1561,7 @@ fn lower_expr_stmt(
         return Ok(());
     }
 
-    let _ = lower_expr(expr_id, arena, &mut ctx.next_reg, &mut ctx.instrs, env, fn_table)?;
+    let _ = lower_expr(expr_id, arena, next, out, env, fn_table, ret_ty)?;
     Ok(())
 }
 
@@ -1508,6 +1603,49 @@ fn alloc(next: &mut u16) -> u16 {
 mod opt_tests {
     use super::*;
     use crate::passes::run_default_opt_passes;
+
+    #[test]
+    fn lower_block_expression_tail_to_ir() {
+        let src = r#"
+            fn main() {
+                let total: f64 = {
+                    let base: f64 = 1.0;
+                    base + 2.0
+                };
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("block expression should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "base"
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "total"
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+    }
+
+    #[test]
+    fn block_expression_rejects_control_statements_in_body() {
+        let src = r#"
+            fn main() {
+                let total: f64 = {
+                    if true { return; } else { return; }
+                    1.0
+                };
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src).expect_err("control statements must reject");
+        assert!(err.message.contains(
+            "block expression body currently supports only let-bindings and expression statements before the tail value"
+        ));
+    }
 
     #[test]
     fn opt_removes_unreachable_and_noop_jmp() {

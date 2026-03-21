@@ -95,7 +95,7 @@ fn check_stmt(
     let stmt = arena.stmt(stmt_id);
     match stmt {
         Stmt::Let { name, ty, value } => {
-            let vt = infer_expr_type(*value, arena, env, table)?;
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
             let final_ty = if let Some(ann) = ty {
                 if *ann != vt {
                     if *ann == Type::Fx && is_numeric_for_fx_gap(vt) {
@@ -136,7 +136,7 @@ fn check_stmt(
             then_block,
             else_block,
         } => {
-            let ct = infer_expr_type(*condition, arena, env, table)?;
+            let ct = infer_expr_type(*condition, arena, env, table, ret_ty)?;
             if ct != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -165,7 +165,7 @@ fn check_stmt(
             arms,
             default,
         } => {
-            let st = infer_expr_type(*scrutinee, arena, env, table)?;
+            let st = infer_expr_type(*scrutinee, arena, env, table, ret_ty)?;
             if st != Type::Quad {
                 return Err(FrontendError {
                     pos: 0,
@@ -198,7 +198,7 @@ fn check_stmt(
         }
         Stmt::Return(v) => {
             let got = if let Some(e) = v {
-                infer_expr_type(*e, arena, env, table)?
+                infer_expr_type(*e, arena, env, table, ret_ty)?
             } else {
                 Type::Unit
             };
@@ -225,7 +225,7 @@ fn check_stmt(
             Ok(())
         }
         Stmt::Expr(e) => {
-            let _ = infer_expr_type(*e, arena, env, table)?;
+            let _ = infer_expr_type(*e, arena, env, table, ret_ty)?;
             Ok(())
         }
     }
@@ -236,6 +236,7 @@ fn infer_expr_type(
     arena: &AstArena,
     env: &ScopeEnv,
     table: &FnTable,
+    ret_ty: Type,
 ) -> Result<Type, FrontendError> {
     let expr = arena.expr(expr_id);
     match expr {
@@ -247,6 +248,26 @@ fn infer_expr_type(
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
         }),
+        Expr::Block(block) => {
+            let mut block_env = env.clone();
+            block_env.push_scope();
+            for stmt in &block.statements {
+                match arena.stmt(*stmt) {
+                    Stmt::Let { .. } | Stmt::Expr(_) => {
+                        check_stmt(*stmt, arena, &mut block_env, ret_ty, table)?;
+                    }
+                    _ => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "block expression body currently supports only let-bindings and expression statements before the tail value".to_string(),
+                        });
+                    }
+                }
+            }
+            let tail_ty = infer_expr_type(block.tail, arena, &block_env, table, ret_ty)?;
+            block_env.pop_scope();
+            Ok(tail_ty)
+        }
         Expr::Call(name, args) => {
             let sig = if let Some(s) = table.get(name) {
                 s.clone()
@@ -270,7 +291,7 @@ fn infer_expr_type(
                 });
             }
             for (i, arg) in args.iter().enumerate() {
-                let at = infer_expr_type(*arg, arena, env, table)?;
+                let at = infer_expr_type(*arg, arena, env, table, ret_ty)?;
                 if at != sig.params[i] {
                     if sig.params[i] == Type::Fx && is_numeric_for_fx_gap(at) {
                         if !is_fx_literal_expr(*arg, arena) {
@@ -301,7 +322,7 @@ fn infer_expr_type(
             Ok(sig.ret)
         }
         Expr::Unary(op, inner) => {
-            let t = infer_expr_type(*inner, arena, env, table)?;
+            let t = infer_expr_type(*inner, arena, env, table, ret_ty)?;
             match op {
                 UnaryOp::Not => match t {
                     Type::Quad | Type::Bool => Ok(t),
@@ -328,8 +349,8 @@ fn infer_expr_type(
             }
         }
         Expr::Binary(l, op, r) => {
-            let lt = infer_expr_type(*l, arena, env, table)?;
-            let rt = infer_expr_type(*r, arena, env, table)?;
+            let lt = infer_expr_type(*l, arena, env, table, ret_ty)?;
+            let rt = infer_expr_type(*r, arena, env, table, ret_ty)?;
             match op {
                 BinaryOp::Eq | BinaryOp::Ne => {
                     if lt == rt {
@@ -453,5 +474,38 @@ mod tests {
 
         let err = typecheck_source(src).expect_err("fx arithmetic should reject");
         assert!(err.message.contains("fx arithmetic is not implemented"));
+    }
+
+    #[test]
+    fn block_expression_tail_typechecks() {
+        let src = r#"
+            fn main() {
+                let total: f64 = {
+                    let base: f64 = 1.0;
+                    base + 2.0
+                };
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("block expression tail should typecheck");
+    }
+
+    #[test]
+    fn block_expression_scope_does_not_escape() {
+        let src = r#"
+            fn main() {
+                let total: f64 = {
+                    let base: f64 = 1.0;
+                    base + 2.0
+                };
+                let leak = base;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("block-local name must not escape");
+        assert!(err.message.contains("unknown variable 'base'"));
     }
 }
