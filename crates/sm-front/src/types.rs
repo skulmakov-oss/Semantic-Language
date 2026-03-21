@@ -218,6 +218,7 @@ pub enum TokenKind {
     String,
     AndAnd,
     OrOr,
+    PipeForward,
     Plus,
     Minus,
     Star,

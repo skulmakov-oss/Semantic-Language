@@ -700,6 +700,22 @@ mod tests {
         let err = typecheck_source(src).expect_err("expression-bodied return mismatch must reject");
         assert!(err.message.contains("return type mismatch"));
     }
+
+    #[test]
+    fn pipeline_chain_typechecks_via_existing_call_rules() {
+        let src = r#"
+            fn inc(x: f64) -> f64 = x + 1.0;
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = 1.0 |> inc() |> scale(3.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("pipeline desugaring should typecheck");
+    }
 }
 
 fn infer_value_block_type(

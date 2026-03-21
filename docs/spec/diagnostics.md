@@ -38,6 +38,7 @@ Current examples include:
 - `if`-expression parse failures such as missing `else` or rejected `else if`
   sugar in value position
 - expression-bodied function parse failures such as missing trailing `;`
+- pipeline parse failures such as missing function-stage targets after `|>`
 - `guard`-clause parse failures such as missing `else return`
 - `match`-expression parse failures such as invalid literal arm patterns
 

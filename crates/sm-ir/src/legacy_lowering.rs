@@ -2135,6 +2135,33 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_pipeline_expression_to_ordinary_calls() {
+        let src = r#"
+            fn inc(x: f64) -> f64 = x + 1.0;
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = 1.0 |> inc() |> scale(3.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("pipeline should lower through ordinary calls");
+        let main = &ir[2];
+        let call_names: Vec<_> = main
+            .instrs
+            .iter()
+            .filter_map(|instr| match instr {
+                IrInstr::Call { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(call_names.contains(&"inc"));
+        assert!(call_names.contains(&"scale"));
+    }
+
+    #[test]
     fn lowering_match_expression_rejects_branch_type_mismatch() {
         let src = r#"
             fn main() {

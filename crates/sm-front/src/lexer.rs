@@ -162,13 +162,16 @@ fn tokenize_line(
                 if i + 1 < bytes.len() && bytes[i + 1] == b'|' {
                     push_tok(out, TokenKind::OrOr, "||", abs_pos, line_no, col);
                     i += 2;
+                } else if i + 1 < bytes.len() && bytes[i + 1] == b'>' {
+                    push_tok(out, TokenKind::PipeForward, "|>", abs_pos, line_no, col);
+                    i += 2;
                 } else {
                     return Err(fmt_mark_error(
                         "E0003",
                         line_no,
                         col,
                         line_text,
-                        "expected '||'",
+                        "expected '||' or '|>'",
                         abs_pos,
                     ));
                 }

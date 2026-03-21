@@ -94,6 +94,9 @@ Current expression forms:
   - floating literals
 - variables
 - function calls
+- pipeline chains:
+  - `value |> stage()`
+  - `value |> stage(arg)`
 - block expressions with a trailing tail value:
   - `{ let x = 1; x }`
 - `if` expressions with explicit `else` blocks:
@@ -123,6 +126,7 @@ Current precedence, from tighter to looser:
 6. `&&`
 7. `||`
 8. `->`
+9. `|>`
 
 ## Quad-Specific Surface Rules
 

@@ -41,6 +41,8 @@ Current rules:
 - call arguments are evaluated left-to-right
 - control-flow conditions are evaluated before branch selection
 - `match` scrutinee is evaluated once before arm dispatch
+- pipeline stages evaluate left-to-right and pass the previous stage value as
+  the first argument of the next call
 
 The source contract does not currently claim short-circuit laziness beyond the
 observable deterministic behavior of the current lowering path.
@@ -213,6 +215,20 @@ Current builtin signatures:
 - `sqrt(f64) -> f64`
 - `abs(f64) -> f64`
 - `pow(f64, f64) -> f64`
+
+## Pipeline
+
+Current `|>` semantics:
+
+- `input |> stage()` is equivalent to `stage(input)`
+- `input |> stage(arg1, arg2)` is equivalent to `stage(input, arg1, arg2)`
+- pipeline stages are currently restricted to bare function names or ordinary
+  call syntax
+
+Current v0 limit:
+
+- placeholder-based pipeline forms are not part of the current contract
+- arbitrary right-hand expressions after `|>` are not yet supported
 
 ## Logos Semantics Boundary
 

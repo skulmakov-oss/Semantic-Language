@@ -217,7 +217,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<ExprId, FrontendError> {
-        self.parse_impl()
+        self.parse_pipe()
+    }
+
+    fn parse_pipe(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_impl()?;
+        while self.eat(TokenKind::PipeForward) {
+            left = self.parse_pipeline_stage(left)?;
+        }
+        Ok(left)
     }
 
     fn parse_impl(&mut self) -> Result<ExprId, FrontendError> {
@@ -319,6 +327,31 @@ impl<'a> Parser<'a> {
             return Ok(self.arena.alloc_expr(Expr::Unary(UnaryOp::Neg, inner)));
         }
         self.parse_primary()
+    }
+
+    fn parse_pipeline_stage(&mut self, input: ExprId) -> Result<ExprId, FrontendError> {
+        if !self.check(TokenKind::Ident) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "pipeline stage must start with function name or call".to_string(),
+            });
+        }
+
+        let name = self.expect_symbol()?;
+        let mut args = vec![input];
+        if self.eat(TokenKind::LParen) {
+            if !self.check(TokenKind::RParen) {
+                loop {
+                    args.push(self.parse_expr()?);
+                    if self.eat(TokenKind::Comma) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen, "expected ')'")?;
+        }
+        Ok(self.arena.alloc_expr(Expr::Call(name, args)))
     }
 
     fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
@@ -1112,6 +1145,51 @@ fn main() { return; }
         assert!(err
             .message
             .contains("expected ';' after expression-bodied function"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_pipeline_chain() {
+        let src = r#"
+fn inc(x: f64) -> f64 = x + 1.0;
+fn scale(x: f64, factor: f64) -> f64 = x * factor;
+fn main() {
+    let value: f64 = 1.0 |> inc() |> scale(3.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("pipeline chain should parse");
+        let func = &program.functions[2];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Call(scale_name, scale_args) = program.arena.expr(*value) else {
+            panic!("expected outer desugared call");
+        };
+        assert_eq!(program.arena.symbol_name(*scale_name), "scale");
+        assert_eq!(scale_args.len(), 2);
+        let Expr::Call(inc_name, inc_args) = program.arena.expr(scale_args[0]) else {
+            panic!("expected nested pipeline call");
+        };
+        assert_eq!(program.arena.symbol_name(*inc_name), "inc");
+        assert_eq!(inc_args.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_pipeline_without_call_target() {
+        let src = r#"
+fn main() {
+    let value: f64 = 1.0 |> true;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("pipeline stage without function target must reject");
+        assert!(err
+            .message
+            .contains("pipeline stage must start with function name or call"));
     }
 
     #[test]
