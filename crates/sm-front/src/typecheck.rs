@@ -1,7 +1,7 @@
+use crate::*;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::ToString;
-use crate::*;
 
 fn fx_coercion_gap_message() -> &'static str {
     "fx coercion from non-literal numeric expressions is not implemented in the canonical Rust-like path yet"
@@ -111,6 +111,13 @@ fn check_stmt(
             env.insert(*name, final_ty);
             Ok(())
         }
+        Stmt::Discard { ty, value } => {
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            if let Some(ann) = ty {
+                ensure_binding_value_type(*ann, vt, *value, arena, "discard binding".to_string())?;
+            }
+            Ok(())
+        }
         Stmt::Assign { name, value } => {
             let target_ty = env.get(*name).ok_or(FrontendError {
                 pos: 0,
@@ -209,9 +216,7 @@ fn check_stmt(
             def_env.pop_scope();
             Ok(())
         }
-        Stmt::Return(v) => {
-            check_return_payload(*v, arena, env, table, ret_ty)
-        }
+        Stmt::Return(v) => check_return_payload(*v, arena, env, table, ret_ty),
         Stmt::Expr(e) => {
             if check_builtin_assert_stmt(*e, arena, env, table, ret_ty)? {
                 return Ok(());
@@ -268,8 +273,9 @@ fn infer_expr_type(
             if is_builtin_assert_name(*name, arena, table)? {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "assert builtin is statement-only and cannot be used as expression value"
-                        .to_string(),
+                    message:
+                        "assert builtin is statement-only and cannot be used as expression value"
+                            .to_string(),
                 });
             }
             let sig = if let Some(s) = table.get(name) {
@@ -535,9 +541,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("mismatched if expression branches must reject");
-        assert!(err
-            .message
-            .contains("if expression branch type mismatch"));
+        assert!(err.message.contains("if expression branch type mismatch"));
     }
 
     #[test]
@@ -550,9 +554,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("quad condition must reject");
-        assert!(err
-            .message
-            .contains("if expression condition must be bool"));
+        assert!(err.message.contains("if expression condition must be bool"));
     }
 
     #[test]
@@ -768,6 +770,48 @@ mod tests {
     }
 
     #[test]
+    fn repeated_discard_binds_typecheck_without_name_collisions() {
+        let src = r#"
+            fn main() {
+                let _ = 1.0;
+                let _ = 2.0;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("discard binds should not create conflicting visible names");
+    }
+
+    #[test]
+    fn typed_discard_bind_reuses_type_mismatch_rules() {
+        let src = r#"
+            fn main() {
+                let _: f64 = true;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("typed discard bind must check rhs type");
+        assert!(err.message.contains("discard binding"));
+    }
+
+    #[test]
+    fn discard_bind_is_allowed_inside_value_block_body() {
+        let src = r#"
+            fn main() {
+                let total: f64 = {
+                    let _ = 1.0;
+                    2.0
+                };
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("discard bind should be accepted in value block body");
+    }
+
+    #[test]
     fn assert_builtin_statement_typechecks() {
         let src = r#"
             fn main() {
@@ -789,7 +833,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("assert builtin must require bool");
-        assert!(err.message.contains("assert builtin requires bool condition"));
+        assert!(err
+            .message
+            .contains("assert builtin requires bool condition"));
     }
 
     #[test]
@@ -852,10 +898,7 @@ fn check_builtin_assert_stmt(
     if cond_ty != Type::Bool {
         return Err(FrontendError {
             pos: 0,
-            message: format!(
-                "assert builtin requires bool condition, got {:?}",
-                cond_ty
-            ),
+            message: format!("assert builtin requires bool condition, got {:?}", cond_ty),
         });
     }
     Ok(true)
@@ -872,7 +915,7 @@ fn infer_value_block_type(
     block_env.push_scope();
     for stmt in &block.statements {
         match arena.stmt(*stmt) {
-            Stmt::Let { .. } | Stmt::Expr(_) => {
+            Stmt::Let { .. } | Stmt::Discard { .. } | Stmt::Expr(_) => {
                 check_stmt(*stmt, arena, &mut block_env, ret_ty, table)?;
             }
             _ => {
@@ -955,8 +998,9 @@ fn check_match_guard(
         if guard_ty != Type::Bool {
             return Err(FrontendError {
                 pos: 0,
-                message: "match guard condition must be bool; explicit compare is required for quad"
-                    .to_string(),
+                message:
+                    "match guard condition must be bool; explicit compare is required for quad"
+                        .to_string(),
             });
         }
     }
@@ -1023,6 +1067,9 @@ fn ensure_binding_value_type(
     }
     Err(FrontendError {
         pos: 0,
-        message: format!("type mismatch in {}: {:?} vs {:?}", context, expected, actual),
+        message: format!(
+            "type mismatch in {}: {:?} vs {:?}",
+            context, expected, actual
+        ),
     })
 }

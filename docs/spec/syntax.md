@@ -65,6 +65,8 @@ Current statement forms:
 
 - `let name = expr;`
 - `let name: type = expr;`
+- `let _ = expr;`
+- `let _: type = expr;`
 - `name += expr;`
 - `name -= expr;`
 - `name *= expr;`
@@ -84,12 +86,14 @@ Current statement forms:
 Current statement rules:
 
 - semicolons terminate executable statements
+- `let _ = expr;` is the current discard-bind surface
 - compound assignment is statement-level sugar only
 - `guard` currently supports only the `else return` form
 - `assert(condition);` is a statement-level builtin contract form
 - `if` conditions must be `bool`
 - `match` is currently restricted to `quad`
 - `match` requires an explicit default arm `_ => { ... }`
+- `_` in `match` remains the current wildcard/default arm spelling
 - unit-returning calls may be used as statements
 
 ## Expressions

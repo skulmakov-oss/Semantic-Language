@@ -1,15 +1,15 @@
+use crate::lexer::lex_tokens;
+use crate::types::{
+    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
+    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
+    MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind,
+    Type, UnaryOp,
+};
+use crate::CompilePolicyView;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use crate::lexer::lex_tokens;
-use crate::CompilePolicyView;
-use crate::types::{
-    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
-    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token,
-    TokenKind, Type, UnaryOp,
-};
 use sm_profile::{CompatibilityMode, ParserProfile};
 use ton618_core::diagnostics::{
     format_multiple_parser_errors, format_parser_error_at_input, suggest_closest_case_insensitive,
@@ -124,6 +124,17 @@ impl<'a> Parser<'a> {
 
     fn parse_stmt(&mut self) -> Result<StmtId, FrontendError> {
         if self.eat(TokenKind::KwLet) {
+            if self.eat(TokenKind::Underscore) {
+                let ty = if self.eat(TokenKind::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::Assign, "expected '='")?;
+                let value = self.parse_expr()?;
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                return Ok(self.arena.alloc_stmt(Stmt::Discard { ty, value }));
+            }
             let name = self.expect_symbol()?;
             let ty = if self.eat(TokenKind::Colon) {
                 Some(self.parse_type()?)
@@ -272,7 +283,9 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_and()?;
         while self.eat(TokenKind::OrOr) {
             let right = self.parse_and()?;
-            left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::OrOr, right));
+            left = self
+                .arena
+                .alloc_expr(Expr::Binary(left, BinaryOp::OrOr, right));
         }
         Ok(left)
     }
@@ -293,12 +306,16 @@ impl<'a> Parser<'a> {
         loop {
             if self.eat(TokenKind::EqEq) {
                 let right = self.parse_add()?;
-                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Eq, right));
+                left = self
+                    .arena
+                    .alloc_expr(Expr::Binary(left, BinaryOp::Eq, right));
                 continue;
             }
             if self.eat(TokenKind::Ne) {
                 let right = self.parse_add()?;
-                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Ne, right));
+                left = self
+                    .arena
+                    .alloc_expr(Expr::Binary(left, BinaryOp::Ne, right));
                 continue;
             }
             break;
@@ -311,12 +328,16 @@ impl<'a> Parser<'a> {
         loop {
             if self.eat(TokenKind::Plus) {
                 let right = self.parse_mul()?;
-                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Add, right));
+                left = self
+                    .arena
+                    .alloc_expr(Expr::Binary(left, BinaryOp::Add, right));
                 continue;
             }
             if self.eat(TokenKind::Minus) {
                 let right = self.parse_mul()?;
-                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Sub, right));
+                left = self
+                    .arena
+                    .alloc_expr(Expr::Binary(left, BinaryOp::Sub, right));
                 continue;
             }
             break;
@@ -329,12 +350,16 @@ impl<'a> Parser<'a> {
         loop {
             if self.eat(TokenKind::Star) {
                 let right = self.parse_unary()?;
-                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Mul, right));
+                left = self
+                    .arena
+                    .alloc_expr(Expr::Binary(left, BinaryOp::Mul, right));
                 continue;
             }
             if self.eat(TokenKind::Slash) {
                 let right = self.parse_unary()?;
-                left = self.arena.alloc_expr(Expr::Binary(left, BinaryOp::Div, right));
+                left = self
+                    .arena
+                    .alloc_expr(Expr::Binary(left, BinaryOp::Div, right));
                 continue;
             }
             break;
@@ -477,8 +502,9 @@ impl<'a> Parser<'a> {
         if self.check(TokenKind::KwIf) {
             return Err(FrontendError {
                 pos: self.pos(),
-                message: "else-if sugar is not supported in if expressions yet; use else { if ... }"
-                    .to_string(),
+                message:
+                    "else-if sugar is not supported in if expressions yet; use else { if ... }"
+                        .to_string(),
             });
         }
         let else_block = self.parse_value_block()?;
@@ -610,7 +636,10 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            self.expect(TokenKind::RBrace, "expected '}' after value-producing block")?;
+            self.expect(
+                TokenKind::RBrace,
+                "expected '}' after value-producing block",
+            )?;
             return Ok(BlockExpr {
                 statements,
                 tail: expr,
@@ -942,7 +971,11 @@ impl<'a> Parser<'a> {
                 break;
             }
             if t.kind == TokenKind::Newline || t.kind == TokenKind::Dedent {
-                return Err(self.error_at_token(&t, "unexpected line break in expression", "E0235"));
+                return Err(self.error_at_token(
+                    &t,
+                    "unexpected line break in expression",
+                    "E0235",
+                ));
             }
             out.push(t);
             self.idx += 1;
@@ -986,7 +1019,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_raw(&mut self, kind: TokenKind, msg: &str, code: &str) -> Result<Token, FrontendError> {
+    fn expect_raw(
+        &mut self,
+        kind: TokenKind,
+        msg: &str,
+        code: &str,
+    ) -> Result<Token, FrontendError> {
         if self.check_raw(kind) {
             let t = self.tokens[self.idx].clone();
             self.idx += 1;
@@ -1286,7 +1324,9 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("block expression without tail must reject");
-        assert!(err.message.contains("value-producing block requires trailing value expression"));
+        assert!(err
+            .message
+            .contains("value-producing block requires trailing value expression"));
     }
 
     #[test]
@@ -1324,7 +1364,9 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("if expression without else must reject");
-        assert!(err.message.contains("if expression requires explicit else branch"));
+        assert!(err
+            .message
+            .contains("if expression requires explicit else branch"));
     }
 
     #[test]
@@ -1338,7 +1380,9 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("else-if sugar must reject in value position");
-        assert!(err.message.contains("else-if sugar is not supported in if expressions yet"));
+        assert!(err
+            .message
+            .contains("else-if sugar is not supported in if expressions yet"));
     }
 
     #[test]
@@ -1403,10 +1447,14 @@ fn main() {
         let Stmt::Guard {
             condition,
             else_return,
-        } = program.arena.stmt(func.body[0]) else {
+        } = program.arena.stmt(func.body[0])
+        else {
             panic!("expected guard statement");
         };
-        assert!(matches!(program.arena.expr(*condition), Expr::BoolLiteral(true)));
+        assert!(matches!(
+            program.arena.expr(*condition),
+            Expr::BoolLiteral(true)
+        ));
         assert!(else_return.is_none());
     }
 
@@ -1423,6 +1471,44 @@ fn main() {
         assert!(err
             .message
             .contains("guard clause currently supports only else return"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_discard_bind() {
+        let src = r#"
+fn main() {
+    let _ = 1.0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("discard bind should parse");
+        let func = &program.functions[0];
+        let Stmt::Discard { ty, value } = program.arena.stmt(func.body[0]) else {
+            panic!("expected discard statement");
+        };
+        assert!(ty.is_none());
+        assert!(matches!(program.arena.expr(*value), Expr::Float(_)));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_typed_discard_bind() {
+        let src = r#"
+fn main() {
+    let _: f64 = 1.0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("typed discard bind should parse");
+        let func = &program.functions[0];
+        let Stmt::Discard { ty, value } = program.arena.stmt(func.body[0]) else {
+            panic!("expected discard statement");
+        };
+        assert_eq!(*ty, Some(Type::F64));
+        assert!(matches!(program.arena.expr(*value), Expr::Float(_)));
     }
 
     #[test]
@@ -1445,7 +1531,10 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*name), "assert");
         assert_eq!(args.len(), 1);
-        assert!(matches!(program.arena.expr(args[0]), Expr::BoolLiteral(true)));
+        assert!(matches!(
+            program.arena.expr(args[0]),
+            Expr::BoolLiteral(true)
+        ));
     }
 
     #[test]

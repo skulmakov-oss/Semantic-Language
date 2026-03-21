@@ -180,7 +180,10 @@ fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
     Ok(rounded as i32)
 }
 
-fn try_encode_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> Result<Option<i32>, FrontendError> {
+fn try_encode_fx_literal_expr(
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Result<Option<i32>, FrontendError> {
     match arena.expr(expr_id) {
         Expr::Num(n) => {
             let value = i32::try_from(*n).map_err(|_| FrontendError {
@@ -191,7 +194,8 @@ fn try_encode_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> Result<Optio
                 .checked_mul(FX_SCALE)
                 .ok_or(FrontendError {
                     pos: 0,
-                    message: "fx literal is out of range for the v1 fixed-point carrier".to_string(),
+                    message: "fx literal is out of range for the v1 fixed-point carrier"
+                        .to_string(),
                 })
                 .map(Some)
         }
@@ -205,7 +209,8 @@ fn try_encode_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> Result<Optio
                 .checked_neg()
                 .ok_or(FrontendError {
                     pos: 0,
-                    message: "fx literal is out of range for the v1 fixed-point carrier".to_string(),
+                    message: "fx literal is out of range for the v1 fixed-point carrier"
+                        .to_string(),
                 })
                 .map(Some)
         }
@@ -309,12 +314,9 @@ pub fn compile_program_to_immutable_ir(
     opt: OptLevel,
 ) -> Result<ImmutableIrProgram, FrontendError> {
     let parser_profile = ParserProfile::foundation_default();
-    Ok(ImmutableIrProgram::from_vec(compile_program_to_ir_with_options_and_profile(
-        input,
-        profile,
-        opt,
-        &parser_profile,
-    )?))
+    Ok(ImmutableIrProgram::from_vec(
+        compile_program_to_ir_with_options_and_profile(input, profile, opt, &parser_profile)?,
+    ))
 }
 
 pub fn compile_program_to_ir_with_options(
@@ -485,7 +487,10 @@ pub fn compile_program_to_semcode_with_options_debug(
     emit_semcode(ir.functions(), debug_symbols)
 }
 
-pub fn emit_ir_to_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
+pub fn emit_ir_to_semcode(
+    funcs: &[IrFunction],
+    debug_symbols: bool,
+) -> Result<Vec<u8>, FrontendError> {
     emit_semcode(funcs, debug_symbols)
 }
 
@@ -813,11 +818,9 @@ fn has_v1_math_instr(funcs: &[IrFunction]) -> bool {
 }
 
 fn has_v2_fx_instr(funcs: &[IrFunction]) -> bool {
-    funcs.iter().any(|f| {
-        f.instrs
-            .iter()
-            .any(|i| matches!(i, IrInstr::LoadFx { .. }))
-    })
+    funcs
+        .iter()
+        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::LoadFx { .. })))
 }
 
 #[derive(Debug, Default)]
@@ -1032,15 +1035,16 @@ fn lower_expr_with_expected(
             });
             Ok((dst, then_ty))
         }
-        Expr::Match(match_expr) => {
-            lower_match_expr(match_expr, arena, next, out, env, fn_table, expected, ret_ty)
-        }
+        Expr::Match(match_expr) => lower_match_expr(
+            match_expr, arena, next, out, env, fn_table, expected, ret_ty,
+        ),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, fn_table)? {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "assert builtin is statement-only and cannot be used as expression value"
-                        .to_string(),
+                    message:
+                        "assert builtin is statement-only and cannot be used as expression value"
+                            .to_string(),
                 });
             }
             let sig = if let Some(s) = fn_table.get(name) {
@@ -1066,17 +1070,16 @@ fn lower_expr_with_expected(
             }
             let mut regs = Vec::new();
             for (i, arg) in args.iter().enumerate() {
-                let (r, t) =
-                    lower_expr_with_expected(
-                        *arg,
-                        arena,
-                        next,
-                        out,
-                        env,
-                        fn_table,
-                        Some(sig.params[i]),
-                        ret_ty,
-                    )?;
+                let (r, t) = lower_expr_with_expected(
+                    *arg,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    fn_table,
+                    Some(sig.params[i]),
+                    ret_ty,
+                )?;
                 if t != sig.params[i] {
                     return Err(FrontendError {
                         pos: 0,
@@ -1116,8 +1119,9 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Fx));
                 }
             }
-            let (src, ty) =
-                lower_expr_with_expected(*inner, arena, next, out, env, fn_table, expected, ret_ty)?;
+            let (src, ty) = lower_expr_with_expected(
+                *inner, arena, next, out, env, fn_table, expected, ret_ty,
+            )?;
             match op {
                 UnaryOp::Not => {
                     let dst = alloc(next);
@@ -1168,8 +1172,9 @@ fn lower_expr_with_expected(
         Expr::Binary(left, op, right) => {
             let (lr, lt) =
                 lower_expr_with_expected(*left, arena, next, out, env, fn_table, expected, ret_ty)?;
-            let (rr, rt) =
-                lower_expr_with_expected(*right, arena, next, out, env, fn_table, expected, ret_ty)?;
+            let (rr, rt) = lower_expr_with_expected(
+                *right, arena, next, out, env, fn_table, expected, ret_ty,
+            )?;
             if lt != rt {
                 return Err(FrontendError {
                     pos: 0,
@@ -1335,6 +1340,19 @@ fn lower_stmt(
             });
             Ok(())
         }
+        Stmt::Discard { ty, value } => {
+            let _ = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                *ty,
+                ret_ty,
+            )?;
+            Ok(())
+        }
         Stmt::Assign { name, value } => {
             let target_ty = env.get(*name).ok_or(FrontendError {
                 pos: 0,
@@ -1403,17 +1421,15 @@ fn lower_stmt(
             lower_expr_stmt(*expr, arena, ctx, env, fn_table, ret_ty)?;
             Ok(())
         }
-        Stmt::Return(v) => {
-            lower_return_payload(
-                *v,
-                arena,
-                &mut ctx.next_reg,
-                &mut ctx.instrs,
-                env,
-                fn_table,
-                ret_ty,
-            )
-        }
+        Stmt::Return(v) => lower_return_payload(
+            *v,
+            arena,
+            &mut ctx.next_reg,
+            &mut ctx.instrs,
+            env,
+            fn_table,
+            ret_ty,
+        ),
         Stmt::If {
             condition,
             then_block,
@@ -1643,14 +1659,7 @@ fn lower_value_block_expr(
         match arena.stmt(*stmt) {
             Stmt::Let { name, ty, value } => {
                 let (reg, vty) = lower_expr_with_expected(
-                    *value,
-                    arena,
-                    next,
-                    out,
-                    &block_env,
-                    fn_table,
-                    *ty,
-                    ret_ty,
+                    *value, arena, next, out, &block_env, fn_table, *ty, ret_ty,
                 )?;
                 let final_ty = if let Some(ann) = ty { *ann } else { vty };
                 block_env.insert(*name, final_ty);
@@ -1658,6 +1667,11 @@ fn lower_value_block_expr(
                     name: resolve_symbol_name(arena, *name)?.to_string(),
                     src: reg,
                 });
+            }
+            Stmt::Discard { ty, value } => {
+                let _ = lower_expr_with_expected(
+                    *value, arena, next, out, &block_env, fn_table, *ty, ret_ty,
+                )?;
             }
             Stmt::Expr(expr) => {
                 lower_expr_stmt_with_parts(*expr, arena, next, out, &block_env, fn_table, ret_ty)?;
@@ -1671,14 +1685,7 @@ fn lower_value_block_expr(
         }
     }
     let tail = lower_expr_with_expected(
-        block.tail,
-        arena,
-        next,
-        out,
-        &block_env,
-        fn_table,
-        expected,
-        ret_ty,
+        block.tail, arena, next, out, &block_env, fn_table, expected, ret_ty,
     )?;
     block_env.pop_scope();
     Ok(tail)
@@ -1762,7 +1769,15 @@ fn lower_match_expr(
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
-    let (scr_reg, scr_ty) = lower_expr(match_expr.scrutinee, arena, next, out, env, fn_table, ret_ty)?;
+    let (scr_reg, scr_ty) = lower_expr(
+        match_expr.scrutinee,
+        arena,
+        next,
+        out,
+        env,
+        fn_table,
+        ret_ty,
+    )?;
     if scr_ty != Type::Quad {
         return Err(FrontendError {
             pos: 0,
@@ -1833,14 +1848,7 @@ fn lower_match_expr(
             });
         }
         let (arm_reg, arm_ty) = lower_value_block_expr(
-            &arm.block,
-            arena,
-            next,
-            out,
-            &arm_env,
-            fn_table,
-            expected,
-            ret_ty,
+            &arm.block, arena, next, out, &arm_env, fn_table, expected, ret_ty,
         )?;
         arm_env.pop_scope();
         if let Some(expected_ty) = result_ty {
@@ -1962,10 +1970,7 @@ fn lower_expr_stmt_with_parts(
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
-                    message: format!(
-                        "assert builtin requires bool condition, got {:?}",
-                        cond_ty
-                    ),
+                    message: format!("assert builtin requires bool condition, got {:?}", cond_ty),
                 });
             }
             out.push(IrInstr::Assert { cond });
@@ -2094,7 +2099,10 @@ mod opt_tests {
             instr,
             IrInstr::StoreVar { name, .. } if name == "total"
         )));
-        assert!(main.instrs.iter().any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
     }
 
     #[test]
@@ -2150,9 +2158,7 @@ mod opt_tests {
         "#;
 
         let err = compile_program_to_ir(src).expect_err("mismatched branch types must reject");
-        assert!(err
-            .message
-            .contains("if expression branch type mismatch"));
+        assert!(err.message.contains("if expression branch type mismatch"));
     }
 
     #[test]
@@ -2173,10 +2179,10 @@ mod opt_tests {
             instr,
             IrInstr::Label { name } if name.starts_with("match_expr_")
         )));
-        assert!(main.instrs.iter().any(|instr| matches!(
-            instr,
-            IrInstr::LoadBool { .. }
-        )));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadBool { .. })));
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name.starts_with("__match_expr_")
@@ -2202,12 +2208,13 @@ mod opt_tests {
             instr,
             IrInstr::JmpIf { label, .. } if label.starts_with("guard_")
         )));
-        assert!(main
-            .instrs
-            .iter()
-            .filter(|instr| matches!(instr, IrInstr::Ret { .. }))
-            .count()
-            >= 2);
+        assert!(
+            main.instrs
+                .iter()
+                .filter(|instr| matches!(instr, IrInstr::Ret { .. }))
+                .count()
+                >= 2
+        );
     }
 
     #[test]
@@ -2257,12 +2264,34 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(
+            main.instrs
+                .iter()
+                .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "total"))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn lower_discard_bind_evaluates_rhs_without_store() {
+        let src = r#"
+            fn main() {
+                let _ = 1.0 + 2.0;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("discard bind should lower");
+        let main = &ir[0];
         assert!(main
             .instrs
             .iter()
-            .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "total"))
-            .count()
-            >= 2);
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(!main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "_"
+        )));
     }
 
     #[test]
@@ -2294,8 +2323,8 @@ mod opt_tests {
             }
         "#;
 
-        let err =
-            compile_program_to_ir(src).expect_err("mismatched match expression branches must reject");
+        let err = compile_program_to_ir(src)
+            .expect_err("mismatched match expression branches must reject");
         assert!(err
             .message
             .contains("match expression branch type mismatch"));
@@ -2378,13 +2407,10 @@ mod opt_tests {
         let report = crate::passes::run_default_opt_passes(&mut ir);
         assert!(report.changed);
         let f = &ir[0];
-        assert!(f.instrs.iter().any(|i| matches!(
-            i,
-            IrInstr::LoadBool {
-                dst: 2,
-                val: false
-            }
-        )));
+        assert!(f
+            .instrs
+            .iter()
+            .any(|i| matches!(i, IrInstr::LoadBool { dst: 2, val: false })));
         assert!(f.instrs.iter().any(|i| matches!(
             i,
             IrInstr::LoadF64 { dst: 5, val } if (*val - 5.0).abs() < f64::EPSILON

@@ -77,6 +77,7 @@ Current rules:
 
 - function parameters are bound in function scope before body execution
 - `let` introduces a source-visible local binding
+- `let _ = expr;` evaluates the right-hand side but introduces no source-visible binding
 - `if` branches and `match` arms are checked in branch-local scopes
 - branch-local bindings do not escape to sibling branches
 
@@ -91,6 +92,7 @@ Current honest limit:
 Current statement meaning:
 
 - `let` evaluates the right-hand side before binding the name
+- discard bind evaluates the right-hand side and then drops the produced value
 - `name op= expr;` evaluates as read-modify-write over the existing binding
 - the current v0 compound forms are `+=`, `-=`, `*=`, `/=`, `&&=`, and `||=`
 - `guard condition else return ...;` continues when the condition is `true`
@@ -121,8 +123,10 @@ Current block-expression semantics:
 
 Current v0 limit:
 
-- block-expression bodies currently accept only `let` bindings and expression
-  statements before the tail value
+- block-expression bodies currently accept only named `let` bindings,
+  discard binds, and expression statements before the tail value
+- discard bind is accepted in value-producing block bodies, but richer pattern
+  destructuring is not yet part of the stable block-expression contract
 - `return` is not yet supported inside value-producing block bodies as a
   stable source contract
 
@@ -170,6 +174,8 @@ Current `match` semantics:
 - arms match only the literal patterns `N`, `F`, `T`, `S`
 - non-default arms may attach a `bool` guard with `if guard_expr`
 - `_` is required as the default arm
+- `_` currently means wildcard/default only in `match`, not a general rich
+  pattern system
 - the first matching arm is selected deterministically
 
 Current `match` expression semantics:

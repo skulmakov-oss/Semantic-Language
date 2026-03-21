@@ -1,8 +1,8 @@
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use ton618_core::{SigTable, SourceMark};
 pub use ton618_core::{ExprId, StmtId, SymbolId};
+use ton618_core::{SigTable, SourceMark};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -63,6 +63,10 @@ pub enum Expr {
 pub enum Stmt {
     Let {
         name: SymbolId,
+        ty: Option<Type>,
+        value: ExprId,
+    },
+    Discard {
         ty: Option<Type>,
         value: ExprId,
     },
