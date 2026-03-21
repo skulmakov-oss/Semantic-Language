@@ -727,6 +727,46 @@ mod tests {
     }
 
     #[test]
+    fn immediate_short_lambda_typechecks_via_block_desugaring() {
+        let src = r#"
+            fn main() {
+                let total: f64 = (x => x + 1.0)(2.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("immediate short lambda should typecheck");
+    }
+
+    #[test]
+    fn pipeline_short_lambda_typechecks_via_block_desugaring() {
+        let src = r#"
+            fn main() {
+                let total: f64 = 2.0 |> (x => x + 1.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("pipeline short lambda should typecheck");
+    }
+
+    #[test]
+    fn captureful_short_lambda_is_rejected() {
+        let src = r#"
+            fn main() {
+                let offset: f64 = 1.0;
+                let total: f64 = (x => x + offset)(2.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("captureful short lambda must reject");
+        assert!(err.message.contains("capture-free only"));
+    }
+
+    #[test]
     fn compound_assignment_typechecks_for_existing_scalar_rules() {
         let src = r#"
             fn main() {

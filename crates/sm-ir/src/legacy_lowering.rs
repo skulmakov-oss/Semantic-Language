@@ -2245,6 +2245,56 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_immediate_short_lambda_without_indirect_call_path() {
+        let src = r#"
+            fn main() {
+                let total: f64 = (x => x + 1.0)(2.0);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("short lambda should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "x")));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(!main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::Call { .. })));
+    }
+
+    #[test]
+    fn lower_pipeline_short_lambda_without_indirect_call_path() {
+        let src = r#"
+            fn main() {
+                let total: f64 = 2.0 |> (x => x + 1.0);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("pipeline short lambda should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "x")));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(!main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::Call { .. })));
+    }
+
+    #[test]
     fn lower_compound_assignment_to_read_modify_write() {
         let src = r#"
             fn main() {

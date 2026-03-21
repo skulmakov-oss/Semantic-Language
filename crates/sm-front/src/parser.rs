@@ -384,6 +384,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pipeline_stage(&mut self, input: ExprId) -> Result<ExprId, FrontendError> {
+        if self.eat(TokenKind::LParen) {
+            return self.parse_short_lambda_apply_after_lparen(Some(input), true);
+        }
         if !self.check(TokenKind::Ident) {
             return Err(FrontendError {
                 pos: self.pos(),
@@ -419,6 +422,9 @@ impl<'a> Parser<'a> {
             return self.parse_block_expr();
         }
         if self.eat(TokenKind::LParen) {
+            if self.starts_short_lambda_head() {
+                return self.parse_short_lambda_apply_after_lparen(None, false);
+            }
             let e = self.parse_expr()?;
             self.expect(TokenKind::RParen, "expected ')'")?;
             return Ok(e);
@@ -479,6 +485,193 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected primary expression".to_string(),
         })
+    }
+
+    fn starts_short_lambda_head(&self) -> bool {
+        self.check(TokenKind::Ident) && self.peek_next_kind() == Some(TokenKind::FatArrow)
+    }
+
+    fn parse_short_lambda_apply_after_lparen(
+        &mut self,
+        pipeline_input: Option<ExprId>,
+        from_pipeline: bool,
+    ) -> Result<ExprId, FrontendError> {
+        if !self.starts_short_lambda_head() {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: if from_pipeline {
+                    "pipeline short lambda must use form '(x => expr)'".to_string()
+                } else {
+                    "expected parenthesized expression or short lambda".to_string()
+                },
+            });
+        }
+
+        let param = self.expect_symbol()?;
+        self.expect(TokenKind::FatArrow, "expected '=>' after short lambda parameter")?;
+        let body = self.parse_expr()?;
+        self.expect(TokenKind::RParen, "expected ')' after short lambda body")?;
+        self.ensure_short_lambda_capture_free(body, param)?;
+
+        let arg = if from_pipeline {
+            pipeline_input.expect("pipeline input must be provided for pipeline short lambda")
+        } else {
+            self.parse_short_lambda_immediate_arg()?
+        };
+        self.build_short_lambda_apply(param, body, arg)
+    }
+
+    fn parse_short_lambda_immediate_arg(&mut self) -> Result<ExprId, FrontendError> {
+        if !self.eat(TokenKind::LParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "short lambda is v0 call-site sugar only; use immediate invocation '(x => expr)(arg)' or pipeline stage 'value |> (x => expr)'"
+                        .to_string(),
+            });
+        }
+        if self.check(TokenKind::RParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "short lambda immediate call requires exactly one argument".to_string(),
+            });
+        }
+        let arg = self.parse_expr()?;
+        if self.eat(TokenKind::Comma) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "short lambda v0 currently supports exactly one argument".to_string(),
+            });
+        }
+        self.expect(TokenKind::RParen, "expected ')' after short lambda argument")?;
+        Ok(arg)
+    }
+
+    fn build_short_lambda_apply(
+        &mut self,
+        param: SymbolId,
+        body: ExprId,
+        arg: ExprId,
+    ) -> Result<ExprId, FrontendError> {
+        let binding = self.arena.alloc_stmt(Stmt::Let {
+            name: param,
+            ty: None,
+            value: arg,
+        });
+        Ok(self.arena.alloc_expr(Expr::Block(BlockExpr {
+            statements: vec![binding],
+            tail: body,
+        })))
+    }
+
+    fn ensure_short_lambda_capture_free(
+        &self,
+        body: ExprId,
+        param: SymbolId,
+    ) -> Result<(), FrontendError> {
+        let mut scopes = vec![vec![param]];
+        self.ensure_short_lambda_expr_capture_free(body, &mut scopes)
+    }
+
+    fn ensure_short_lambda_expr_capture_free(
+        &self,
+        expr_id: ExprId,
+        scopes: &mut Vec<Vec<SymbolId>>,
+    ) -> Result<(), FrontendError> {
+        match self.arena.expr(expr_id) {
+            Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::Num(_) | Expr::Float(_) => Ok(()),
+            Expr::Var(name) => {
+                if scopes.iter().rev().any(|scope| scope.contains(name)) {
+                    Ok(())
+                } else {
+                    Err(FrontendError {
+                        pos: self.pos(),
+                        message: format!(
+                            "short lambda v0 is capture-free only; body may not reference non-local '{}'",
+                            self.arena.symbol_name(*name)
+                        ),
+                    })
+                }
+            }
+            Expr::Call(_, args) => {
+                for arg in args {
+                    self.ensure_short_lambda_expr_capture_free(*arg, scopes)?;
+                }
+                Ok(())
+            }
+            Expr::Unary(_, inner) => self.ensure_short_lambda_expr_capture_free(*inner, scopes),
+            Expr::Binary(lhs, _, rhs) => {
+                self.ensure_short_lambda_expr_capture_free(*lhs, scopes)?;
+                self.ensure_short_lambda_expr_capture_free(*rhs, scopes)
+            }
+            Expr::Block(block) => {
+                self.ensure_short_lambda_block_capture_free(block, scopes)
+            }
+            Expr::If(if_expr) => {
+                self.ensure_short_lambda_expr_capture_free(if_expr.condition, scopes)?;
+                self.ensure_short_lambda_block_capture_free(&if_expr.then_block, scopes)?;
+                self.ensure_short_lambda_block_capture_free(&if_expr.else_block, scopes)
+            }
+            Expr::Match(match_expr) => {
+                self.ensure_short_lambda_expr_capture_free(match_expr.scrutinee, scopes)?;
+                for arm in &match_expr.arms {
+                    if let Some(guard) = arm.guard {
+                        self.ensure_short_lambda_expr_capture_free(guard, scopes)?;
+                    }
+                    self.ensure_short_lambda_block_capture_free(&arm.block, scopes)?;
+                }
+                if let Some(default) = &match_expr.default {
+                    self.ensure_short_lambda_block_capture_free(default, scopes)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn ensure_short_lambda_block_capture_free(
+        &self,
+        block: &BlockExpr,
+        scopes: &mut Vec<Vec<SymbolId>>,
+    ) -> Result<(), FrontendError> {
+        scopes.push(Vec::new());
+        for stmt_id in &block.statements {
+            self.ensure_short_lambda_stmt_capture_free(*stmt_id, scopes)?;
+        }
+        self.ensure_short_lambda_expr_capture_free(block.tail, scopes)?;
+        let _ = scopes.pop();
+        Ok(())
+    }
+
+    fn ensure_short_lambda_stmt_capture_free(
+        &self,
+        stmt_id: StmtId,
+        scopes: &mut Vec<Vec<SymbolId>>,
+    ) -> Result<(), FrontendError> {
+        match self.arena.stmt(stmt_id) {
+            Stmt::Let { name, value, .. } => {
+                self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.push(*name);
+                }
+                Ok(())
+            }
+            Stmt::Discard { value, .. } => self.ensure_short_lambda_expr_capture_free(*value, scopes),
+            Stmt::Expr(expr_id) => self.ensure_short_lambda_expr_capture_free(*expr_id, scopes),
+            _ => Err(FrontendError {
+                pos: self.pos(),
+                message: "short lambda body currently supports only expression-compatible block forms"
+                    .to_string(),
+            }),
+        }
+    }
+
+    fn peek_next_kind(&self) -> Option<TokenKind> {
+        let mut i = self.next_non_layout_idx();
+        i += 1;
+        while i < self.tokens.len() && Self::is_layout(self.tokens[i].kind) {
+            i += 1;
+        }
+        self.tokens.get(i).map(|t| t.kind)
     }
 
     fn parse_block_expr(&mut self) -> Result<ExprId, FrontendError> {
@@ -1265,6 +1458,88 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*inc_name), "inc");
         assert_eq!(inc_args.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_immediate_short_lambda() {
+        let src = r#"
+fn main() {
+    let value: f64 = (x => x + 1.0)(2.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("immediate short lambda should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Block(block) = program.arena.expr(*value) else {
+            panic!("expected desugared block expression");
+        };
+        assert_eq!(block.statements.len(), 1);
+        let Stmt::Let { name, value, .. } = program.arena.stmt(block.statements[0]) else {
+            panic!("expected lambda parameter binding");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "x");
+        assert!(matches!(program.arena.expr(*value), Expr::Float(_)));
+        assert!(matches!(program.arena.expr(block.tail), Expr::Binary(_, BinaryOp::Add, _)));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_pipeline_short_lambda_stage() {
+        let src = r#"
+fn main() {
+    let value: f64 = 2.0 |> (x => x + 1.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("pipeline short lambda should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Block(block) = program.arena.expr(*value) else {
+            panic!("expected desugared block expression");
+        };
+        let Stmt::Let { name, .. } = program.arena.stmt(block.statements[0]) else {
+            panic!("expected lambda parameter binding");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "x");
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_standalone_short_lambda_value() {
+        let src = r#"
+fn main() {
+    let value: f64 = (x => x + 1.0);
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("standalone short lambda must reject");
+        assert!(err
+            .message
+            .contains("short lambda is v0 call-site sugar only"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_captureful_short_lambda() {
+        let src = r#"
+fn main() {
+    let offset: f64 = 1.0;
+    let value: f64 = (x => x + offset)(2.0);
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("captureful short lambda must reject");
+        assert!(err.message.contains("capture-free only"));
     }
 
     #[test]

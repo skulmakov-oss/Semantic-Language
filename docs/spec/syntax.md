@@ -110,6 +110,9 @@ Current expression forms:
 - pipeline chains:
   - `value |> stage()`
   - `value |> stage(arg)`
+  - `value |> (x => expr)`
+- short lambda immediate-call sugar:
+  - `(x => expr)(arg)`
 - block expressions with a trailing tail value:
   - `{ let x = 1; x }`
 - `if` expressions with explicit `else` blocks:
@@ -140,6 +143,18 @@ Current precedence, from tighter to looser:
 7. `||`
 8. `->`
 9. `|>`
+
+Current short-lambda rules:
+
+- short lambda syntax is currently single-parameter only: `x => expr`
+- short lambdas are not first-class values in v0
+- the stable v0 surface accepts short lambdas only as:
+  - immediate call sugar: `(x => expr)(arg)`
+  - pipeline stage sugar: `value |> (x => expr)`
+- short lambdas are capture-free in v0; they may not reference outer local
+  bindings
+- typed lambda parameters and multi-argument lambda forms are not yet part of
+  the stable source contract
 
 ## Quad-Specific Surface Rules
 

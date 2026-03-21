@@ -39,6 +39,8 @@ Current examples include:
   sugar in value position
 - expression-bodied function parse failures such as missing trailing `;`
 - pipeline parse failures such as missing function-stage targets after `|>`
+- short-lambda parse failures such as standalone non-invoked lambdas
+- short-lambda surface failures such as rejected outer-local capture in v0
 - `guard`-clause parse failures such as missing `else return`
 - `match`-expression parse failures such as invalid literal arm patterns
 

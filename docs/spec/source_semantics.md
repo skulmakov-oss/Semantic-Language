@@ -43,6 +43,8 @@ Current rules:
 - `match` scrutinee is evaluated once before arm dispatch
 - pipeline stages evaluate left-to-right and pass the previous stage value as
   the first argument of the next call
+- short lambda call-site sugar evaluates its argument before the lambda body
+  binding becomes visible
 
 The source contract does not currently claim short-circuit laziness beyond the
 observable deterministic behavior of the current lowering path.
@@ -193,6 +195,25 @@ Current v0 limit:
 
 - the default `_` arm does not yet support guards
 - only literal `quad` patterns and `_` are part of the stable source contract
+
+## Short Lambdas
+
+Current short-lambda semantics:
+
+- short lambdas are currently capture-free call-site sugar only
+- `(x => expr)(arg)` is interpreted as a fresh lexical block equivalent to
+  `{ let x = arg; expr }`
+- `value |> (x => expr)` is interpreted as the same block sugar with `value` as
+  the bound argument
+- the lambda body is checked and lowered through ordinary block-expression
+  semantics; no alternate runtime callable representation is introduced
+
+Current v0 limits:
+
+- short lambdas are not first-class values
+- short lambdas currently support exactly one parameter and exactly one applied
+  argument
+- outer local-name capture is rejected in the current source contract
 
 ## Operator Meaning
 
