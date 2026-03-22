@@ -199,6 +199,14 @@ impl<'a> Parser<'a> {
                 return Ok(self.arena.alloc_stmt(Stmt::Assign { name, value }));
             }
         }
+        if self.looks_like_tuple_assign_stmt() {
+            self.expect(TokenKind::LParen, "expected '('")?;
+            let items = self.parse_tuple_bind_items_after_lparen()?;
+            self.expect(TokenKind::Assign, "expected '='")?;
+            let value = self.parse_expr()?;
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::AssignTuple { items, value }));
+        }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
             if !self.eat(TokenKind::KwElse) {
@@ -258,6 +266,38 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semi, "expected ';'")?;
         Ok(self.arena.alloc_stmt(Stmt::Expr(expr)))
+    }
+
+    fn looks_like_tuple_assign_stmt(&self) -> bool {
+        let mut i = self.next_non_layout_idx();
+        if self.tokens.get(i).map(|t| t.kind) != Some(TokenKind::LParen) {
+            return false;
+        }
+        let mut depth = 0usize;
+        while i < self.tokens.len() {
+            let kind = self.tokens[i].kind;
+            if !Self::is_layout(kind) {
+                match kind {
+                    TokenKind::LParen => depth += 1,
+                    TokenKind::RParen => {
+                        if depth == 0 {
+                            return false;
+                        }
+                        depth -= 1;
+                        if depth == 0 {
+                            i += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+        while i < self.tokens.len() && Self::is_layout(self.tokens[i].kind) {
+            i += 1;
+        }
+        self.tokens.get(i).map(|t| t.kind) == Some(TokenKind::Assign)
     }
 
     fn parse_tuple_bind_items_after_lparen(&mut self) -> Result<Vec<Option<SymbolId>>, FrontendError> {
@@ -2317,6 +2357,35 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_tuple_destructuring_assignment() {
+        let src = r#"
+fn pair() -> (i32, bool) = (1, true);
+
+fn main() {
+    let count: i32 = 0;
+    let ready: bool = false;
+    (count, ready) = pair();
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tuple destructuring assignment should parse");
+        let func = &program.functions[1];
+        let Stmt::AssignTuple { items, value } = program.arena.stmt(func.body[2]) else {
+            panic!("expected tuple destructuring assignment");
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].map(|name| program.arena.symbol_name(name)), Some("count"));
+        assert_eq!(items[1].map(|name| program.arena.symbol_name(name)), Some("ready"));
+        let Expr::Call(name, args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "pair");
+        assert!(args.is_empty());
+    }
+
+    #[test]
     fn rustlike_parser_rejects_nested_tuple_destructuring_bind() {
         let src = r#"
 fn main() {
@@ -2327,6 +2396,25 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("nested tuple destructuring must reject");
+        assert!(err
+            .message
+            .contains("tuple destructuring bind v0 currently supports only flat"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_nested_tuple_destructuring_assignment() {
+        let src = r#"
+fn main() {
+    let x: i32 = 0;
+    let y: bool = false;
+    let z: bool = false;
+    ((x, y), z) = ((1, true), false);
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("nested tuple destructuring assignment must reject");
         assert!(err
             .message
             .contains("tuple destructuring bind v0 currently supports only flat"));

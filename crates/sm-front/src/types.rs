@@ -99,6 +99,10 @@ pub enum Stmt {
         name: SymbolId,
         value: ExprId,
     },
+    AssignTuple {
+        items: Vec<Option<SymbolId>>,
+        value: ExprId,
+    },
     Guard {
         condition: ExprId,
         else_return: Option<ExprId>,

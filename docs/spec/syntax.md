@@ -86,6 +86,7 @@ Current statement forms:
 - `name /= expr;`
 - `name &&= expr;`
 - `name ||= expr;`
+- `(a, b) = expr;`
 - `guard condition else return;`
 - `guard condition else return expr;`
 - `assert(condition);`
@@ -103,6 +104,7 @@ Current statement rules:
 - `const` initializer syntax mirrors `let` but uses a narrower compile-time-safe expression subset
 - `let _ = expr;` is the current discard-bind surface
 - tuple destructuring bind is currently flat only and accepts only names or `_`
+- tuple destructuring assignment is currently flat only and accepts only names or `_`
 - compound assignment is statement-level sugar only
 - `guard` currently supports only the `else return` form
 - `assert(condition);` is a statement-level builtin contract form
@@ -185,6 +187,8 @@ Current v0 tuple limits:
 - tuple destructuring bind is currently statement-level only
 - tuple destructuring bind currently supports only flat name-or-`_` item lists
 - tuple destructuring bind currently requires arity at least 2
+- tuple destructuring assignment is currently statement-level only
+- tuple destructuring assignment currently supports only flat name-or-`_` item lists
 - tuple equality follows ordinary `==` / `!=` when both operands have the same
   tuple type
 - tuple field access and tuple pattern matching beyond flat destructuring bind

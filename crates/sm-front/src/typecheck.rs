@@ -238,6 +238,57 @@ fn check_stmt(
                 format!("assignment to '{}'", resolve_symbol_name(arena, *name)?),
             )
         }
+        Stmt::AssignTuple { items, value } => {
+            let value_ty = infer_expr_type(*value, arena, env, table, ret_ty.clone())?;
+            let Type::Tuple(item_tys) = value_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "tuple destructuring assignment requires tuple value".to_string(),
+                });
+            };
+            if item_tys.len() != items.len() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "tuple destructuring assignment arity mismatch: expected {}, got {}",
+                        items.len(),
+                        item_tys.len()
+                    ),
+                });
+            }
+            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
+                let Some(name) = item else {
+                    continue;
+                };
+                let target_ty = env.get(*name).ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown tuple assignment target '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                })?;
+                if env.is_const(*name) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "cannot assign to const binding '{}' in tuple destructuring assignment",
+                            resolve_symbol_name(arena, *name)?
+                        ),
+                    });
+                }
+                ensure_binding_value_type(
+                    target_ty,
+                    item_ty,
+                    *value,
+                    arena,
+                    format!(
+                        "tuple assignment to '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                )?;
+            }
+            Ok(())
+        }
         Stmt::Guard {
             condition,
             else_return,
@@ -1304,6 +1355,42 @@ mod tests {
 
         let err = typecheck_source(src).expect_err("non-tuple destructuring must reject");
         assert!(err.message.contains("tuple destructuring bind requires tuple value"));
+    }
+
+    #[test]
+    fn tuple_destructuring_assignment_typechecks() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let count: i32 = 0;
+                let ready: bool = false;
+                (count, ready) = pair(true);
+                assert(count == 1);
+                assert(ready == true);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("tuple destructuring assignment should typecheck");
+    }
+
+    #[test]
+    fn tuple_destructuring_assignment_rejects_unknown_target() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let count: i32 = 0;
+                (count, ready) = pair(true);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("unknown tuple assignment target must reject");
+        assert!(err
+            .message
+            .contains("unknown tuple assignment target 'ready'"));
     }
 }
 

@@ -107,6 +107,10 @@ Current message families include:
 - tuple destructuring bind requires tuple value
 - tuple destructuring bind arity mismatch
 - nested tuple destructuring bind rejected in v0
+- tuple destructuring assignment requires tuple value
+- tuple destructuring assignment arity mismatch
+- unknown tuple assignment target
+- tuple destructuring assignment to const target
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

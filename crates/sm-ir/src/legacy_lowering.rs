@@ -1475,6 +1475,80 @@ fn bind_tuple_items(
     Ok(())
 }
 
+fn assign_tuple_items(
+    items: &[Option<SymbolId>],
+    tuple_reg: u16,
+    tuple_ty: &Type,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(item_tys) = tuple_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: "tuple destructuring assignment requires tuple value".to_string(),
+        });
+    };
+    if item_tys.len() != items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple destructuring assignment arity mismatch: expected {}, got {}",
+                items.len(),
+                item_tys.len()
+            ),
+        });
+    }
+    for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
+        let Some(name) = item else {
+            continue;
+        };
+        let target_ty = env.get(*name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "unknown tuple assignment target '{}'",
+                resolve_symbol_name(arena, *name)?
+            ),
+        })?;
+        if env.is_const(*name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "cannot assign to const binding '{}' in tuple destructuring assignment",
+                    resolve_symbol_name(arena, *name)?
+                ),
+            });
+        }
+        if target_ty != *item_ty {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "type mismatch in tuple assignment to '{}': {:?} vs {:?}",
+                    resolve_symbol_name(arena, *name)?,
+                    target_ty,
+                    item_ty
+                ),
+            });
+        }
+        let reg = alloc(next);
+        let index = u16::try_from(index).map_err(|_| FrontendError {
+            pos: 0,
+            message: "tuple destructuring assignment index exceeds v0 limit".to_string(),
+        })?;
+        out.push(IrInstr::TupleGet {
+            dst: reg,
+            src: tuple_reg,
+            index,
+        });
+        out.push(IrInstr::StoreVar {
+            name: resolve_symbol_name(arena, *name)?.to_string(),
+            src: reg,
+        });
+    }
+    Ok(())
+}
+
 fn lower_stmt(
     stmt_id: StmtId,
     arena: &AstArena,
@@ -1590,6 +1664,26 @@ fn lower_stmt(
                 src: reg,
             });
             Ok(())
+        }
+        Stmt::AssignTuple { items, value } => {
+            let (tuple_reg, tuple_ty) = lower_expr(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                ret_ty,
+            )?;
+            assign_tuple_items(
+                items,
+                tuple_reg,
+                &tuple_ty,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+            )
         }
         Stmt::Guard {
             condition,
@@ -2818,6 +2912,34 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("tuple destructuring bind should lower");
+        let main = ir
+            .iter()
+            .find(|func| func.name == "main")
+            .expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::TupleGet { index: 0, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::TupleGet { index: 1, .. })));
+    }
+
+    #[test]
+    fn lower_tuple_destructuring_assignment_to_tuple_get_ir() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let count: i32 = 0;
+                let ready: bool = false;
+                (count, ready) = pair(true);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("tuple destructuring assignment should lower");
         let main = ir
             .iter()
             .find(|func| func.name == "main")

@@ -153,6 +153,8 @@ Current statement meaning:
 - `let` evaluates the right-hand side before binding the name
 - tuple destructuring bind evaluates the right-hand side once before projecting
   tuple items into named bindings
+- tuple destructuring assignment evaluates the right-hand side once before
+  projecting tuple items into existing assignment targets
 - discard bind evaluates the right-hand side and then drops the produced value
 - `name op= expr;` evaluates as read-modify-write over the existing binding
 - the current v0 compound forms are `+=`, `-=`, `*=`, `/=`, `&&=`, and `||=`
@@ -210,11 +212,18 @@ Current tuple-destructuring semantics:
 - an optional whole-binding annotation, such as
   `let (a, b): (i32, bool) = expr;`, constrains the full tuple value before
   item bindings are introduced
+- `(a, b) = expr;` assigns projected tuple items into already existing mutable
+  bindings
+- `_` items in tuple destructuring assignment discard the corresponding tuple
+  element without requiring a target binding
 
 Current v0 limit:
 
 - tuple destructuring bind is currently statement-level only
+- tuple destructuring assignment is currently statement-level only
 - only flat name-or-`_` item lists are supported
+- tuple destructuring assignment does not introduce new bindings; every named
+  item must already resolve to an existing non-const local
 - nested tuple patterns, tuple field access, and general tuple pattern matching
   are not yet part of the stable source contract
 
