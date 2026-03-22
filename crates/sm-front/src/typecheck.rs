@@ -162,6 +162,43 @@ fn check_stmt(
             env.insert(*name, final_ty);
             Ok(())
         }
+        Stmt::LetTuple { items, ty, value } => {
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            let final_ty = if let Some(ann) = ty {
+                ensure_binding_value_type(
+                    ann.clone(),
+                    vt,
+                    *value,
+                    arena,
+                    "tuple destructuring bind".to_string(),
+                )?;
+                ann.clone()
+            } else {
+                vt
+            };
+            let Type::Tuple(item_tys) = final_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "tuple destructuring bind requires tuple value".to_string(),
+                });
+            };
+            if item_tys.len() != items.len() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "tuple destructuring bind arity mismatch: expected {}, got {}",
+                        items.len(),
+                        item_tys.len()
+                    ),
+                });
+            }
+            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
+                if let Some(name) = item {
+                    env.insert(*name, item_ty);
+                }
+            }
+            Ok(())
+        }
         Stmt::Discard { ty, value } => {
             let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
             if let Some(ann) = ty {
@@ -1240,6 +1277,34 @@ mod tests {
 
         typecheck_source(src).expect("tuple literal/type surface should typecheck");
     }
+
+    #[test]
+    fn tuple_destructuring_bind_typechecks() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let (count, ready): (i32, bool) = pair(true);
+                assert(ready == true);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("tuple destructuring bind should typecheck");
+    }
+
+    #[test]
+    fn tuple_destructuring_bind_rejects_non_tuple_value() {
+        let src = r#"
+            fn main() {
+                let (count, ready) = 1;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-tuple destructuring must reject");
+        assert!(err.message.contains("tuple destructuring bind requires tuple value"));
+    }
 }
 
 fn is_builtin_assert_name(
@@ -1290,7 +1355,11 @@ fn infer_value_block_type(
     block_env.push_scope();
     for stmt in &block.statements {
         match arena.stmt(*stmt) {
-            Stmt::Const { .. } | Stmt::Let { .. } | Stmt::Discard { .. } | Stmt::Expr(_) => {
+            Stmt::Const { .. }
+            | Stmt::Let { .. }
+            | Stmt::LetTuple { .. }
+            | Stmt::Discard { .. }
+            | Stmt::Expr(_) => {
                 check_stmt(*stmt, arena, &mut block_env, ret_ty.clone(), table)?;
             }
             _ => {

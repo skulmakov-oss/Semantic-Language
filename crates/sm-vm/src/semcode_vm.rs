@@ -438,6 +438,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::TupleGet => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadVar => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -692,6 +697,22 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     items.push(get_reg(vm, frame_idx, src)?);
                 }
                 set_reg(vm, frame_idx, dst, Value::Tuple(items))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::TupleGet => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let index = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let tuple = get_reg(vm, frame_idx, src)?;
+                let Value::Tuple(items) = tuple else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "TUPLE_GET source must be tuple".to_string(),
+                    ));
+                };
+                let item = items.get(index).cloned().ok_or_else(|| {
+                    RuntimeError::BadFormat(format!("tuple-get index out of bounds: {}", index))
+                })?;
+                set_reg(vm, frame_idx, dst, item)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
@@ -1196,6 +1217,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 .join(", ");
             format!("MAKE_TUPLE r{}, [{}]", d, regs)
         }
+        Opcode::TupleGet => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("TUPLE_GET r{}, r{}, {}", d, s, i)
+        }
         Opcode::LoadVar => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1430,6 +1457,25 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("MAKE_TUPLE"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_tuple_destructuring_bind_path() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let (count, ready): (i32, bool) = pair(true);
+                assert(count == 1);
+                assert(ready == true);
+                return;
+            }
+        "#;
+
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("TUPLE_GET"));
         run_semcode(&bytes).expect("run");
     }
 

@@ -165,6 +165,18 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::Discard { ty, value }));
             }
+            if self.eat(TokenKind::LParen) {
+                let items = self.parse_tuple_bind_items_after_lparen()?;
+                let ty = if self.eat(TokenKind::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::Assign, "expected '='")?;
+                let value = self.parse_expr()?;
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                return Ok(self.arena.alloc_stmt(Stmt::LetTuple { items, ty, value }));
+            }
             let name = self.expect_symbol()?;
             let ty = if self.eat(TokenKind::Colon) {
                 Some(self.parse_type()?)
@@ -246,6 +258,57 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semi, "expected ';'")?;
         Ok(self.arena.alloc_stmt(Stmt::Expr(expr)))
+    }
+
+    fn parse_tuple_bind_items_after_lparen(&mut self) -> Result<Vec<Option<SymbolId>>, FrontendError> {
+        let mut items = Vec::new();
+        loop {
+            if self.check(TokenKind::LParen) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "tuple destructuring bind v0 currently supports only flat name/_ items"
+                            .to_string(),
+                });
+            }
+            let item = if self.eat(TokenKind::Underscore) {
+                None
+            } else {
+                Some(self.expect_symbol()?)
+            };
+            if let Some(name) = item {
+                if items
+                    .iter()
+                    .any(|existing: &Option<SymbolId>| existing.as_ref().is_some_and(|existing| *existing == name))
+                {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: format!(
+                            "tuple destructuring bind cannot repeat '{}'",
+                            self.arena.symbol_name(name)
+                        ),
+                    });
+                }
+                items.push(Some(name));
+            } else {
+                items.push(None);
+            }
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RParen, "expected ')' after tuple destructuring bind")?;
+        if items.len() < 2 {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "tuple destructuring bind requires at least 2 items".to_string(),
+            });
+        }
+        Ok(items)
     }
 
     fn peek_compound_assign_op(&self) -> Option<BinaryOp> {
@@ -730,6 +793,13 @@ impl<'a> Parser<'a> {
                 self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
                 if let Some(scope) = scopes.last_mut() {
                     scope.push(*name);
+                }
+                Ok(())
+            }
+            Stmt::LetTuple { items, value, .. } => {
+                self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.extend(items.iter().flatten().copied());
                 }
                 Ok(())
             }
@@ -2216,6 +2286,50 @@ fn main() {
             program.arena.expr(*value),
             Expr::NumericLiteral(NumericLiteral::F64(_))
         ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_tuple_destructuring_bind() {
+        let src = r#"
+fn pair() -> (i32, bool) = (1, true);
+
+fn main() {
+    let (count, _): (i32, bool) = pair();
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tuple destructuring bind should parse");
+        let func = &program.functions[1];
+        let Stmt::LetTuple { items, ty, value } = program.arena.stmt(func.body[0]) else {
+            panic!("expected tuple destructuring statement");
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].map(|name| program.arena.symbol_name(name)), Some("count"));
+        assert!(items[1].is_none());
+        assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Bool])));
+        let Expr::Call(name, args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "pair");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_nested_tuple_destructuring_bind() {
+        let src = r#"
+fn main() {
+    let ((x, y), z) = ((1, true), false);
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("nested tuple destructuring must reject");
+        assert!(err
+            .message
+            .contains("tuple destructuring bind v0 currently supports only flat"));
     }
 
     #[test]

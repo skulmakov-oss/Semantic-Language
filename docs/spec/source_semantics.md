@@ -132,6 +132,8 @@ Current rules:
 - function parameters are bound in function scope before body execution
 - `const` introduces an immutable source-visible local binding
 - `let` introduces a source-visible local binding
+- `let (a, b) = expr;` evaluates the right-hand side once and then binds named
+  items left-to-right from the produced tuple value
 - `let _ = expr;` evaluates the right-hand side but introduces no source-visible binding
 - `if` branches and `match` arms are checked in branch-local scopes
 - branch-local bindings do not escape to sibling branches
@@ -149,6 +151,8 @@ Current statement meaning:
 - `const` evaluates a compile-time-safe initializer expression before binding the name
 - const bindings are immutable in the current source contract
 - `let` evaluates the right-hand side before binding the name
+- tuple destructuring bind evaluates the right-hand side once before projecting
+  tuple items into named bindings
 - discard bind evaluates the right-hand side and then drops the produced value
 - `name op= expr;` evaluates as read-modify-write over the existing binding
 - the current v0 compound forms are `+=`, `-=`, `*=`, `/=`, `&&=`, and `||=`
@@ -188,12 +192,31 @@ Current block-expression semantics:
 Current v0 limit:
 
 - block-expression bodies currently accept only named `let` bindings,
-  `const` bindings, discard binds, and expression statements before the tail
-  value
+  tuple destructuring binds, `const` bindings, discard binds, and expression
+  statements before the tail value
 - discard bind is accepted in value-producing block bodies, but richer pattern
   destructuring is not yet part of the stable block-expression contract
 - `return` is not yet supported inside value-producing block bodies as a
   stable source contract
+
+## Tuple Destructuring Bind
+
+Current tuple-destructuring semantics:
+
+- `let (a, b) = expr;` requires the right-hand side to produce a tuple value
+- the tuple arity must match the binding item count exactly
+- `_` items discard the corresponding tuple element without introducing a
+  source-visible binding
+- an optional whole-binding annotation, such as
+  `let (a, b): (i32, bool) = expr;`, constrains the full tuple value before
+  item bindings are introduced
+
+Current v0 limit:
+
+- tuple destructuring bind is currently statement-level only
+- only flat name-or-`_` item lists are supported
+- nested tuple patterns, tuple field access, and general tuple pattern matching
+  are not yet part of the stable source contract
 
 ## Control Flow
 

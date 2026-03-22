@@ -483,6 +483,13 @@ fn decode_operands(
                 mark_reg(src);
             }
         }
+        Opcode::TupleGet => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get dst register"))?;
+            let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get src register"))?;
+            read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get index"))?;
+            mark_reg(dst);
+            mark_reg(src);
+        }
         Opcode::LoadVar => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             mark_reg(dst);

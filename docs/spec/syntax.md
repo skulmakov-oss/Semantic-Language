@@ -76,6 +76,8 @@ Current statement forms:
 - `const name: type = expr;`
 - `let name = expr;`
 - `let name: type = expr;`
+- `let (a, b) = expr;`
+- `let (a, _): (type_a, type_b) = expr;`
 - `let _ = expr;`
 - `let _: type = expr;`
 - `name += expr;`
@@ -100,6 +102,7 @@ Current statement rules:
 - `const` is currently statement-level only
 - `const` initializer syntax mirrors `let` but uses a narrower compile-time-safe expression subset
 - `let _ = expr;` is the current discard-bind surface
+- tuple destructuring bind is currently flat only and accepts only names or `_`
 - compound assignment is statement-level sugar only
 - `guard` currently supports only the `else return` form
 - `assert(condition);` is a statement-level builtin contract form
@@ -179,10 +182,13 @@ Current v0 tuple limits:
 
 - tuples are currently aggregate value carriers only
 - tuple literals and tuple types are supported
+- tuple destructuring bind is currently statement-level only
+- tuple destructuring bind currently supports only flat name-or-`_` item lists
+- tuple destructuring bind currently requires arity at least 2
 - tuple equality follows ordinary `==` / `!=` when both operands have the same
   tuple type
-- tuple destructuring, tuple field access, and tuple pattern matching are not
-  yet part of the stable surface
+- tuple field access and tuple pattern matching beyond flat destructuring bind
+  are not yet part of the stable surface
 
 Current precedence, from tighter to looser:
 

@@ -86,6 +86,11 @@ pub enum Stmt {
         ty: Option<Type>,
         value: ExprId,
     },
+    LetTuple {
+        items: Vec<Option<SymbolId>>,
+        ty: Option<Type>,
+        value: ExprId,
+    },
     Discard {
         ty: Option<Type>,
         value: ExprId,

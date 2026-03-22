@@ -37,6 +37,11 @@ pub enum IrInstr {
         dst: u16,
         items: Vec<u16>,
     },
+    TupleGet {
+        dst: u16,
+        src: u16,
+        index: u16,
+    },
     LoadVar {
         dst: u16,
         name: String,
@@ -638,6 +643,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
+        IrInstr::TupleGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
         IrInstr::StoreVar { .. } => 1 + 2 + 2,
         IrInstr::QAnd { .. }
@@ -719,6 +725,12 @@ fn emit_instr(
             for item in items {
                 write_u16_le(out, *item);
             }
+        }
+        IrInstr::TupleGet { dst, src, index } => {
+            out.push(Opcode::TupleGet.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *src);
+            write_u16_le(out, *index);
         }
         IrInstr::LoadVar { dst, name } => {
             out.push(Opcode::LoadVar.byte());
@@ -1415,6 +1427,54 @@ fn lower_expr_with_expected(
     }
 }
 
+fn bind_tuple_items(
+    items: &[Option<SymbolId>],
+    tuple_reg: u16,
+    tuple_ty: &Type,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &mut ScopeEnv,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(item_tys) = tuple_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: "tuple destructuring bind requires tuple value".to_string(),
+        });
+    };
+    if item_tys.len() != items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple destructuring bind arity mismatch: expected {}, got {}",
+                items.len(),
+                item_tys.len()
+            ),
+        });
+    }
+    for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
+        let Some(name) = item else {
+            continue;
+        };
+        let reg = alloc(next);
+        let index = u16::try_from(index).map_err(|_| FrontendError {
+            pos: 0,
+            message: "tuple destructuring bind index exceeds v0 limit".to_string(),
+        })?;
+        out.push(IrInstr::TupleGet {
+            dst: reg,
+            src: tuple_reg,
+            index,
+        });
+        env.insert(*name, item_ty.clone());
+        out.push(IrInstr::StoreVar {
+            name: resolve_symbol_name(arena, *name)?.to_string(),
+            src: reg,
+        });
+    }
+    Ok(())
+}
+
 fn lower_stmt(
     stmt_id: StmtId,
     arena: &AstArena,
@@ -1462,6 +1522,28 @@ fn lower_stmt(
                 src: reg,
             });
             Ok(())
+        }
+        Stmt::LetTuple { items, ty, value } => {
+            let (tuple_reg, vty) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                ty.clone(),
+                ret_ty.clone(),
+            )?;
+            let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
+            bind_tuple_items(
+                items,
+                tuple_reg,
+                &final_ty,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+            )
         }
         Stmt::Discard { ty, value } => {
             let _ = lower_expr_with_expected(
@@ -1824,6 +1906,20 @@ fn lower_value_block_expr(
                     name: resolve_symbol_name(arena, *name)?.to_string(),
                     src: reg,
                 });
+            }
+            Stmt::LetTuple { items, ty, value } => {
+                let (tuple_reg, vty) = lower_expr_with_expected(
+                    *value,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    fn_table,
+                    ty.clone(),
+                    ret_ty.clone(),
+                )?;
+                let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
+                bind_tuple_items(items, tuple_reg, &final_ty, arena, next, out, &mut block_env)?;
             }
             Stmt::Discard { ty, value } => {
                 let _ = lower_expr_with_expected(
@@ -2707,6 +2803,33 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::MakeTuple { items, .. } if items.len() == 2)));
+    }
+
+    #[test]
+    fn lower_tuple_destructuring_bind_to_tuple_get_ir() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let (count, ready): (i32, bool) = pair(true);
+                assert(ready == true);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("tuple destructuring bind should lower");
+        let main = ir
+            .iter()
+            .find(|func| func.name == "main")
+            .expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::TupleGet { index: 0, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::TupleGet { index: 1, .. })));
     }
 
     #[test]

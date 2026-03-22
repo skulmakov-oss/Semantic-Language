@@ -104,6 +104,9 @@ Current message families include:
 - invalid typed numeric literal form
 - invalid tuple arity
 - tuple type mismatch
+- tuple destructuring bind requires tuple value
+- tuple destructuring bind arity mismatch
+- nested tuple destructuring bind rejected in v0
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type
