@@ -33,6 +33,10 @@ pub enum IrInstr {
         dst: u16,
         val: i32,
     },
+    MakeTuple {
+        dst: u16,
+        items: Vec<u16>,
+    },
     LoadVar {
         dst: u16,
         name: String,
@@ -264,7 +268,7 @@ pub fn lower_expr_to_ir(
     let mut next = 0u16;
     let mut env = ScopeEnv::new();
     for (name, ty) in var_types {
-        env.insert(*name, *ty);
+        env.insert(*name, ty.clone());
     }
     let _ = lower_expr(expr, arena, &mut next, &mut out, &env, fn_table, Type::Unit)?;
     Ok(out)
@@ -290,7 +294,7 @@ pub fn lower_function_to_ir(
         });
     }
     for stmt in &func.body {
-        lower_stmt(*stmt, arena, &mut ctx, &mut env, func.ret, fn_table)?;
+        lower_stmt(*stmt, arena, &mut ctx, &mut env, func.ret.clone(), fn_table)?;
     }
 
     if !ctx.ends_with_ret() {
@@ -633,6 +637,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadU32 { .. } => 1 + 2 + 4,
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
+        IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
         IrInstr::StoreVar { .. } => 1 + 2 + 2,
         IrInstr::QAnd { .. }
@@ -702,6 +707,18 @@ fn emit_instr(
             out.push(Opcode::LoadFx.byte());
             write_u16_le(out, *dst);
             write_i32_le(out, *val);
+        }
+        IrInstr::MakeTuple { dst, items } => {
+            out.push(Opcode::MakeTuple.byte());
+            write_u16_le(out, *dst);
+            let count = u16::try_from(items.len()).map_err(|_| FrontendError {
+                pos: 0,
+                message: "tuple literal has too many elements".to_string(),
+            })?;
+            write_u16_le(out, count);
+            for item in items {
+                write_u16_le(out, *item);
+            }
         }
         IrInstr::LoadVar { dst, name } => {
             out.push(Opcode::LoadVar.byte());
@@ -932,6 +949,44 @@ fn lower_expr_with_expected(
             out.push(IrInstr::LoadBool { dst: r, val: *v });
             Ok((r, Type::Bool))
         }
+        Expr::Tuple(items) => {
+            let expected_items = match expected.as_ref() {
+                Some(Type::Tuple(types)) => Some(types),
+                _ => None,
+            };
+            if let Some(types) = expected_items {
+                if types.len() != items.len() {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "tuple arity mismatch in lowering: expected {}, got {}",
+                            types.len(),
+                            items.len()
+                        ),
+                    });
+                }
+            }
+            let mut regs = Vec::with_capacity(items.len());
+            let mut tys = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                let item_expected = expected_items.and_then(|types| types.get(index)).cloned();
+                let (reg, ty) = lower_expr_with_expected(
+                    *item,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    fn_table,
+                    item_expected,
+                    ret_ty.clone(),
+                )?;
+                regs.push(reg);
+                tys.push(ty);
+            }
+            let dst = alloc(next);
+            out.push(IrInstr::MakeTuple { dst, items: regs });
+            Ok((dst, Type::Tuple(tys)))
+        }
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
             if expected == Some(Type::Fx) {
@@ -1002,7 +1057,7 @@ fn lower_expr_with_expected(
         }
         Expr::If(if_expr) => {
             let (cond_reg, cond_ty) =
-                lower_expr(if_expr.condition, arena, next, out, env, fn_table, ret_ty)?;
+                lower_expr(if_expr.condition, arena, next, out, env, fn_table, ret_ty.clone())?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -1032,8 +1087,8 @@ fn lower_expr_with_expected(
                 out,
                 env,
                 fn_table,
-                expected,
-                ret_ty,
+                expected.clone(),
+                ret_ty.clone(),
             )?;
             out.push(IrInstr::StoreVar {
                 name: result_name.clone(),
@@ -1051,8 +1106,8 @@ fn lower_expr_with_expected(
                 out,
                 env,
                 fn_table,
-                expected,
-                ret_ty,
+                expected.clone(),
+                ret_ty.clone(),
             )?;
             if then_ty != else_ty {
                 return Err(FrontendError {
@@ -1111,8 +1166,8 @@ fn lower_expr_with_expected(
                     out,
                     env,
                     fn_table,
-                    Some(sig.params[i]),
-                    ret_ty,
+                    Some(sig.params[i].clone()),
+                    ret_ty.clone(),
                 )?;
                 if t != sig.params[i] {
                     return Err(FrontendError {
@@ -1143,7 +1198,7 @@ fn lower_expr_with_expected(
                 name: resolve_symbol_name(arena, *name)?.to_string(),
                 args: regs,
             });
-            Ok((r, sig.ret))
+            Ok((r, sig.ret.clone()))
         }
         Expr::Unary(op, inner) => {
             if expected == Some(Type::Fx) {
@@ -1204,10 +1259,25 @@ fn lower_expr_with_expected(
             }
         }
         Expr::Binary(left, op, right) => {
-            let (lr, lt) =
-                lower_expr_with_expected(*left, arena, next, out, env, fn_table, expected, ret_ty)?;
+            let (lr, lt) = lower_expr_with_expected(
+                *left,
+                arena,
+                next,
+                out,
+                env,
+                fn_table,
+                expected.clone(),
+                ret_ty.clone(),
+            )?;
             let (rr, rt) = lower_expr_with_expected(
-                *right, arena, next, out, env, fn_table, expected, ret_ty,
+                *right,
+                arena,
+                next,
+                out,
+                env,
+                fn_table,
+                expected,
+                ret_ty,
             )?;
             if lt != rt {
                 return Err(FrontendError {
@@ -1363,10 +1433,10 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                *ty,
-                ret_ty,
+                ty.clone(),
+                ret_ty.clone(),
             )?;
-            let final_ty = if let Some(ann) = ty { *ann } else { vty };
+            let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
             env.insert_const(*name, final_ty);
             ctx.instrs.push(IrInstr::StoreVar {
                 name: resolve_symbol_name(arena, *name)?.to_string(),
@@ -1382,10 +1452,10 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                *ty,
-                ret_ty,
+                ty.clone(),
+                ret_ty.clone(),
             )?;
-            let final_ty = if let Some(ann) = ty { *ann } else { vty };
+            let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
             env.insert(*name, final_ty);
             ctx.instrs.push(IrInstr::StoreVar {
                 name: resolve_symbol_name(arena, *name)?.to_string(),
@@ -1401,8 +1471,8 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                *ty,
-                ret_ty,
+                ty.clone(),
+                ret_ty.clone(),
             )?;
             Ok(())
         }
@@ -1431,7 +1501,7 @@ fn lower_stmt(
                 env,
                 fn_table,
                 Some(target_ty),
-                ret_ty,
+                ret_ty.clone(),
             )?;
             ctx.instrs.push(IrInstr::StoreVar {
                 name: resolve_symbol_name(arena, *name)?.to_string(),
@@ -1450,7 +1520,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                ret_ty,
+                ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1472,7 +1542,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                ret_ty,
+                ret_ty.clone(),
             )?;
             ctx.instrs.push(IrInstr::Label {
                 name: continue_label,
@@ -1480,7 +1550,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::Expr(expr) => {
-            lower_expr_stmt(*expr, arena, ctx, env, fn_table, ret_ty)?;
+            lower_expr_stmt(*expr, arena, ctx, env, fn_table, ret_ty.clone())?;
             Ok(())
         }
         Stmt::Return(v) => lower_return_payload(
@@ -1490,7 +1560,7 @@ fn lower_stmt(
             &mut ctx.instrs,
             env,
             fn_table,
-            ret_ty,
+            ret_ty.clone(),
         ),
         Stmt::If {
             condition,
@@ -1504,7 +1574,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                ret_ty,
+                ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1530,7 +1600,7 @@ fn lower_stmt(
             let mut then_env = env.clone();
             then_env.push_scope();
             for s in then_block {
-                lower_stmt(*s, arena, ctx, &mut then_env, ret_ty, fn_table)?;
+                lower_stmt(*s, arena, ctx, &mut then_env, ret_ty.clone(), fn_table)?;
             }
             then_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -1541,7 +1611,7 @@ fn lower_stmt(
             let mut else_env = env.clone();
             else_env.push_scope();
             for s in else_block {
-                lower_stmt(*s, arena, ctx, &mut else_env, ret_ty, fn_table)?;
+                lower_stmt(*s, arena, ctx, &mut else_env, ret_ty.clone(), fn_table)?;
             }
             else_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -1563,7 +1633,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 fn_table,
-                ret_ty,
+                ret_ty.clone(),
             )?;
             if scr_ty != Type::Quad {
                 return Err(FrontendError {
@@ -1613,7 +1683,7 @@ fn lower_stmt(
                     let mut arm_env = env.clone();
                     arm_env.push_scope();
                     for s in &arm.block {
-                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty, fn_table)?;
+                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table)?;
                     }
                     arm_env.pop_scope();
                     ctx.instrs.push(IrInstr::Jmp {
@@ -1664,7 +1734,7 @@ fn lower_stmt(
                         &mut ctx.instrs,
                         &arm_env,
                         fn_table,
-                        ret_ty,
+                        ret_ty.clone(),
                     )? {
                         let guarded_body_label = format!("match_{}_body_{}", mid, i);
                         ctx.instrs.push(IrInstr::JmpIf {
@@ -1677,7 +1747,7 @@ fn lower_stmt(
                         });
                     }
                     for s in &arm.block {
-                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty, fn_table)?;
+                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table)?;
                     }
                     arm_env.pop_scope();
                     ctx.instrs.push(IrInstr::Jmp {
@@ -1692,7 +1762,7 @@ fn lower_stmt(
             let mut def_env = env.clone();
             def_env.push_scope();
             for s in default {
-                lower_stmt(*s, arena, ctx, &mut def_env, ret_ty, fn_table)?;
+                lower_stmt(*s, arena, ctx, &mut def_env, ret_ty.clone(), fn_table)?;
             }
             def_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -1727,10 +1797,10 @@ fn lower_value_block_expr(
                     out,
                     &block_env,
                     fn_table,
-                    *ty,
-                    ret_ty,
+                    ty.clone(),
+                    ret_ty.clone(),
                 )?;
-                let final_ty = if let Some(ann) = ty { *ann } else { vty };
+                let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
                 block_env.insert_const(*name, final_ty);
                 out.push(IrInstr::StoreVar {
                     name: resolve_symbol_name(arena, *name)?.to_string(),
@@ -1739,9 +1809,16 @@ fn lower_value_block_expr(
             }
             Stmt::Let { name, ty, value } => {
                 let (reg, vty) = lower_expr_with_expected(
-                    *value, arena, next, out, &block_env, fn_table, *ty, ret_ty,
+                    *value,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    fn_table,
+                    ty.clone(),
+                    ret_ty.clone(),
                 )?;
-                let final_ty = if let Some(ann) = ty { *ann } else { vty };
+                let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
                 block_env.insert(*name, final_ty);
                 out.push(IrInstr::StoreVar {
                     name: resolve_symbol_name(arena, *name)?.to_string(),
@@ -1750,11 +1827,26 @@ fn lower_value_block_expr(
             }
             Stmt::Discard { ty, value } => {
                 let _ = lower_expr_with_expected(
-                    *value, arena, next, out, &block_env, fn_table, *ty, ret_ty,
+                    *value,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    fn_table,
+                    ty.clone(),
+                    ret_ty.clone(),
                 )?;
             }
             Stmt::Expr(expr) => {
-                lower_expr_stmt_with_parts(*expr, arena, next, out, &block_env, fn_table, ret_ty)?;
+                lower_expr_stmt_with_parts(
+                    *expr,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    fn_table,
+                    ret_ty.clone(),
+                )?;
             }
             _ => {
                 return Err(FrontendError {
@@ -1811,8 +1903,8 @@ fn lower_return_payload(
                 out,
                 env,
                 fn_table,
-                Some(ret_ty),
-                ret_ty,
+                Some(ret_ty.clone()),
+                ret_ty.clone(),
             )?;
             if ty != ret_ty {
                 return Err(FrontendError {
@@ -1856,7 +1948,7 @@ fn lower_match_expr(
         out,
         env,
         fn_table,
-        ret_ty,
+        ret_ty.clone(),
     )?;
     if scr_ty != Type::Quad {
         return Err(FrontendError {
@@ -1915,7 +2007,7 @@ fn lower_match_expr(
         let mut arm_env = env.clone();
         arm_env.push_scope();
         if let Some(guard_reg) =
-            lower_match_guard(arm.guard, arena, next, out, &arm_env, fn_table, ret_ty)?
+            lower_match_guard(arm.guard, arena, next, out, &arm_env, fn_table, ret_ty.clone())?
         {
             let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
             out.push(IrInstr::JmpIf {
@@ -1928,11 +2020,18 @@ fn lower_match_expr(
             });
         }
         let (arm_reg, arm_ty) = lower_value_block_expr(
-            &arm.block, arena, next, out, &arm_env, fn_table, expected, ret_ty,
+            &arm.block,
+            arena,
+            next,
+            out,
+            &arm_env,
+            fn_table,
+            expected.clone(),
+            ret_ty.clone(),
         )?;
         arm_env.pop_scope();
-        if let Some(expected_ty) = result_ty {
-            if expected_ty != arm_ty {
+        if let Some(ref expected_ty) = result_ty {
+            if *expected_ty != arm_ty {
                 return Err(FrontendError {
                     pos: 0,
                     message: format!(
@@ -1956,10 +2055,18 @@ fn lower_match_expr(
     out.push(IrInstr::Label {
         name: default_label,
     });
-    let (default_reg, default_ty) =
-        lower_value_block_expr(default, arena, next, out, env, fn_table, expected, ret_ty)?;
-    if let Some(expected_ty) = result_ty {
-        if expected_ty != default_ty {
+    let (default_reg, default_ty) = lower_value_block_expr(
+        default,
+        arena,
+        next,
+        out,
+        env,
+        fn_table,
+        expected,
+        ret_ty,
+    )?;
+    if let Some(ref expected_ty) = result_ty {
+        if *expected_ty != default_ty {
             return Err(FrontendError {
                 pos: 0,
                 message: format!(
@@ -2076,8 +2183,8 @@ fn lower_expr_stmt_with_parts(
                 out,
                 env,
                 fn_table,
-                Some(sig.params[i]),
-                ret_ty,
+                Some(sig.params[i].clone()),
+                ret_ty.clone(),
             )?;
             if t != sig.params[i] {
                 return Err(FrontendError {
@@ -2575,6 +2682,31 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::Assert { .. })));
+    }
+
+    #[test]
+    fn lower_tuple_literal_to_make_tuple_ir() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) {
+                return (1, flag);
+            }
+
+            fn main() {
+                let pair: (i32, bool) = pair(true);
+                assert(pair == (1, true));
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("tuple literal should lower");
+        let pair_fn = ir
+            .iter()
+            .find(|func| func.name == "pair")
+            .expect("pair fn");
+        assert!(pair_fn
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::MakeTuple { items, .. } if items.len() == 2)));
     }
 
     #[test]

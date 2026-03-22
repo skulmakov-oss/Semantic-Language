@@ -102,6 +102,8 @@ Current message families include:
 - discard-binding type mismatch
 - non-const-safe initializer in const declaration
 - invalid typed numeric literal form
+- invalid tuple arity
+- tuple type mismatch
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

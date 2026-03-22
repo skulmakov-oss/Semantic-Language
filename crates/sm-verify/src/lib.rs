@@ -471,6 +471,18 @@ fn decode_operands(
             refs.required_capabilities |= CAP_FX_VALUES;
             read_i32_le(code, cursor).map_err(|_| invalid("truncated fx literal"))?;
         }
+        Opcode::MakeTuple => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple dst register"))?;
+            mark_reg(dst);
+            let count = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple arity"))? as usize;
+            if count < 2 {
+                return Err(invalid("tuple literal arity must be at least 2"));
+            }
+            for _ in 0..count {
+                let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple item register"))?;
+                mark_reg(src);
+            }
+        }
         Opcode::LoadVar => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             mark_reg(dst);

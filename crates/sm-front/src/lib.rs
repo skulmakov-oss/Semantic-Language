@@ -46,7 +46,7 @@ pub struct FnSig {
 pub type FnTable = BTreeMap<SymbolId, FnSig>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeBinding {
     pub ty: Type,
     pub is_const: bool,
@@ -69,7 +69,7 @@ impl ScopeEnv {
     pub fn with_params(params: &[(SymbolId, Type)]) -> Self {
         let mut env = Self::new();
         for (name, ty) in params {
-            env.insert(*name, *ty);
+            env.insert(*name, ty.clone());
         }
         env
     }
@@ -105,17 +105,17 @@ impl ScopeEnv {
     }
 
     pub fn get(&self, name: SymbolId) -> Option<Type> {
-        self.binding(name).map(|binding| binding.ty)
+        self.binding(name).map(|binding| binding.ty.clone())
     }
 
     pub fn is_const(&self, name: SymbolId) -> bool {
         self.binding(name).map(|binding| binding.is_const).unwrap_or(false)
     }
 
-    fn binding(&self, name: SymbolId) -> Option<ScopeBinding> {
+    fn binding(&self, name: SymbolId) -> Option<&ScopeBinding> {
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.get(&name) {
-                return Some(*binding);
+                return Some(binding);
             }
         }
         None
@@ -145,10 +145,10 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
         out.insert(
             f.name,
             FnSig {
-                params: f.params.iter().map(|(_, t)| *t).collect(),
+                params: f.params.iter().map(|(_, t)| t.clone()).collect(),
                 param_names: Some(f.params.iter().map(|(name, _)| *name).collect()),
                 param_defaults: Some(f.param_defaults.clone()),
-                ret: f.ret,
+                ret: f.ret.clone(),
             },
         );
     }

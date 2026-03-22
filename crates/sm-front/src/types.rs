@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 pub use ton618_core::{ExprId, StmtId, SymbolId};
 use ton618_core::{SigTable, SourceMark};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Quad,
     QVec(usize),
@@ -13,6 +13,7 @@ pub enum Type {
     U32,
     Fx,
     F64,
+    Tuple(Vec<Type>),
     Unit,
 }
 
@@ -63,6 +64,7 @@ pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
     NumericLiteral(NumericLiteral),
+    Tuple(Vec<ExprId>),
     Var(SymbolId),
     Call(SymbolId, Vec<CallArg>),
     Unary(UnaryOp, ExprId),

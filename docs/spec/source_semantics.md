@@ -221,6 +221,23 @@ Current v0 limit:
 - `else if` sugar is not yet supported for value-producing `if`; users must
   write `else { if ... }`
 
+## Tuples
+
+Current tuple semantics:
+
+- tuple literals evaluate their elements left-to-right and package them into a
+  single aggregate value
+- tuple types are structural and preserve declared element order
+- tuples may flow through ordinary local bindings, function parameters, returns,
+  equality, and the verified execution path
+
+Current v0 limit:
+
+- tuple literals and tuple types require arity at least 2
+- tuples are currently value carriers only; destructuring, field access, and
+  tuple-specific operators are not yet part of the stable contract
+- tuple values are not part of the PROMETHEUS host ABI surface
+
 ### Guard
 
 Current `guard` semantics:

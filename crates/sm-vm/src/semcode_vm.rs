@@ -26,6 +26,7 @@ pub enum Value {
     F64(f64),
     U32(u32),
     Fx(i32),
+    Tuple(Vec<Value>),
     Unit,
 }
 
@@ -424,6 +425,19 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::MakeTuple => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                if count < 2 {
+                    return Err(RuntimeError::BadFormat(format!(
+                        "tuple literal arity must be at least 2 in '{}'",
+                        f.name
+                    )));
+                }
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
             Opcode::LoadVar => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -583,7 +597,7 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
             .require_call(HostCallId::GateWrite)
             .map_err(RuntimeError::CapabilityDenied)?;
         self.host
-            .gate_write(device_id, port, value_to_abi(value))
+            .gate_write(device_id, port, value_to_abi(value)?)
             .map_err(RuntimeError::HostAbi)
     }
 
@@ -667,6 +681,17 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
                 set_reg(vm, frame_idx, dst, Value::Fx(v))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::MakeTuple => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let mut items = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    items.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(vm, frame_idx, dst, Value::Tuple(items))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
@@ -876,15 +901,18 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
     }
 }
 
-fn value_to_abi(value: Value) -> AbiValue {
+fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
     match value {
-        Value::Quad(q) => AbiValue::Quad(quad_to_u8(q)),
-        Value::Bool(v) => AbiValue::Bool(v),
-        Value::I32(v) => AbiValue::I32(v),
-        Value::F64(v) => AbiValue::F64(v),
-        Value::U32(v) => AbiValue::U32(v),
-        Value::Fx(v) => AbiValue::Fx(v),
-        Value::Unit => AbiValue::Unit,
+        Value::Quad(q) => Ok(AbiValue::Quad(quad_to_u8(q))),
+        Value::Bool(v) => Ok(AbiValue::Bool(v)),
+        Value::I32(v) => Ok(AbiValue::I32(v)),
+        Value::F64(v) => Ok(AbiValue::F64(v)),
+        Value::U32(v) => Ok(AbiValue::U32(v)),
+        Value::Fx(v) => Ok(AbiValue::Fx(v)),
+        Value::Tuple(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "tuple values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
+        Value::Unit => Ok(AbiValue::Unit),
     }
 }
 
@@ -1065,6 +1093,17 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
         (Value::F64(x), Value::F64(y)) => Ok(x == y),
         (Value::U32(x), Value::U32(y)) => Ok(x == y),
         (Value::Fx(x), Value::Fx(y)) => Ok(x == y),
+        (Value::Tuple(xs), Value::Tuple(ys)) => {
+            if xs.len() != ys.len() {
+                return Ok(false);
+            }
+            for (x, y) in xs.iter().zip(ys.iter()) {
+                if !value_eq(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
         (Value::Unit, Value::Unit) => Ok(true),
         _ => Err(RuntimeError::TypeMismatchRuntime(
             "CmpEq/CmpNe operands must have same runtime type".to_string(),
@@ -1142,6 +1181,20 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_FX r{}, raw:{}", d, n)
+        }
+        Opcode::MakeTuple => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("MAKE_TUPLE r{}, [{}]", d, regs)
         }
         Opcode::LoadVar => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1357,6 +1410,26 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("LOAD_U32"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_tuple_return_and_equality_path() {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) {
+                return (1, flag);
+            }
+
+            fn main() {
+                let left: (i32, bool) = pair(true);
+                let right: (i32, bool) = (1, true);
+                assert(left == right);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_TUPLE"));
         run_semcode(&bytes).expect("run");
     }
 

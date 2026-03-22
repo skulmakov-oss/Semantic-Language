@@ -450,9 +450,7 @@ impl<'a> Parser<'a> {
             if self.starts_short_lambda_head() {
                 return self.parse_short_lambda_apply_after_lparen(None, false);
             }
-            let e = self.parse_expr()?;
-            self.expect(TokenKind::RParen, "expected ')'")?;
-            return Ok(e);
+            return self.parse_paren_expr_or_tuple();
         }
         if self.eat(TokenKind::QuadN) {
             return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::N)));
@@ -489,6 +487,30 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected primary expression".to_string(),
         })
+    }
+
+    fn parse_paren_expr_or_tuple(&mut self) -> Result<ExprId, FrontendError> {
+        if self.check(TokenKind::RParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "empty tuple literal is not supported in v0".to_string(),
+            });
+        }
+        let first = self.parse_expr()?;
+        if !self.eat(TokenKind::Comma) {
+            self.expect(TokenKind::RParen, "expected ')'")?;
+            return Ok(first);
+        }
+
+        let mut items = vec![first, self.parse_expr()?];
+        while self.eat(TokenKind::Comma) {
+            if self.check(TokenKind::RParen) {
+                break;
+            }
+            items.push(self.parse_expr()?);
+        }
+        self.expect(TokenKind::RParen, "expected ')' after tuple literal")?;
+        Ok(self.arena.alloc_expr(Expr::Tuple(items)))
     }
 
     fn starts_short_lambda_head(&self) -> bool {
@@ -623,6 +645,12 @@ impl<'a> Parser<'a> {
     ) -> Result<(), FrontendError> {
         match self.arena.expr(expr_id) {
             Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
+            Expr::Tuple(items) => {
+                for item in items {
+                    self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
+                }
+                Ok(())
+            }
             Expr::Var(name) => {
                 if scopes.iter().rev().any(|scope| scope.contains(name)) {
                     Ok(())
@@ -891,6 +919,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
+        if self.eat(TokenKind::LParen) {
+            return self.parse_paren_type_or_tuple();
+        }
         if self.check(TokenKind::Ident) {
             let t = self.tokens[self.next_non_layout_idx()].text.clone();
             if t == "qvec" {
@@ -930,6 +961,30 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected type".to_string(),
         })
+    }
+
+    fn parse_paren_type_or_tuple(&mut self) -> Result<Type, FrontendError> {
+        if self.check(TokenKind::RParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "empty tuple type is not supported in v0".to_string(),
+            });
+        }
+        let first = self.parse_type()?;
+        if !self.eat(TokenKind::Comma) {
+            self.expect(TokenKind::RParen, "expected ')' after parenthesized type")?;
+            return Ok(first);
+        }
+
+        let mut items = vec![first, self.parse_type()?];
+        while self.eat(TokenKind::Comma) {
+            if self.check(TokenKind::RParen) {
+                break;
+            }
+            items.push(self.parse_type()?);
+        }
+        self.expect(TokenKind::RParen, "expected ')' after tuple type")?;
+        Ok(Type::Tuple(items))
     }
 
     fn parse_logos_program(&mut self) -> Result<LogosProgram, FrontendError> {
@@ -2187,6 +2242,33 @@ fn main() {
             program.arena.expr(args[0].value),
             Expr::BoolLiteral(true)
         ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_tuple_literal_and_tuple_type_surface() {
+        let src = r#"
+fn pair() -> (i32, bool) = (1, true);
+
+fn main() {
+    let pair: (i32, bool) = (1, true);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tuple literal/type surface should parse");
+        let pair_fn = &program.functions[0];
+        assert_eq!(pair_fn.ret, Type::Tuple(vec![Type::I32, Type::Bool]));
+
+        let main_fn = &program.functions[1];
+        let Stmt::Let { ty, value, .. } = program.arena.stmt(main_fn.body[0]) else {
+            panic!("expected let statement");
+        };
+        assert_eq!(ty.clone(), Some(Type::Tuple(vec![Type::I32, Type::Bool])));
+        let Expr::Tuple(items) = program.arena.expr(*value) else {
+            panic!("expected tuple literal");
+        };
+        assert_eq!(items.len(), 2);
     }
 
     #[test]

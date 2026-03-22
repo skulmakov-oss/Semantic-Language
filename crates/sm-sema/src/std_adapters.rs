@@ -45,6 +45,7 @@ impl From<Type> for SemanticType {
             Type::Bool => SemanticType::Bool,
             Type::U32 => SemanticType::Int,
             Type::Unit => SemanticType::Unit,
+            Type::Tuple(_) => SemanticType::Unknown,
         }
     }
 }
@@ -587,7 +588,7 @@ pub fn analyze_logos_program(
             for field in &ent.fields {
                 let _ = symbols.insert(Symbol {
                     name: field.name.clone(),
-                    ty: SemanticType::from(field.ty),
+                    ty: SemanticType::from(field.ty.clone()),
                     scope: symbols.scope_kind(),
                 });
             }
@@ -621,7 +622,7 @@ pub fn analyze_logos_program(
                             .fields
                             .iter()
                             .find(|x| x.name == field)
-                            .map(|f| SemanticType::from(f.ty))
+                            .map(|f| SemanticType::from(f.ty.clone()))
                     })
                 },
             )

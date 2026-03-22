@@ -138,6 +138,12 @@ Current expression forms:
   - `value |> (x => expr)`
 - short lambda immediate-call sugar:
   - `(x => expr)(arg)`
+- tuple literals:
+  - `(1, true)`
+  - `(value, ready, 1.0)`
+- tuple types:
+  - `(i32, bool)`
+  - `(f64, quad, bool)`
 - block expressions with a trailing tail value:
   - `{ let x = 1; x }`
 - `if` expressions with explicit `else` blocks:
@@ -167,6 +173,16 @@ Current v0 numeric-literal limits:
   stable surface
 - typed literal spelling does not imply new integer arithmetic beyond the
   already documented operator surface
+- tuple literal arity must be at least 2 in the current contract
+
+Current v0 tuple limits:
+
+- tuples are currently aggregate value carriers only
+- tuple literals and tuple types are supported
+- tuple equality follows ordinary `==` / `!=` when both operands have the same
+  tuple type
+- tuple destructuring, tuple field access, and tuple pattern matching are not
+  yet part of the stable surface
 
 Current precedence, from tighter to looser:
 
