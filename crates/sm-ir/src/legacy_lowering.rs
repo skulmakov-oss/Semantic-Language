@@ -38,6 +38,11 @@ pub enum IrInstr {
         dst: u16,
         items: Vec<u16>,
     },
+    MakeRecord {
+        dst: u16,
+        name: String,
+        items: Vec<u16>,
+    },
     TupleGet {
         dst: u16,
         src: u16,
@@ -289,6 +294,7 @@ pub fn lower_expr_to_ir(
     let mut next = 0u16;
     let mut env = ScopeEnv::new();
     let mut loop_stack = Vec::new();
+    let empty_records = RecordTable::new();
     for (name, ty) in var_types {
         env.insert(*name, ty.clone());
     }
@@ -300,18 +306,18 @@ pub fn lower_expr_to_ir(
         &env,
         &mut loop_stack,
         fn_table,
+        &empty_records,
         Type::Unit,
     )?;
     Ok(out)
 }
 
-pub fn lower_function_to_ir(
+fn lower_function_to_ir_with_record_table(
     func: &Function,
     arena: &AstArena,
     fn_table: &FnTable,
+    record_table: &RecordTable,
 ) -> Result<IrFunction, FrontendError> {
-    type_check_function_with_table(func, arena, fn_table)?;
-
     let mut ctx = LoweringCtx::new();
     let mut env = ScopeEnv::with_params(&func.params);
     ctx.next_reg = u16::try_from(func.params.len()).map_err(|_| FrontendError {
@@ -325,7 +331,15 @@ pub fn lower_function_to_ir(
         });
     }
     for stmt in &func.body {
-        lower_stmt(*stmt, arena, &mut ctx, &mut env, func.ret.clone(), fn_table)?;
+        lower_stmt(
+            *stmt,
+            arena,
+            &mut ctx,
+            &mut env,
+            func.ret.clone(),
+            fn_table,
+            record_table,
+        )?;
     }
 
     if !ctx.ends_with_ret() {
@@ -347,6 +361,16 @@ pub fn lower_function_to_ir(
         name: resolve_symbol_name(arena, func.name)?.to_string(),
         instrs: ctx.instrs,
     })
+}
+
+pub fn lower_function_to_ir(
+    func: &Function,
+    arena: &AstArena,
+    fn_table: &FnTable,
+) -> Result<IrFunction, FrontendError> {
+    type_check_function_with_table(func, arena, fn_table)?;
+    let empty_records = RecordTable::new();
+    lower_function_to_ir_with_record_table(func, arena, fn_table, &empty_records)
 }
 
 pub fn compile_program_to_ir(input: &str) -> Result<Vec<IrFunction>, FrontendError> {
@@ -444,10 +468,16 @@ pub fn compile_program_to_ir_with_options_and_profile(
     }
     let program = parse_program_with_profile(input, parser_profile)?;
     let fn_table = build_fn_table(&program)?;
+    let record_table = build_record_table(&program)?;
     type_check_program(&program)?;
     let mut out = Vec::new();
     for f in &program.functions {
-        out.push(lower_function_to_ir(f, &program.arena, &fn_table)?);
+        out.push(lower_function_to_ir_with_record_table(
+            f,
+            &program.arena,
+            &fn_table,
+            &record_table,
+        )?);
     }
     if matches!(opt, OptLevel::O1) {
         let _ = crate::passes::run_default_opt_passes(&mut out);
@@ -587,6 +617,9 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             IrInstr::StoreVar { name, .. } => {
                 let _ = interner.id(name)?;
             }
+            IrInstr::MakeRecord { name, .. } => {
+                let _ = interner.id(name)?;
+            }
             IrInstr::Call { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -669,6 +702,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
+        IrInstr::MakeRecord { items, .. } => 1 + 2 + 2 + 2 + (items.len() * 2),
         IrInstr::TupleGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
         IrInstr::StoreVar { .. } => 1 + 2 + 2,
@@ -749,6 +783,19 @@ fn emit_instr(
             let count = u16::try_from(items.len()).map_err(|_| FrontendError {
                 pos: 0,
                 message: "tuple literal has too many elements".to_string(),
+            })?;
+            write_u16_le(out, count);
+            for item in items {
+                write_u16_le(out, *item);
+            }
+        }
+        IrInstr::MakeRecord { dst, name, items } => {
+            out.push(Opcode::MakeRecord.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, interner.lookup(name)?);
+            let count = u16::try_from(items.len()).map_err(|_| FrontendError {
+                pos: 0,
+                message: "record literal has too many fields".to_string(),
             })?;
             write_u16_le(out, count);
             for item in items {
@@ -968,6 +1015,7 @@ fn lower_expr(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
     lower_expr_with_expected(
@@ -978,6 +1026,7 @@ fn lower_expr(
         env,
         loop_stack,
         fn_table,
+        record_table,
         None,
         ret_ty,
     )
@@ -991,6 +1040,7 @@ fn lower_expr_with_expected(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -1014,6 +1064,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 Some(Type::I32),
                 ret_ty.clone(),
             )?;
@@ -1034,6 +1085,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 Some(Type::I32),
                 ret_ty,
             )?;
@@ -1087,6 +1139,7 @@ fn lower_expr_with_expected(
                     env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     item_expected,
                     ret_ty.clone(),
                 )?;
@@ -1096,6 +1149,63 @@ fn lower_expr_with_expected(
             let dst = alloc(next);
             out.push(IrInstr::MakeTuple { dst, items: regs });
             Ok((dst, Type::Tuple(tys)))
+        }
+        Expr::RecordLiteral(record_literal) => {
+            let record = record_table.get(&record_literal.name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown record type '{}' in record literal lowering",
+                    resolve_symbol_name(arena, record_literal.name)?
+                ),
+            })?;
+            let mut lowered_fields = HashMap::new();
+            for field in &record_literal.fields {
+                let expected_field_ty = record
+                    .fields
+                    .iter()
+                    .find(|decl_field| decl_field.name == field.name)
+                    .map(|decl_field| decl_field.ty.clone())
+                    .ok_or(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record literal '{}' has no field named '{}' during lowering",
+                            resolve_symbol_name(arena, record_literal.name)?,
+                            resolve_symbol_name(arena, field.name)?
+                        ),
+                    })?;
+                let (reg, _) = lower_expr_with_expected(
+                    field.value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    Some(expected_field_ty),
+                    ret_ty.clone(),
+                )?;
+                lowered_fields.insert(field.name, reg);
+            }
+            let mut ordered_regs = Vec::with_capacity(record.fields.len());
+            for decl_field in &record.fields {
+                let reg = lowered_fields.get(&decl_field.name).copied().ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "record literal '{}' is missing field '{}' during lowering",
+                        resolve_symbol_name(arena, record_literal.name)?,
+                        resolve_symbol_name(arena, decl_field.name)?
+                    ),
+                })?;
+                ordered_regs.push(reg);
+            }
+            let dst = alloc(next);
+            out.push(IrInstr::MakeRecord {
+                dst,
+                name: resolve_symbol_name(arena, record_literal.name)?.to_string(),
+                items: ordered_regs,
+            });
+            Ok((dst, Type::Record(record_literal.name)))
         }
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
@@ -1171,6 +1281,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 expected,
                 ret_ty,
             )
@@ -1184,6 +1295,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
@@ -1216,6 +1328,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 expected.clone(),
                 ret_ty.clone(),
             )?;
@@ -1236,6 +1349,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 expected.clone(),
                 ret_ty.clone(),
             )?;
@@ -1272,6 +1386,7 @@ fn lower_expr_with_expected(
             env,
             loop_stack,
             fn_table,
+            record_table,
             expected,
             ret_ty,
         ),
@@ -1283,6 +1398,7 @@ fn lower_expr_with_expected(
             env,
             loop_stack,
             fn_table,
+            record_table,
             expected,
             ret_ty,
         ),
@@ -1316,6 +1432,7 @@ fn lower_expr_with_expected(
                     env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     Some(sig.params[i].clone()),
                     ret_ty.clone(),
                 )?;
@@ -1366,6 +1483,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 expected,
                 ret_ty,
             )?;
@@ -1425,6 +1543,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 expected.clone(),
                 ret_ty.clone(),
             )?;
@@ -1436,6 +1555,7 @@ fn lower_expr_with_expected(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 expected,
                 ret_ty,
             )?;
@@ -1706,6 +1826,7 @@ fn lower_for_range_stmt(
     env: &mut ScopeEnv,
     ret_ty: Type,
     fn_table: &FnTable,
+    record_table: &RecordTable,
 ) -> Result<(), FrontendError> {
     let (range_reg, range_ty) = lower_expr_with_expected(
         range,
@@ -1715,6 +1836,7 @@ fn lower_for_range_stmt(
         env,
         &mut ctx.loop_stack,
         fn_table,
+        record_table,
         Some(Type::RangeI32),
         ret_ty.clone(),
     )?;
@@ -1823,7 +1945,15 @@ fn lower_for_range_stmt(
         src: current_reg,
     });
     for stmt in body {
-        lower_stmt(*stmt, arena, ctx, &mut body_env, ret_ty.clone(), fn_table)?;
+        lower_stmt(
+            *stmt,
+            arena,
+            ctx,
+            &mut body_env,
+            ret_ty.clone(),
+            fn_table,
+            record_table,
+        )?;
     }
     body_env.pop_scope();
 
@@ -1872,6 +2002,7 @@ fn bind_let_else_tuple_items(
     env: &mut ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     let Type::Tuple(item_tys) = tuple_ty else {
@@ -1942,6 +2073,7 @@ fn bind_let_else_tuple_items(
                     env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ret_ty.clone(),
                 )?;
                 out.push(IrInstr::Label {
@@ -1968,6 +2100,7 @@ fn lower_stmt(
     env: &mut ScopeEnv,
     ret_ty: Type,
     fn_table: &FnTable,
+    record_table: &RecordTable,
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
@@ -1980,6 +2113,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2000,6 +2134,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2020,6 +2155,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2048,6 +2184,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2063,6 +2200,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ret_ty,
             )
         }
@@ -2075,6 +2213,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2105,6 +2244,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 Some(target_ty),
                 ret_ty.clone(),
             )?;
@@ -2123,6 +2263,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ret_ty,
             )?;
             assign_tuple_items(
@@ -2136,7 +2277,17 @@ fn lower_stmt(
             )
         }
         Stmt::ForRange { name, range, body } => {
-            lower_for_range_stmt(*name, *range, body, arena, ctx, env, ret_ty, fn_table)
+            lower_for_range_stmt(
+                *name,
+                *range,
+                body,
+                arena,
+                ctx,
+                env,
+                ret_ty,
+                fn_table,
+                record_table,
+            )
         }
         Stmt::Break(value) => {
             let (expected_break, end_label, result_name, prior_result_ty) = {
@@ -2159,6 +2310,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 expected_break,
                 ret_ty.clone(),
             )?;
@@ -2199,6 +2351,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
@@ -2222,6 +2375,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ret_ty.clone(),
             )?;
             ctx.instrs.push(IrInstr::Label {
@@ -2230,7 +2384,15 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::Expr(expr) => {
-            lower_expr_stmt(*expr, arena, ctx, env, fn_table, ret_ty.clone())?;
+            lower_expr_stmt(
+                *expr,
+                arena,
+                ctx,
+                env,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
             Ok(())
         }
         Stmt::Return(v) => lower_return_payload(
@@ -2241,6 +2403,7 @@ fn lower_stmt(
             env,
             &mut ctx.loop_stack,
             fn_table,
+            record_table,
             ret_ty.clone(),
         ),
         Stmt::If {
@@ -2256,6 +2419,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
@@ -2282,7 +2446,7 @@ fn lower_stmt(
             let mut then_env = env.clone();
             then_env.push_scope();
             for s in then_block {
-                lower_stmt(*s, arena, ctx, &mut then_env, ret_ty.clone(), fn_table)?;
+                lower_stmt(*s, arena, ctx, &mut then_env, ret_ty.clone(), fn_table, record_table)?;
             }
             then_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -2293,7 +2457,7 @@ fn lower_stmt(
             let mut else_env = env.clone();
             else_env.push_scope();
             for s in else_block {
-                lower_stmt(*s, arena, ctx, &mut else_env, ret_ty.clone(), fn_table)?;
+                lower_stmt(*s, arena, ctx, &mut else_env, ret_ty.clone(), fn_table, record_table)?;
             }
             else_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -2316,6 +2480,7 @@ fn lower_stmt(
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
+                record_table,
                 ret_ty.clone(),
             )?;
             if scr_ty != Type::Quad {
@@ -2366,7 +2531,7 @@ fn lower_stmt(
                     let mut arm_env = env.clone();
                     arm_env.push_scope();
                     for s in &arm.block {
-                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table)?;
+                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table, record_table)?;
                     }
                     arm_env.pop_scope();
                     ctx.instrs.push(IrInstr::Jmp {
@@ -2418,6 +2583,7 @@ fn lower_stmt(
                         &arm_env,
                         &mut ctx.loop_stack,
                         fn_table,
+                        record_table,
                         ret_ty.clone(),
                     )? {
                         let guarded_body_label = format!("match_{}_body_{}", mid, i);
@@ -2431,7 +2597,7 @@ fn lower_stmt(
                         });
                     }
                     for s in &arm.block {
-                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table)?;
+                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table, record_table)?;
                     }
                     arm_env.pop_scope();
                     ctx.instrs.push(IrInstr::Jmp {
@@ -2446,7 +2612,7 @@ fn lower_stmt(
             let mut def_env = env.clone();
             def_env.push_scope();
             for s in default {
-                lower_stmt(*s, arena, ctx, &mut def_env, ret_ty.clone(), fn_table)?;
+                lower_stmt(*s, arena, ctx, &mut def_env, ret_ty.clone(), fn_table, record_table)?;
             }
             def_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -2467,6 +2633,7 @@ fn lower_value_block_expr(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -2483,6 +2650,7 @@ fn lower_value_block_expr(
                     &block_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -2502,6 +2670,7 @@ fn lower_value_block_expr(
                     &block_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -2521,6 +2690,7 @@ fn lower_value_block_expr(
                     &block_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -2536,6 +2706,7 @@ fn lower_value_block_expr(
                     &block_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -2549,6 +2720,7 @@ fn lower_value_block_expr(
                     &block_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -2568,6 +2740,7 @@ fn lower_value_block_expr(
         &block_env,
         loop_stack,
         fn_table,
+        record_table,
         expected,
         ret_ty,
     )?;
@@ -2583,13 +2756,14 @@ fn lower_match_guard(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<Option<u16>, FrontendError> {
     let Some(guard_expr) = guard else {
         return Ok(None);
     };
     let (guard_reg, guard_ty) =
-        lower_expr(guard_expr, arena, next, out, env, loop_stack, fn_table, ret_ty)?;
+        lower_expr(guard_expr, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty)?;
     if guard_ty != Type::Bool {
         return Err(FrontendError {
             pos: 0,
@@ -2607,6 +2781,7 @@ fn lower_return_payload(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     match value {
@@ -2619,6 +2794,7 @@ fn lower_return_payload(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 Some(ret_ty.clone()),
                 ret_ty.clone(),
             )?;
@@ -2655,6 +2831,7 @@ fn lower_loop_expr(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -2681,12 +2858,13 @@ fn lower_loop_expr(
             *stmt,
             arena,
             next,
-            out,
-            &mut body_env,
-            loop_stack,
-            fn_table,
-            ret_ty.clone(),
-        )?;
+        out,
+        &mut body_env,
+        loop_stack,
+        fn_table,
+        record_table,
+        ret_ty.clone(),
+    )?;
     }
     body_env.pop_scope();
     out.push(IrInstr::Jmp {
@@ -2726,6 +2904,7 @@ fn lower_loop_expr_stmt(
     env: &mut ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
@@ -2748,7 +2927,7 @@ fn lower_loop_expr_stmt(
             else_block,
         } => {
             let (cond_reg, cond_ty) =
-                lower_expr(*condition, arena, next, out, env, loop_stack, fn_table, ret_ty.clone())?;
+                lower_expr(*condition, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty.clone())?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -2781,6 +2960,7 @@ fn lower_loop_expr_stmt(
                     &mut then_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -2801,6 +2981,7 @@ fn lower_loop_expr_stmt(
                     &mut else_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -2818,7 +2999,7 @@ fn lower_loop_expr_stmt(
             default,
         } => {
             let (scr_reg, scr_ty) =
-                lower_expr(*scrutinee, arena, next, out, env, loop_stack, fn_table, ret_ty.clone())?;
+                lower_expr(*scrutinee, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty.clone())?;
             if scr_ty != Type::Quad {
                 return Err(FrontendError {
                     pos: 0,
@@ -2883,6 +3064,7 @@ fn lower_loop_expr_stmt(
                     &arm_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ret_ty.clone(),
                 )? {
                     let guarded_body_label = format!("loop_match_{}_body_{}", id, i);
@@ -2904,6 +3086,7 @@ fn lower_loop_expr_stmt(
                         &mut arm_env,
                         loop_stack,
                         fn_table,
+                        record_table,
                         ret_ty.clone(),
                     )?;
                 }
@@ -2927,6 +3110,7 @@ fn lower_loop_expr_stmt(
                     &mut def_env,
                     loop_stack,
                     fn_table,
+                    record_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -2944,7 +3128,7 @@ fn lower_loop_expr_stmt(
                 loop_stack: loop_stack.clone(),
                 instrs: core::mem::take(out),
             };
-            let result = lower_stmt(stmt_id, arena, &mut ctx, env, ret_ty, fn_table);
+            let result = lower_stmt(stmt_id, arena, &mut ctx, env, ret_ty, fn_table, record_table);
             *next = ctx.next_reg;
             *out = ctx.instrs;
             *loop_stack = ctx.loop_stack;
@@ -2961,6 +3145,7 @@ fn lower_match_expr(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -2972,6 +3157,7 @@ fn lower_match_expr(
         env,
         loop_stack,
         fn_table,
+        record_table,
         ret_ty.clone(),
     )?;
     if scr_ty != Type::Quad {
@@ -3039,6 +3225,7 @@ fn lower_match_expr(
                 &arm_env,
                 loop_stack,
                 fn_table,
+                record_table,
                 ret_ty.clone(),
             )?
         {
@@ -3060,6 +3247,7 @@ fn lower_match_expr(
             &arm_env,
             loop_stack,
             fn_table,
+            record_table,
             expected.clone(),
             ret_ty.clone(),
         )?;
@@ -3097,6 +3285,7 @@ fn lower_match_expr(
         env,
         loop_stack,
         fn_table,
+        record_table,
         expected,
         ret_ty,
     )?;
@@ -3136,6 +3325,7 @@ fn lower_expr_stmt(
     ctx: &mut LoweringCtx,
     env: &ScopeEnv,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     lower_expr_stmt_with_parts(
@@ -3146,6 +3336,7 @@ fn lower_expr_stmt(
         env,
         &mut ctx.loop_stack,
         fn_table,
+        record_table,
         ret_ty,
     )
 }
@@ -3176,6 +3367,7 @@ fn lower_expr_stmt_with_parts(
     env: &ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
+    record_table: &RecordTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     let expr = arena.expr(expr_id);
@@ -3195,6 +3387,7 @@ fn lower_expr_stmt_with_parts(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 Some(Type::Bool),
                 ret_ty,
             )?;
@@ -3228,6 +3421,7 @@ fn lower_expr_stmt_with_parts(
                 env,
                 loop_stack,
                 fn_table,
+                record_table,
                 Some(sig.params[i].clone()),
                 ret_ty.clone(),
             )?;
@@ -3256,7 +3450,7 @@ fn lower_expr_stmt_with_parts(
         return Ok(());
     }
 
-    let _ = lower_expr(expr_id, arena, next, out, env, loop_stack, fn_table, ret_ty)?;
+    let _ = lower_expr(expr_id, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty)?;
     Ok(())
 }
 
@@ -4009,6 +4203,34 @@ mod opt_tests {
         assert!(err
             .message
             .contains("record type 'DecisionContext' is declared but not yet available in executable parameter 'ctx'"));
+    }
+
+    #[test]
+    fn lower_record_literal_to_make_record_in_declaration_slot_order() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let mirror: DecisionContext = ctx;
+                let _ = mirror;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record literal should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeRecord { name, items, .. } if name == "DecisionContext" && items.len() == 2
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "ctx"
+        )));
     }
 
     #[test]

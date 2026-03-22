@@ -10,6 +10,13 @@ use alloc::string::{String, ToString};
 #[cfg(any(feature = "alloc", feature = "std"))]
 use alloc::vec::Vec;
 
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordCarrier<T> {
+    pub type_name: String,
+    pub slots: Vec<T>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolId(pub u32);
 

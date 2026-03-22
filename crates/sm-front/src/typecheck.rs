@@ -200,7 +200,7 @@ fn check_stmt(
                     arena,
                     format!("const '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
-                ensure_executable_type_supported(
+                ensure_storage_type_supported(
                     ann,
                     arena,
                     format!("const '{}'", resolve_symbol_name(arena, *name)?),
@@ -231,7 +231,7 @@ fn check_stmt(
                     arena,
                     format!("let '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
-                ensure_executable_type_supported(
+                ensure_storage_type_supported(
                     ann,
                     arena,
                     format!("let '{}'", resolve_symbol_name(arena, *name)?),
@@ -261,7 +261,7 @@ fn check_stmt(
                     arena,
                     "tuple destructuring bind".to_string(),
                 )?;
-                ensure_executable_type_supported(
+                ensure_storage_type_supported(
                     ann,
                     arena,
                     "tuple destructuring bind".to_string(),
@@ -316,7 +316,7 @@ fn check_stmt(
                     arena,
                     "let-else tuple destructuring bind".to_string(),
                 )?;
-                ensure_executable_type_supported(
+                ensure_storage_type_supported(
                     ann,
                     arena,
                     "let-else tuple destructuring bind".to_string(),
@@ -390,7 +390,7 @@ fn check_stmt(
         Stmt::Discard { ty, value } => {
             if let Some(ann) = ty {
                 ensure_type_resolved(ann, record_table, arena, "discard binding".to_string())?;
-                ensure_executable_type_supported(ann, arena, "discard binding".to_string())?;
+                ensure_storage_type_supported(ann, arena, "discard binding".to_string())?;
             }
             let vt = infer_expr_type(*value, arena, env, table, record_table, ret_ty, loop_stack)?;
             if let Some(ann) = ty {
@@ -805,6 +805,15 @@ fn infer_expr_type(
             }
             Ok(Type::Tuple(item_tys))
         }
+        Expr::RecordLiteral(record_literal) => infer_record_literal_type(
+            record_literal,
+            arena,
+            env,
+            table,
+            record_table,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::Var(v) => env.get(*v).ok_or(FrontendError {
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
@@ -990,6 +999,14 @@ fn infer_expr_type(
                             pos: 0,
                             message:
                                 "range equality is not part of the stable v0 range surface"
+                                    .to_string(),
+                        });
+                    }
+                    if contains_stage1_record_carrier(&lt) && contains_stage1_record_carrier(&rt) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "record equality is not part of the stage-1 canonical record surface"
                                     .to_string(),
                         });
                     }
@@ -2251,22 +2268,80 @@ mod tests {
     }
 
     #[test]
-    fn record_type_rejects_executable_local_annotation_use() {
+    fn record_literal_typechecks_for_local_stage1_carrier_bind() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext {
+                    quality: 0.75,
+                    camera: T,
+                };
+                let mirror = ctx;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("record literal local carrier bind should typecheck");
+    }
+
+    #[test]
+    fn record_literal_rejects_missing_field() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx = DecisionContext { camera: T };
+                let _ = ctx;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("missing record field must reject");
+        assert!(err.message.contains("record literal 'DecisionContext' is missing field 'quality'"));
+    }
+
+    #[test]
+    fn record_literal_rejects_unknown_field() {
         let src = r#"
             record DecisionContext {
                 camera: quad,
             }
 
             fn main() {
-                let ctx: DecisionContext = 1;
+                let ctx = DecisionContext { camera: T, badge: F };
+                let _ = ctx;
                 return;
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record local annotation should reject");
-        assert!(err
-            .message
-            .contains("record type 'DecisionContext' is declared but not yet available in executable let 'ctx'"));
+        let err = typecheck_source(src).expect_err("unknown record field must reject");
+        assert!(err.message.contains("record literal 'DecisionContext' has no field named 'badge'"));
+    }
+
+    #[test]
+    fn record_literal_rejects_record_equality() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            fn main() {
+                let left = DecisionContext { camera: T };
+                let right = DecisionContext { camera: T };
+                assert(left == right);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("record equality must remain gated");
+        assert!(err.message.contains("record equality is not part of the stage-1 canonical record surface"));
     }
 
     #[test]
@@ -2851,6 +2926,111 @@ fn ensure_executable_type_supported(
         }),
         _ => Ok(()),
     }
+}
+
+fn ensure_storage_type_supported(
+    ty: &Type,
+    arena: &AstArena,
+    context: String,
+) -> Result<(), FrontendError> {
+    match ty {
+        Type::Tuple(items) => {
+            for item in items {
+                ensure_storage_type_supported(item, arena, context.clone())?;
+            }
+            Ok(())
+        }
+        Type::Record(name) => {
+            let _ = resolve_symbol_name(arena, *name)?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn contains_stage1_record_carrier(ty: &Type) -> bool {
+    match ty {
+        Type::Record(_) => true,
+        Type::Tuple(items) => items.iter().any(contains_stage1_record_carrier),
+        _ => false,
+    }
+}
+
+fn infer_record_literal_type(
+    record_literal: &RecordLiteralExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let record = record_table.get(&record_literal.name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in record literal",
+            resolve_symbol_name(arena, record_literal.name)?
+        ),
+    })?;
+    let record_name = resolve_symbol_name(arena, record_literal.name)?;
+    let mut field_types = BTreeMap::new();
+    for field in &record.fields {
+        field_types.insert(field.name, field.ty.clone());
+    }
+    let mut seen = BTreeSet::new();
+    for field in &record_literal.fields {
+        if !seen.insert(field.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record literal '{}' cannot repeat field '{}'",
+                    record_name,
+                    resolve_symbol_name(arena, field.name)?
+                ),
+            });
+        }
+        let expected_ty = field_types.get(&field.name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "record literal '{}' has no field named '{}'",
+                record_name,
+                resolve_symbol_name(arena, field.name)?
+            ),
+        })?;
+        let actual_ty = infer_expr_type(
+            field.value,
+            arena,
+            env,
+            table,
+            record_table,
+            ret_ty.clone(),
+            loop_stack,
+        )?;
+        ensure_binding_value_type(
+            expected_ty.clone(),
+            actual_ty,
+            field.value,
+            arena,
+            format!(
+                "record field '{}.{}'",
+                record_name,
+                resolve_symbol_name(arena, field.name)?
+            ),
+        )?;
+    }
+    for decl_field in &record.fields {
+        if !seen.contains(&decl_field.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record literal '{}' is missing field '{}'",
+                    record_name,
+                    resolve_symbol_name(arena, decl_field.name)?
+                ),
+            });
+        }
+    }
+    Ok(Type::Record(record_literal.name))
 }
 
 fn check_match_guard(

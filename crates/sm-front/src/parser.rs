@@ -3,8 +3,8 @@ use crate::types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
-    RangeExpr, RecordDecl, RecordField, Stmt, StmtId, SymbolId, Token, TokenKind,
-    TuplePatternItem, Type, UnaryOp,
+    RangeExpr, RecordDecl, RecordField, RecordInitField, RecordLiteralExpr, Stmt, StmtId,
+    SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -767,6 +767,10 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen, "expected ')'")?;
                 return Ok(self.arena.alloc_expr(Expr::Call(name, args)));
             }
+            if self.starts_record_literal_head() {
+                self.expect(TokenKind::LBrace, "expected '{' after record literal type name")?;
+                return self.parse_record_literal_after_name(name);
+            }
             return Ok(self.arena.alloc_expr(Expr::Var(name)));
         }
         Err(FrontendError {
@@ -797,6 +801,44 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RParen, "expected ')' after tuple literal")?;
         Ok(self.arena.alloc_expr(Expr::Tuple(items)))
+    }
+
+    fn parse_record_literal_after_name(&mut self, name: SymbolId) -> Result<ExprId, FrontendError> {
+        let mut fields = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            let field_name = self.expect_symbol()?;
+            self.expect(TokenKind::Colon, "expected ':' after record field name")?;
+            let value = self.parse_expr()?;
+            fields.push(RecordInitField {
+                name: field_name,
+                value,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBrace, "expected '}' after record literal")?;
+        Ok(self.arena.alloc_expr(Expr::RecordLiteral(RecordLiteralExpr {
+            name,
+            fields,
+        })))
+    }
+
+    fn starts_record_literal_head(&self) -> bool {
+        let lbrace_idx = self.next_non_layout_idx();
+        if lbrace_idx >= self.tokens.len() || self.tokens[lbrace_idx].kind != TokenKind::LBrace {
+            return false;
+        }
+        let field_idx = self.next_non_layout_idx_from(lbrace_idx + 1);
+        if field_idx >= self.tokens.len() || self.tokens[field_idx].kind != TokenKind::Ident {
+            return false;
+        }
+        let colon_idx = self.next_non_layout_idx_from(field_idx + 1);
+        colon_idx < self.tokens.len() && self.tokens[colon_idx].kind == TokenKind::Colon
     }
 
     fn starts_short_lambda_head(&self) -> bool {
@@ -958,6 +1000,12 @@ impl<'a> Parser<'a> {
             Expr::Tuple(items) => {
                 for item in items {
                     self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
+                }
+                Ok(())
+            }
+            Expr::RecordLiteral(record) => {
+                for field in &record.fields {
+                    self.ensure_short_lambda_expr_capture_free(field.value, scopes)?;
                 }
                 Ok(())
             }
@@ -1768,6 +1816,13 @@ impl<'a> Parser<'a> {
 
     fn next_non_layout_idx(&self) -> usize {
         let mut i = self.idx;
+        while i < self.tokens.len() && Self::is_layout(self.tokens[i].kind) {
+            i += 1;
+        }
+        i
+    }
+
+    fn next_non_layout_idx_from(&self, mut i: usize) -> usize {
         while i < self.tokens.len() && Self::is_layout(self.tokens[i].kind) {
             i += 1;
         }
@@ -2832,6 +2887,35 @@ fn main() {
             .expect("empty record is rejected in sema, not parser");
         assert_eq!(program.records.len(), 1);
         assert!(program.records[0].fields.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_record_literal_surface() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let ctx = DecisionContext { quality: 0.75, camera: T };
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record literal surface should parse");
+        let main = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(main.body[0]) else {
+            panic!("expected leading let");
+        };
+        let Expr::RecordLiteral(record) = program.arena.expr(*value) else {
+            panic!("expected record literal expr");
+        };
+        assert_eq!(program.arena.symbol_name(record.name), "DecisionContext");
+        assert_eq!(record.fields.len(), 2);
+        assert_eq!(program.arena.symbol_name(record.fields[0].name), "quality");
+        assert_eq!(program.arena.symbol_name(record.fields[1].name), "camera");
     }
 
     #[test]

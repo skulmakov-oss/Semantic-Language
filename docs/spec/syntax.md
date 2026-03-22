@@ -91,8 +91,14 @@ Current rules:
 
 Current v0 record limits:
 
-- `record` currently defines type identity only; it does not yet open record construction or field access syntax
-- record types are not yet part of stable executable function signatures, returns, or local binding annotations
+- `RecordName { field: expr, ... }` is the current stage-1 record construction form
+- record literal fields must appear exactly once by name
+- lowering preserves declaration-slot order rather than source-field order
+- record types are currently allowed only in executable local/const binding positions
+- record types are not yet part of stable executable function signatures or returns
+- field access, destructuring, and record update are not yet part of the stable source contract
+- record equality is not yet part of the stable source contract
+- record values are not part of the PROMETHEUS host ABI surface
 - record destructuring, record punning, mutation, methods, and inheritance are not part of this slice
 
 ## Statements
@@ -190,6 +196,9 @@ Current expression forms:
 - tuple literals:
   - `(1, true)`
   - `(value, ready, 1.0)`
+- record literals:
+  - `DecisionContext { camera: T, quality: 0.75 }`
+  - `DecisionContext { quality: 0.75, camera: T }`
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`

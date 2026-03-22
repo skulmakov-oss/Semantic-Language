@@ -45,8 +45,8 @@ pub mod semcode_verify {
 #[cfg(feature = "std")]
 pub mod runtime_core {
     pub use sm_runtime_core::{
-        DebugNameMap, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas,
-        RuntimeSymbolTable, RuntimeTrap, SymbolId,
+        DebugNameMap, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier,
+        RuntimeQuotas, RuntimeSymbolTable, RuntimeTrap, SymbolId,
     };
 }
 #[cfg(feature = "std")]

@@ -1,4 +1,9 @@
 source: crates/sm-runtime-core/src/lib.rs
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordCarrier<T> {
+pub type_name: String,
+pub slots: Vec<T>,
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolId(pub u32);
 pub const fn new(raw: u32) -> Self {
@@ -51,4 +56,3 @@ pub fn new() -> Self {
 pub fn push(&mut self, name: &str) -> SymbolId {
 pub fn resolve(&self, id: SymbolId) -> Option<&str> {
 pub fn len(&self) -> usize {
-

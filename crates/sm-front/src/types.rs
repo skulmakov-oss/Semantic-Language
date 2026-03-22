@@ -62,12 +62,25 @@ pub struct CallArg {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RecordInitField {
+    pub name: SymbolId,
+    pub value: ExprId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordLiteralExpr {
+    pub name: SymbolId,
+    pub fields: Vec<RecordInitField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
     NumericLiteral(NumericLiteral),
     Range(RangeExpr),
     Tuple(Vec<ExprId>),
+    RecordLiteral(RecordLiteralExpr),
     Var(SymbolId),
     Call(SymbolId, Vec<CallArg>),
     Unary(UnaryOp, ExprId),

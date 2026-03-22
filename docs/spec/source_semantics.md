@@ -39,7 +39,12 @@ Current v0 record declaration semantics:
 - record declarations must be non-empty and may not repeat field names
 - record declarations may refer to other declared record names in field types
 - recursive record field graphs are not yet part of the stable contract
-- record types are declared in source, but executable value carriers, construction, and field access remain deferred to a later slice
+- stage-1 record literals use `RecordName { field: expr, ... }`
+- record literal fields are validated by declared field names and types
+- record literal evaluation is deterministic left-to-right in source field order
+- the canonical runtime carrier stores slots in declaration order, not source order
+- stage-1 record values may flow through executable local and const bindings
+- executable parameters, returns, field access, and record equality remain deferred to later slices
 
 ## Deterministic Evaluation Order
 
@@ -378,6 +383,23 @@ Current v0 limit:
 - tuples are currently value carriers only; destructuring, field access, and
   tuple-specific operators are not yet part of the stable contract
 - tuple values are not part of the PROMETHEUS host ABI surface
+
+## Records
+
+Current stage-1 record semantics:
+
+- record literals construct nominal record values using the declared record name
+- each declared field must be provided exactly once
+- record literal source fields may appear in any order
+- the stage-1 lowering path rewrites record values into a canonical slot carrier in declaration order
+- record values currently participate only in local storage and internal verified execution
+
+Current v0 limit:
+
+- record values are not yet part of executable parameter or return contracts
+- record field access, destructuring, update, and punning are not yet part of the stable source contract
+- record equality is intentionally rejected
+- record values are not part of the PROMETHEUS host ABI surface
 
 ### Guard
 

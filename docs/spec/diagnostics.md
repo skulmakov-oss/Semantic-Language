@@ -115,7 +115,11 @@ Current message families include:
 - duplicate record field name
 - unknown record field type
 - recursive record field graph
-- record type declared but not yet available in executable parameter/return/local annotation positions
+- record type declared but not yet available in executable parameter/return annotation positions
+- duplicate field in record literal
+- unknown field in record literal
+- missing field in record literal
+- record equality is not part of the stage-1 canonical record surface
 - invalid tuple arity
 - tuple type mismatch
 - tuple destructuring bind requires tuple value

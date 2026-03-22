@@ -122,6 +122,10 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.remove(&dst);
                 out.push(IrInstr::MakeTuple { dst, items });
             }
+            IrInstr::MakeRecord { dst, name, items } => {
+                cst.remove(&dst);
+                out.push(IrInstr::MakeRecord { dst, name, items });
+            }
             IrInstr::TupleGet { dst, src, index } => {
                 cst.remove(&dst);
                 out.push(IrInstr::TupleGet { dst, src, index });

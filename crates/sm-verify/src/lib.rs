@@ -491,6 +491,26 @@ fn decode_operands(
                 mark_reg(src);
             }
         }
+        Opcode::MakeRecord => {
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated record dst register"))?;
+            mark_reg(dst);
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated record type string id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "record type name"));
+            let count =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated record slot count"))?
+                    as usize;
+            if count == 0 {
+                return Err(invalid("record literal must encode at least one slot"));
+            }
+            for _ in 0..count {
+                let src = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated record slot register"))?;
+                mark_reg(src);
+            }
+        }
         Opcode::TupleGet => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get dst register"))?;
             let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get src register"))?;
@@ -742,6 +762,25 @@ mod tests {
                 let left: u32 = 1_000u32;
                 let right: u32 = 0x3e8u32;
                 assert(left == right);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_stage1_record_make_record_semcode() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let _ = ctx;
                 return;
             }
         "#;

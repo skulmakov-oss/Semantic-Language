@@ -6,8 +6,8 @@ use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
 use prom_cap::{CapabilityChecker, CapabilityDenied};
 use sm_runtime_core::{
-    ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeQuotas, RuntimeTrap,
-    RuntimeSymbolTable, SymbolId,
+    ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier, RuntimeQuotas,
+    RuntimeTrap, RuntimeSymbolTable, SymbolId,
 };
 use sm_verify::RejectReport;
 use sm_verify::verify_semcode;
@@ -27,6 +27,7 @@ pub enum Value {
     U32(u32),
     Fx(i32),
     Tuple(Vec<Value>),
+    Record(RecordCarrier<Value>),
     Unit,
 }
 
@@ -443,6 +444,20 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::MakeRecord => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                if count == 0 {
+                    return Err(RuntimeError::BadFormat(format!(
+                        "record literal slot count must be at least 1 in '{}'",
+                        f.name
+                    )));
+                }
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
             Opcode::TupleGet => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -716,6 +731,24 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 set_reg(vm, frame_idx, dst, Value::Tuple(items))?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::MakeRecord => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let type_name = lookup_str(&f, sid)?.to_string();
+                let mut slots = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    slots.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(
+                    vm,
+                    frame_idx,
+                    dst,
+                    Value::Record(RecordCarrier { type_name, slots }),
+                )?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::TupleGet => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -960,6 +993,9 @@ fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
         Value::Tuple(_) => Err(RuntimeError::TypeMismatchRuntime(
             "tuple values are not part of the PROMETHEUS host ABI surface".to_string(),
         )),
+        Value::Record(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "record values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
         Value::Unit => Ok(AbiValue::Unit),
     }
 }
@@ -1162,6 +1198,9 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
+        (Value::Record(_), Value::Record(_)) => Err(RuntimeError::TypeMismatchRuntime(
+            "record equality is not part of the stage-1 canonical record surface".to_string(),
+        )),
         (Value::Unit, Value::Unit) => Ok(true),
         _ => Err(RuntimeError::TypeMismatchRuntime(
             "CmpEq/CmpNe operands must have same runtime type".to_string(),
@@ -1259,6 +1298,22 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("MAKE_TUPLE r{}, [{}]", d, regs)
+        }
+        Opcode::MakeRecord => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let name = lookup_str(f, sid)?;
+            format!("MAKE_RECORD r{}, {}, [{}]", d, name, regs)
         }
         Opcode::TupleGet => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1523,6 +1578,27 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("TUPLE_GET"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_stage1_record_literal_path() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let shadow: DecisionContext = ctx;
+                let _ = shadow;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_RECORD"));
         run_semcode(&bytes).expect("run");
     }
 
