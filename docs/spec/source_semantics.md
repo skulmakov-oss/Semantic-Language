@@ -217,6 +217,22 @@ Current v0 limit:
 - `where` bindings currently reuse ordinary local-bind semantics; richer
   destructuring and control-flow forms are not yet part of the stable contract
 
+## Loop Expression
+
+Current `loop` expression semantics:
+
+- `loop { ... }` produces a value through explicit `break expr;`
+- `break` values inside the same loop must agree on one result type
+- lowering uses the existing label/jump/store/load path; no separate runtime
+  carrier is introduced for this slice
+
+Current v0 limit:
+
+- only expression-form `loop` is part of the contract
+- only `break expr;` is supported; bare `break;` is not
+- loop-expression bodies currently do not allow `guard` or `return`
+- `continue`, statement-loop, and richer control interaction are deferred
+
 ## Tuple Destructuring Bind
 
 Current tuple-destructuring semantics:

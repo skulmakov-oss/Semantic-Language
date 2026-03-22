@@ -159,6 +159,9 @@ Current expression forms:
 - `match` expressions with value-producing arms:
   - `match state { T => { 1.0 } _ => { 0.0 } }`
   - `match state { T if ready == true => { 1.0 } _ => { 0.0 } }`
+- `loop` expressions with explicit `break value`:
+  - `loop { break 1.0; }`
+  - `loop { if ready { break 1.0; } else { break 0.0; } }`
 - parenthesized expressions
 - unary operators:
   - `!`
@@ -240,11 +243,20 @@ Current where-clause rules:
   to the tail expression
 - `where` currently desugars through the existing block-expression path
 
+Current loop-expression rules:
+
+- `loop { ... }` is accepted only as an expression form in this slice
+- loop-expression bodies currently exit only through `break expr;`
+- bare `break;` is not part of the stable v0 contract
+- `break expr;` is currently valid only inside `loop` expression bodies
+
 Current honest limit:
 
 - `where` is currently expression-suffix sugar only
 - `where` bindings currently use ordinary local names only; tuple/record
   destructuring is not yet part of the stable `where` contract
+- `loop` is currently expression-only; statement-loop, `continue`, and bare
+  `break;` are not yet part of the stable contract
 
 Current default-parameter rules:
 

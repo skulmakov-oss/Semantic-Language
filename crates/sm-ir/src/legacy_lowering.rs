@@ -2,6 +2,7 @@ use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
+use sm_front::LoopExpr;
 use sm_front::types::NumericLiteral;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -272,10 +273,20 @@ pub fn lower_expr_to_ir(
     let mut out = Vec::new();
     let mut next = 0u16;
     let mut env = ScopeEnv::new();
+    let mut loop_stack = Vec::new();
     for (name, ty) in var_types {
         env.insert(*name, ty.clone());
     }
-    let _ = lower_expr(expr, arena, &mut next, &mut out, &env, fn_table, Type::Unit)?;
+    let _ = lower_expr(
+        expr,
+        arena,
+        &mut next,
+        &mut out,
+        &env,
+        &mut loop_stack,
+        fn_table,
+        Type::Unit,
+    )?;
     Ok(out)
 }
 
@@ -934,10 +945,21 @@ fn lower_expr(
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
-    lower_expr_with_expected(expr_id, arena, next, out, env, fn_table, None, ret_ty)
+    lower_expr_with_expected(
+        expr_id,
+        arena,
+        next,
+        out,
+        env,
+        loop_stack,
+        fn_table,
+        None,
+        ret_ty,
+    )
 }
 
 fn lower_expr_with_expected(
@@ -946,6 +968,7 @@ fn lower_expr_with_expected(
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     expected: Option<Type>,
     ret_ty: Type,
@@ -988,6 +1011,7 @@ fn lower_expr_with_expected(
                     next,
                     out,
                     env,
+                    loop_stack,
                     fn_table,
                     item_expected,
                     ret_ty.clone(),
@@ -1065,11 +1089,29 @@ fn lower_expr_with_expected(
             Ok((r, ty))
         }
         Expr::Block(block) => {
-            lower_value_block_expr(block, arena, next, out, env, fn_table, expected, ret_ty)
+            lower_value_block_expr(
+                block,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                expected,
+                ret_ty,
+            )
         }
         Expr::If(if_expr) => {
-            let (cond_reg, cond_ty) =
-                lower_expr(if_expr.condition, arena, next, out, env, fn_table, ret_ty.clone())?;
+            let (cond_reg, cond_ty) = lower_expr(
+                if_expr.condition,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                ret_ty.clone(),
+            )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -1098,6 +1140,7 @@ fn lower_expr_with_expected(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 expected.clone(),
                 ret_ty.clone(),
@@ -1117,6 +1160,7 @@ fn lower_expr_with_expected(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 expected.clone(),
                 ret_ty.clone(),
@@ -1146,8 +1190,27 @@ fn lower_expr_with_expected(
             });
             Ok((dst, then_ty))
         }
+        Expr::Loop(loop_expr) => lower_loop_expr(
+            loop_expr,
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            expected,
+            ret_ty,
+        ),
         Expr::Match(match_expr) => lower_match_expr(
-            match_expr, arena, next, out, env, fn_table, expected, ret_ty,
+            match_expr,
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            expected,
+            ret_ty,
         ),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, fn_table)? {
@@ -1177,6 +1240,7 @@ fn lower_expr_with_expected(
                     next,
                     out,
                     env,
+                    loop_stack,
                     fn_table,
                     Some(sig.params[i].clone()),
                     ret_ty.clone(),
@@ -1221,7 +1285,15 @@ fn lower_expr_with_expected(
                 }
             }
             let (src, ty) = lower_expr_with_expected(
-                *inner, arena, next, out, env, fn_table, expected, ret_ty,
+                *inner,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                expected,
+                ret_ty,
             )?;
             match op {
                 UnaryOp::Not => {
@@ -1277,6 +1349,7 @@ fn lower_expr_with_expected(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 expected.clone(),
                 ret_ty.clone(),
@@ -1287,6 +1360,7 @@ fn lower_expr_with_expected(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 expected,
                 ret_ty,
@@ -1566,6 +1640,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ty.clone(),
                 ret_ty.clone(),
@@ -1585,6 +1660,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ty.clone(),
                 ret_ty.clone(),
@@ -1604,6 +1680,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ty.clone(),
                 ret_ty.clone(),
@@ -1626,6 +1703,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ty.clone(),
                 ret_ty.clone(),
@@ -1655,6 +1733,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 Some(target_ty),
                 ret_ty.clone(),
@@ -1672,6 +1751,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ret_ty,
             )?;
@@ -1685,6 +1765,55 @@ fn lower_stmt(
                 env,
             )
         }
+        Stmt::Break(value) => {
+            let (expected_break, end_label, result_name, prior_result_ty) = {
+                let frame = ctx.loop_stack.last().ok_or(FrontendError {
+                    pos: 0,
+                    message: "break with value is allowed only inside loop expression".to_string(),
+                })?;
+                (
+                    frame.result_ty.clone().or(frame.expected_ty.clone()),
+                    frame.end_label.clone(),
+                    frame.result_name.clone(),
+                    frame.result_ty.clone(),
+                )
+            };
+            let (reg, break_ty) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                expected_break,
+                ret_ty.clone(),
+            )?;
+            if let Some(expected_ty) = &prior_result_ty {
+                if *expected_ty != break_ty {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "loop expression break type mismatch in lowering: expected {:?}, got {:?}",
+                            expected_ty, break_ty
+                        ),
+                    });
+                }
+            } else if let Some(frame) = ctx.loop_stack.last_mut() {
+                frame.result_ty = Some(break_ty);
+            } else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "break with value is allowed only inside loop expression".to_string(),
+                });
+            }
+            ctx.instrs.push(IrInstr::StoreVar {
+                name: result_name,
+                src: reg,
+            });
+            ctx.instrs.push(IrInstr::Jmp { label: end_label });
+            Ok(())
+        }
         Stmt::Guard {
             condition,
             else_return,
@@ -1695,6 +1824,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ret_ty.clone(),
             )?;
@@ -1717,6 +1847,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ret_ty.clone(),
             )?;
@@ -1735,6 +1866,7 @@ fn lower_stmt(
             &mut ctx.next_reg,
             &mut ctx.instrs,
             env,
+            &mut ctx.loop_stack,
             fn_table,
             ret_ty.clone(),
         ),
@@ -1749,6 +1881,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ret_ty.clone(),
             )?;
@@ -1808,6 +1941,7 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+                &mut ctx.loop_stack,
                 fn_table,
                 ret_ty.clone(),
             )?;
@@ -1909,6 +2043,7 @@ fn lower_stmt(
                         &mut ctx.next_reg,
                         &mut ctx.instrs,
                         &arm_env,
+                        &mut ctx.loop_stack,
                         fn_table,
                         ret_ty.clone(),
                     )? {
@@ -1957,6 +2092,7 @@ fn lower_value_block_expr(
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     expected: Option<Type>,
     ret_ty: Type,
@@ -1972,6 +2108,7 @@ fn lower_value_block_expr(
                     next,
                     out,
                     &block_env,
+                    loop_stack,
                     fn_table,
                     ty.clone(),
                     ret_ty.clone(),
@@ -1990,6 +2127,7 @@ fn lower_value_block_expr(
                     next,
                     out,
                     &block_env,
+                    loop_stack,
                     fn_table,
                     ty.clone(),
                     ret_ty.clone(),
@@ -2008,6 +2146,7 @@ fn lower_value_block_expr(
                     next,
                     out,
                     &block_env,
+                    loop_stack,
                     fn_table,
                     ty.clone(),
                     ret_ty.clone(),
@@ -2022,6 +2161,7 @@ fn lower_value_block_expr(
                     next,
                     out,
                     &block_env,
+                    loop_stack,
                     fn_table,
                     ty.clone(),
                     ret_ty.clone(),
@@ -2034,6 +2174,7 @@ fn lower_value_block_expr(
                     next,
                     out,
                     &block_env,
+                    loop_stack,
                     fn_table,
                     ret_ty.clone(),
                 )?;
@@ -2047,7 +2188,15 @@ fn lower_value_block_expr(
         }
     }
     let tail = lower_expr_with_expected(
-        block.tail, arena, next, out, &block_env, fn_table, expected, ret_ty,
+        block.tail,
+        arena,
+        next,
+        out,
+        &block_env,
+        loop_stack,
+        fn_table,
+        expected,
+        ret_ty,
     )?;
     block_env.pop_scope();
     Ok(tail)
@@ -2059,13 +2208,15 @@ fn lower_match_guard(
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     ret_ty: Type,
 ) -> Result<Option<u16>, FrontendError> {
     let Some(guard_expr) = guard else {
         return Ok(None);
     };
-    let (guard_reg, guard_ty) = lower_expr(guard_expr, arena, next, out, env, fn_table, ret_ty)?;
+    let (guard_reg, guard_ty) =
+        lower_expr(guard_expr, arena, next, out, env, loop_stack, fn_table, ret_ty)?;
     if guard_ty != Type::Bool {
         return Err(FrontendError {
             pos: 0,
@@ -2081,6 +2232,7 @@ fn lower_return_payload(
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
@@ -2092,6 +2244,7 @@ fn lower_return_payload(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 Some(ret_ty.clone()),
                 ret_ty.clone(),
@@ -2121,12 +2274,311 @@ fn lower_return_payload(
     }
 }
 
+fn lower_loop_expr(
+    loop_expr: &LoopExpr,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    expected: Option<Type>,
+    ret_ty: Type,
+) -> Result<(u16, Type), FrontendError> {
+    let id = alloc_loop_expr_id(next);
+    let start_label = format!("loop_expr_{}_start", id);
+    let end_label = format!("loop_expr_{}_end", id);
+    let result_name = format!("__loop_expr_{}_result", id);
+
+    loop_stack.push(LoopLoweringFrame {
+        end_label: end_label.clone(),
+        result_name: result_name.clone(),
+        result_ty: None,
+        expected_ty: expected.clone(),
+    });
+
+    out.push(IrInstr::Label {
+        name: start_label.clone(),
+    });
+
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    for stmt in &loop_expr.body {
+        lower_loop_expr_stmt(
+            *stmt,
+            arena,
+            next,
+            out,
+            &mut body_env,
+            loop_stack,
+            fn_table,
+            ret_ty.clone(),
+        )?;
+    }
+    body_env.pop_scope();
+    out.push(IrInstr::Jmp {
+        label: start_label,
+    });
+    out.push(IrInstr::Label { name: end_label });
+
+    let frame = loop_stack.pop().expect("loop frame must exist");
+    let result_ty = frame.result_ty.ok_or(FrontendError {
+        pos: 0,
+        message: "loop expression requires at least one break value".to_string(),
+    })?;
+    if let Some(expected_ty) = expected {
+        if expected_ty != result_ty {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "loop expression result type mismatch in lowering: expected {:?}, got {:?}",
+                    expected_ty, result_ty
+                ),
+            });
+        }
+    }
+    let dst = alloc(next);
+    out.push(IrInstr::LoadVar {
+        dst,
+        name: result_name,
+    });
+    Ok((dst, result_ty))
+}
+
+fn lower_loop_expr_stmt(
+    stmt_id: StmtId,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &mut ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    match arena.stmt(stmt_id) {
+        Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow guard clause or return"
+                .to_string(),
+        }),
+        Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            let (cond_reg, cond_ty) =
+                lower_expr(*condition, arena, next, out, env, loop_stack, fn_table, ret_ty.clone())?;
+            if cond_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "if condition must be bool".to_string(),
+                });
+            }
+
+            let id = alloc_loop_expr_id(next);
+            let then_label = format!("loop_if_{}_then", id);
+            let else_label = format!("loop_if_{}_else", id);
+            let end_label = format!("loop_if_{}_end", id);
+
+            out.push(IrInstr::JmpIf {
+                cond: cond_reg,
+                label: then_label.clone(),
+            });
+            out.push(IrInstr::Jmp {
+                label: else_label.clone(),
+            });
+
+            out.push(IrInstr::Label { name: then_label });
+            let mut then_env = env.clone();
+            then_env.push_scope();
+            for stmt in then_block {
+                lower_loop_expr_stmt(
+                    *stmt,
+                    arena,
+                    next,
+                    out,
+                    &mut then_env,
+                    loop_stack,
+                    fn_table,
+                    ret_ty.clone(),
+                )?;
+            }
+            then_env.pop_scope();
+            out.push(IrInstr::Jmp {
+                label: end_label.clone(),
+            });
+
+            out.push(IrInstr::Label { name: else_label });
+            let mut else_env = env.clone();
+            else_env.push_scope();
+            for stmt in else_block {
+                lower_loop_expr_stmt(
+                    *stmt,
+                    arena,
+                    next,
+                    out,
+                    &mut else_env,
+                    loop_stack,
+                    fn_table,
+                    ret_ty.clone(),
+                )?;
+            }
+            else_env.pop_scope();
+            out.push(IrInstr::Jmp {
+                label: end_label.clone(),
+            });
+
+            out.push(IrInstr::Label { name: end_label });
+            Ok(())
+        }
+        Stmt::Match {
+            scrutinee,
+            arms,
+            default,
+        } => {
+            let (scr_reg, scr_ty) =
+                lower_expr(*scrutinee, arena, next, out, env, loop_stack, fn_table, ret_ty.clone())?;
+            if scr_ty != Type::Quad {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match scrutinee must be quad".to_string(),
+                });
+            }
+            if default.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match requires default arm '_'".to_string(),
+                });
+            }
+
+            let id = alloc_loop_expr_id(next);
+            let end_label = format!("loop_match_{}_end", id);
+            let default_label = format!("loop_match_{}_default", id);
+            let arm_labels: Vec<String> = (0..arms.len())
+                .map(|i| format!("loop_match_{}_arm_{}", id, i))
+                .collect();
+
+            for (i, arm) in arms.iter().enumerate() {
+                if i > 0 {
+                    out.push(IrInstr::Label {
+                        name: format!("loop_match_{}_check_{}", id, i),
+                    });
+                }
+                let next_label = if i + 1 < arms.len() {
+                    format!("loop_match_{}_check_{}", id, i + 1)
+                } else {
+                    default_label.clone()
+                };
+
+                let lit_reg = alloc(next);
+                out.push(IrInstr::LoadQ {
+                    dst: lit_reg,
+                    val: arm.pat,
+                });
+                let cmp_reg = alloc(next);
+                out.push(IrInstr::CmpEq {
+                    dst: cmp_reg,
+                    lhs: scr_reg,
+                    rhs: lit_reg,
+                });
+                out.push(IrInstr::JmpIf {
+                    cond: cmp_reg,
+                    label: arm_labels[i].clone(),
+                });
+                out.push(IrInstr::Jmp {
+                    label: next_label.clone(),
+                });
+
+                out.push(IrInstr::Label {
+                    name: arm_labels[i].clone(),
+                });
+                let mut arm_env = env.clone();
+                arm_env.push_scope();
+                if let Some(guard_reg) = lower_match_guard(
+                    arm.guard,
+                    arena,
+                    next,
+                    out,
+                    &arm_env,
+                    loop_stack,
+                    fn_table,
+                    ret_ty.clone(),
+                )? {
+                    let guarded_body_label = format!("loop_match_{}_body_{}", id, i);
+                    out.push(IrInstr::JmpIf {
+                        cond: guard_reg,
+                        label: guarded_body_label.clone(),
+                    });
+                    out.push(IrInstr::Jmp { label: next_label });
+                    out.push(IrInstr::Label {
+                        name: guarded_body_label,
+                    });
+                }
+                for stmt in &arm.block {
+                    lower_loop_expr_stmt(
+                        *stmt,
+                        arena,
+                        next,
+                        out,
+                        &mut arm_env,
+                        loop_stack,
+                        fn_table,
+                        ret_ty.clone(),
+                    )?;
+                }
+                arm_env.pop_scope();
+                out.push(IrInstr::Jmp {
+                    label: end_label.clone(),
+                });
+            }
+
+            out.push(IrInstr::Label {
+                name: default_label,
+            });
+            let mut def_env = env.clone();
+            def_env.push_scope();
+            for stmt in default {
+                lower_loop_expr_stmt(
+                    *stmt,
+                    arena,
+                    next,
+                    out,
+                    &mut def_env,
+                    loop_stack,
+                    fn_table,
+                    ret_ty.clone(),
+                )?;
+            }
+            def_env.pop_scope();
+            out.push(IrInstr::Jmp {
+                label: end_label.clone(),
+            });
+            out.push(IrInstr::Label { name: end_label });
+            Ok(())
+        }
+        _ => {
+            let mut ctx = LoweringCtx {
+                next_reg: *next,
+                next_label_id: out.len() as u32,
+                loop_stack: loop_stack.clone(),
+                instrs: core::mem::take(out),
+            };
+            let result = lower_stmt(stmt_id, arena, &mut ctx, env, ret_ty, fn_table);
+            *next = ctx.next_reg;
+            *out = ctx.instrs;
+            *loop_stack = ctx.loop_stack;
+            result
+        }
+    }
+}
+
 fn lower_match_expr(
     match_expr: &MatchExpr,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     expected: Option<Type>,
     ret_ty: Type,
@@ -2137,6 +2589,7 @@ fn lower_match_expr(
         next,
         out,
         env,
+        loop_stack,
         fn_table,
         ret_ty.clone(),
     )?;
@@ -2197,7 +2650,16 @@ fn lower_match_expr(
         let mut arm_env = env.clone();
         arm_env.push_scope();
         if let Some(guard_reg) =
-            lower_match_guard(arm.guard, arena, next, out, &arm_env, fn_table, ret_ty.clone())?
+            lower_match_guard(
+                arm.guard,
+                arena,
+                next,
+                out,
+                &arm_env,
+                loop_stack,
+                fn_table,
+                ret_ty.clone(),
+            )?
         {
             let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
             out.push(IrInstr::JmpIf {
@@ -2215,6 +2677,7 @@ fn lower_match_expr(
             next,
             out,
             &arm_env,
+            loop_stack,
             fn_table,
             expected.clone(),
             ret_ty.clone(),
@@ -2251,6 +2714,7 @@ fn lower_match_expr(
         next,
         out,
         env,
+        loop_stack,
         fn_table,
         expected,
         ret_ty,
@@ -2299,6 +2763,7 @@ fn lower_expr_stmt(
         &mut ctx.next_reg,
         &mut ctx.instrs,
         env,
+        &mut ctx.loop_stack,
         fn_table,
         ret_ty,
     )
@@ -2316,12 +2781,19 @@ fn alloc_match_expr_id(next: &mut u16) -> u16 {
     id
 }
 
+fn alloc_loop_expr_id(next: &mut u16) -> u16 {
+    let id = *next;
+    *next += 1;
+    id
+}
+
 fn lower_expr_stmt_with_parts(
     expr_id: ExprId,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
     env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
@@ -2340,6 +2812,7 @@ fn lower_expr_stmt_with_parts(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 Some(Type::Bool),
                 ret_ty,
@@ -2372,6 +2845,7 @@ fn lower_expr_stmt_with_parts(
                 next,
                 out,
                 env,
+                loop_stack,
                 fn_table,
                 Some(sig.params[i].clone()),
                 ret_ty.clone(),
@@ -2401,7 +2875,7 @@ fn lower_expr_stmt_with_parts(
         return Ok(());
     }
 
-    let _ = lower_expr(expr_id, arena, next, out, env, fn_table, ret_ty)?;
+    let _ = lower_expr(expr_id, arena, next, out, env, loop_stack, fn_table, ret_ty)?;
     Ok(())
 }
 
@@ -2409,7 +2883,16 @@ fn lower_expr_stmt_with_parts(
 struct LoweringCtx {
     next_reg: u16,
     next_label_id: u32,
+    loop_stack: Vec<LoopLoweringFrame>,
     instrs: Vec<IrInstr>,
+}
+
+#[derive(Debug, Clone)]
+struct LoopLoweringFrame {
+    end_label: String,
+    result_name: String,
+    result_ty: Option<Type>,
+    expected_ty: Option<Type>,
 }
 
 impl LoweringCtx {
@@ -2417,6 +2900,7 @@ impl LoweringCtx {
         Self {
             next_reg: 0,
             next_label_id: 0,
+            loop_stack: Vec::new(),
             instrs: Vec::new(),
         }
     }
@@ -2985,6 +3469,37 @@ mod opt_tests {
         assert!(func.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "total"
+        )));
+    }
+
+    #[test]
+    fn lower_loop_expression_with_break_value_to_labels_and_result_slot() {
+        let src = r#"
+            fn main() {
+                let total: f64 = loop {
+                    if true {
+                        break 1.0;
+                    } else {
+                        break 2.0;
+                    }
+                };
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("loop expression should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("loop_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name.starts_with("__loop_expr_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::LoadVar { name, .. } if name.starts_with("__loop_expr_")
         )));
     }
 

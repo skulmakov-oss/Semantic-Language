@@ -72,6 +72,7 @@ pub enum Expr {
     Block(BlockExpr),
     If(IfExpr),
     Match(MatchExpr),
+    Loop(LoopExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,6 +118,7 @@ pub enum Stmt {
         arms: Vec<MatchArm>,
         default: Vec<StmtId>,
     },
+    Break(ExprId),
     Return(Option<ExprId>),
     Expr(ExprId),
 }
@@ -146,6 +148,11 @@ pub struct MatchExprArm {
     pub pat: QuadVal,
     pub guard: Option<ExprId>,
     pub block: BlockExpr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopExpr {
+    pub body: Vec<StmtId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -231,6 +238,8 @@ pub enum TokenKind {
     KwGuard,
     KwIf,
     KwElse,
+    KwLoop,
+    KwBreak,
     KwWhere,
     KwReturn,
     KwMatch,

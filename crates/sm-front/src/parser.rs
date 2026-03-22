@@ -2,8 +2,8 @@ use crate::lexer::lex_tokens;
 use crate::types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
-    LogosWhen, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal, Stmt, StmtId,
-    SymbolId, Token, TokenKind, Type, UnaryOp,
+    LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
+    Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -262,6 +262,17 @@ impl<'a> Parser<'a> {
             let expr = self.parse_expr()?;
             self.expect(TokenKind::Semi, "expected ';'")?;
             return Ok(self.arena.alloc_stmt(Stmt::Return(Some(expr))));
+        }
+        if self.eat(TokenKind::KwBreak) {
+            if self.check(TokenKind::Semi) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "loop expression v0 currently requires break value".to_string(),
+                });
+            }
+            let expr = self.parse_expr()?;
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Break(expr)));
         }
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semi, "expected ';'")?;
@@ -555,6 +566,9 @@ impl<'a> Parser<'a> {
         if self.eat(TokenKind::KwMatch) {
             return self.parse_match_expr_after_kw_match();
         }
+        if self.eat(TokenKind::KwLoop) {
+            return self.parse_loop_expr_after_kw_loop();
+        }
         if self.check(TokenKind::LBrace) {
             return self.parse_block_expr();
         }
@@ -828,6 +842,12 @@ impl<'a> Parser<'a> {
                 }
                 Ok(())
             }
+            Expr::Loop(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "short lambda v0 does not currently allow loop expressions in the lambda body"
+                        .to_string(),
+            }),
         }
     }
 
@@ -1011,6 +1031,11 @@ impl<'a> Parser<'a> {
             return Ok(Some(self.parse_expr()?));
         }
         Ok(None)
+    }
+
+    fn parse_loop_expr_after_kw_loop(&mut self) -> Result<ExprId, FrontendError> {
+        let body = self.parse_block()?;
+        Ok(self.arena.alloc_expr(Expr::Loop(LoopExpr { body })))
     }
 
     fn parse_value_block(&mut self) -> Result<BlockExpr, FrontendError> {
@@ -2569,6 +2594,52 @@ fn main() {
             panic!("expected tuple literal");
         };
         assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_loop_expression_with_break_value() {
+        let src = r#"
+fn main() {
+    let total: f64 = loop {
+        break 1.0;
+    };
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("loop expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected let statement");
+        };
+        let Expr::Loop(loop_expr) = program.arena.expr(*value) else {
+            panic!("expected loop expression");
+        };
+        assert_eq!(loop_expr.body.len(), 1);
+        let Stmt::Break(expr_id) = program.arena.stmt(loop_expr.body[0]) else {
+            panic!("expected break statement");
+        };
+        assert!(matches!(
+            program.arena.expr(*expr_id),
+            Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_break_without_value() {
+        let src = r#"
+fn main() {
+    let total: f64 = loop {
+        break;
+    };
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("break without value must reject");
+        assert!(err.message.contains("requires break value"));
     }
 
     #[test]

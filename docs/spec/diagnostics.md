@@ -112,6 +112,8 @@ Current message families include:
 - unknown tuple assignment target
 - tuple destructuring assignment to const target
 - malformed or empty `where` binding lists
+- `break expr;` outside `loop` expression context
+- loop-expression bodies that currently use unsupported `guard` / `return`
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

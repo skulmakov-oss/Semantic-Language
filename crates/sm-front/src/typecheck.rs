@@ -88,10 +88,18 @@ pub fn type_check_function_with_table(
         });
     }
     let empty_env = ScopeEnv::new();
+    let mut default_loop_stack = Vec::new();
     for ((name, ty), default_expr) in func.params.iter().zip(func.param_defaults.iter()) {
         if let Some(default_expr) = default_expr {
             let default_ty =
-                infer_expr_type(*default_expr, arena, &empty_env, table, Type::Unit)?;
+                infer_expr_type(
+                    *default_expr,
+                    arena,
+                    &empty_env,
+                    table,
+                    Type::Unit,
+                    &mut default_loop_stack,
+                )?;
             if let Err(err) = ensure_const_initializer_safe(*default_expr, arena, &empty_env) {
                 return Err(FrontendError {
                     pos: err.pos,
@@ -112,10 +120,16 @@ pub fn type_check_function_with_table(
         }
     }
     let mut env = ScopeEnv::with_params(&func.params);
+    let mut loop_stack = Vec::new();
     for stmt in &func.body {
-        check_stmt(*stmt, arena, &mut env, func.ret.clone(), table)?;
+        check_stmt(*stmt, arena, &mut env, func.ret.clone(), table, &mut loop_stack)?;
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoopTypeFrame {
+    break_ty: Option<Type>,
 }
 
 fn check_stmt(
@@ -124,11 +138,12 @@ fn check_stmt(
     env: &mut ScopeEnv,
     ret_ty: Type,
     table: &FnTable,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
         Stmt::Const { name, ty, value } => {
-            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
             ensure_const_initializer_safe(*value, arena, env)?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
@@ -146,7 +161,7 @@ fn check_stmt(
             Ok(())
         }
         Stmt::Let { name, ty, value } => {
-            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
                     ann.clone(),
@@ -163,7 +178,7 @@ fn check_stmt(
             Ok(())
         }
         Stmt::LetTuple { items, ty, value } => {
-            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
                     ann.clone(),
@@ -200,7 +215,7 @@ fn check_stmt(
             Ok(())
         }
         Stmt::Discard { ty, value } => {
-            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
             if let Some(ann) = ty {
                 ensure_binding_value_type(
                     ann.clone(),
@@ -229,7 +244,7 @@ fn check_stmt(
                     ),
                 });
             }
-            let value_ty = infer_expr_type(*value, arena, env, table, ret_ty.clone())?;
+            let value_ty = infer_expr_type(*value, arena, env, table, ret_ty.clone(), loop_stack)?;
             ensure_binding_value_type(
                 target_ty,
                 value_ty,
@@ -239,7 +254,7 @@ fn check_stmt(
             )
         }
         Stmt::AssignTuple { items, value } => {
-            let value_ty = infer_expr_type(*value, arena, env, table, ret_ty.clone())?;
+            let value_ty = infer_expr_type(*value, arena, env, table, ret_ty.clone(), loop_stack)?;
             let Type::Tuple(item_tys) = value_ty else {
                 return Err(FrontendError {
                     pos: 0,
@@ -289,11 +304,33 @@ fn check_stmt(
             }
             Ok(())
         }
+        Stmt::Break(value) => {
+            let break_ty = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
+            let frame = loop_stack.last_mut().ok_or(FrontendError {
+                pos: 0,
+                message: "break with value is allowed only inside loop expression".to_string(),
+            })?;
+            if let Some(expected) = &frame.break_ty {
+                if *expected != break_ty {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "loop expression break type mismatch: expected {:?}, got {:?}",
+                            expected, break_ty
+                        ),
+                    });
+                }
+            } else {
+                frame.break_ty = Some(break_ty);
+            }
+            Ok(())
+        }
         Stmt::Guard {
             condition,
             else_return,
         } => {
-            let condition_ty = infer_expr_type(*condition, arena, env, table, ret_ty.clone())?;
+            let condition_ty =
+                infer_expr_type(*condition, arena, env, table, ret_ty.clone(), loop_stack)?;
             if condition_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -302,14 +339,14 @@ fn check_stmt(
                             .to_string(),
                 });
             }
-            check_return_payload(*else_return, arena, env, table, ret_ty)
+            check_return_payload(*else_return, arena, env, table, ret_ty, loop_stack)
         }
         Stmt::If {
             condition,
             then_block,
             else_block,
         } => {
-            let ct = infer_expr_type(*condition, arena, env, table, ret_ty.clone())?;
+            let ct = infer_expr_type(*condition, arena, env, table, ret_ty.clone(), loop_stack)?;
             if ct != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -321,14 +358,14 @@ fn check_stmt(
             let mut then_env = env.clone();
             then_env.push_scope();
             for s in then_block {
-                check_stmt(*s, arena, &mut then_env, ret_ty.clone(), table)?;
+                check_stmt(*s, arena, &mut then_env, ret_ty.clone(), table, loop_stack)?;
             }
             then_env.pop_scope();
 
             let mut else_env = env.clone();
             else_env.push_scope();
             for s in else_block {
-                check_stmt(*s, arena, &mut else_env, ret_ty.clone(), table)?;
+                check_stmt(*s, arena, &mut else_env, ret_ty.clone(), table, loop_stack)?;
             }
             else_env.pop_scope();
             Ok(())
@@ -338,7 +375,7 @@ fn check_stmt(
             arms,
             default,
         } => {
-            let st = infer_expr_type(*scrutinee, arena, env, table, ret_ty.clone())?;
+            let st = infer_expr_type(*scrutinee, arena, env, table, ret_ty.clone(), loop_stack)?;
             if st != Type::Quad {
                 return Err(FrontendError {
                     pos: 0,
@@ -355,9 +392,9 @@ fn check_stmt(
             for arm in arms {
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
-                check_match_guard(arm.guard, arena, &arm_env, table, ret_ty.clone())?;
+                check_match_guard(arm.guard, arena, &arm_env, table, ret_ty.clone(), loop_stack)?;
                 for s in &arm.block {
-                    check_stmt(*s, arena, &mut arm_env, ret_ty.clone(), table)?;
+                    check_stmt(*s, arena, &mut arm_env, ret_ty.clone(), table, loop_stack)?;
                 }
                 arm_env.pop_scope();
             }
@@ -365,17 +402,17 @@ fn check_stmt(
             let mut def_env = env.clone();
             def_env.push_scope();
             for s in default {
-                check_stmt(*s, arena, &mut def_env, ret_ty.clone(), table)?;
+                check_stmt(*s, arena, &mut def_env, ret_ty.clone(), table, loop_stack)?;
             }
             def_env.pop_scope();
             Ok(())
         }
-        Stmt::Return(v) => check_return_payload(*v, arena, env, table, ret_ty),
+        Stmt::Return(v) => check_return_payload(*v, arena, env, table, ret_ty, loop_stack),
         Stmt::Expr(e) => {
-            if check_builtin_assert_stmt(*e, arena, env, table, ret_ty.clone())? {
+            if check_builtin_assert_stmt(*e, arena, env, table, ret_ty.clone(), loop_stack)? {
                 return Ok(());
             }
-            let _ = infer_expr_type(*e, arena, env, table, ret_ty)?;
+            let _ = infer_expr_type(*e, arena, env, table, ret_ty, loop_stack)?;
             Ok(())
         }
     }
@@ -387,6 +424,7 @@ fn infer_expr_type(
     env: &ScopeEnv,
     table: &FnTable,
     ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
     let expr = arena.expr(expr_id);
     match expr {
@@ -401,7 +439,14 @@ fn infer_expr_type(
         Expr::Tuple(items) => {
             let mut item_tys = Vec::with_capacity(items.len());
             for item in items {
-                item_tys.push(infer_expr_type(*item, arena, env, table, ret_ty.clone())?);
+                item_tys.push(infer_expr_type(
+                    *item,
+                    arena,
+                    env,
+                    table,
+                    ret_ty.clone(),
+                    loop_stack,
+                )?);
             }
             Ok(Type::Tuple(item_tys))
         }
@@ -409,9 +454,10 @@ fn infer_expr_type(
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
         }),
-        Expr::Block(block) => infer_value_block_type(block, arena, env, table, ret_ty),
+        Expr::Block(block) => infer_value_block_type(block, arena, env, table, ret_ty, loop_stack),
         Expr::If(if_expr) => {
-            let cond_ty = infer_expr_type(if_expr.condition, arena, env, table, ret_ty.clone())?;
+            let cond_ty =
+                infer_expr_type(if_expr.condition, arena, env, table, ret_ty.clone(), loop_stack)?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -421,9 +467,23 @@ fn infer_expr_type(
                 });
             }
             let then_ty =
-                infer_value_block_type(&if_expr.then_block, arena, env, table, ret_ty.clone())?;
+                infer_value_block_type(
+                    &if_expr.then_block,
+                    arena,
+                    env,
+                    table,
+                    ret_ty.clone(),
+                    loop_stack,
+                )?;
             let else_ty =
-                infer_value_block_type(&if_expr.else_block, arena, env, table, ret_ty.clone())?;
+                infer_value_block_type(
+                    &if_expr.else_block,
+                    arena,
+                    env,
+                    table,
+                    ret_ty.clone(),
+                    loop_stack,
+                )?;
             if then_ty != else_ty {
                 return Err(FrontendError {
                     pos: 0,
@@ -435,7 +495,10 @@ fn infer_expr_type(
             }
             Ok(then_ty)
         }
-        Expr::Match(match_expr) => infer_match_expr_type(match_expr, arena, env, table, ret_ty),
+        Expr::Match(match_expr) => {
+            infer_match_expr_type(match_expr, arena, env, table, ret_ty, loop_stack)
+        }
+        Expr::Loop(loop_expr) => infer_loop_expr_type(loop_expr, arena, env, table, ret_ty, loop_stack),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
                 return Err(FrontendError {
@@ -457,7 +520,7 @@ fn infer_expr_type(
             };
             let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
             for (i, arg) in ordered_args.iter().enumerate() {
-                let at = infer_expr_type(*arg, arena, env, table, ret_ty.clone())?;
+                let at = infer_expr_type(*arg, arena, env, table, ret_ty.clone(), loop_stack)?;
                 let expected_ty = sig.params[i].clone();
                 if at != expected_ty {
                     if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
@@ -489,7 +552,7 @@ fn infer_expr_type(
             Ok(sig.ret.clone())
         }
         Expr::Unary(op, inner) => {
-            let t = infer_expr_type(*inner, arena, env, table, ret_ty.clone())?;
+            let t = infer_expr_type(*inner, arena, env, table, ret_ty.clone(), loop_stack)?;
             match op {
                 UnaryOp::Not => match t {
                     Type::Quad | Type::Bool => Ok(t),
@@ -518,8 +581,8 @@ fn infer_expr_type(
             }
         }
         Expr::Binary(l, op, r) => {
-            let lt = infer_expr_type(*l, arena, env, table, ret_ty.clone())?;
-            let rt = infer_expr_type(*r, arena, env, table, ret_ty.clone())?;
+            let lt = infer_expr_type(*l, arena, env, table, ret_ty.clone(), loop_stack)?;
+            let rt = infer_expr_type(*r, arena, env, table, ret_ty.clone(), loop_stack)?;
             match op {
                 BinaryOp::Eq | BinaryOp::Ne => {
                     if lt == rt {
@@ -1423,6 +1486,74 @@ mod tests {
         let err = typecheck_source(src).expect_err("typed where binding mismatch must reject");
         assert!(err.message.contains("type mismatch in let"));
     }
+
+    #[test]
+    fn loop_expression_typechecks_with_break_value() {
+        let src = r#"
+            fn main() {
+                let value: f64 = loop {
+                    if true {
+                        break 1.0;
+                    } else {
+                        break 2.0;
+                    }
+                };
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("loop expression should typecheck");
+    }
+
+    #[test]
+    fn loop_expression_rejects_break_outside_loop() {
+        let src = r#"
+            fn main() {
+                break 1.0;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("break outside loop must reject");
+        assert!(err
+            .message
+            .contains("break with value is allowed only inside loop expression"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_mismatched_break_types() {
+        let src = r#"
+            fn main() {
+                let value: f64 = loop {
+                    if true {
+                        break 1.0;
+                    } else {
+                        break true;
+                    }
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("mismatched break types must reject");
+        assert!(err.message.contains("loop expression break type mismatch"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_return_in_body() {
+        let src = r#"
+            fn main() {
+                let value: f64 = loop {
+                    return;
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("return in loop expression body must reject");
+        assert!(err
+            .message
+            .contains("loop expression body currently does not allow guard clause or return"));
+    }
 }
 
 fn is_builtin_assert_name(
@@ -1439,6 +1570,7 @@ fn check_builtin_assert_stmt(
     env: &ScopeEnv,
     table: &FnTable,
     ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<bool, FrontendError> {
     let Expr::Call(name, args) = arena.expr(expr_id) else {
         return Ok(false);
@@ -1452,7 +1584,7 @@ fn check_builtin_assert_stmt(
             message: format!("assert builtin expects 1 arg, got {}", args.len()),
         });
     }
-    let cond_ty = infer_expr_type(args[0].value, arena, env, table, ret_ty)?;
+    let cond_ty = infer_expr_type(args[0].value, arena, env, table, ret_ty, loop_stack)?;
     if cond_ty != Type::Bool {
         return Err(FrontendError {
             pos: 0,
@@ -1468,6 +1600,7 @@ fn infer_value_block_type(
     env: &ScopeEnv,
     table: &FnTable,
     ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
     let mut block_env = env.clone();
     block_env.push_scope();
@@ -1478,7 +1611,7 @@ fn infer_value_block_type(
             | Stmt::LetTuple { .. }
             | Stmt::Discard { .. }
             | Stmt::Expr(_) => {
-                check_stmt(*stmt, arena, &mut block_env, ret_ty.clone(), table)?;
+                check_stmt(*stmt, arena, &mut block_env, ret_ty.clone(), table, loop_stack)?;
             }
             _ => {
                 return Err(FrontendError {
@@ -1488,7 +1621,7 @@ fn infer_value_block_type(
             }
         }
     }
-    let tail_ty = infer_expr_type(block.tail, arena, &block_env, table, ret_ty)?;
+    let tail_ty = infer_expr_type(block.tail, arena, &block_env, table, ret_ty, loop_stack)?;
     block_env.pop_scope();
     Ok(tail_ty)
 }
@@ -1499,8 +1632,10 @@ fn infer_match_expr_type(
     env: &ScopeEnv,
     table: &FnTable,
     ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
-    let scrutinee_ty = infer_expr_type(match_expr.scrutinee, arena, env, table, ret_ty.clone())?;
+    let scrutinee_ty =
+        infer_expr_type(match_expr.scrutinee, arena, env, table, ret_ty.clone(), loop_stack)?;
     if scrutinee_ty != Type::Quad {
         return Err(FrontendError {
             pos: 0,
@@ -1514,8 +1649,15 @@ fn infer_match_expr_type(
 
     let mut result_ty = None;
     for arm in &match_expr.arms {
-        check_match_guard(arm.guard, arena, env, table, ret_ty.clone())?;
-        let arm_ty = infer_value_block_type(&arm.block, arena, env, table, ret_ty.clone())?;
+        check_match_guard(arm.guard, arena, env, table, ret_ty.clone(), loop_stack)?;
+        let arm_ty = infer_value_block_type(
+            &arm.block,
+            arena,
+            env,
+            table,
+            ret_ty.clone(),
+            loop_stack,
+        )?;
         if let Some(ref expected) = result_ty {
             if *expected != arm_ty {
                 return Err(FrontendError {
@@ -1531,7 +1673,7 @@ fn infer_match_expr_type(
         }
     }
 
-    let default_ty = infer_value_block_type(default, arena, env, table, ret_ty)?;
+    let default_ty = infer_value_block_type(default, arena, env, table, ret_ty, loop_stack)?;
     if let Some(expected) = result_ty {
         if expected != default_ty {
             return Err(FrontendError {
@@ -1548,15 +1690,123 @@ fn infer_match_expr_type(
     }
 }
 
+fn infer_loop_expr_type(
+    loop_expr: &LoopExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    loop_stack.push(LoopTypeFrame { break_ty: None });
+    for stmt in &loop_expr.body {
+        check_loop_expr_stmt(*stmt, arena, &mut body_env, table, ret_ty.clone(), loop_stack)?;
+    }
+    body_env.pop_scope();
+    let frame = loop_stack.pop().expect("loop frame must exist");
+    frame.break_ty.ok_or(FrontendError {
+        pos: 0,
+        message: "loop expression requires at least one break value".to_string(),
+    })
+}
+
+fn check_loop_expr_stmt(
+    stmt_id: StmtId,
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+    table: &FnTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<(), FrontendError> {
+    match arena.stmt(stmt_id) {
+        Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow guard clause or return"
+                .to_string(),
+        }),
+        Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            let cond_ty =
+                infer_expr_type(*condition, arena, env, table, ret_ty.clone(), loop_stack)?;
+            if cond_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "if condition must be bool; explicit compare is required for quad"
+                        .to_string(),
+                });
+            }
+
+            let mut then_env = env.clone();
+            then_env.push_scope();
+            for stmt in then_block {
+                check_loop_expr_stmt(*stmt, arena, &mut then_env, table, ret_ty.clone(), loop_stack)?;
+            }
+            then_env.pop_scope();
+
+            let mut else_env = env.clone();
+            else_env.push_scope();
+            for stmt in else_block {
+                check_loop_expr_stmt(*stmt, arena, &mut else_env, table, ret_ty.clone(), loop_stack)?;
+            }
+            else_env.pop_scope();
+            Ok(())
+        }
+        Stmt::Match {
+            scrutinee,
+            arms,
+            default,
+        } => {
+            let st = infer_expr_type(*scrutinee, arena, env, table, ret_ty.clone(), loop_stack)?;
+            if st != Type::Quad {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match is allowed only for quad scrutinee".to_string(),
+                });
+            }
+            if default.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match requires default arm '_'".to_string(),
+                });
+            }
+
+            for arm in arms {
+                let mut arm_env = env.clone();
+                arm_env.push_scope();
+                check_match_guard(arm.guard, arena, &arm_env, table, ret_ty.clone(), loop_stack)?;
+                for stmt in &arm.block {
+                    check_loop_expr_stmt(*stmt, arena, &mut arm_env, table, ret_ty.clone(), loop_stack)?;
+                }
+                arm_env.pop_scope();
+            }
+
+            let mut def_env = env.clone();
+            def_env.push_scope();
+            for stmt in default {
+                check_loop_expr_stmt(*stmt, arena, &mut def_env, table, ret_ty.clone(), loop_stack)?;
+            }
+            def_env.pop_scope();
+            Ok(())
+        }
+        _ => check_stmt(stmt_id, arena, env, ret_ty, table, loop_stack),
+    }
+}
+
 fn check_match_guard(
     guard: Option<ExprId>,
     arena: &AstArena,
     env: &ScopeEnv,
     table: &FnTable,
     ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     if let Some(expr_id) = guard {
-        let guard_ty = infer_expr_type(expr_id, arena, env, table, ret_ty)?;
+        let guard_ty = infer_expr_type(expr_id, arena, env, table, ret_ty, loop_stack)?;
         if guard_ty != Type::Bool {
             return Err(FrontendError {
                 pos: 0,
@@ -1575,9 +1825,10 @@ fn check_return_payload(
     env: &ScopeEnv,
     table: &FnTable,
     ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     let got = if let Some(expr_id) = value {
-        infer_expr_type(expr_id, arena, env, table, ret_ty.clone())?
+        infer_expr_type(expr_id, arena, env, table, ret_ty.clone(), loop_stack)?
     } else {
         Type::Unit
     };
