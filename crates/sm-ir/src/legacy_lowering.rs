@@ -984,6 +984,59 @@ fn lower_expr_with_expected(
             out.push(IrInstr::LoadBool { dst: r, val: *v });
             Ok((r, Type::Bool))
         }
+        Expr::Range(range_expr) => {
+            let (start_reg, start_ty) = lower_expr_with_expected(
+                range_expr.start,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                Some(Type::I32),
+                ret_ty.clone(),
+            )?;
+            if start_ty != Type::I32 {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "range literal currently requires i32 bounds, got {:?}",
+                        start_ty
+                    ),
+                });
+            }
+            let (end_reg, end_ty) = lower_expr_with_expected(
+                range_expr.end,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                Some(Type::I32),
+                ret_ty,
+            )?;
+            if end_ty != Type::I32 {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "range literal currently requires i32 bounds, got {:?}",
+                        end_ty
+                    ),
+                });
+            }
+            let inclusive_reg = alloc(next);
+            out.push(IrInstr::LoadBool {
+                dst: inclusive_reg,
+                val: range_expr.inclusive,
+            });
+            let dst = alloc(next);
+            out.push(IrInstr::MakeTuple {
+                dst,
+                items: vec![start_reg, end_reg, inclusive_reg],
+            });
+            Ok((dst, Type::RangeI32))
+        }
         Expr::Tuple(items) => {
             let expected_items = match expected.as_ref() {
                 Some(Type::Tuple(types)) => Some(types),
@@ -3654,6 +3707,39 @@ mod opt_tests {
         assert!(func.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "total"
+        )));
+    }
+
+    #[test]
+    fn lower_range_literal_to_hidden_tuple_carrier() {
+        let src = r#"
+            fn main() {
+                let interval = 0..=10;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("range literal should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadI32 { val: 0, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadI32 { val: 10, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadBool { val: true, .. })));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeTuple { items, .. } if items.len() == 3
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "interval"
         )));
     }
 

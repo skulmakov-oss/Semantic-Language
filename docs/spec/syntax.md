@@ -152,6 +152,9 @@ Current expression forms:
 - where-clause suffix:
   - `sqrt(a + b) where a = x * x, b = y * y`
   - `total where total: f64 = 1.0`
+- range literals:
+  - `0..10`
+  - `0..=10`
 - short lambda immediate-call sugar:
   - `(x => expr)(arg)`
 - tuple literals:
@@ -193,6 +196,16 @@ Current v0 numeric-literal limits:
 - typed literal spelling does not imply new integer arithmetic beyond the
   already documented operator surface
 - tuple literal arity must be at least 2 in the current contract
+
+Current v0 range-literal limits:
+
+- range literals currently accept only `i32` bounds
+- `start..end` is half-open and `start..=end` is closed
+- range literals currently lower through an internal executable interval
+  descriptor rather than a dedicated runtime range opcode
+- range equality is not yet part of the stable source contract
+- range literals are not yet part of the stable tuple/user-data surface
+- `for ... in range` is not yet part of the current stable syntax contract
 
 Current v0 tuple limits:
 

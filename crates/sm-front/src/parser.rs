@@ -3,7 +3,7 @@ use crate::types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
-    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RangeExpr, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -527,23 +527,44 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_eq(&mut self) -> Result<ExprId, FrontendError> {
-        let mut left = self.parse_add()?;
+        let mut left = self.parse_range()?;
         loop {
             if self.eat(TokenKind::EqEq) {
-                let right = self.parse_add()?;
+                let right = self.parse_range()?;
                 left = self
                     .arena
                     .alloc_expr(Expr::Binary(left, BinaryOp::Eq, right));
                 continue;
             }
             if self.eat(TokenKind::Ne) {
-                let right = self.parse_add()?;
+                let right = self.parse_range()?;
                 left = self
                     .arena
                     .alloc_expr(Expr::Binary(left, BinaryOp::Ne, right));
                 continue;
             }
             break;
+        }
+        Ok(left)
+    }
+
+    fn parse_range(&mut self) -> Result<ExprId, FrontendError> {
+        let left = self.parse_add()?;
+        if self.eat(TokenKind::DotDotEq) {
+            let end = self.parse_add()?;
+            return Ok(self.arena.alloc_expr(Expr::Range(RangeExpr {
+                start: left,
+                end,
+                inclusive: true,
+            })));
+        }
+        if self.eat(TokenKind::DotDot) {
+            let end = self.parse_add()?;
+            return Ok(self.arena.alloc_expr(Expr::Range(RangeExpr {
+                start: left,
+                end,
+                inclusive: false,
+            })));
         }
         Ok(left)
     }
@@ -886,6 +907,10 @@ impl<'a> Parser<'a> {
     ) -> Result<(), FrontendError> {
         match self.arena.expr(expr_id) {
             Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
+            Expr::Range(range_expr) => {
+                self.ensure_short_lambda_expr_capture_free(range_expr.start, scopes)?;
+                self.ensure_short_lambda_expr_capture_free(range_expr.end, scopes)
+            }
             Expr::Tuple(items) => {
                 for item in items {
                     self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
@@ -2788,6 +2813,56 @@ fn main() {
             program.arena.expr(*expr_id),
             Expr::NumericLiteral(NumericLiteral::F64(_))
         ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_half_open_range_literal() {
+        let src = r#"
+fn main() {
+    let interval = 0..10;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("half-open range literal should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected let statement");
+        };
+        let Expr::Range(range_expr) = program.arena.expr(*value) else {
+            panic!("expected range literal");
+        };
+        assert!(!range_expr.inclusive);
+        assert!(matches!(
+            program.arena.expr(range_expr.start),
+            Expr::NumericLiteral(NumericLiteral::I32(0))
+        ));
+        assert!(matches!(
+            program.arena.expr(range_expr.end),
+            Expr::NumericLiteral(NumericLiteral::I32(10))
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_closed_range_literal() {
+        let src = r#"
+fn main() {
+    let interval = 1..=10;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("closed range literal should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected let statement");
+        };
+        let Expr::Range(range_expr) = program.arena.expr(*value) else {
+            panic!("expected range literal");
+        };
+        assert!(range_expr.inclusive);
     }
 
     #[test]

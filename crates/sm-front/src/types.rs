@@ -13,6 +13,7 @@ pub enum Type {
     U32,
     Fx,
     F64,
+    RangeI32,
     Tuple(Vec<Type>),
     Unit,
 }
@@ -64,6 +65,7 @@ pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
     NumericLiteral(NumericLiteral),
+    Range(RangeExpr),
     Tuple(Vec<ExprId>),
     Var(SymbolId),
     Call(SymbolId, Vec<CallArg>),
@@ -159,6 +161,13 @@ pub struct MatchExprArm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopExpr {
     pub body: Vec<StmtId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeExpr {
+    pub start: ExprId,
+    pub end: ExprId,
+    pub inclusive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -297,6 +306,8 @@ pub enum TokenKind {
     FatArrow,
     EqEq,
     Ne,
+    DotDot,
+    DotDotEq,
     Assign,
     LBrace,
     RBrace,

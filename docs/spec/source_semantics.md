@@ -123,6 +123,24 @@ Current honest limit:
 - exponent notation and binary/octal literal families are not yet part of the
   stable contract
 
+## Range Literal
+
+Current range-literal semantics:
+
+- `start..end` denotes a half-open ascending `i32` interval descriptor
+- `start..=end` denotes a closed ascending `i32` interval descriptor
+- both bounds are evaluated exactly once, left to right
+- the current lowering path reuses an internal tuple-shaped carrier rather than
+  introducing a dedicated runtime range family
+
+Current v0 limit:
+
+- range literals currently require `i32` bounds
+- range literals are not yet part of the stable tuple/user-data surface
+- range equality is not yet part of the stable source contract
+- `for ... in range` is not yet part of the stable source contract
+- the source contract does not yet treat ranges as a general iterable family
+
 ## Scope And Binding Rules
 
 The executable Rust-like surface uses lexical block scoping.

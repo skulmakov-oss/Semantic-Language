@@ -491,17 +491,47 @@ fn infer_expr_type(
             NumericLiteral::F64(_) => Ok(Type::F64),
             NumericLiteral::Fx(_) => Ok(Type::Fx),
         },
+        Expr::Range(range_expr) => {
+            let start_ty = infer_expr_type(
+                range_expr.start,
+                arena,
+                env,
+                table,
+                ret_ty.clone(),
+                loop_stack,
+            )?;
+            let end_ty = infer_expr_type(range_expr.end, arena, env, table, ret_ty, loop_stack)?;
+            if start_ty != Type::I32 || end_ty != Type::I32 {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "range literal currently requires i32 bounds, got {:?}..{:?}",
+                        start_ty, end_ty
+                    ),
+                });
+            }
+            Ok(Type::RangeI32)
+        }
         Expr::Tuple(items) => {
             let mut item_tys = Vec::with_capacity(items.len());
             for item in items {
-                item_tys.push(infer_expr_type(
+                let item_ty = infer_expr_type(
                     *item,
                     arena,
                     env,
                     table,
                     ret_ty.clone(),
                     loop_stack,
-                )?);
+                )?;
+                if item_ty == Type::RangeI32 {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "range literal is not yet part of the stable tuple/user-data surface"
+                                .to_string(),
+                    });
+                }
+                item_tys.push(item_ty);
             }
             Ok(Type::Tuple(item_tys))
         }
@@ -640,6 +670,14 @@ fn infer_expr_type(
             let rt = infer_expr_type(*r, arena, env, table, ret_ty.clone(), loop_stack)?;
             match op {
                 BinaryOp::Eq | BinaryOp::Ne => {
+                    if lt == Type::RangeI32 && rt == Type::RangeI32 {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "range equality is not part of the stable v0 range surface"
+                                    .to_string(),
+                        });
+                    }
                     if lt == rt {
                         Ok(Type::Bool)
                     } else {
@@ -762,6 +800,62 @@ mod tests {
         "#;
 
         typecheck_source(src).expect("extended numeric literal surface should typecheck");
+    }
+
+    #[test]
+    fn range_literal_typechecks_for_i32_bounds() {
+        let src = r#"
+            fn main() {
+                let half_open = 0..10;
+                let closed = 1..=10;
+                let _ = half_open;
+                let _ = closed;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("i32 range literals should typecheck");
+    }
+
+    #[test]
+    fn range_literal_rejects_non_i32_bounds() {
+        let src = r#"
+            fn main() {
+                let bad = 0u32..10u32;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("u32 range bounds must reject");
+        assert!(err.message.contains("range literal currently requires i32 bounds"));
+    }
+
+    #[test]
+    fn range_literal_rejects_equality_surface() {
+        let src = r#"
+            fn main() {
+                let left = 0..10;
+                let right = 0..10;
+                let same = left == right;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("range equality must reject");
+        assert!(err.message.contains("range equality is not part of the stable v0 range surface"));
+    }
+
+    #[test]
+    fn range_literal_rejects_tuple_nesting() {
+        let src = r#"
+            fn main() {
+                let pair = (0..10, true);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("range tuple nesting must reject");
+        assert!(err.message.contains("range literal is not yet part of the stable tuple/user-data surface"));
     }
 
     #[test]
@@ -2060,6 +2154,10 @@ fn ensure_const_initializer_safe(
 ) -> Result<(), FrontendError> {
     match arena.expr(expr_id) {
         Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
+        Expr::Range(range_expr) => {
+            ensure_const_initializer_safe(range_expr.start, arena, env)?;
+            ensure_const_initializer_safe(range_expr.end, arena, env)
+        }
         Expr::Tuple(items) => {
             for item in items {
                 ensure_const_initializer_safe(*item, arena, env)?;

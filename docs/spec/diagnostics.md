@@ -104,6 +104,9 @@ Current message families include:
 - discard-binding type mismatch
 - non-const-safe initializer in const declaration
 - invalid typed numeric literal form
+- range literal requires `i32` bounds
+- range equality not part of stable v0 range surface
+- range literal rejected in tuple/user-data position
 - invalid tuple arity
 - tuple type mismatch
 - tuple destructuring bind requires tuple value

@@ -115,8 +115,16 @@ fn tokenize_line(
                 }
             }
             b'.' => {
-                push_tok(out, TokenKind::Dot, ".", abs_pos, line_no, col);
-                i += 1;
+                if i + 2 < bytes.len() && bytes[i + 1] == b'.' && bytes[i + 2] == b'=' {
+                    push_tok(out, TokenKind::DotDotEq, "..=", abs_pos, line_no, col);
+                    i += 3;
+                } else if i + 1 < bytes.len() && bytes[i + 1] == b'.' {
+                    push_tok(out, TokenKind::DotDot, "..", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::Dot, ".", abs_pos, line_no, col);
+                    i += 1;
+                }
             }
             b'_' => {
                 push_tok(out, TokenKind::Underscore, "_", abs_pos, line_no, col);
