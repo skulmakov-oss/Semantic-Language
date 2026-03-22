@@ -53,12 +53,18 @@ pub enum NumericLiteral {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    pub name: Option<SymbolId>,
+    pub value: ExprId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
     NumericLiteral(NumericLiteral),
     Var(SymbolId),
-    Call(SymbolId, Vec<ExprId>),
+    Call(SymbolId, Vec<CallArg>),
     Unary(UnaryOp, ExprId),
     Binary(ExprId, BinaryOp, ExprId),
     Block(BlockExpr),

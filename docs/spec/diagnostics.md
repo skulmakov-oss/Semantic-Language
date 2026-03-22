@@ -90,6 +90,11 @@ Current message families include:
 - invalid `assert` argument count
 - invalid `assert` condition type
 - statement-only `assert` used in value position
+- positional arguments after named arguments
+- named arguments on builtin calls
+- unknown named parameter
+- duplicate named argument
+- missing named argument for a declared parameter
 - let-binding type mismatch
 - discard-binding type mismatch
 - non-const-safe initializer in const declaration

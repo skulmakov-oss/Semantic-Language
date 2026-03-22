@@ -16,8 +16,8 @@ use alloc::vec::Vec;
 pub mod types;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
-    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, FrontendErrorKind, Function,
-    IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
+    AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, FrontendErrorKind,
+    Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
     LogosSystem, LogosWhen, MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt, StmtId,
     SymbolId, Token, TokenKind, Type, UnaryOp,
 };
@@ -37,6 +37,7 @@ pub use typecheck::{type_check_function, type_check_function_with_table, type_ch
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnSig {
     pub params: Vec<Type>,
+    pub param_names: Option<Vec<SymbolId>>,
     pub ret: Type,
 }
 
@@ -144,6 +145,7 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
             f.name,
             FnSig {
                 params: f.params.iter().map(|(_, t)| *t).collect(),
+                param_names: Some(f.params.iter().map(|(name, _)| *name).collect()),
                 ret: f.ret,
             },
         );
@@ -156,14 +158,114 @@ pub fn builtin_sig(name: &str) -> Option<FnSig> {
     match name {
         "sin" | "cos" | "tan" | "sqrt" | "abs" => Some(FnSig {
             params: vec![Type::F64],
+            param_names: None,
             ret: Type::F64,
         }),
         "pow" => Some(FnSig {
             params: vec![Type::F64, Type::F64],
+            param_names: None,
             ret: Type::F64,
         }),
         _ => None,
     }
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn reorder_call_args(
+    call_name: SymbolId,
+    args: &[CallArg],
+    sig: &FnSig,
+    arena: &AstArena,
+) -> Result<Vec<ExprId>, FrontendError> {
+    let has_named = args.iter().any(|arg| arg.name.is_some());
+    if !has_named {
+        if sig.params.len() != args.len() {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "function '{}' expects {} args, got {}",
+                    resolve_symbol_name(arena, call_name)?,
+                    sig.params.len(),
+                    args.len()
+                ),
+            });
+        }
+        return Ok(args.iter().map(|arg| arg.value).collect());
+    }
+
+    let Some(param_names) = sig.param_names.as_ref() else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "named arguments are not supported for builtin '{}'",
+                resolve_symbol_name(arena, call_name)?
+            ),
+        });
+    };
+
+    let mut ordered = vec![None; sig.params.len()];
+    let mut positional_index = 0usize;
+    let mut named_seen = false;
+    for arg in args {
+        if let Some(arg_name) = arg.name {
+            named_seen = true;
+            let Some(param_index) = param_names.iter().position(|name| *name == arg_name) else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "function '{}' has no parameter named '{}'",
+                        resolve_symbol_name(arena, call_name)?,
+                        resolve_symbol_name(arena, arg_name)?
+                    ),
+                });
+            };
+            if ordered[param_index].is_some() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "duplicate named argument '{}' in call to '{}'",
+                        resolve_symbol_name(arena, arg_name)?,
+                        resolve_symbol_name(arena, call_name)?
+                    ),
+                });
+            }
+            ordered[param_index] = Some(arg.value);
+        } else {
+            if named_seen {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "positional arguments cannot follow named arguments".to_string(),
+                });
+            }
+            if positional_index >= ordered.len() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "function '{}' expects {} args, got {}",
+                        resolve_symbol_name(arena, call_name)?,
+                        sig.params.len(),
+                        args.len()
+                    ),
+                });
+            }
+            ordered[positional_index] = Some(arg.value);
+            positional_index += 1;
+        }
+    }
+
+    if ordered.iter().any(|slot| slot.is_none()) {
+        let missing_index = ordered.iter().position(|slot| slot.is_none()).unwrap_or(0);
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "function '{}' is missing argument for parameter '{}'",
+                resolve_symbol_name(arena, call_name)?,
+                resolve_symbol_name(arena, param_names[missing_index])?
+            ),
+        });
+    }
+
+    Ok(ordered.into_iter().flatten().collect())
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]

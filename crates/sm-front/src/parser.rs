@@ -1,9 +1,9 @@
 use crate::lexer::lex_tokens;
 use crate::types::{
-    AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
-    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal, Stmt, StmtId, SymbolId,
-    Token, TokenKind, Type, UnaryOp,
+    AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
+    LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
+    LogosWhen, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal, Stmt, StmtId,
+    SymbolId, Token, TokenKind, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -407,17 +407,12 @@ impl<'a> Parser<'a> {
         }
 
         let name = self.expect_symbol()?;
-        let mut args = vec![input];
+        let mut args = vec![CallArg {
+            name: None,
+            value: input,
+        }];
         if self.eat(TokenKind::LParen) {
-            if !self.check(TokenKind::RParen) {
-                loop {
-                    args.push(self.parse_expr()?);
-                    if self.eat(TokenKind::Comma) {
-                        continue;
-                    }
-                    break;
-                }
-            }
+            args.extend(self.parse_call_args()?);
             self.expect(TokenKind::RParen, "expected ')'")?;
         }
         Ok(self.arena.alloc_expr(Expr::Call(name, args)))
@@ -466,16 +461,7 @@ impl<'a> Parser<'a> {
         if self.check(TokenKind::Ident) {
             let name = self.expect_symbol()?;
             if self.eat(TokenKind::LParen) {
-                let mut args = Vec::new();
-                if !self.check(TokenKind::RParen) {
-                    loop {
-                        args.push(self.parse_expr()?);
-                        if self.eat(TokenKind::Comma) {
-                            continue;
-                        }
-                        break;
-                    }
-                }
+                let args = self.parse_call_args()?;
                 self.expect(TokenKind::RParen, "expected ')'")?;
                 return Ok(self.arena.alloc_expr(Expr::Call(name, args)));
             }
@@ -489,6 +475,45 @@ impl<'a> Parser<'a> {
 
     fn starts_short_lambda_head(&self) -> bool {
         self.check(TokenKind::Ident) && self.peek_next_kind() == Some(TokenKind::FatArrow)
+    }
+
+    fn parse_call_args(&mut self) -> Result<Vec<CallArg>, FrontendError> {
+        let mut args = Vec::new();
+        let mut named_seen = false;
+        if self.check(TokenKind::RParen) {
+            return Ok(args);
+        }
+        loop {
+            let arg = if self.check(TokenKind::Ident)
+                && self.peek_next_kind() == Some(TokenKind::Assign)
+            {
+                named_seen = true;
+                let name = self.expect_symbol()?;
+                self.expect(TokenKind::Assign, "expected '=' in named argument")?;
+                let value = self.parse_expr()?;
+                CallArg {
+                    name: Some(name),
+                    value,
+                }
+            } else {
+                if named_seen {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "positional arguments cannot follow named arguments".to_string(),
+                    });
+                }
+                CallArg {
+                    name: None,
+                    value: self.parse_expr()?,
+                }
+            };
+            args.push(arg);
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            break;
+        }
+        Ok(args)
     }
 
     fn parse_short_lambda_apply_after_lparen(
@@ -595,7 +620,7 @@ impl<'a> Parser<'a> {
             }
             Expr::Call(_, args) => {
                 for arg in args {
-                    self.ensure_short_lambda_expr_capture_free(*arg, scopes)?;
+                    self.ensure_short_lambda_expr_capture_free(arg.value, scopes)?;
                 }
                 Ok(())
             }
@@ -1655,11 +1680,77 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*scale_name), "scale");
         assert_eq!(scale_args.len(), 2);
-        let Expr::Call(inc_name, inc_args) = program.arena.expr(scale_args[0]) else {
+        assert!(scale_args[0].name.is_none());
+        let Expr::Call(inc_name, inc_args) = program.arena.expr(scale_args[0].value) else {
             panic!("expected nested pipeline call");
         };
         assert_eq!(program.arena.symbol_name(*inc_name), "inc");
         assert_eq!(inc_args.len(), 1);
+        assert!(inc_args[0].name.is_none());
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_named_arguments() {
+        let src = r#"
+fn scale(x: f64, factor: f64) -> f64 = x * factor;
+fn main() {
+    let value: f64 = scale(factor = 3.0, x = 1.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("named arguments should parse");
+        let func = &program.functions[1];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Call(scale_name, scale_args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(program.arena.symbol_name(*scale_name), "scale");
+        assert_eq!(scale_args.len(), 2);
+        assert_eq!(
+            scale_args[0]
+                .name
+                .map(|name| program.arena.symbol_name(name)),
+            Some("factor")
+        );
+        assert_eq!(
+            scale_args[1]
+                .name
+                .map(|name| program.arena.symbol_name(name)),
+            Some("x")
+        );
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_pipeline_named_arguments_after_prefix() {
+        let src = r#"
+fn scale(x: f64, factor: f64) -> f64 = x * factor;
+fn main() {
+    let value: f64 = 1.0 |> scale(factor = 3.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("pipeline named arguments should parse");
+        let func = &program.functions[1];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Call(_, scale_args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(scale_args.len(), 2);
+        assert!(scale_args[0].name.is_none());
+        assert_eq!(
+            scale_args[1]
+                .name
+                .map(|name| program.arena.symbol_name(name)),
+            Some("factor")
+        );
     }
 
     #[test]
@@ -1761,6 +1852,23 @@ fn main() {
         assert!(err
             .message
             .contains("pipeline stage must start with function name or call"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_positional_after_named_arguments() {
+        let src = r#"
+fn scale(x: f64, factor: f64) -> f64 = x * factor;
+fn main() {
+    let value: f64 = scale(x = 1.0, 3.0);
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("positional after named must reject");
+        assert!(err
+            .message
+            .contains("positional arguments cannot follow named arguments"));
     }
 
     #[test]
@@ -2019,7 +2127,7 @@ fn main() {
         assert_eq!(program.arena.symbol_name(*name), "assert");
         assert_eq!(args.len(), 1);
         assert!(matches!(
-            program.arena.expr(args[0]),
+            program.arena.expr(args[0].value),
             Expr::BoolLiteral(true)
         ));
     }

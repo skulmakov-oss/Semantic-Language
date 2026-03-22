@@ -41,6 +41,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
         func.name,
         FnSig {
             params: func.params.iter().map(|(_, t)| *t).collect(),
+            param_names: Some(func.params.iter().map(|(name, _)| *name).collect()),
             ret: func.ret,
         },
     );
@@ -320,18 +321,8 @@ fn infer_expr_type(
                     message: format!("unknown function '{}'", resolve_symbol_name(arena, *name)?),
                 });
             };
-            if sig.params.len() != args.len() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "function '{}' expects {} args, got {}",
-                        resolve_symbol_name(arena, *name)?,
-                        sig.params.len(),
-                        args.len()
-                    ),
-                });
-            }
-            for (i, arg) in args.iter().enumerate() {
+            let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
+            for (i, arg) in ordered_args.iter().enumerate() {
                 let at = infer_expr_type(*arg, arena, env, table, ret_ty)?;
                 if at != sig.params[i] {
                     if sig.params[i] == Type::Fx && is_numeric_for_fx_gap(at) {
@@ -791,6 +782,85 @@ mod tests {
     }
 
     #[test]
+    fn named_arguments_typecheck_via_parameter_reorder() {
+        let src = r#"
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = scale(factor = 3.0, x = 2.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("named arguments should typecheck");
+    }
+
+    #[test]
+    fn pipeline_named_arguments_typecheck_after_positional_prefix() {
+        let src = r#"
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = 2.0 |> scale(factor = 3.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("pipeline named arguments should typecheck");
+    }
+
+    #[test]
+    fn builtin_named_arguments_are_rejected() {
+        let src = r#"
+            fn main() {
+                let total: f64 = sqrt(x = 4.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("builtin named arguments must reject");
+        assert!(err
+            .message
+            .contains("named arguments are not supported for builtin 'sqrt'"));
+    }
+
+    #[test]
+    fn duplicate_named_arguments_are_rejected() {
+        let src = r#"
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = scale(x = 2.0, x = 3.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("duplicate named arguments must reject");
+        assert!(err
+            .message
+            .contains("duplicate named argument 'x'"));
+    }
+
+    #[test]
+    fn missing_named_argument_is_rejected() {
+        let src = r#"
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = scale(x = 2.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("missing named argument must reject");
+        assert!(err
+            .message
+            .contains("is missing argument for parameter 'factor'"));
+    }
+
+    #[test]
     fn immediate_short_lambda_typechecks_via_block_desugaring() {
         let src = r#"
             fn main() {
@@ -1056,7 +1126,7 @@ fn check_builtin_assert_stmt(
             message: format!("assert builtin expects 1 arg, got {}", args.len()),
         });
     }
-    let cond_ty = infer_expr_type(args[0], arena, env, table, ret_ty)?;
+    let cond_ty = infer_expr_type(args[0].value, arena, env, table, ret_ty)?;
     if cond_ty != Type::Bool {
         return Err(FrontendError {
             pos: 0,

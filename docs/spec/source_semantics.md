@@ -60,6 +60,7 @@ Current rules:
   same name exists
 - there is no overload resolution
 - there is no dynamic dispatch
+- named arguments reorder only after the target function resolves successfully
 
 Current builtin names in the Rust-like surface are:
 
@@ -70,6 +71,22 @@ Current builtin names in the Rust-like surface are:
 - `abs`
 - `pow`
 - `assert`
+
+Current named-argument call semantics:
+
+- named arguments are currently supported only for ordinary user-defined
+  functions
+- positional arguments may appear only before the first named argument
+- after resolution, named arguments reorder to the declared parameter order
+  before ordinary argument type-checking and lowering
+- each declared parameter must receive exactly one argument in the current
+  contract
+
+Current v0 limits:
+
+- builtin calls do not yet accept named arguments
+- default parameters are not yet part of the source contract
+- named arguments do not imply overload resolution or keyword-only parameters
 
 ## Numeric Literal Meaning
 
@@ -289,6 +306,7 @@ Current `|>` semantics:
 
 - `input |> stage()` is equivalent to `stage(input)`
 - `input |> stage(arg1, arg2)` is equivalent to `stage(input, arg1, arg2)`
+- `input |> stage(name = arg1)` is equivalent to `stage(input, name = arg1)`
 - pipeline stages are currently restricted to bare function names or ordinary
   call syntax
 

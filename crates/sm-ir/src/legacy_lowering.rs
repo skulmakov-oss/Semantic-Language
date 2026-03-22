@@ -1101,19 +1101,9 @@ fn lower_expr_with_expected(
                     message: format!("unknown function '{}'", resolve_symbol_name(arena, *name)?),
                 });
             };
-            if sig.params.len() != args.len() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "function '{}' expects {} args, got {}",
-                        resolve_symbol_name(arena, *name)?,
-                        sig.params.len(),
-                        args.len()
-                    ),
-                });
-            }
+            let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
             let mut regs = Vec::new();
-            for (i, arg) in args.iter().enumerate() {
+            for (i, arg) in ordered_args.iter().enumerate() {
                 let (r, t) = lower_expr_with_expected(
                     *arg,
                     arena,
@@ -2048,7 +2038,7 @@ fn lower_expr_stmt_with_parts(
                 });
             }
             let (cond, cond_ty) = lower_expr_with_expected(
-                args[0],
+                args[0].value,
                 arena,
                 next,
                 out,
@@ -2076,19 +2066,9 @@ fn lower_expr_stmt_with_parts(
                 message: format!("unknown function '{}'", resolve_symbol_name(arena, *name)?),
             });
         };
-        if sig.params.len() != args.len() {
-            return Err(FrontendError {
-                pos: 0,
-                message: format!(
-                    "function '{}' expects {} args, got {}",
-                    resolve_symbol_name(arena, *name)?,
-                    sig.params.len(),
-                    args.len()
-                ),
-            });
-        }
+        let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
         let mut regs = Vec::new();
-        for (i, arg) in args.iter().enumerate() {
+        for (i, arg) in ordered_args.iter().enumerate() {
             let (r, t) = lower_expr_with_expected(
                 *arg,
                 arena,
@@ -2332,6 +2312,48 @@ mod opt_tests {
             .collect();
         assert!(call_names.contains(&"inc"));
         assert!(call_names.contains(&"scale"));
+    }
+
+    #[test]
+    fn lower_named_arguments_to_ordinary_call_order() {
+        let src = r#"
+            fn scale(x: f64, factor: f64) -> f64 = x * factor;
+            fn main() {
+                let total: f64 = scale(factor = 3.0, x = 2.0);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("named arguments should lower");
+        let main = &ir[1];
+        let call = main
+            .instrs
+            .iter()
+            .find(|instr| matches!(instr, IrInstr::Call { name, .. } if name == "scale"));
+        assert!(call.is_some());
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadF64 { val, .. } if (*val - 2.0).abs() < f64::EPSILON)));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadF64 { val, .. } if (*val - 3.0).abs() < f64::EPSILON)));
+    }
+
+    #[test]
+    fn lowering_rejects_builtin_named_arguments() {
+        let src = r#"
+            fn main() {
+                let total: f64 = sqrt(x = 4.0);
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src).expect_err("builtin named arguments must reject");
+        assert!(err
+            .message
+            .contains("named arguments are not supported for builtin 'sqrt'"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 mod frontend {
     pub use sm_front::{
         build_fn_table, builtin_sig, parse_logos_program_with_profile,
-        parse_program_with_profile, resolve_symbol_name,
+        parse_program_with_profile, reorder_call_args, resolve_symbol_name,
         type_check_function_with_table, type_check_program, AstArena, BinaryOp, BlockExpr,
         CompileProfile, Expr, ExprId, FnTable, FrontendError, Function, LogosProgram, MatchExpr,
         OptLevel, QuadVal, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,

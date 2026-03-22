@@ -120,6 +120,9 @@ Current expression forms:
     - explicit `fx` forms `1.25fx`, `100fx`
 - variables
 - function calls
+- named-argument calls:
+  - `open(path = main_path, mode = read_only)`
+  - `value |> stage(limit = 10)`
 - pipeline chains:
   - `value |> stage()`
   - `value |> stage(arg)`
@@ -179,6 +182,16 @@ Current short-lambda rules:
   bindings
 - typed lambda parameters and multi-argument lambda forms are not yet part of
   the stable source contract
+
+Current named-argument rules:
+
+- ordinary user-defined calls may use named arguments
+- positional arguments are allowed only as a leading prefix before any named
+  argument
+- every declared parameter must still be supplied exactly once in v0
+- named arguments reorder to the declared parameter order before ordinary
+  type-checking and lowering
+- named arguments are not yet part of the builtin-call surface
 
 ## Quad-Specific Surface Rules
 
