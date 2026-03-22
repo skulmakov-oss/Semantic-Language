@@ -30,3 +30,8 @@ Semantic already has a strong execution contract. What it still lacks is a fully
 - syntax, typing, and module semantics are documented in one intentional contract family
 - examples and diagnostics match the documented source surface
 - no major source feature remains described only by implementation behavior
+
+Related staged design-target notes:
+
+- `docs/roadmap/language_maturity/record_data_model.md`
+- `docs/roadmap/language_maturity/range_execution_story.md`
