@@ -1554,6 +1554,49 @@ mod tests {
             .message
             .contains("loop expression body currently does not allow guard clause or return"));
     }
+
+    #[test]
+    fn ufcs_method_call_typechecks_via_ordinary_call_contract() {
+        let src = r#"
+            fn scale(value: f64, factor: f64) -> f64 = value * factor;
+
+            fn main() {
+                let total: f64 = 2.0.scale(3.0);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("UFCS method-call sugar should typecheck");
+    }
+
+    #[test]
+    fn ufcs_named_arguments_reuse_parameter_reorder_rules() {
+        let src = r#"
+            fn clamp(value: f64, min: f64, max: f64) -> f64 = value;
+
+            fn main() {
+                let total: f64 = 2.0.clamp(min = 0.0, max = 10.0);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("UFCS named arguments should typecheck");
+    }
+
+    #[test]
+    fn ufcs_builtin_named_arguments_still_reject() {
+        let src = r#"
+            fn main() {
+                let total: f64 = 2.0.pow(exp = 3.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("builtin named arguments must still reject");
+        assert!(err
+            .message
+            .contains("named arguments are not supported for builtin 'pow'"));
+    }
 }
 
 fn is_builtin_assert_name(

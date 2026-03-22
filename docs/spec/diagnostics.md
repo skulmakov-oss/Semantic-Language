@@ -114,6 +114,7 @@ Current message families include:
 - malformed or empty `where` binding lists
 - `break expr;` outside `loop` expression context
 - loop-expression bodies that currently use unsupported `guard` / `return`
+- UFCS method-call sugar written without explicit `(...)`
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

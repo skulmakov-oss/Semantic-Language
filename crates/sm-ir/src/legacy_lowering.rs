@@ -3504,6 +3504,33 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_ufcs_method_call_to_ordinary_call_order() {
+        let method_src = r#"
+            fn scale(value: f64, factor: f64) -> f64 = value * factor;
+
+            fn main() {
+                let total: f64 = 2.0.scale(3.0);
+                return;
+            }
+        "#;
+
+        let plain_src = r#"
+            fn scale(value: f64, factor: f64) -> f64 = value * factor;
+
+            fn main() {
+                let total: f64 = scale(2.0, 3.0);
+                return;
+            }
+        "#;
+
+        let method_ir = compile_program_to_ir(method_src).expect("UFCS method call should lower");
+        let plain_ir = compile_program_to_ir(plain_src).expect("plain call should lower");
+        let method_main = method_ir.iter().find(|func| func.name == "main").expect("main fn");
+        let plain_main = plain_ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert_eq!(method_main.instrs, plain_main.instrs);
+    }
+
+    #[test]
     fn lowering_match_expression_rejects_branch_type_mismatch() {
         let src = r#"
             fn main() {

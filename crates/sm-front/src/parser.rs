@@ -560,6 +560,29 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
+        let mut expr = self.parse_primary_atom()?;
+        while self.eat(TokenKind::Dot) {
+            let name = self.expect_symbol()?;
+            if !self.eat(TokenKind::LParen) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "UFCS method-call sugar currently requires explicit parentheses '.name(...)'"
+                            .to_string(),
+                });
+            }
+            let mut args = vec![CallArg {
+                name: None,
+                value: expr,
+            }];
+            args.extend(self.parse_call_args()?);
+            self.expect(TokenKind::RParen, "expected ')' after UFCS method call")?;
+            expr = self.arena.alloc_expr(Expr::Call(name, args));
+        }
+        Ok(expr)
+    }
+
+    fn parse_primary_atom(&mut self) -> Result<ExprId, FrontendError> {
         if self.eat(TokenKind::KwIf) {
             return self.parse_if_expr_after_kw_if();
         }
@@ -2640,6 +2663,76 @@ fn main() {
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("break without value must reject");
         assert!(err.message.contains("requires break value"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_ufcs_method_call_sugar() {
+        let src = r#"
+fn scale(value: f64, factor: f64) -> f64 = value * factor;
+
+fn main() {
+    let total: f64 = 2.0.scale(3.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("UFCS method-call sugar should parse");
+        let func = &program.functions[1];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected let statement");
+        };
+        let Expr::Call(name, args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "scale");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(
+            program.arena.expr(args[0].value),
+            Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_ufcs_method_call_with_named_arguments() {
+        let src = r#"
+fn clamp(value: f64, min: f64, max: f64) -> f64 = value;
+
+fn main() {
+    let total: f64 = 2.0.clamp(min = 0.0, max = 10.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("UFCS named-argument call should parse");
+        let func = &program.functions[1];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected let statement");
+        };
+        let Expr::Call(_, args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(args.len(), 3);
+        assert!(args[0].name.is_none());
+        assert!(args[1].name.is_some());
+        assert!(args[2].name.is_some());
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_ufcs_without_parentheses() {
+        let src = r#"
+fn abs(value: f64) -> f64 = value;
+
+fn main() {
+    let total: f64 = 2.0.abs;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("UFCS without parentheses must reject");
+        assert!(err.message.contains("requires explicit parentheses"));
     }
 
     #[test]

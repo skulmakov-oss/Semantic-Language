@@ -137,6 +137,9 @@ Current expression forms:
 - named-argument calls:
   - `open(path = main_path, mode = read_only)`
   - `value |> stage(limit = 10)`
+- UFCS / method-call sugar:
+  - `value.scale(10.0)`
+  - `sensor.clamp(min = 0.0, max = 1.0)`
 - pipeline chains:
   - `value |> stage()`
   - `value |> stage(arg)`
@@ -233,6 +236,16 @@ Current named-argument rules:
 - named arguments reorder to the declared parameter order before ordinary
   type-checking and lowering
 - named arguments are not yet part of the builtin-call surface
+
+Current UFCS / method-call rules:
+
+- `receiver.name(args...)` is accepted as postfix call sugar
+- UFCS currently desugars to ordinary call order: `name(receiver, args...)`
+- UFCS may chain because it remains ordinary expression/call surface after
+  desugaring
+- UFCS currently requires explicit parentheses; `.name` without `(...)` is not
+  part of the contract
+- UFCS does not introduce field access, object members, or method declarations
 
 Current where-clause rules:
 

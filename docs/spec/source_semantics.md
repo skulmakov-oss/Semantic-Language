@@ -217,6 +217,22 @@ Current v0 limit:
 - `where` bindings currently reuse ordinary local-bind semantics; richer
   destructuring and control-flow forms are not yet part of the stable contract
 
+## UFCS / Method-Call Sugar
+
+Current UFCS semantics:
+
+- `receiver.name(args...)` is postfix sugar over the ordinary call form
+  `name(receiver, args...)`
+- after desugaring, ordinary parameter ordering, named-argument reordering, and
+  lowering rules apply unchanged
+- UFCS chaining remains ordinary nested-call structure after desugaring
+
+Current v0 limit:
+
+- UFCS currently requires explicit call parentheses
+- UFCS does not define field access or member lookup
+- UFCS does not introduce method declarations or object-oriented dispatch
+
 ## Loop Expression
 
 Current `loop` expression semantics:
