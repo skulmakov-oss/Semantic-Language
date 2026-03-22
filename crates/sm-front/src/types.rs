@@ -15,6 +15,7 @@ pub enum Type {
     F64,
     RangeI32,
     Tuple(Vec<Type>),
+    Record(SymbolId),
     Unit,
 }
 
@@ -198,9 +199,22 @@ pub struct Function {
     pub body: Vec<StmtId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordField {
+    pub name: SymbolId,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordDecl {
+    pub name: SymbolId,
+    pub fields: Vec<RecordField>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub arena: AstArena,
+    pub records: Vec<RecordDecl>,
     pub functions: Vec<Function>,
 }
 
@@ -260,6 +274,7 @@ pub struct Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     KwFn,
+    KwRecord,
     KwConst,
     KwLet,
     KwFor,

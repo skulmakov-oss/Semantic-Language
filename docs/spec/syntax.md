@@ -36,7 +36,24 @@ public source-surface contracts are specified separately in:
 
 ## Program Structure
 
-The current Rust-like executable program is a sequence of top-level functions:
+The current Rust-like executable program is a sequence of top-level `record`
+declarations and functions:
+
+```sm
+record Name {
+    field: type,
+    ...
+}
+```
+
+```sm
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+```
+
+Function surface remains:
 
 ```sm
 fn name(arg: type, ...) -> ret_type {
@@ -60,6 +77,10 @@ fn name(arg: type, ...) -> ret_type = expr;
 
 Current rules:
 
+- `record` introduces a nominal top-level record declaration
+- record declarations must be non-empty
+- record field names must be unique within one declaration
+- record field types currently use the ordinary source type grammar
 - `fn` introduces a function
 - parameters are named and typed explicitly
 - trailing parameters may attach a default initializer with `= expr`
@@ -67,6 +88,12 @@ Current rules:
 - function bodies are block-delimited with `{ ... }`
 - `fn ... = expr;` is accepted as shorthand for a single returned expression
 - the public program entrypoint is `fn main()`
+
+Current v0 record limits:
+
+- `record` currently defines type identity only; it does not yet open record construction or field access syntax
+- record types are not yet part of stable executable function signatures, returns, or local binding annotations
+- record destructuring, record punning, mutation, methods, and inheritance are not part of this slice
 
 ## Statements
 
@@ -344,7 +371,7 @@ surface is part of the language contract and is specified in `modules.md`.
 The current source contract does not yet claim stable support for:
 
 - relational operators such as `>`, `<`, `>=`, `<=`
-- user-defined aggregate types
+- user-defined aggregate value operations beyond top-level nominal record declarations
 - collections as first-class language forms
 - generics or trait-like abstraction
 - exceptions or Python-style dynamic execution

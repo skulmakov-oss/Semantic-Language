@@ -18,8 +18,9 @@ pub mod types;
 pub use types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, FrontendErrorKind,
     Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
-    LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt,
-    StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, Program, QuadVal,
+    RecordDecl, RecordField, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type,
+    UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};
@@ -44,6 +45,9 @@ pub struct FnSig {
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub type FnTable = BTreeMap<SymbolId, FnSig>;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type RecordTable = BTreeMap<SymbolId, RecordDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +155,24 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
                 ret: f.ret.clone(),
             },
         );
+    }
+    Ok(out)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_record_table(program: &Program) -> Result<RecordTable, FrontendError> {
+    let mut out = BTreeMap::new();
+    for record in &program.records {
+        if out.contains_key(&record.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "duplicate record '{}'",
+                    resolve_symbol_name(&program.arena, record.name)?
+                ),
+            });
+        }
+        out.insert(record.name, record.clone());
     }
     Ok(out)
 }
@@ -422,7 +444,10 @@ mod tests {
         let src = "fn main() { return; }";
         let ast = parse_rustlike(src).expect("parse");
         match ast {
-            AstBundle::RustLike(p) => assert_eq!(p.functions.len(), 1),
+            AstBundle::RustLike(p) => {
+                assert!(p.records.is_empty());
+                assert_eq!(p.functions.len(), 1);
+            }
             AstBundle::Logos(_) => panic!("expected rustlike bundle"),
         }
     }

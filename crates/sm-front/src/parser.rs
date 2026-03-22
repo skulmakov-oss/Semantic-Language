@@ -3,7 +3,8 @@ use crate::types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
-    RangeExpr, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RangeExpr, RecordDecl, RecordField, Stmt, StmtId, SymbolId, Token, TokenKind,
+    TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -56,6 +57,7 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
+        let mut records = Vec::new();
         let mut functions = Vec::new();
         loop {
             let i = self.next_non_layout_idx();
@@ -63,10 +65,20 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.idx = i;
-            functions.push(self.parse_function()?);
+            match self.tokens[i].kind {
+                TokenKind::KwFn => functions.push(self.parse_function()?),
+                TokenKind::KwRecord => records.push(self.parse_record_decl()?),
+                _ => {
+                    return Err(FrontendError {
+                        pos: self.tokens[i].pos,
+                        message: "expected top-level 'fn' or 'record'".to_string(),
+                    });
+                }
+            }
         }
         Ok(Program {
             arena: ::core::mem::take(&mut self.arena),
+            records,
             functions,
         })
     }
@@ -128,6 +140,31 @@ impl<'a> Parser<'a> {
             ret,
             body,
         })
+    }
+
+    fn parse_record_decl(&mut self) -> Result<RecordDecl, FrontendError> {
+        self.expect(TokenKind::KwRecord, "expected 'record'")?;
+        let name = self.expect_symbol()?;
+        self.expect(TokenKind::LBrace, "expected '{' after record name")?;
+        let mut fields = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            let field_name = self.expect_symbol()?;
+            self.expect(TokenKind::Colon, "expected ':' after record field name")?;
+            let field_ty = self.parse_type()?;
+            fields.push(RecordField {
+                name: field_name,
+                ty: field_ty,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBrace, "expected '}' after record declaration")?;
+        Ok(RecordDecl { name, fields })
     }
 
     fn parse_block(&mut self) -> Result<Vec<StmtId>, FrontendError> {
@@ -1228,6 +1265,8 @@ impl<'a> Parser<'a> {
                 }
                 return Ok(Type::QVec(32));
             }
+            let record_name = self.expect_symbol()?;
+            return Ok(Type::Record(record_name));
         }
         if self.eat(TokenKind::TyQuad) {
             return Ok(Type::Quad);
@@ -2727,6 +2766,72 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*name), "pair");
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_top_level_record_declaration() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    badge: quad,
+    quality: f64,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record declaration should parse");
+        assert_eq!(program.records.len(), 1);
+        let record = &program.records[0];
+        assert_eq!(program.arena.symbol_name(record.name), "DecisionContext");
+        assert_eq!(record.fields.len(), 3);
+        assert_eq!(program.arena.symbol_name(record.fields[0].name), "camera");
+        assert_eq!(record.fields[0].ty, Type::Quad);
+        assert_eq!(record.fields[2].ty, Type::F64);
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_record_type_name_in_function_signature() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+}
+
+fn describe(ctx: DecisionContext) -> DecisionContext {
+    return ctx;
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record type name in signature should parse");
+        let func = &program.functions[0];
+        assert_eq!(program.arena.symbol_name(func.name), "describe");
+        assert!(matches!(func.params[0].1, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext"));
+        assert!(matches!(func.ret, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_empty_record_surface_for_later_sema_rejection() {
+        let src = r#"
+record Empty {}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("empty record is rejected in sema, not parser");
+        assert_eq!(program.records.len(), 1);
+        assert!(program.records[0].fields.is_empty());
     }
 
     #[test]

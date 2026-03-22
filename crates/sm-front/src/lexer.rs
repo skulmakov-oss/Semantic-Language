@@ -295,6 +295,7 @@ fn tokenize_line(
                 let text = &line_text[start..i];
                 let kind = match text {
                     "fn" => TokenKind::KwFn,
+                    "record" => TokenKind::KwRecord,
                     "const" => TokenKind::KwConst,
                     "let" => TokenKind::KwLet,
                     "for" => TokenKind::KwFor,

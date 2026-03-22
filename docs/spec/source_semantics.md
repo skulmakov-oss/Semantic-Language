@@ -24,12 +24,22 @@ The current Rust-like executable surface is a deterministic function program.
 
 Current rules:
 
-- top-level executable items are functions only
+- top-level source items currently include nominal `record` declarations and executable functions
+- `record` declarations contribute nominal type identity but are not themselves executable entrypoints
 - execution begins at `fn main()`
 - `main` must currently have signature `fn main()`
 - there is no dynamic entrypoint discovery or module-level executable code
 - `fn name(...) -> ret = expr;` is semantically equivalent to a body containing
   only `return expr;`
+
+Current v0 record declaration semantics:
+
+- `record Name { ... }` introduces one nominal source type
+- two records with the same field shapes remain distinct because identity is by record name, not by structural shape
+- record declarations must be non-empty and may not repeat field names
+- record declarations may refer to other declared record names in field types
+- recursive record field graphs are not yet part of the stable contract
+- record types are declared in source, but executable value carriers, construction, and field access remain deferred to a later slice
 
 ## Deterministic Evaluation Order
 
@@ -500,6 +510,7 @@ The current source semantics contract does not yet claim stable support for:
 
 - exceptions
 - heap/object semantics
+- executable record construction or field access
 - async or concurrency execution
 - user-defined operator overloading
 - lazy evaluation as a first-class source feature

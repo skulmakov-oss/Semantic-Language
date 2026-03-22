@@ -47,6 +47,7 @@ impl From<Type> for SemanticType {
             Type::Unit => SemanticType::Unit,
             Type::RangeI32 => SemanticType::Unknown,
             Type::Tuple(_) => SemanticType::Unknown,
+            Type::Record(_) => SemanticType::Unknown,
         }
     }
 }

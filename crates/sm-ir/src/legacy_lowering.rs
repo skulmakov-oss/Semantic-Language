@@ -3971,6 +3971,47 @@ mod opt_tests {
     }
 
     #[test]
+    fn compile_program_with_top_level_record_declaration_and_ordinary_main() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record declaration should not break ordinary lowering");
+        assert_eq!(ir.len(), 1);
+        assert_eq!(ir[0].name, "main");
+    }
+
+    #[test]
+    fn lowering_rejects_executable_record_signature_before_carrier_lands() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            fn describe(ctx: DecisionContext) {
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src)
+            .expect_err("executable record type should reject before carrier lands");
+        assert!(err
+            .message
+            .contains("record type 'DecisionContext' is declared but not yet available in executable parameter 'ctx'"));
+    }
+
+    #[test]
     fn lower_loop_expression_with_break_value_to_labels_and_result_slot() {
         let src = r#"
             fn main() {
