@@ -94,6 +94,28 @@ Phase-1 rule:
 This keeps the first aggregate family coherent without forcing a broad match
 expansion in the same change wave.
 
+## Record Punning Gate
+
+`record punning` is intentionally not part of the first canonical record layer.
+
+For the `Density-20 Plus` backlog this means `D20P-D01` stays blocked until all
+of the following are true:
+
+- nominal `record` declarations are part of the executable source contract
+- record construction with explicit field names is implemented end-to-end
+- explicit field access lowers through a stable deterministic slot model
+- the repository has a separate decision reopening record destructuring syntax
+
+Until then, forms such as:
+
+```sm
+Point { x, y }
+let { x, y } = point;
+```
+
+must remain out of scope. The first record wave should keep field names explicit
+and should not reopen pattern/destructuring ergonomics by accident.
+
 ## Lowering Strategy
 
 The first record implementation should preserve the current deterministic VM

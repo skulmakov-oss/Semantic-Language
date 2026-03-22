@@ -35,3 +35,9 @@ Related staged design-target notes:
 
 - `docs/roadmap/language_maturity/record_data_model.md`
 - `docs/roadmap/language_maturity/range_execution_story.md`
+
+Current gated follow-up:
+
+- `D20P-D01 record punning` remains blocked until the canonical record data
+  model is implemented and record destructuring is intentionally reopened as a
+  later contract slice.
