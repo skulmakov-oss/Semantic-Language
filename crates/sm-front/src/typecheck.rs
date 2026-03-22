@@ -94,6 +94,24 @@ fn check_stmt(
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
+        Stmt::Const { name, ty, value } => {
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
+            ensure_const_initializer_safe(*value, arena, env)?;
+            let final_ty = if let Some(ann) = ty {
+                ensure_binding_value_type(
+                    *ann,
+                    vt,
+                    *value,
+                    arena,
+                    format!("const '{}'", resolve_symbol_name(arena, *name)?),
+                )?;
+                *ann
+            } else {
+                vt
+            };
+            env.insert_const(*name, final_ty);
+            Ok(())
+        }
         Stmt::Let { name, ty, value } => {
             let vt = infer_expr_type(*value, arena, env, table, ret_ty)?;
             let final_ty = if let Some(ann) = ty {
@@ -126,6 +144,15 @@ fn check_stmt(
                     resolve_symbol_name(arena, *name)?
                 ),
             })?;
+            if env.is_const(*name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "cannot assign to const binding '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                });
+            }
             let value_ty = infer_expr_type(*value, arena, env, table, ret_ty)?;
             ensure_binding_value_type(
                 target_ty,
@@ -753,6 +780,64 @@ mod tests {
     }
 
     #[test]
+    fn const_declaration_typechecks_for_literal_expression_subset() {
+        let src = r#"
+            fn main() {
+                const two: f64 = 1.0 + 1.0;
+                const four: f64 = two + two;
+                let ok = four == four;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("const declarations should typecheck");
+    }
+
+    #[test]
+    fn const_declaration_rejects_non_const_initializer() {
+        let src = r#"
+            fn main() {
+                let base: f64 = 1.0;
+                const total: f64 = base + 1.0;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("const initializer must reject runtime binding");
+        assert!(err.message.contains("is not const"));
+    }
+
+    #[test]
+    fn const_binding_rejects_assignment_target() {
+        let src = r#"
+            fn main() {
+                const total: f64 = 1.0;
+                total += 2.0;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("assignment to const must reject");
+        assert!(err.message.contains("cannot assign to const binding 'total'"));
+    }
+
+    #[test]
+    fn const_declaration_is_allowed_inside_value_block_body() {
+        let src = r#"
+            fn main() {
+                let total: f64 = {
+                    const offset: f64 = 2.0;
+                    1.0 + offset
+                };
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("const should be accepted in value block body");
+    }
+
+    #[test]
     fn captureful_short_lambda_is_rejected() {
         let src = r#"
             fn main() {
@@ -955,13 +1040,13 @@ fn infer_value_block_type(
     block_env.push_scope();
     for stmt in &block.statements {
         match arena.stmt(*stmt) {
-            Stmt::Let { .. } | Stmt::Discard { .. } | Stmt::Expr(_) => {
+            Stmt::Const { .. } | Stmt::Let { .. } | Stmt::Discard { .. } | Stmt::Expr(_) => {
                 check_stmt(*stmt, arena, &mut block_env, ret_ty, table)?;
             }
             _ => {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "value-producing block currently supports only let-bindings and expression statements before the tail value".to_string(),
+                    message: "value-producing block currently supports only const-bindings, let-bindings, discard binds, and expression statements before the tail value".to_string(),
                 });
             }
         }
@@ -1112,4 +1197,37 @@ fn ensure_binding_value_type(
             context, expected, actual
         ),
     })
+}
+
+fn ensure_const_initializer_safe(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+) -> Result<(), FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::Num(_) | Expr::Float(_) => Ok(()),
+        Expr::Var(name) => {
+            if env.is_const(*name) {
+                Ok(())
+            } else {
+                Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "const initializer currently allows only literals, unary/binary operations, and references to earlier const bindings; '{}' is not const",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                })
+            }
+        }
+        Expr::Unary(_, inner) => ensure_const_initializer_safe(*inner, arena, env),
+        Expr::Binary(lhs, _, rhs) => {
+            ensure_const_initializer_safe(*lhs, arena, env)?;
+            ensure_const_initializer_safe(*rhs, arena, env)
+        }
+        _ => Err(FrontendError {
+            pos: 0,
+            message: "const initializer currently supports only pure literal/const expression forms"
+                .to_string(),
+        }),
+    }
 }

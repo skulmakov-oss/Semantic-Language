@@ -61,6 +61,11 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
+    Const {
+        name: SymbolId,
+        ty: Option<Type>,
+        value: ExprId,
+    },
     Let {
         name: SymbolId,
         ty: Option<Type>,
@@ -196,6 +201,7 @@ pub struct Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     KwFn,
+    KwConst,
     KwLet,
     KwGuard,
     KwIf,

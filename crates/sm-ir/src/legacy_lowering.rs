@@ -1321,6 +1321,25 @@ fn lower_stmt(
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
+        Stmt::Const { name, ty, value } => {
+            let (reg, vty) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                fn_table,
+                *ty,
+                ret_ty,
+            )?;
+            let final_ty = if let Some(ann) = ty { *ann } else { vty };
+            env.insert_const(*name, final_ty);
+            ctx.instrs.push(IrInstr::StoreVar {
+                name: resolve_symbol_name(arena, *name)?.to_string(),
+                src: reg,
+            });
+            Ok(())
+        }
         Stmt::Let { name, ty, value } => {
             let (reg, vty) = lower_expr_with_expected(
                 *value,
@@ -1361,6 +1380,15 @@ fn lower_stmt(
                     resolve_symbol_name(arena, *name)?
                 ),
             })?;
+            if env.is_const(*name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "cannot assign to const binding '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                });
+            }
             let (reg, _) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -1657,6 +1685,24 @@ fn lower_value_block_expr(
     block_env.push_scope();
     for stmt in &block.statements {
         match arena.stmt(*stmt) {
+            Stmt::Const { name, ty, value } => {
+                let (reg, vty) = lower_expr_with_expected(
+                    *value,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    fn_table,
+                    *ty,
+                    ret_ty,
+                )?;
+                let final_ty = if let Some(ann) = ty { *ann } else { vty };
+                block_env.insert_const(*name, final_ty);
+                out.push(IrInstr::StoreVar {
+                    name: resolve_symbol_name(arena, *name)?.to_string(),
+                    src: reg,
+                });
+            }
             Stmt::Let { name, ty, value } => {
                 let (reg, vty) = lower_expr_with_expected(
                     *value, arena, next, out, &block_env, fn_table, *ty, ret_ty,
@@ -1679,7 +1725,7 @@ fn lower_value_block_expr(
             _ => {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "value-producing block currently supports only let-bindings and expression statements before the tail value".to_string(),
+                    message: "value-producing block currently supports only const-bindings, let-bindings, discard binds, and expression statements before the tail value".to_string(),
                 });
             }
         }
@@ -2119,7 +2165,7 @@ mod opt_tests {
 
         let err = compile_program_to_ir(src).expect_err("control statements must reject");
         assert!(err.message.contains(
-            "value-producing block currently supports only let-bindings and expression statements before the tail value"
+            "value-producing block currently supports only const-bindings, let-bindings, discard binds, and expression statements before the tail value"
         ));
     }
 
@@ -2292,6 +2338,41 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::Call { .. })));
+    }
+
+    #[test]
+    fn lower_const_declaration_to_existing_store_path() {
+        let src = r#"
+            fn main() {
+                const total: f64 = 1.0 + 2.0;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("const declaration should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "total")));
+    }
+
+    #[test]
+    fn lowering_rejects_assignment_to_const_binding() {
+        let src = r#"
+            fn main() {
+                const total: f64 = 1.0;
+                total += 2.0;
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src).expect_err("assignment to const must reject");
+        assert!(err.message.contains("cannot assign to const binding 'total'"));
     }
 
     #[test]

@@ -123,6 +123,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt(&mut self) -> Result<StmtId, FrontendError> {
+        if self.eat(TokenKind::KwConst) {
+            let name = self.expect_symbol()?;
+            let ty = if self.eat(TokenKind::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            self.expect(TokenKind::Assign, "expected '='")?;
+            let value = self.parse_expr()?;
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Const { name, ty, value }));
+        }
         if self.eat(TokenKind::KwLet) {
             if self.eat(TokenKind::Underscore) {
                 let ty = if self.eat(TokenKind::Colon) {
@@ -648,6 +660,13 @@ impl<'a> Parser<'a> {
         scopes: &mut Vec<Vec<SymbolId>>,
     ) -> Result<(), FrontendError> {
         match self.arena.stmt(stmt_id) {
+            Stmt::Const { name, value, .. } => {
+                self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.push(*name);
+                }
+                Ok(())
+            }
             Stmt::Let { name, value, .. } => {
                 self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
                 if let Some(scope) = scopes.last_mut() {
@@ -680,7 +699,7 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_stmt_only_in_block_expr(&self) -> bool {
-        self.check(TokenKind::KwLet)
+        self.check(TokenKind::KwLet) || self.check(TokenKind::KwConst)
     }
 
     fn parse_if_expr_after_kw_if(&mut self) -> Result<ExprId, FrontendError> {
@@ -818,7 +837,7 @@ impl<'a> Parser<'a> {
                 return Err(FrontendError {
                     pos: self.pos(),
                     message:
-                        "value-producing block currently supports only let-bindings and expression statements before the tail value"
+                        "value-producing block currently supports only const-bindings, let-bindings, discard binds, and expression statements before the tail value"
                             .to_string(),
                 });
             }
@@ -1432,6 +1451,26 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_const_declaration() {
+        let src = r#"
+fn main() {
+    const total: f64 = 1.0 + 2.0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("const declaration should parse");
+        let func = &program.functions[0];
+        let Stmt::Const { name, ty, value } = program.arena.stmt(func.body[0]) else {
+            panic!("expected const statement");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "total");
+        assert_eq!(*ty, Some(Type::F64));
+        assert!(matches!(program.arena.expr(*value), Expr::Binary(_, BinaryOp::Add, _)));
+    }
+
+    #[test]
     fn rustlike_parser_accepts_pipeline_chain() {
         let src = r#"
 fn inc(x: f64) -> f64 = x + 1.0;
@@ -1563,8 +1602,9 @@ fn main() {
         let src = r#"
 fn main() {
     let value: f64 = {
+        const offset: f64 = 2.0;
         let base: f64 = 1.0;
-        base + 2.0
+        base + offset
     };
     return;
 }
@@ -1579,7 +1619,7 @@ fn main() {
         let Expr::Block(block) = program.arena.expr(*value) else {
             panic!("expected block expression");
         };
-        assert_eq!(block.statements.len(), 1);
+        assert_eq!(block.statements.len(), 2);
         match program.arena.expr(block.tail) {
             Expr::Binary(_, BinaryOp::Add, _) => {}
             other => panic!("expected additive tail expression, got {:?}", other),

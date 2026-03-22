@@ -81,6 +81,7 @@ Current message families include:
 
 - unknown variable
 - unknown assignment target
+- assignment to const binding
 - unknown function
 - argument count mismatch
 - argument type mismatch
@@ -89,6 +90,7 @@ Current message families include:
 - statement-only `assert` used in value position
 - let-binding type mismatch
 - discard-binding type mismatch
+- non-const-safe initializer in const declaration
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

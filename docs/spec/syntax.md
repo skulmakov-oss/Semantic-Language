@@ -63,6 +63,8 @@ Current rules:
 
 Current statement forms:
 
+- `const name = expr;`
+- `const name: type = expr;`
 - `let name = expr;`
 - `let name: type = expr;`
 - `let _ = expr;`
@@ -86,6 +88,8 @@ Current statement forms:
 Current statement rules:
 
 - semicolons terminate executable statements
+- `const` is currently statement-level only
+- `const` initializer syntax mirrors `let` but uses a narrower compile-time-safe expression subset
 - `let _ = expr;` is the current discard-bind surface
 - compound assignment is statement-level sugar only
 - `guard` currently supports only the `else return` form

@@ -78,6 +78,7 @@ The executable Rust-like surface uses lexical block scoping.
 Current rules:
 
 - function parameters are bound in function scope before body execution
+- `const` introduces an immutable source-visible local binding
 - `let` introduces a source-visible local binding
 - `let _ = expr;` evaluates the right-hand side but introduces no source-visible binding
 - `if` branches and `match` arms are checked in branch-local scopes
@@ -93,6 +94,8 @@ Current honest limit:
 
 Current statement meaning:
 
+- `const` evaluates a compile-time-safe initializer expression before binding the name
+- const bindings are immutable in the current source contract
 - `let` evaluates the right-hand side before binding the name
 - discard bind evaluates the right-hand side and then drops the produced value
 - `name op= expr;` evaluates as read-modify-write over the existing binding
@@ -114,6 +117,13 @@ Current non-goal:
 - `guard` does not yet support arbitrary `else { ... }` recovery blocks
 - plain reassignment `name = expr;` is not yet part of the public surface
 
+Current v0 const limit:
+
+- `const` is statement-level only in the current source contract
+- const initializers currently support only pure literal/const expression forms
+- ordinary function calls, control-flow expressions, and references to
+  non-const locals are not yet part of the stable const initializer subset
+
 ## Block Expressions
 
 Current block-expression semantics:
@@ -126,7 +136,8 @@ Current block-expression semantics:
 Current v0 limit:
 
 - block-expression bodies currently accept only named `let` bindings,
-  discard binds, and expression statements before the tail value
+  `const` bindings, discard binds, and expression statements before the tail
+  value
 - discard bind is accepted in value-producing block bodies, but richer pattern
   destructuring is not yet part of the stable block-expression contract
 - `return` is not yet supported inside value-producing block bodies as a

@@ -44,9 +44,16 @@ pub struct FnSig {
 pub type FnTable = BTreeMap<SymbolId, FnSig>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeBinding {
+    pub ty: Type,
+    pub is_const: bool,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeEnv {
-    scopes: Vec<BTreeMap<SymbolId, Type>>,
+    scopes: Vec<BTreeMap<SymbolId, ScopeBinding>>,
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -76,15 +83,37 @@ impl ScopeEnv {
     }
 
     pub fn insert(&mut self, name: SymbolId, ty: Type) {
+        self.insert_binding(
+            name,
+            ScopeBinding {
+                ty,
+                is_const: false,
+            },
+        );
+    }
+
+    pub fn insert_const(&mut self, name: SymbolId, ty: Type) {
+        self.insert_binding(name, ScopeBinding { ty, is_const: true });
+    }
+
+    fn insert_binding(&mut self, name: SymbolId, binding: ScopeBinding) {
         if let Some(last) = self.scopes.last_mut() {
-            last.insert(name, ty);
+            last.insert(name, binding);
         }
     }
 
     pub fn get(&self, name: SymbolId) -> Option<Type> {
+        self.binding(name).map(|binding| binding.ty)
+    }
+
+    pub fn is_const(&self, name: SymbolId) -> bool {
+        self.binding(name).map(|binding| binding.is_const).unwrap_or(false)
+    }
+
+    fn binding(&self, name: SymbolId) -> Option<ScopeBinding> {
         for scope in self.scopes.iter().rev() {
-            if let Some(t) = scope.get(&name) {
-                return Some(*t);
+            if let Some(binding) = scope.get(&name) {
+                return Some(*binding);
             }
         }
         None
