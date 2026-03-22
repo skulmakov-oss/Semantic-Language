@@ -1,4 +1,5 @@
 use crate::*;
+use crate::types::NumericLiteral;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::ToString;
@@ -21,7 +22,7 @@ fn is_numeric_for_fx_gap(ty: Type) -> bool {
 
 fn is_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
-        Expr::Num(_) | Expr::Float(_) => true,
+        Expr::NumericLiteral(_) => true,
         Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_fx_literal_expr(*inner, arena),
         _ => false,
     }
@@ -265,8 +266,12 @@ fn infer_expr_type(
     match expr {
         Expr::QuadLiteral(_) => Ok(Type::Quad),
         Expr::BoolLiteral(_) => Ok(Type::Bool),
-        Expr::Num(_) => Ok(Type::I32),
-        Expr::Float(_) => Ok(Type::F64),
+        Expr::NumericLiteral(literal) => match literal {
+            NumericLiteral::I32(_) => Ok(Type::I32),
+            NumericLiteral::U32(_) => Ok(Type::U32),
+            NumericLiteral::F64(_) => Ok(Type::F64),
+            NumericLiteral::Fx(_) => Ok(Type::Fx),
+        },
         Expr::Var(v) => env.get(*v).ok_or(FrontendError {
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
@@ -370,6 +375,8 @@ fn infer_expr_type(
                 UnaryOp::Pos | UnaryOp::Neg => {
                     if t == Type::F64 {
                         Ok(Type::F64)
+                    } else if t == Type::Fx && is_fx_literal_expr(expr_id, arena) {
+                        Ok(Type::Fx)
                     } else if t == Type::Fx {
                         Err(FrontendError {
                             pos: 0,
@@ -494,6 +501,36 @@ mod tests {
         "#;
 
         typecheck_source(src).expect("fx literal/call/return surface should typecheck");
+    }
+
+    #[test]
+    fn extended_numeric_literal_surface_typechecks() {
+        let src = r#"
+            fn main() {
+                let decimal: i32 = 1_000;
+                let hex: i32 = 0xff;
+                let unsigned: u32 = 1_000u32;
+                let fx_value: fx = 1.25fx;
+                let neg_fx: fx = -1.25fx;
+                let same = unsigned == unsigned;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("extended numeric literal surface should typecheck");
+    }
+
+    #[test]
+    fn explicit_fx_literal_bypasses_f64_gap_at_same_type() {
+        let src = r#"
+            fn main() {
+                let value: fx = 2fx;
+                let same = value == value;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("explicit fx literal should typecheck as fx directly");
     }
 
     #[test]
@@ -1205,7 +1242,7 @@ fn ensure_const_initializer_safe(
     env: &ScopeEnv,
 ) -> Result<(), FrontendError> {
     match arena.expr(expr_id) {
-        Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::Num(_) | Expr::Float(_) => Ok(()),
+        Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
         Expr::Var(name) => {
             if env.is_const(*name) {
                 Ok(())

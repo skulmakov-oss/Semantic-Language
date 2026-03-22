@@ -71,6 +71,25 @@ Current builtin names in the Rust-like surface are:
 - `pow`
 - `assert`
 
+## Numeric Literal Meaning
+
+Current numeric-literal rules:
+
+- unsuffixed decimal integer literals currently evaluate as `i32`
+- unsuffixed decimal literals containing `.` currently evaluate as `f64`
+- explicit `i32`, `u32`, `f64`, and `fx` suffixes fix the source-level literal type
+- digit separators `_` are ignored for numeric-literal value decoding
+- hexadecimal literals currently decode only for integer carriers
+- explicit `fx` literals lower directly to the fixed-point value carrier and do
+  not rely on `f64` surface policy
+
+Current honest limit:
+
+- extended numeric literal spelling does not currently widen integer arithmetic
+  beyond the already documented operator surface
+- exponent notation and binary/octal literal families are not yet part of the
+  stable contract
+
 ## Scope And Binding Rules
 
 The executable Rust-like surface uses lexical block scoping.

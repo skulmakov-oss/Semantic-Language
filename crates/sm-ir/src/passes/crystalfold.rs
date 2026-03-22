@@ -33,6 +33,7 @@ enum ConstVal {
     Bool(bool),
     F64(f64),
     I32(i32),
+    U32(u32),
     Fx(i32),
 }
 
@@ -104,6 +105,10 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
             IrInstr::LoadI32 { dst, val } => {
                 cst.insert(dst, ConstVal::I32(val));
                 out.push(IrInstr::LoadI32 { dst, val });
+            }
+            IrInstr::LoadU32 { dst, val } => {
+                cst.insert(dst, ConstVal::U32(val));
+                out.push(IrInstr::LoadU32 { dst, val });
             }
             IrInstr::LoadF64 { dst, val } => {
                 cst.insert(dst, ConstVal::F64(val));

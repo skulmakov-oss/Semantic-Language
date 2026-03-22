@@ -2,6 +2,7 @@ use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
+use sm_front::types::NumericLiteral;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstr {
@@ -19,6 +20,10 @@ pub enum IrInstr {
     LoadI32 {
         dst: u16,
         val: i32,
+    },
+    LoadU32 {
+        dst: u16,
+        val: u32,
     },
     LoadF64 {
         dst: u16,
@@ -185,21 +190,32 @@ fn try_encode_fx_literal_expr(
     arena: &AstArena,
 ) -> Result<Option<i32>, FrontendError> {
     match arena.expr(expr_id) {
-        Expr::Num(n) => {
-            let value = i32::try_from(*n).map_err(|_| FrontendError {
-                pos: 0,
-                message: format!("numeric literal {} does not fit in i32", n),
-            })?;
-            value
+        Expr::NumericLiteral(literal) => match literal {
+            NumericLiteral::I32(value) => value
                 .checked_mul(FX_SCALE)
                 .ok_or(FrontendError {
                     pos: 0,
                     message: "fx literal is out of range for the v1 fixed-point carrier"
                         .to_string(),
                 })
-                .map(Some)
-        }
-        Expr::Float(n) => encode_fx_literal(*n).map(Some),
+                .map(Some),
+            NumericLiteral::U32(value) => {
+                let value = i32::try_from(*value).map_err(|_| FrontendError {
+                    pos: 0,
+                    message: "fx literal is out of range for the v1 fixed-point carrier"
+                        .to_string(),
+                })?;
+                value
+                    .checked_mul(FX_SCALE)
+                    .ok_or(FrontendError {
+                        pos: 0,
+                        message: "fx literal is out of range for the v1 fixed-point carrier"
+                            .to_string(),
+                    })
+                    .map(Some)
+            }
+            NumericLiteral::F64(value) | NumericLiteral::Fx(value) => encode_fx_literal(*value).map(Some),
+        },
         Expr::Unary(UnaryOp::Pos, inner) => try_encode_fx_literal_expr(*inner, arena),
         Expr::Unary(UnaryOp::Neg, inner) => {
             let Some(value) = try_encode_fx_literal_expr(*inner, arena)? else {
@@ -614,6 +630,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadQ { .. } => 1 + 2 + 1,
         IrInstr::LoadBool { .. } => 1 + 2 + 1,
         IrInstr::LoadI32 { .. } => 1 + 2 + 4,
+        IrInstr::LoadU32 { .. } => 1 + 2 + 4,
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
@@ -670,6 +687,11 @@ fn emit_instr(
             out.push(Opcode::LoadI32.byte());
             write_u16_le(out, *dst);
             write_i32_le(out, *val);
+        }
+        IrInstr::LoadU32 { dst, val } => {
+            out.push(Opcode::LoadU32.byte());
+            write_u16_le(out, *dst);
+            write_u32_le(out, *val);
         }
         IrInstr::LoadF64 { dst, val } => {
             out.push(Opcode::LoadF64.byte());
@@ -910,7 +932,7 @@ fn lower_expr_with_expected(
             out.push(IrInstr::LoadBool { dst: r, val: *v });
             Ok((r, Type::Bool))
         }
-        Expr::Num(n) => {
+        Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
             if expected == Some(Type::Fx) {
                 let val = try_encode_fx_literal_expr(expr_id, arena)?.ok_or(FrontendError {
@@ -928,7 +950,21 @@ fn lower_expr_with_expected(
                 Ok((r, Type::I32))
             }
         }
-        Expr::Float(n) => {
+        Expr::NumericLiteral(NumericLiteral::U32(n)) => {
+            let r = alloc(next);
+            if expected == Some(Type::Fx) {
+                let val = try_encode_fx_literal_expr(expr_id, arena)?.ok_or(FrontendError {
+                    pos: 0,
+                    message: "expected fx literal".to_string(),
+                })?;
+                out.push(IrInstr::LoadFx { dst: r, val });
+                Ok((r, Type::Fx))
+            } else {
+                out.push(IrInstr::LoadU32 { dst: r, val: *n });
+                Ok((r, Type::U32))
+            }
+        }
+        Expr::NumericLiteral(NumericLiteral::F64(n)) => {
             let r = alloc(next);
             if expected == Some(Type::Fx) {
                 out.push(IrInstr::LoadFx {
@@ -940,6 +976,14 @@ fn lower_expr_with_expected(
                 out.push(IrInstr::LoadF64 { dst: r, val: *n });
                 Ok((r, Type::F64))
             }
+        }
+        Expr::NumericLiteral(NumericLiteral::Fx(n)) => {
+            let r = alloc(next);
+            out.push(IrInstr::LoadFx {
+                dst: r,
+                val: encode_fx_literal(*n)?,
+            });
+            Ok((r, Type::Fx))
         }
         Expr::Var(name) => {
             let ty = env.get(*name).ok_or(FrontendError {
@@ -2373,6 +2417,33 @@ mod opt_tests {
 
         let err = compile_program_to_ir(src).expect_err("assignment to const must reject");
         assert!(err.message.contains("cannot assign to const binding 'total'"));
+    }
+
+    #[test]
+    fn lower_extended_numeric_literals_to_typed_loads() {
+        let src = r#"
+            fn main() {
+                let hex: i32 = 0xff;
+                let unsigned: u32 = 1_000u32;
+                let fixed: fx = 1.25fx;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("extended numeric literals should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadI32 { val, .. } if *val == 255)));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadU32 { val, .. } if *val == 1000)));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadFx { val, .. } if *val == 1250)));
     }
 
     #[test]

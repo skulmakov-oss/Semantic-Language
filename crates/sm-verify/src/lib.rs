@@ -454,6 +454,11 @@ fn decode_operands(
             mark_reg(dst);
             read_i32_le(code, cursor).map_err(|_| invalid("truncated i32 literal"))?;
         }
+        Opcode::LoadU32 => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            mark_reg(dst);
+            read_u32_le(code, cursor).map_err(|_| invalid("truncated u32 literal"))?;
+        }
         Opcode::LoadF64 => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             mark_reg(dst);
@@ -693,6 +698,21 @@ mod tests {
         let src = r#"
             fn main() {
                 assert(true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_u32_numeric_literal_semcode() {
+        let src = r#"
+            fn main() {
+                let left: u32 = 1_000u32;
+                let right: u32 = 0x3e8u32;
+                assert(left == right);
                 return;
             }
         "#;

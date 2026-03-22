@@ -412,6 +412,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::LoadU32 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadF64 => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -645,6 +649,12 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
                 set_reg(vm, frame_idx, dst, Value::I32(v))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::LoadU32 => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let v = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
+                set_reg(vm, frame_idx, dst, Value::U32(v))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadF64 => {
@@ -1118,6 +1128,11 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_I32 r{}, {}", d, n)
         }
+        Opcode::LoadU32 => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let n = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("LOAD_U32 r{}, {}", d, n)
+        }
         Opcode::LoadF64 => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let n = read_f64_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1326,6 +1341,22 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("LOAD_FX"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_u32_literal_compare_path() {
+        let src = r#"
+            fn main() {
+                let left: u32 = 1_000u32;
+                let right: u32 = 0x3e8u32;
+                assert(left == right);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("LOAD_U32"));
         run_semcode(&bytes).expect("run");
     }
 

@@ -44,12 +44,19 @@ pub enum BinaryOp {
     Div,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NumericLiteral {
+    I32(i32),
+    U32(u32),
+    F64(f64),
+    Fx(f64),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
-    Num(i64),
-    Float(f64),
+    NumericLiteral(NumericLiteral),
     Var(SymbolId),
     Call(SymbolId, Vec<ExprId>),
     Unary(UnaryOp, ExprId),
@@ -398,7 +405,7 @@ mod tests {
         assert_eq!(arena.stmt(s0), &Stmt::Expr(e0));
 
         // Additional allocations must not change earlier IDs or referenced nodes.
-        let _e2 = arena.alloc_expr(Expr::Num(42));
+        let _e2 = arena.alloc_expr(Expr::NumericLiteral(NumericLiteral::I32(42)));
         let _s2 = arena.alloc_stmt(Stmt::Return(None));
         assert_eq!(arena.expr(e0), &Expr::QuadLiteral(QuadVal::T));
         assert_eq!(arena.stmt(s0), &Stmt::Expr(e0));

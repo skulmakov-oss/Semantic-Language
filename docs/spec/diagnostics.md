@@ -43,6 +43,8 @@ Current examples include:
 - short-lambda surface failures such as rejected outer-local capture in v0
 - `guard`-clause parse failures such as missing `else return`
 - `match`-expression parse failures such as invalid literal arm patterns
+- extended numeric-literal parse failures such as invalid typed suffix/body
+  combinations or decimal-only `f64`/`fx` requirements
 
 Current guarantees:
 
@@ -91,6 +93,7 @@ Current message families include:
 - let-binding type mismatch
 - discard-binding type mismatch
 - non-const-safe initializer in const declaration
+- invalid typed numeric literal form
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

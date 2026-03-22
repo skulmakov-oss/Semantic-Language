@@ -99,6 +99,7 @@ Current statement rules:
 - `match` requires an explicit default arm `_ => { ... }`
 - `_` in `match` remains the current wildcard/default arm spelling
 - unit-returning calls may be used as statements
+- extended numeric literal spelling does not itself widen arithmetic support
 
 ## Expressions
 
@@ -107,8 +108,16 @@ Current expression forms:
 - literals:
   - quad literals: `N`, `F`, `T`, `S`
   - bool literals: `true`, `false`
-  - integer literals
-  - floating literals
+  - integer literals:
+    - decimal `123`
+    - decimal with separators `1_000`
+    - hexadecimal `0xff`
+    - explicit typed forms `123i32`, `123u32`, `0xffu32`
+  - floating and fixed-point literals:
+    - decimal `1.25`
+    - decimal with separators `1_000.25`
+    - explicit `f64` forms `1.25f64`, `100f64`
+    - explicit `fx` forms `1.25fx`, `100fx`
 - variables
 - function calls
 - pipeline chains:
@@ -135,6 +144,17 @@ Current expression forms:
   - `==`, `!=`
   - `&&`, `||`
   - `->`
+
+Current v0 numeric-literal limits:
+
+- unsuffixed integer literals currently mean `i32`
+- unsuffixed decimal literals with `.` currently mean `f64`
+- explicit `fx` literals are decimal-only and do not require `f64` surface policy
+- hexadecimal literals currently target only integer carriers
+- exponent notation and binary/octal literal families are not yet part of the
+  stable surface
+- typed literal spelling does not imply new integer arithmetic beyond the
+  already documented operator surface
 
 Current precedence, from tighter to looser:
 

@@ -246,13 +246,28 @@ fn tokenize_line(
             }
             d if d.is_ascii_digit() => {
                 i += 1;
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                if d == b'0' && i < bytes.len() && (bytes[i] == b'x' || bytes[i] == b'X') {
                     i += 1;
-                }
-                if i < bytes.len() && bytes[i] == b'.' {
-                    i += 1;
-                    while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    while i < bytes.len() && (bytes[i].is_ascii_hexdigit() || bytes[i] == b'_') {
                         i += 1;
+                    }
+                } else {
+                    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'_') {
+                        i += 1;
+                    }
+                    if i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_digit() {
+                        i += 1;
+                        while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'_') {
+                            i += 1;
+                        }
+                    }
+                }
+                if i + 2 <= bytes.len() && &line_text[i..i + 2] == "fx" {
+                    i += 2;
+                } else if i + 3 <= bytes.len() {
+                    let suffix = &line_text[i..i + 3];
+                    if matches!(suffix, "i32" | "u32" | "f64") {
+                        i += 3;
                     }
                 }
                 push_tok(

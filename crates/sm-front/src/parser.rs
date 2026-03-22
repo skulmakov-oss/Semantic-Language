@@ -2,8 +2,8 @@ use crate::lexer::lex_tokens;
 use crate::types::{
     AstArena, BinaryOp, BlockExpr, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt, StmtId, SymbolId, Token, TokenKind,
-    Type, UnaryOp,
+    MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal, Stmt, StmtId, SymbolId,
+    Token, TokenKind, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -461,19 +461,7 @@ impl<'a> Parser<'a> {
         }
         if self.check(TokenKind::Num) {
             let text = self.advance().text;
-            if text.contains('.') {
-                self.require_f64_feature("f64 literals are disabled by profile policy")?;
-                let n = text.parse::<f64>().map_err(|_| FrontendError {
-                    pos: 0,
-                    message: "invalid float number".to_string(),
-                })?;
-                return Ok(self.arena.alloc_expr(Expr::Float(n)));
-            }
-            let n = text.parse::<i64>().map_err(|_| FrontendError {
-                pos: 0,
-                message: "invalid number".to_string(),
-            })?;
-            return Ok(self.arena.alloc_expr(Expr::Num(n)));
+            return self.parse_numeric_literal_expr(&text);
         }
         if self.check(TokenKind::Ident) {
             let name = self.expect_symbol()?;
@@ -591,7 +579,7 @@ impl<'a> Parser<'a> {
         scopes: &mut Vec<Vec<SymbolId>>,
     ) -> Result<(), FrontendError> {
         match self.arena.expr(expr_id) {
-            Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::Num(_) | Expr::Float(_) => Ok(()),
+            Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
             Expr::Var(name) => {
                 if scopes.iter().rev().any(|scope| scope.contains(name)) {
                     Ok(())
@@ -1275,6 +1263,31 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_numeric_literal_expr(&mut self, text: &str) -> Result<ExprId, FrontendError> {
+        let (core, suffix) = split_numeric_suffix(text);
+        let literal = match suffix {
+            Some("i32") => NumericLiteral::I32(parse_i32_literal(core)?),
+            Some("u32") => NumericLiteral::U32(parse_u32_literal(core)?),
+            Some("f64") => {
+                self.require_f64_feature("f64 literals are disabled by profile policy")?;
+                NumericLiteral::F64(parse_decimal_f64_literal(core, "f64")?)
+            }
+            Some("fx") => NumericLiteral::Fx(parse_decimal_f64_literal(core, "fx")?),
+            Some(_) => {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "unsupported numeric literal suffix".to_string(),
+                });
+            }
+            None if core.contains('.') => {
+                self.require_f64_feature("f64 literals are disabled by profile policy")?;
+                NumericLiteral::F64(parse_decimal_f64_literal(core, "f64")?)
+            }
+            None => NumericLiteral::I32(parse_i32_literal(core)?),
+        };
+        Ok(self.arena.alloc_expr(Expr::NumericLiteral(literal)))
+    }
+
     fn require_logos_surface(&self, message: &str) -> Result<(), FrontendError> {
         if self.policy.profile.features.allow_logos_surface {
             Ok(())
@@ -1379,6 +1392,75 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
+    for suffix in ["i32", "u32", "f64", "fx"] {
+        if let Some(core) = text.strip_suffix(suffix) {
+            return (core, Some(suffix));
+        }
+    }
+    (text, None)
+}
+
+fn strip_digit_separators(text: &str) -> String {
+    text.chars().filter(|ch| *ch != '_').collect()
+}
+
+fn parse_i32_literal(text: &str) -> Result<i32, FrontendError> {
+    if text.contains('.') {
+        return Err(FrontendError {
+            pos: 0,
+            message: "i32 literal cannot contain decimal point".to_string(),
+        });
+    }
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        let digits = strip_digit_separators(hex);
+        return i32::from_str_radix(&digits, 16).map_err(|_| FrontendError {
+            pos: 0,
+            message: "invalid i32 hexadecimal literal".to_string(),
+        });
+    }
+    let digits = strip_digit_separators(text);
+    digits.parse::<i32>().map_err(|_| FrontendError {
+        pos: 0,
+        message: "invalid i32 literal".to_string(),
+    })
+}
+
+fn parse_u32_literal(text: &str) -> Result<u32, FrontendError> {
+    if text.contains('.') {
+        return Err(FrontendError {
+            pos: 0,
+            message: "u32 literal cannot contain decimal point".to_string(),
+        });
+    }
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        let digits = strip_digit_separators(hex);
+        return u32::from_str_radix(&digits, 16).map_err(|_| FrontendError {
+            pos: 0,
+            message: "invalid u32 hexadecimal literal".to_string(),
+        });
+    }
+    let digits = strip_digit_separators(text);
+    digits.parse::<u32>().map_err(|_| FrontendError {
+        pos: 0,
+        message: "invalid u32 literal".to_string(),
+    })
+}
+
+fn parse_decimal_f64_literal(text: &str, kind: &str) -> Result<f64, FrontendError> {
+    if text.starts_with("0x") || text.starts_with("0X") {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!("{kind} literal currently requires decimal form"),
+        });
+    }
+    let digits = strip_digit_separators(text);
+    digits.parse::<f64>().map_err(|_| FrontendError {
+        pos: 0,
+        message: format!("invalid {kind} literal"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1447,7 +1529,10 @@ fn main() {
             panic!("expected desugared additive assignment");
         };
         assert!(matches!(program.arena.expr(*lhs), Expr::Var(_)));
-        assert!(matches!(program.arena.expr(*rhs), Expr::Float(_)));
+        assert!(matches!(
+            program.arena.expr(*rhs),
+            Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
     }
 
     #[test]
@@ -1468,6 +1553,84 @@ fn main() {
         assert_eq!(program.arena.symbol_name(*name), "total");
         assert_eq!(*ty, Some(Type::F64));
         assert!(matches!(program.arena.expr(*value), Expr::Binary(_, BinaryOp::Add, _)));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_extended_numeric_literals() {
+        let src = r#"
+fn main() {
+    let a: i32 = 0xff;
+    let b: u32 = 1_000u32;
+    let c: f64 = 1_000.25f64;
+    let d: fx = 1.25fx;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("extended numeric literals should parse");
+        let func = &program.functions[0];
+
+        let Stmt::Let { value: a, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected first let statement");
+        };
+        assert!(matches!(
+            program.arena.expr(*a),
+            Expr::NumericLiteral(NumericLiteral::I32(255))
+        ));
+
+        let Stmt::Let { value: b, .. } = program.arena.stmt(func.body[1]) else {
+            panic!("expected second let statement");
+        };
+        assert!(matches!(
+            program.arena.expr(*b),
+            Expr::NumericLiteral(NumericLiteral::U32(1000))
+        ));
+
+        let Stmt::Let { value: c, .. } = program.arena.stmt(func.body[2]) else {
+            panic!("expected third let statement");
+        };
+        assert!(matches!(
+            program.arena.expr(*c),
+            Expr::NumericLiteral(NumericLiteral::F64(v)) if (*v - 1000.25).abs() < f64::EPSILON
+        ));
+
+        let Stmt::Let { value: d, .. } = program.arena.stmt(func.body[3]) else {
+            panic!("expected fourth let statement");
+        };
+        assert!(matches!(
+            program.arena.expr(*d),
+            Expr::NumericLiteral(NumericLiteral::Fx(v)) if (*v - 1.25).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn strict_profile_accepts_explicit_fx_literals_without_f64_surface() {
+        let src = r#"
+fn main() {
+    let value: fx = 1.25fx;
+    return;
+}
+"#;
+
+        let mut profile = ParserProfile::foundation_default();
+        profile.features.allow_f64_math = false;
+        parse_rustlike_with_profile(src, &profile)
+            .expect("explicit fx literal should not require f64 surface");
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_hex_f64_literal_surface() {
+        let src = r#"
+fn main() {
+    let value: f64 = 0xfff64;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("hex f64 literal must reject");
+        assert!(err.message.contains("f64 literal currently requires decimal form"));
     }
 
     #[test]
@@ -1522,7 +1685,10 @@ fn main() {
             panic!("expected lambda parameter binding");
         };
         assert_eq!(program.arena.symbol_name(*name), "x");
-        assert!(matches!(program.arena.expr(*value), Expr::Float(_)));
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
         assert!(matches!(program.arena.expr(block.tail), Expr::Binary(_, BinaryOp::Add, _)));
     }
 
@@ -1804,7 +1970,10 @@ fn main() {
             panic!("expected discard statement");
         };
         assert!(ty.is_none());
-        assert!(matches!(program.arena.expr(*value), Expr::Float(_)));
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
     }
 
     #[test]
@@ -1823,7 +1992,10 @@ fn main() {
             panic!("expected discard statement");
         };
         assert_eq!(*ty, Some(Type::F64));
-        assert!(matches!(program.arena.expr(*value), Expr::Float(_)));
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
     }
 
     #[test]
