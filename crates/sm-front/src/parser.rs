@@ -390,7 +390,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<ExprId, FrontendError> {
-        self.parse_pipe()
+        self.parse_where()
+    }
+
+    fn parse_where(&mut self) -> Result<ExprId, FrontendError> {
+        let tail = self.parse_pipe()?;
+        if !self.eat(TokenKind::KwWhere) {
+            return Ok(tail);
+        }
+        let statements = self.parse_where_bindings()?;
+        Ok(self.arena.alloc_expr(Expr::Block(BlockExpr { statements, tail })))
     }
 
     fn parse_pipe(&mut self) -> Result<ExprId, FrontendError> {
@@ -657,6 +666,26 @@ impl<'a> Parser<'a> {
             break;
         }
         Ok(args)
+    }
+
+    fn parse_where_bindings(&mut self) -> Result<Vec<StmtId>, FrontendError> {
+        let mut statements = Vec::new();
+        loop {
+            let name = self.expect_symbol()?;
+            let ty = if self.eat(TokenKind::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            self.expect(TokenKind::Assign, "expected '=' in where binding")?;
+            let value = self.parse_expr()?;
+            statements.push(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            break;
+        }
+        Ok(statements)
     }
 
     fn parse_short_lambda_apply_after_lparen(
@@ -2123,6 +2152,61 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_where_clause_expression() {
+        let src = r#"
+fn length_sq(x: f64, y: f64) -> f64 = a + b where a = x * x, b = y * y;
+
+fn main() {
+    let value: f64 = length_sq(3.0, 4.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("where-clause should parse");
+        let func = &program.functions[0];
+        let Stmt::Return(Some(value)) = program.arena.stmt(func.body[0]) else {
+            panic!("expected expression-bodied return");
+        };
+        let Expr::Block(block) = program.arena.expr(*value) else {
+            panic!("expected where-clause to desugar to block expression");
+        };
+        assert_eq!(block.statements.len(), 2);
+        let Stmt::Let { name, .. } = program.arena.stmt(block.statements[0]) else {
+            panic!("expected first where binding");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "a");
+        let Stmt::Let { name, .. } = program.arena.stmt(block.statements[1]) else {
+            panic!("expected second where binding");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "b");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_typed_where_binding() {
+        let src = r#"
+fn main() {
+    let value: f64 = total where total: f64 = 1.0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("typed where binding should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Block(block) = program.arena.expr(*value) else {
+            panic!("expected desugared block expression");
+        };
+        let Stmt::Let { ty, .. } = program.arena.stmt(block.statements[0]) else {
+            panic!("expected typed where binding");
+        };
+        assert_eq!(*ty, Some(Type::F64));
+    }
+
+    #[test]
     fn rustlike_parser_rejects_block_expression_without_tail() {
         let src = r#"
 fn main() {
@@ -2138,6 +2222,20 @@ fn main() {
         assert!(err
             .message
             .contains("value-producing block requires trailing value expression"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_where_without_binding() {
+        let src = r#"
+fn main() {
+    let value: f64 = 1.0 where;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("where without binding must reject");
+        assert!(err.message.contains("expected identifier"));
     }
 
     #[test]

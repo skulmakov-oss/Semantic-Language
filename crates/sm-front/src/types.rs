@@ -231,6 +231,7 @@ pub enum TokenKind {
     KwGuard,
     KwIf,
     KwElse,
+    KwWhere,
     KwReturn,
     KwMatch,
     KwTrue,

@@ -141,6 +141,9 @@ Current expression forms:
   - `value |> stage()`
   - `value |> stage(arg)`
   - `value |> (x => expr)`
+- where-clause suffix:
+  - `sqrt(a + b) where a = x * x, b = y * y`
+  - `total where total: f64 = 1.0`
 - short lambda immediate-call sugar:
   - `(x => expr)(arg)`
 - tuple literals:
@@ -227,6 +230,21 @@ Current named-argument rules:
 - named arguments reorder to the declared parameter order before ordinary
   type-checking and lowering
 - named arguments are not yet part of the builtin-call surface
+
+Current where-clause rules:
+
+- `expr where name = value, ...` is accepted as expression-suffix sugar
+- each `where` binding currently follows ordinary `let` spelling with optional
+  whole-binding type annotation
+- bindings appear in source order and are visible to later `where` bindings and
+  to the tail expression
+- `where` currently desugars through the existing block-expression path
+
+Current honest limit:
+
+- `where` is currently expression-suffix sugar only
+- `where` bindings currently use ordinary local names only; tuple/record
+  destructuring is not yet part of the stable `where` contract
 
 Current default-parameter rules:
 

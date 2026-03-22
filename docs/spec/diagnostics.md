@@ -111,6 +111,7 @@ Current message families include:
 - tuple destructuring assignment arity mismatch
 - unknown tuple assignment target
 - tuple destructuring assignment to const target
+- malformed or empty `where` binding lists
 - return type mismatch
 - invalid `guard` condition type
 - invalid `if` condition type

@@ -1392,6 +1392,37 @@ mod tests {
             .message
             .contains("unknown tuple assignment target 'ready'"));
     }
+
+    #[test]
+    fn where_clause_typechecks_via_block_desugaring() {
+        let src = r#"
+            fn magnitude_sq(x: f64, y: f64) -> f64 =
+                total where
+                    xx = x * x,
+                    yy = y * y,
+                    total = xx + yy;
+
+            fn main() {
+                let value: f64 = magnitude_sq(3.0, 4.0);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("where-clause should typecheck");
+    }
+
+    #[test]
+    fn where_clause_reuses_let_type_mismatch_rules() {
+        let src = r#"
+            fn main() {
+                let value: f64 = total where total: bool = true;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("typed where binding mismatch must reject");
+        assert!(err.message.contains("type mismatch in let"));
+    }
 }
 
 fn is_builtin_assert_name(

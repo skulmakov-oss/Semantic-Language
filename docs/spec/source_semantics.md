@@ -201,6 +201,22 @@ Current v0 limit:
 - `return` is not yet supported inside value-producing block bodies as a
   stable source contract
 
+## Where-Clause
+
+Current `where` semantics:
+
+- `expr where a = x, b = y` is expression-suffix sugar over an ordinary
+  value-producing block
+- `where` bindings execute in source order before the tail expression
+- later `where` bindings may reference earlier `where` bindings
+- the tail expression sees all `where` bindings introduced by the clause
+
+Current v0 limit:
+
+- `where` is currently expression-suffix sugar only
+- `where` bindings currently reuse ordinary local-bind semantics; richer
+  destructuring and control-flow forms are not yet part of the stable contract
+
 ## Tuple Destructuring Bind
 
 Current tuple-destructuring semantics:

@@ -2955,6 +2955,40 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_where_clause_via_existing_block_path() {
+        let src = r#"
+            fn magnitude_sq(x: f64, y: f64) -> f64 =
+                total where
+                    xx = x * x,
+                    yy = y * y,
+                    total = xx + yy;
+
+            fn main() {
+                let value: f64 = magnitude_sq(3.0, 4.0);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("where-clause should lower");
+        let func = ir
+            .iter()
+            .find(|func| func.name == "magnitude_sq")
+            .expect("magnitude_sq fn");
+        assert!(func.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "xx"
+        )));
+        assert!(func.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "yy"
+        )));
+        assert!(func.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "total"
+        )));
+    }
+
+    #[test]
     fn lowering_match_expression_rejects_branch_type_mismatch() {
         let src = r#"
             fn main() {
