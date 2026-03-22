@@ -95,6 +95,9 @@ Current message families include:
 - unknown named parameter
 - duplicate named argument
 - missing named argument for a declared parameter
+- required parameter after default parameter
+- non-const-safe default parameter initializer
+- default parameter type mismatch
 - let-binding type mismatch
 - discard-binding type mismatch
 - non-const-safe initializer in const declaration

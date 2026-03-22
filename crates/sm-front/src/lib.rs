@@ -38,6 +38,7 @@ pub use typecheck::{type_check_function, type_check_function_with_table, type_ch
 pub struct FnSig {
     pub params: Vec<Type>,
     pub param_names: Option<Vec<SymbolId>>,
+    pub param_defaults: Option<Vec<Option<ExprId>>>,
     pub ret: Type,
 }
 
@@ -146,6 +147,7 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
             FnSig {
                 params: f.params.iter().map(|(_, t)| *t).collect(),
                 param_names: Some(f.params.iter().map(|(name, _)| *name).collect()),
+                param_defaults: Some(f.param_defaults.clone()),
                 ret: f.ret,
             },
         );
@@ -159,11 +161,13 @@ pub fn builtin_sig(name: &str) -> Option<FnSig> {
         "sin" | "cos" | "tan" | "sqrt" | "abs" => Some(FnSig {
             params: vec![Type::F64],
             param_names: None,
+            param_defaults: None,
             ret: Type::F64,
         }),
         "pow" => Some(FnSig {
             params: vec![Type::F64, Type::F64],
             param_names: None,
+            param_defaults: None,
             ret: Type::F64,
         }),
         _ => None,
@@ -179,7 +183,7 @@ pub fn reorder_call_args(
 ) -> Result<Vec<ExprId>, FrontendError> {
     let has_named = args.iter().any(|arg| arg.name.is_some());
     if !has_named {
-        if sig.params.len() != args.len() {
+        if args.len() > sig.params.len() {
             return Err(FrontendError {
                 pos: 0,
                 message: format!(
@@ -190,7 +194,11 @@ pub fn reorder_call_args(
                 ),
             });
         }
-        return Ok(args.iter().map(|arg| arg.value).collect());
+        let mut ordered = vec![None; sig.params.len()];
+        for (idx, arg) in args.iter().enumerate() {
+            ordered[idx] = Some(arg.value);
+        }
+        return finalize_ordered_call_args(call_name, ordered, sig, arena, args.len());
     }
 
     let Some(param_names) = sig.param_names.as_ref() else {
@@ -253,18 +261,51 @@ pub fn reorder_call_args(
         }
     }
 
-    if ordered.iter().any(|slot| slot.is_none()) {
-        let missing_index = ordered.iter().position(|slot| slot.is_none()).unwrap_or(0);
+    finalize_ordered_call_args(call_name, ordered, sig, arena, args.len())
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+fn finalize_ordered_call_args(
+    call_name: SymbolId,
+    mut ordered: Vec<Option<ExprId>>,
+    sig: &FnSig,
+    arena: &AstArena,
+    provided_count: usize,
+) -> Result<Vec<ExprId>, FrontendError> {
+    let param_names = sig.param_names.as_ref();
+    let param_defaults = sig.param_defaults.as_ref();
+    for idx in 0..ordered.len() {
+        if ordered[idx].is_some() {
+            continue;
+        }
+        let default_expr = param_defaults
+            .and_then(|defaults| defaults.get(idx))
+            .copied()
+            .flatten();
+        if let Some(default_expr) = default_expr {
+            ordered[idx] = Some(default_expr);
+            continue;
+        }
+        if let Some(param_names) = param_names {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "function '{}' is missing argument for parameter '{}'",
+                    resolve_symbol_name(arena, call_name)?,
+                    resolve_symbol_name(arena, param_names[idx])?
+                ),
+            });
+        }
         return Err(FrontendError {
             pos: 0,
             message: format!(
-                "function '{}' is missing argument for parameter '{}'",
+                "function '{}' expects {} args, got {}",
                 resolve_symbol_name(arena, call_name)?,
-                resolve_symbol_name(arena, param_names[missing_index])?
+                sig.params.len(),
+                provided_count
             ),
         });
     }
-
     Ok(ordered.into_iter().flatten().collect())
 }
 

@@ -2357,6 +2357,48 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_default_parameters_to_ordinary_call_order() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = 2.0) -> f64 = x * factor;
+            fn main() {
+                let total: f64 = scale(3.0);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("default parameters should lower");
+        let main = &ir[1];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::Call { name, args, .. } if name == "scale" && args.len() == 2)));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadF64 { val, .. } if (*val - 2.0).abs() < f64::EPSILON)));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadF64 { val, .. } if (*val - 3.0).abs() < f64::EPSILON)));
+    }
+
+    #[test]
+    fn lowering_rejects_non_const_safe_default_parameter_initializer() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = sqrt(4.0)) -> f64 = x * factor;
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err =
+            compile_program_to_ir(src).expect_err("non-const-safe default parameter must reject");
+        assert!(err
+            .message
+            .contains("default parameter 'factor'"));
+    }
+
+    #[test]
     fn lower_immediate_short_lambda_without_indirect_call_path() {
         let src = r#"
             fn main() {

@@ -76,12 +76,29 @@ impl<'a> Parser<'a> {
         let name = self.expect_symbol()?;
         self.expect(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
+        let mut param_defaults = Vec::new();
+        let mut default_seen = false;
         if !self.check(TokenKind::RParen) {
             loop {
                 let pname = self.expect_symbol()?;
                 self.expect(TokenKind::Colon, "expected ':'")?;
                 let pty = self.parse_type()?;
+                let default = if self.eat(TokenKind::Assign) {
+                    default_seen = true;
+                    Some(self.parse_expr()?)
+                } else {
+                    if default_seen {
+                        return Err(FrontendError {
+                            pos: self.pos(),
+                            message:
+                                "required parameter cannot follow parameter with default value"
+                                    .to_string(),
+                        });
+                    }
+                    None
+                };
                 params.push((pname, pty));
+                param_defaults.push(default);
                 if self.eat(TokenKind::Comma) {
                     continue;
                 }
@@ -107,6 +124,7 @@ impl<'a> Parser<'a> {
         Ok(Function {
             name,
             params,
+            param_defaults,
             ret,
             body,
         })
@@ -1725,6 +1743,29 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_default_parameters() {
+        let src = r#"
+fn scale(x: f64, factor: f64 = 2.0) -> f64 = x * factor;
+fn main() {
+    let value: f64 = scale(3.0);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("default parameters should parse");
+        let scale = &program.functions[0];
+        assert_eq!(scale.params.len(), 2);
+        assert_eq!(scale.param_defaults.len(), 2);
+        assert!(scale.param_defaults[0].is_none());
+        let default_expr = scale.param_defaults[1].expect("expected trailing default");
+        assert!(matches!(
+            program.arena.expr(default_expr),
+            Expr::NumericLiteral(NumericLiteral::F64(v)) if (*v - 2.0).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
     fn rustlike_parser_accepts_pipeline_named_arguments_after_prefix() {
         let src = r#"
 fn scale(x: f64, factor: f64) -> f64 = x * factor;
@@ -1869,6 +1910,22 @@ fn main() {
         assert!(err
             .message
             .contains("positional arguments cannot follow named arguments"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_required_parameter_after_default() {
+        let src = r#"
+fn scale(x: f64 = 2.0, factor: f64) -> f64 = x * factor;
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("required parameter after default must reject");
+        assert!(err
+            .message
+            .contains("required parameter cannot follow parameter with default value"));
     }
 
     #[test]

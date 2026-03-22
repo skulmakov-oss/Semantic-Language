@@ -148,6 +148,7 @@ pub struct MatchArm {
 pub struct Function {
     pub name: SymbolId,
     pub params: Vec<(SymbolId, Type)>,
+    pub param_defaults: Vec<Option<ExprId>>,
     pub ret: Type,
     pub body: Vec<StmtId>,
 }

@@ -44,6 +44,14 @@ fn name(arg: type, ...) -> ret_type {
 }
 ```
 
+Trailing default-parameter sugar is also part of the current v0 surface:
+
+```sm
+fn name(arg: type, optional_arg: type = expr) -> ret_type {
+    ...
+}
+```
+
 Expression-bodied sugar is also part of the current v0 surface:
 
 ```sm
@@ -54,6 +62,7 @@ Current rules:
 
 - `fn` introduces a function
 - parameters are named and typed explicitly
+- trailing parameters may attach a default initializer with `= expr`
 - the return type is optional; omitted return type means `unit`
 - function bodies are block-delimited with `{ ... }`
 - `fn ... = expr;` is accepted as shorthand for a single returned expression
@@ -188,10 +197,18 @@ Current named-argument rules:
 - ordinary user-defined calls may use named arguments
 - positional arguments are allowed only as a leading prefix before any named
   argument
-- every declared parameter must still be supplied exactly once in v0
+- required non-default parameters must still be supplied exactly once in v0
 - named arguments reorder to the declared parameter order before ordinary
   type-checking and lowering
 - named arguments are not yet part of the builtin-call surface
+
+Current default-parameter rules:
+
+- only trailing parameters may declare defaults in v0
+- omitted arguments may currently be filled only from those declared trailing
+  defaults
+- default initializers are part of ordinary user-defined function declarations
+- builtin calls do not expose default-parameter surface
 
 ## Quad-Specific Surface Rules
 

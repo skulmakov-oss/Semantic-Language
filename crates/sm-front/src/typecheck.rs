@@ -42,6 +42,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
         FnSig {
             params: func.params.iter().map(|(_, t)| *t).collect(),
             param_names: Some(func.params.iter().map(|(name, _)| *name).collect()),
+            param_defaults: Some(func.param_defaults.clone()),
             ret: func.ret,
         },
     );
@@ -80,6 +81,35 @@ pub fn type_check_function_with_table(
     arena: &AstArena,
     table: &FnTable,
 ) -> Result<(), FrontendError> {
+    if func.params.len() != func.param_defaults.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: "function parameter/default metadata length mismatch".to_string(),
+        });
+    }
+    let empty_env = ScopeEnv::new();
+    for ((name, ty), default_expr) in func.params.iter().zip(func.param_defaults.iter()) {
+        if let Some(default_expr) = default_expr {
+            let default_ty = infer_expr_type(*default_expr, arena, &empty_env, table, Type::Unit)?;
+            if let Err(err) = ensure_const_initializer_safe(*default_expr, arena, &empty_env) {
+                return Err(FrontendError {
+                    pos: err.pos,
+                    message: format!(
+                        "default parameter '{}' {}",
+                        resolve_symbol_name(arena, *name)?,
+                        err.message
+                    ),
+                });
+            }
+            ensure_binding_value_type(
+                *ty,
+                default_ty,
+                *default_expr,
+                arena,
+                format!("default parameter '{}'", resolve_symbol_name(arena, *name)?),
+            )?;
+        }
+    }
     let mut env = ScopeEnv::with_params(&func.params);
     for stmt in &func.body {
         check_stmt(*stmt, arena, &mut env, func.ret, table)?;
@@ -812,6 +842,36 @@ mod tests {
     }
 
     #[test]
+    fn default_parameters_fill_omitted_trailing_arguments() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = 2.0) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = scale(3.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("default parameters should fill omitted trailing arguments");
+    }
+
+    #[test]
+    fn named_arguments_can_override_remaining_default_parameters() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = 2.0) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = scale(x = 3.0, factor = 4.0);
+                let ok = total == total;
+                if ok { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("named arguments should override defaulted parameters");
+    }
+
+    #[test]
     fn builtin_named_arguments_are_rejected() {
         let src = r#"
             fn main() {
@@ -858,6 +918,54 @@ mod tests {
         assert!(err
             .message
             .contains("is missing argument for parameter 'factor'"));
+    }
+
+    #[test]
+    fn required_parameter_still_rejects_when_default_is_missing() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = 2.0) -> f64 = x * factor;
+
+            fn main() {
+                let total: f64 = scale();
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("required non-default parameter must reject");
+        assert!(err
+            .message
+            .contains("is missing argument for parameter 'x'"));
+    }
+
+    #[test]
+    fn default_parameter_initializer_must_be_const_safe() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = sqrt(4.0)) -> f64 = x * factor;
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-const-safe default parameter must reject");
+        assert!(err
+            .message
+            .contains("default parameter 'factor'"));
+    }
+
+    #[test]
+    fn default_parameter_initializer_cannot_reference_previous_parameter() {
+        let src = r#"
+            fn scale(x: f64, factor: f64 = x) -> f64 = x * factor;
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("default parameter cannot reference earlier param");
+        assert!(err.message.contains("'x'"));
     }
 
     #[test]
