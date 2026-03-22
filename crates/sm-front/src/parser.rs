@@ -3,7 +3,7 @@ use crate::types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
-    Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -162,11 +162,19 @@ impl<'a> Parser<'a> {
                 };
                 self.expect(TokenKind::Assign, "expected '='")?;
                 let value = self.parse_expr()?;
+                if self.check(TokenKind::KwElse) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "let-else currently requires tuple destructuring target; discard target is not supported"
+                                .to_string(),
+                    });
+                }
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::Discard { ty, value }));
             }
             if self.eat(TokenKind::LParen) {
-                let items = self.parse_tuple_bind_items_after_lparen()?;
+                let items = self.parse_tuple_pattern_items_after_lparen()?;
                 let ty = if self.eat(TokenKind::Colon) {
                     Some(self.parse_type()?)
                 } else {
@@ -174,6 +182,16 @@ impl<'a> Parser<'a> {
                 };
                 self.expect(TokenKind::Assign, "expected '='")?;
                 let value = self.parse_expr()?;
+                if self.eat(TokenKind::KwElse) {
+                    let else_return = self.parse_else_return_payload("let-else")?;
+                    return Ok(self.arena.alloc_stmt(Stmt::LetElseTuple {
+                        items,
+                        ty,
+                        value,
+                        else_return,
+                    }));
+                }
+                let items = self.lower_tuple_pattern_items_to_bind(items)?;
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::LetTuple { items, ty, value }));
             }
@@ -185,6 +203,14 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::Assign, "expected '='")?;
             let value = self.parse_expr()?;
+            if self.check(TokenKind::KwElse) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "let-else currently requires tuple destructuring target; plain binding target is not supported"
+                            .to_string(),
+                });
+            }
             self.expect(TokenKind::Semi, "expected ';'")?;
             return Ok(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
         }
@@ -201,7 +227,8 @@ impl<'a> Parser<'a> {
         }
         if self.looks_like_tuple_assign_stmt() {
             self.expect(TokenKind::LParen, "expected '('")?;
-            let items = self.parse_tuple_bind_items_after_lparen()?;
+            let items = self.parse_tuple_pattern_items_after_lparen()?;
+            let items = self.lower_tuple_pattern_items_to_bind(items)?;
             self.expect(TokenKind::Assign, "expected '='")?;
             let value = self.parse_expr()?;
             self.expect(TokenKind::Semi, "expected ';'")?;
@@ -311,39 +338,44 @@ impl<'a> Parser<'a> {
         self.tokens.get(i).map(|t| t.kind) == Some(TokenKind::Assign)
     }
 
-    fn parse_tuple_bind_items_after_lparen(&mut self) -> Result<Vec<Option<SymbolId>>, FrontendError> {
+    fn parse_tuple_pattern_items_after_lparen(&mut self) -> Result<Vec<TuplePatternItem>, FrontendError> {
         let mut items = Vec::new();
         loop {
             if self.check(TokenKind::LParen) {
                 return Err(FrontendError {
                     pos: self.pos(),
                     message:
-                        "tuple destructuring bind v0 currently supports only flat name/_ items"
+                        "tuple destructuring pattern v0 currently supports only flat name/_/quad-literal items"
                             .to_string(),
                 });
             }
             let item = if self.eat(TokenKind::Underscore) {
-                None
+                TuplePatternItem::Discard
+            } else if self.eat(TokenKind::QuadN) {
+                TuplePatternItem::QuadLiteral(QuadVal::N)
+            } else if self.eat(TokenKind::QuadF) {
+                TuplePatternItem::QuadLiteral(QuadVal::F)
+            } else if self.eat(TokenKind::QuadT) {
+                TuplePatternItem::QuadLiteral(QuadVal::T)
+            } else if self.eat(TokenKind::QuadS) {
+                TuplePatternItem::QuadLiteral(QuadVal::S)
             } else {
-                Some(self.expect_symbol()?)
+                TuplePatternItem::Bind(self.expect_symbol()?)
             };
-            if let Some(name) = item {
-                if items
-                    .iter()
-                    .any(|existing: &Option<SymbolId>| existing.as_ref().is_some_and(|existing| *existing == name))
-                {
+            if let TuplePatternItem::Bind(name) = item {
+                if items.iter().any(|existing| {
+                    matches!(existing, TuplePatternItem::Bind(existing_name) if *existing_name == name)
+                }) {
                     return Err(FrontendError {
                         pos: self.pos(),
                         message: format!(
-                            "tuple destructuring bind cannot repeat '{}'",
+                            "tuple destructuring pattern cannot repeat '{}'",
                             self.arena.symbol_name(name)
                         ),
                     });
                 }
-                items.push(Some(name));
-            } else {
-                items.push(None);
             }
+            items.push(item);
             if self.eat(TokenKind::Comma) {
                 if self.check(TokenKind::RParen) {
                     break;
@@ -352,14 +384,54 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after tuple destructuring bind")?;
+        self.expect(TokenKind::RParen, "expected ')' after tuple destructuring pattern")?;
         if items.len() < 2 {
             return Err(FrontendError {
                 pos: self.pos(),
-                message: "tuple destructuring bind requires at least 2 items".to_string(),
+                message: "tuple destructuring pattern requires at least 2 items".to_string(),
             });
         }
         Ok(items)
+    }
+
+    fn lower_tuple_pattern_items_to_bind(
+        &self,
+        items: Vec<TuplePatternItem>,
+    ) -> Result<Vec<Option<SymbolId>>, FrontendError> {
+        let mut bind_items = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                TuplePatternItem::Bind(name) => bind_items.push(Some(name)),
+                TuplePatternItem::Discard => bind_items.push(None),
+                TuplePatternItem::QuadLiteral(_) => {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "quad literal tuple patterns currently require let-else; plain tuple destructuring bind supports only name/_ items"
+                                .to_string(),
+                    })
+                }
+            }
+        }
+        Ok(bind_items)
+    }
+
+    fn parse_else_return_payload(
+        &mut self,
+        feature_name: &str,
+    ) -> Result<Option<ExprId>, FrontendError> {
+        if !self.eat(TokenKind::KwReturn) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: format!("{feature_name} currently supports only else return"),
+            });
+        }
+        if self.eat(TokenKind::Semi) {
+            return Ok(None);
+        }
+        let expr = self.parse_expr()?;
+        self.expect(TokenKind::Semi, "expected ';'")?;
+        Ok(Some(expr))
     }
 
     fn peek_compound_assign_op(&self) -> Option<BinaryOp> {
@@ -2503,6 +2575,75 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_tuple_let_else_surface() {
+        let src = r#"
+fn pair() -> (i32, quad) = (1, T);
+
+fn main() {
+    let (count, T): (i32, quad) = pair() else return;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tuple let-else should parse");
+        let func = &program.functions[1];
+        let Stmt::LetElseTuple {
+            items,
+            ty,
+            value,
+            else_return,
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected tuple let-else statement");
+        };
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], TuplePatternItem::Bind(_)));
+        assert!(matches!(items[1], TuplePatternItem::QuadLiteral(QuadVal::T)));
+        assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Quad])));
+        assert!(else_return.is_none());
+        let Expr::Call(name, args) = program.arena.expr(*value) else {
+            panic!("expected call expression");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "pair");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_plain_bind_let_else_surface() {
+        let src = r#"
+fn main() {
+    let value = 1 else return;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("plain let-else target must reject");
+        assert!(err
+            .message
+            .contains("let-else currently requires tuple destructuring target"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_non_return_tuple_let_else_surface() {
+        let src = r#"
+fn pair() -> (i32, quad) = (1, T);
+
+fn main() {
+    let (count, T) = pair() else guard true else return;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("tuple let-else non-return branch must reject");
+        assert!(err
+            .message
+            .contains("let-else currently supports only else return"));
+    }
+
+    #[test]
     fn rustlike_parser_accepts_tuple_destructuring_assignment() {
         let src = r#"
 fn pair() -> (i32, bool) = (1, true);
@@ -2544,7 +2685,7 @@ fn main() {
             .expect_err("nested tuple destructuring must reject");
         assert!(err
             .message
-            .contains("tuple destructuring bind v0 currently supports only flat"));
+            .contains("tuple destructuring pattern v0 currently supports only flat"));
     }
 
     #[test]
@@ -2563,7 +2704,7 @@ fn main() {
             .expect_err("nested tuple destructuring assignment must reject");
         assert!(err
             .message
-            .contains("tuple destructuring bind v0 currently supports only flat"));
+            .contains("tuple destructuring pattern v0 currently supports only flat"));
     }
 
     #[test]

@@ -2,7 +2,7 @@ use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
-use sm_front::LoopExpr;
+use sm_front::{LoopExpr, TuplePatternItem};
 use sm_front::types::NumericLiteral;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1623,6 +1623,106 @@ fn assign_tuple_items(
     Ok(())
 }
 
+fn bind_let_else_tuple_items(
+    items: &[TuplePatternItem],
+    tuple_reg: u16,
+    tuple_ty: &Type,
+    else_return: Option<ExprId>,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &mut ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(item_tys) = tuple_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: "let-else tuple destructuring bind requires tuple value".to_string(),
+        });
+    };
+    if item_tys.len() != items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "let-else tuple destructuring bind arity mismatch: expected {}, got {}",
+                items.len(),
+                item_tys.len()
+            ),
+        });
+    }
+
+    let pattern_id = alloc_loop_expr_id(next);
+    let mut deferred_binds = Vec::new();
+    for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
+        let reg = alloc(next);
+        let index = u16::try_from(index).map_err(|_| FrontendError {
+            pos: 0,
+            message: "let-else tuple destructuring bind index exceeds v0 limit".to_string(),
+        })?;
+        out.push(IrInstr::TupleGet {
+            dst: reg,
+            src: tuple_reg,
+            index,
+        });
+        match item {
+            TuplePatternItem::Bind(name) => deferred_binds.push((*name, reg, item_ty.clone())),
+            TuplePatternItem::Discard => {}
+            TuplePatternItem::QuadLiteral(pat) => {
+                if *item_ty != Type::Quad {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "let-else tuple literal pattern requires quad element, got {:?}",
+                            item_ty
+                        ),
+                    });
+                }
+                let lit_reg = alloc(next);
+                out.push(IrInstr::LoadQ {
+                    dst: lit_reg,
+                    val: *pat,
+                });
+                let cmp_reg = alloc(next);
+                out.push(IrInstr::CmpEq {
+                    dst: cmp_reg,
+                    lhs: reg,
+                    rhs: lit_reg,
+                });
+                let continue_label =
+                    format!("let_else_tuple_{}_item_{}_ok", pattern_id, index);
+                out.push(IrInstr::JmpIf {
+                    cond: cmp_reg,
+                    label: continue_label.clone(),
+                });
+                lower_return_payload(
+                    else_return,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    ret_ty.clone(),
+                )?;
+                out.push(IrInstr::Label {
+                    name: continue_label,
+                });
+            }
+        }
+    }
+
+    for (name, reg, item_ty) in deferred_binds {
+        env.insert(name, item_ty);
+        out.push(IrInstr::StoreVar {
+            name: resolve_symbol_name(arena, name)?.to_string(),
+            src: reg,
+        });
+    }
+    Ok(())
+}
+
 fn lower_stmt(
     stmt_id: StmtId,
     arena: &AstArena,
@@ -1694,6 +1794,38 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+            )
+        }
+        Stmt::LetElseTuple {
+            items,
+            ty,
+            value,
+            else_return,
+        } => {
+            let (tuple_reg, vty) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                ty.clone(),
+                ret_ty.clone(),
+            )?;
+            let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
+            bind_let_else_tuple_items(
+                items,
+                tuple_reg,
+                &final_ty,
+                *else_return,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                ret_ty,
             )
         }
         Stmt::Discard { ty, value } => {
@@ -2356,6 +2488,10 @@ fn lower_loop_expr_stmt(
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
+        Stmt::LetElseTuple { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow let-else".to_string(),
+        }),
         Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow guard clause or return"
@@ -3436,6 +3572,55 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::TupleGet { index: 1, .. })));
+    }
+
+    #[test]
+    fn lower_tuple_let_else_to_tuple_get_and_early_return_ir() {
+        let src = r#"
+            fn pair() -> (i32, quad) = (1, T);
+
+            fn main() {
+                let (count, T): (i32, quad) = pair() else return;
+                assert(count == 1);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("tuple let-else should lower");
+        let main = ir
+            .iter()
+            .find(|func| func.name == "main")
+            .expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::TupleGet { index: 0, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::TupleGet { index: 1, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadQ { val: QuadVal::T, .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpEq { .. })));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::JmpIf { label, .. } if label.starts_with("let_else_tuple_")
+        )));
+        assert!(main
+            .instrs
+            .iter()
+            .filter(|instr| matches!(instr, IrInstr::Ret { .. }))
+            .count()
+            >= 2);
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "count"
+        )));
     }
 
     #[test]

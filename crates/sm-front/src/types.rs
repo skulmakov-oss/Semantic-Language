@@ -92,6 +92,12 @@ pub enum Stmt {
         ty: Option<Type>,
         value: ExprId,
     },
+    LetElseTuple {
+        items: Vec<TuplePatternItem>,
+        ty: Option<Type>,
+        value: ExprId,
+        else_return: Option<ExprId>,
+    },
     Discard {
         ty: Option<Type>,
         value: ExprId,
@@ -153,6 +159,13 @@ pub struct MatchExprArm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopExpr {
     pub body: Vec<StmtId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TuplePatternItem {
+    Bind(SymbolId),
+    Discard,
+    QuadLiteral(QuadVal),
 }
 
 #[derive(Debug, Clone, PartialEq)]

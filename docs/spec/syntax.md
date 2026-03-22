@@ -78,6 +78,8 @@ Current statement forms:
 - `let name: type = expr;`
 - `let (a, b) = expr;`
 - `let (a, _): (type_a, type_b) = expr;`
+- `let (a, T) = expr else return;`
+- `let (a, T): (type_a, quad) = expr else return expr;`
 - `let _ = expr;`
 - `let _: type = expr;`
 - `name += expr;`
@@ -104,6 +106,9 @@ Current statement rules:
 - `const` initializer syntax mirrors `let` but uses a narrower compile-time-safe expression subset
 - `let _ = expr;` is the current discard-bind surface
 - tuple destructuring bind is currently flat only and accepts only names or `_`
+- `let-else` currently requires tuple destructuring target and `else return`
+- `let-else` tuple items are currently flat only and accept only names, `_`,
+  or `quad` literals `N/F/T/S`
 - tuple destructuring assignment is currently flat only and accepts only names or `_`
 - compound assignment is statement-level sugar only
 - `guard` currently supports only the `else return` form
@@ -195,6 +200,8 @@ Current v0 tuple limits:
 - tuple literals and tuple types are supported
 - tuple destructuring bind is currently statement-level only
 - tuple destructuring bind currently supports only flat name-or-`_` item lists
+- tuple `let-else` currently supports only flat name/`_`/quad-literal item
+  lists
 - tuple destructuring bind currently requires arity at least 2
 - tuple destructuring assignment is currently statement-level only
 - tuple destructuring assignment currently supports only flat name-or-`_` item lists

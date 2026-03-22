@@ -19,7 +19,7 @@ pub use types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, FrontendErrorKind,
     Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
     LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, Program, QuadVal, Stmt,
-    StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+    StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};

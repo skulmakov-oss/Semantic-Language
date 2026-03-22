@@ -214,6 +214,61 @@ fn check_stmt(
             }
             Ok(())
         }
+        Stmt::LetElseTuple {
+            items,
+            ty,
+            value,
+            else_return,
+        } => {
+            let vt = infer_expr_type(*value, arena, env, table, ret_ty.clone(), loop_stack)?;
+            let final_ty = if let Some(ann) = ty {
+                ensure_binding_value_type(
+                    ann.clone(),
+                    vt,
+                    *value,
+                    arena,
+                    "let-else tuple destructuring bind".to_string(),
+                )?;
+                ann.clone()
+            } else {
+                vt
+            };
+            let Type::Tuple(item_tys) = final_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "let-else tuple destructuring bind requires tuple value".to_string(),
+                });
+            };
+            if item_tys.len() != items.len() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "let-else tuple destructuring bind arity mismatch: expected {}, got {}",
+                        items.len(),
+                        item_tys.len()
+                    ),
+                });
+            }
+            check_return_payload(*else_return, arena, env, table, ret_ty, loop_stack)?;
+            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
+                match item {
+                    TuplePatternItem::Bind(name) => env.insert(*name, item_ty),
+                    TuplePatternItem::Discard => {}
+                    TuplePatternItem::QuadLiteral(_) => {
+                        if item_ty != Type::Quad {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "let-else tuple literal pattern requires quad element, got {:?}",
+                                    item_ty
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         Stmt::Discard { ty, value } => {
             let vt = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
             if let Some(ann) = ty {
@@ -1408,6 +1463,70 @@ mod tests {
     }
 
     #[test]
+    fn tuple_let_else_typechecks() {
+        let src = r#"
+            fn pair() -> (i32, quad) = (1, T);
+
+            fn main() {
+                let (count, T): (i32, quad) = pair() else return;
+                assert(count == 1);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("tuple let-else should typecheck");
+    }
+
+    #[test]
+    fn tuple_let_else_rejects_non_tuple_value() {
+        let src = r#"
+            fn main() {
+                let (count, T) = 1 else return;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-tuple let-else must reject");
+        assert!(err
+            .message
+            .contains("let-else tuple destructuring bind requires tuple value"));
+    }
+
+    #[test]
+    fn tuple_let_else_rejects_non_quad_literal_position() {
+        let src = r#"
+            fn pair() -> (i32, bool) = (1, true);
+
+            fn main() {
+                let (count, T): (i32, bool) = pair() else return;
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("non-quad let-else literal pattern must reject");
+        assert!(err
+            .message
+            .contains("let-else tuple literal pattern requires quad element"));
+    }
+
+    #[test]
+    fn tuple_let_else_rejects_return_type_mismatch() {
+        let src = r#"
+            fn pair() -> (i32, quad) = (1, T);
+
+            fn main() {
+                let (count, T): (i32, quad) = pair() else return 1.0;
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("let-else return type mismatch must reject");
+        assert!(err.message.contains("return type mismatch"));
+    }
+
+    #[test]
     fn tuple_destructuring_bind_rejects_non_tuple_value() {
         let src = r#"
             fn main() {
@@ -1764,6 +1883,10 @@ fn check_loop_expr_stmt(
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
+        Stmt::LetElseTuple { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow let-else".to_string(),
+        }),
         Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow guard clause or return"

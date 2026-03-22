@@ -134,6 +134,9 @@ Current rules:
 - `let` introduces a source-visible local binding
 - `let (a, b) = expr;` evaluates the right-hand side once and then binds named
   items left-to-right from the produced tuple value
+- `let (a, T) = expr else return ...;` evaluates the right-hand side once,
+  projects flat tuple items, and returns immediately when any refutable
+  quad-literal item does not match
 - `let _ = expr;` evaluates the right-hand side but introduces no source-visible binding
 - `if` branches and `match` arms are checked in branch-local scopes
 - branch-local bindings do not escape to sibling branches
@@ -155,6 +158,8 @@ Current statement meaning:
   tuple items into named bindings
 - tuple destructuring assignment evaluates the right-hand side once before
   projecting tuple items into existing assignment targets
+- tuple `let-else` introduces named bindings only on the success path; failure
+  follows the explicit `else return` path
 - discard bind evaluates the right-hand side and then drops the produced value
 - `name op= expr;` evaluates as read-modify-write over the existing binding
 - the current v0 compound forms are `+=`, `-=`, `*=`, `/=`, `&&=`, and `||=`
@@ -196,6 +201,8 @@ Current v0 limit:
 - block-expression bodies currently accept only named `let` bindings,
   tuple destructuring binds, `const` bindings, discard binds, and expression
   statements before the tail value
+- tuple `let-else` is not yet part of the stable value-producing block-body
+  contract
 - discard bind is accepted in value-producing block bodies, but richer pattern
   destructuring is not yet part of the stable block-expression contract
 - `return` is not yet supported inside value-producing block bodies as a
@@ -246,7 +253,8 @@ Current v0 limit:
 
 - only expression-form `loop` is part of the contract
 - only `break expr;` is supported; bare `break;` is not
-- loop-expression bodies currently do not allow `guard` or `return`
+- loop-expression bodies currently do not allow `let-else`, `guard`, or
+  `return`
 - `continue`, statement-loop, and richer control interaction are deferred
 
 ## Tuple Destructuring Bind
@@ -268,12 +276,17 @@ Current tuple-destructuring semantics:
 Current v0 limit:
 
 - tuple destructuring bind is currently statement-level only
+- tuple `let-else` is currently statement-level only
 - tuple destructuring assignment is currently statement-level only
-- only flat name-or-`_` item lists are supported
+- only flat name-or-`_` item lists are supported for plain tuple destructuring
+- tuple `let-else` currently supports only flat name/`_`/quad-literal item
+  lists
 - tuple destructuring assignment does not introduce new bindings; every named
   item must already resolve to an existing non-const local
 - nested tuple patterns, tuple field access, and general tuple pattern matching
   are not yet part of the stable source contract
+- plain `let name = expr else ...` is not yet part of the stable source
+  contract
 
 ## Control Flow
 

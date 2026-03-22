@@ -42,6 +42,8 @@ Current examples include:
 - short-lambda parse failures such as standalone non-invoked lambdas
 - short-lambda surface failures such as rejected outer-local capture in v0
 - `guard`-clause parse failures such as missing `else return`
+- `let-else` parse failures such as plain binding targets, discard targets, or
+  non-`return` else branches in the current v0 surface
 - `match`-expression parse failures such as invalid literal arm patterns
 - extended numeric-literal parse failures such as invalid typed suffix/body
   combinations or decimal-only `f64`/`fx` requirements
@@ -106,6 +108,9 @@ Current message families include:
 - tuple type mismatch
 - tuple destructuring bind requires tuple value
 - tuple destructuring bind arity mismatch
+- let-else tuple destructuring bind requires tuple value
+- let-else tuple destructuring bind arity mismatch
+- let-else tuple literal pattern requires quad element
 - nested tuple destructuring bind rejected in v0
 - tuple destructuring assignment requires tuple value
 - tuple destructuring assignment arity mismatch
