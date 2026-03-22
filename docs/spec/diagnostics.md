@@ -107,6 +107,7 @@ Current message families include:
 - range literal requires `i32` bounds
 - range equality not part of stable v0 range surface
 - range literal rejected in tuple/user-data position
+- for-range requires `i32` range expression
 - invalid tuple arity
 - tuple type mismatch
 - tuple destructuring bind requires tuple value
@@ -121,7 +122,8 @@ Current message families include:
 - tuple destructuring assignment to const target
 - malformed or empty `where` binding lists
 - `break expr;` outside `loop` expression context
-- loop-expression bodies that currently use unsupported `guard` / `return`
+- loop-expression bodies that currently use unsupported `for-range`, `guard`,
+  or `return`
 - UFCS method-call sugar written without explicit `(...)`
 - return type mismatch
 - invalid `guard` condition type

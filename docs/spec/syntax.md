@@ -89,6 +89,8 @@ Current statement forms:
 - `name &&= expr;`
 - `name ||= expr;`
 - `(a, b) = expr;`
+- `for name in 0..10 { ... }`
+- `for name in 0..=10 { ... }`
 - `guard condition else return;`
 - `guard condition else return expr;`
 - `assert(condition);`
@@ -111,6 +113,7 @@ Current statement rules:
   or `quad` literals `N/F/T/S`
 - tuple destructuring assignment is currently flat only and accepts only names or `_`
 - compound assignment is statement-level sugar only
+- `for ... in range` currently accepts only `i32` range expressions
 - `guard` currently supports only the `else return` form
 - `assert(condition);` is a statement-level builtin contract form
 - `if` conditions must be `bool`
@@ -205,7 +208,9 @@ Current v0 range-literal limits:
   descriptor rather than a dedicated runtime range opcode
 - range equality is not yet part of the stable source contract
 - range literals are not yet part of the stable tuple/user-data surface
-- `for ... in range` is not yet part of the current stable syntax contract
+- `for ... in range` currently exposes only the narrow `i32` interval surface
+- descending/custom-step/general iterable range forms are not yet part of the
+  stable syntax contract
 
 Current v0 tuple limits:
 

@@ -359,6 +359,23 @@ fn check_stmt(
             }
             Ok(())
         }
+        Stmt::ForRange { name, range, body } => {
+            let range_ty = infer_expr_type(*range, arena, env, table, ret_ty.clone(), loop_stack)?;
+            if range_ty != Type::RangeI32 {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "for-range currently requires i32 range expression".to_string(),
+                });
+            }
+            let mut body_env = env.clone();
+            body_env.push_scope();
+            body_env.insert_const(*name, Type::I32);
+            for stmt in body {
+                check_stmt(*stmt, arena, &mut body_env, ret_ty.clone(), table, loop_stack)?;
+            }
+            body_env.pop_scope();
+            Ok(())
+        }
         Stmt::Break(value) => {
             let break_ty = infer_expr_type(*value, arena, env, table, ret_ty, loop_stack)?;
             let frame = loop_stack.last_mut().ok_or(FrontendError {
@@ -1670,6 +1687,74 @@ mod tests {
     }
 
     #[test]
+    fn for_range_typechecks_with_i32_loop_binding() {
+        let src = r#"
+            fn main() {
+                for i in 0..=2 {
+                    let _: i32 = i;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("for-range should typecheck");
+    }
+
+    #[test]
+    fn for_range_rejects_non_range_value() {
+        let src = r#"
+            fn main() {
+                for i in 1 {
+                    let _: i32 = i;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-range for input must reject");
+        assert!(err
+            .message
+            .contains("for-range currently requires i32 range expression"));
+    }
+
+    #[test]
+    fn for_range_loop_variable_is_const_in_body() {
+        let src = r#"
+            fn main() {
+                for i in 0..2 {
+                    i += 1;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("for-range binding must be const");
+        assert!(err
+            .message
+            .contains("cannot assign to const binding 'i'"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_for_range_in_body() {
+        let src = r#"
+            fn main() {
+                let value: i32 = loop {
+                    for i in 0..1 {
+                        break 1;
+                    }
+                };
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("for-range in loop expression body must reject");
+        assert!(err
+            .message
+            .contains("loop expression body currently does not allow for-range"));
+    }
+
+    #[test]
     fn where_clause_typechecks_via_block_desugaring() {
         let src = r#"
             fn magnitude_sq(x: f64, y: f64) -> f64 =
@@ -1980,6 +2065,10 @@ fn check_loop_expr_stmt(
         Stmt::LetElseTuple { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow let-else".to_string(),
+        }),
+        Stmt::ForRange { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow for-range".to_string(),
         }),
         Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
             pos: 0,

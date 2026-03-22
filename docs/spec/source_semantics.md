@@ -138,8 +138,26 @@ Current v0 limit:
 - range literals currently require `i32` bounds
 - range literals are not yet part of the stable tuple/user-data surface
 - range equality is not yet part of the stable source contract
-- `for ... in range` is not yet part of the stable source contract
 - the source contract does not yet treat ranges as a general iterable family
+
+## For-Range
+
+Current `for ... in range` semantics:
+
+- `for i in start..end { ... }` evaluates the range expression once before the
+  first iteration
+- the loop variable is rebound each iteration from the current `i32` counter
+- half-open ranges iterate while `current < end`
+- closed ranges iterate while `current <= end`
+- when the interval is already empty, the body does not execute
+
+Current v0 limit:
+
+- `for ... in range` currently accepts only `RangeI32` values
+- descending ranges, custom step values, `continue`, and a general iterable
+  subsystem are not yet part of the stable contract
+- `for ... in range` does not widen the public operator surface to general
+  relational operators
 
 ## Scope And Binding Rules
 
@@ -181,6 +199,8 @@ Current statement meaning:
 - discard bind evaluates the right-hand side and then drops the produced value
 - `name op= expr;` evaluates as read-modify-write over the existing binding
 - the current v0 compound forms are `+=`, `-=`, `*=`, `/=`, `&&=`, and `||=`
+- `for ... in range` evaluates the interval descriptor once and then advances a
+  hidden `i32` loop carrier by one per iteration
 - `guard condition else return ...;` continues when the condition is `true`
 - when the guard condition is `false`, the `else return` path terminates the
   current function immediately

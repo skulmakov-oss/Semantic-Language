@@ -234,6 +234,13 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Semi, "expected ';'")?;
             return Ok(self.arena.alloc_stmt(Stmt::AssignTuple { items, value }));
         }
+        if self.eat(TokenKind::KwFor) {
+            let name = self.expect_symbol()?;
+            self.expect(TokenKind::KwIn, "expected 'in' after for binding")?;
+            let range = self.parse_expr()?;
+            let body = self.parse_block()?;
+            return Ok(self.arena.alloc_stmt(Stmt::ForRange { name, range, body }));
+        }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
             if !self.eat(TokenKind::KwElse) {
@@ -2510,6 +2517,31 @@ fn main() {
             Expr::BoolLiteral(true)
         ));
         assert!(else_return.is_none());
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_for_over_range_statement() {
+        let src = r#"
+fn main() {
+    for i in 0..=2 {
+        let _ = i;
+    }
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("for-range statement should parse");
+        let func = &program.functions[0];
+        let Stmt::ForRange { name, range, body } = program.arena.stmt(func.body[0]) else {
+            panic!("expected for-range statement");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "i");
+        let Expr::Range(range_expr) = program.arena.expr(*range) else {
+            panic!("expected range expression");
+        };
+        assert!(range_expr.inclusive);
+        assert_eq!(body.len(), 1);
     }
 
     #[test]

@@ -297,6 +297,8 @@ fn tokenize_line(
                     "fn" => TokenKind::KwFn,
                     "const" => TokenKind::KwConst,
                     "let" => TokenKind::KwLet,
+                    "for" => TokenKind::KwFor,
+                    "in" => TokenKind::KwIn,
                     "guard" => TokenKind::KwGuard,
                     "if" => TokenKind::KwIf,
                     "else" => TokenKind::KwElse,

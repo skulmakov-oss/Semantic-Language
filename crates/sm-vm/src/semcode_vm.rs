@@ -413,6 +413,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::AddI32 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadU32 => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -462,6 +467,8 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
             | Opcode::BoolOr
             | Opcode::CmpEq
             | Opcode::CmpNe
+            | Opcode::CmpI32Lt
+            | Opcode::CmpI32Le
             | Opcode::AddF64
             | Opcode::SubF64
             | Opcode::MulF64
@@ -670,6 +677,16 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 set_reg(vm, frame_idx, dst, Value::I32(v))?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::AddI32 => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
+                let out = l.wrapping_add(r);
+                set_reg(vm, frame_idx, dst, Value::I32(out))?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::LoadU32 => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -789,6 +806,16 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let rv = get_reg(vm, frame_idx, rhs)?;
                 let eq = value_eq(&lv, &rv)?;
                 let out = if opcode == Opcode::CmpEq { eq } else { !eq };
+                set_reg(vm, frame_idx, dst, Value::Bool(out))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::CmpI32Lt | Opcode::CmpI32Le => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
+                let out = if opcode == Opcode::CmpI32Lt { l < r } else { l <= r };
                 set_reg(vm, frame_idx, dst, Value::Bool(out))?;
                 next_pc = cur - f.instr_start;
             }
@@ -1064,6 +1091,16 @@ fn as_bool(v: Value) -> Result<bool, RuntimeError> {
     }
 }
 
+fn as_i32(v: Value) -> Result<i32, RuntimeError> {
+    if let Value::I32(x) = v {
+        Ok(x)
+    } else {
+        Err(RuntimeError::TypeMismatchRuntime(
+            "expected i32".to_string(),
+        ))
+    }
+}
+
 fn as_f64(v: Value) -> Result<f64, RuntimeError> {
     if let Value::F64(x) = v {
         Ok(x)
@@ -1188,6 +1225,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_I32 r{}, {}", d, n)
         }
+        Opcode::AddI32 => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("ADD_I32 r{}, r{}, r{}", d, l, r)
+        }
         Opcode::LoadU32 => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let n = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1238,6 +1281,8 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
         | Opcode::QImpl
         | Opcode::BoolAnd
         | Opcode::BoolOr
+        | Opcode::CmpI32Lt
+        | Opcode::CmpI32Le
         | Opcode::AddF64
         | Opcode::SubF64
         | Opcode::MulF64
@@ -1253,6 +1298,8 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 Opcode::QImpl => "Q_IMPL",
                 Opcode::BoolAnd => "BOOL_AND",
                 Opcode::BoolOr => "BOOL_OR",
+                Opcode::CmpI32Lt => "CMP_I32_LT",
+                Opcode::CmpI32Le => "CMP_I32_LE",
                 Opcode::AddF64 => "ADD_F64",
                 Opcode::SubF64 => "SUB_F64",
                 Opcode::MulF64 => "MUL_F64",
@@ -1477,6 +1524,54 @@ mod tests {
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("TUPLE_GET"));
         run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_for_range_inclusive_path() {
+        let src = r#"
+            fn main() {
+                let saw_start: bool = false;
+                let saw_end: bool = false;
+                for i in 0..=2 {
+                    if i == 0 {
+                        saw_start ||= true;
+                    } else {
+                        saw_start ||= false;
+                    }
+                    if i == 2 {
+                        saw_end ||= true;
+                    } else {
+                        saw_end ||= false;
+                    }
+                }
+                assert(saw_start == true);
+                assert(saw_end == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("CMP_I32_LE"));
+        assert!(disasm.contains("ADD_I32"));
+        run_semcode(&bytes).expect("inclusive for-range should run");
+    }
+
+    #[test]
+    fn vm_runs_for_range_empty_half_open_path() {
+        let src = r#"
+            fn main() {
+                let visited: bool = false;
+                for i in 3..3 {
+                    visited ||= true;
+                }
+                assert(visited == false);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("CMP_I32_LT"));
+        run_semcode(&bytes).expect("empty half-open for-range should skip body");
     }
 
     #[test]

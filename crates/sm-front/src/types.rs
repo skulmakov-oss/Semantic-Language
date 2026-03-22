@@ -112,6 +112,11 @@ pub enum Stmt {
         items: Vec<Option<SymbolId>>,
         value: ExprId,
     },
+    ForRange {
+        name: SymbolId,
+        range: ExprId,
+        body: Vec<StmtId>,
+    },
     Guard {
         condition: ExprId,
         else_return: Option<ExprId>,
@@ -257,6 +262,8 @@ pub enum TokenKind {
     KwFn,
     KwConst,
     KwLet,
+    KwFor,
+    KwIn,
     KwGuard,
     KwIf,
     KwElse,

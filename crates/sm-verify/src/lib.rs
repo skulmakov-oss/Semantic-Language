@@ -454,6 +454,14 @@ fn decode_operands(
             mark_reg(dst);
             read_i32_le(code, cursor).map_err(|_| invalid("truncated i32 literal"))?;
         }
+        Opcode::AddI32 => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            let lhs = read_u16_le(code, cursor).map_err(|_| invalid("truncated lhs register"))?;
+            let rhs = read_u16_le(code, cursor).map_err(|_| invalid("truncated rhs register"))?;
+            mark_reg(dst);
+            mark_reg(lhs);
+            mark_reg(rhs);
+        }
         Opcode::LoadU32 => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             mark_reg(dst);
@@ -519,6 +527,8 @@ fn decode_operands(
         | Opcode::BoolOr
         | Opcode::CmpEq
         | Opcode::CmpNe
+        | Opcode::CmpI32Lt
+        | Opcode::CmpI32Le
         | Opcode::AddF64
         | Opcode::SubF64
         | Opcode::MulF64

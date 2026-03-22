@@ -94,6 +94,21 @@ pub enum IrInstr {
         lhs: u16,
         rhs: u16,
     },
+    CmpI32Lt {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
+    CmpI32Le {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
+    AddI32 {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
     AddF64 {
         dst: u16,
         lhs: u16,
@@ -664,6 +679,9 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         | IrInstr::BoolOr { .. }
         | IrInstr::CmpEq { .. }
         | IrInstr::CmpNe { .. }
+        | IrInstr::CmpI32Lt { .. }
+        | IrInstr::CmpI32Le { .. }
+        | IrInstr::AddI32 { .. }
         | IrInstr::AddF64 { .. }
         | IrInstr::SubF64 { .. }
         | IrInstr::MulF64 { .. }
@@ -762,6 +780,9 @@ fn emit_instr(
         IrInstr::BoolNot { dst, src } => emit_2reg(Opcode::BoolNot, *dst, *src, out),
         IrInstr::CmpEq { dst, lhs, rhs } => emit_3reg(Opcode::CmpEq, *dst, *lhs, *rhs, out),
         IrInstr::CmpNe { dst, lhs, rhs } => emit_3reg(Opcode::CmpNe, *dst, *lhs, *rhs, out),
+        IrInstr::CmpI32Lt { dst, lhs, rhs } => emit_3reg(Opcode::CmpI32Lt, *dst, *lhs, *rhs, out),
+        IrInstr::CmpI32Le { dst, lhs, rhs } => emit_3reg(Opcode::CmpI32Le, *dst, *lhs, *rhs, out),
+        IrInstr::AddI32 { dst, lhs, rhs } => emit_3reg(Opcode::AddI32, *dst, *lhs, *rhs, out),
         IrInstr::AddF64 { dst, lhs, rhs } => emit_3reg(Opcode::AddF64, *dst, *lhs, *rhs, out),
         IrInstr::SubF64 { dst, lhs, rhs } => emit_3reg(Opcode::SubF64, *dst, *lhs, *rhs, out),
         IrInstr::MulF64 { dst, lhs, rhs } => emit_3reg(Opcode::MulF64, *dst, *lhs, *rhs, out),
@@ -1676,6 +1697,170 @@ fn assign_tuple_items(
     Ok(())
 }
 
+fn lower_for_range_stmt(
+    name: SymbolId,
+    range: ExprId,
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+) -> Result<(), FrontendError> {
+    let (range_reg, range_ty) = lower_expr_with_expected(
+        range,
+        arena,
+        &mut ctx.next_reg,
+        &mut ctx.instrs,
+        env,
+        &mut ctx.loop_stack,
+        fn_table,
+        Some(Type::RangeI32),
+        ret_ty.clone(),
+    )?;
+    if range_ty != Type::RangeI32 {
+        return Err(FrontendError {
+            pos: 0,
+            message: "for-range currently requires i32 range expression".to_string(),
+        });
+    }
+
+    let id = ctx.next_if_id();
+    let current_name = format!("__for_range_{}_current", id);
+    let start_reg = alloc(&mut ctx.next_reg);
+    let end_reg = alloc(&mut ctx.next_reg);
+    let inclusive_reg = alloc(&mut ctx.next_reg);
+    let one_reg = alloc(&mut ctx.next_reg);
+    let cmp_reg = alloc(&mut ctx.next_reg);
+    let stop_cmp_reg = alloc(&mut ctx.next_reg);
+    let stop_reg = alloc(&mut ctx.next_reg);
+
+    ctx.instrs.push(IrInstr::TupleGet {
+        dst: start_reg,
+        src: range_reg,
+        index: 0,
+    });
+    ctx.instrs.push(IrInstr::TupleGet {
+        dst: end_reg,
+        src: range_reg,
+        index: 1,
+    });
+    ctx.instrs.push(IrInstr::TupleGet {
+        dst: inclusive_reg,
+        src: range_reg,
+        index: 2,
+    });
+    ctx.instrs.push(IrInstr::LoadI32 {
+        dst: one_reg,
+        val: 1,
+    });
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: current_name.clone(),
+        src: start_reg,
+    });
+
+    let test_label = format!("for_range_{}_test", id);
+    let inclusive_label = format!("for_range_{}_inclusive", id);
+    let exclusive_label = format!("for_range_{}_exclusive", id);
+    let body_label = format!("for_range_{}_body", id);
+    let end_label = format!("for_range_{}_end", id);
+    let loop_name = resolve_symbol_name(arena, name)?.to_string();
+
+    ctx.instrs.push(IrInstr::Label {
+        name: test_label.clone(),
+    });
+    let current_reg = alloc(&mut ctx.next_reg);
+    ctx.instrs.push(IrInstr::LoadVar {
+        dst: current_reg,
+        name: current_name.clone(),
+    });
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: inclusive_reg,
+        label: inclusive_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::Jmp {
+        label: exclusive_label.clone(),
+    });
+
+    ctx.instrs.push(IrInstr::Label {
+        name: inclusive_label,
+    });
+    ctx.instrs.push(IrInstr::CmpI32Le {
+        dst: cmp_reg,
+        lhs: current_reg,
+        rhs: end_reg,
+    });
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: cmp_reg,
+        label: body_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::Jmp {
+        label: end_label.clone(),
+    });
+
+    ctx.instrs.push(IrInstr::Label {
+        name: exclusive_label,
+    });
+    ctx.instrs.push(IrInstr::CmpI32Lt {
+        dst: cmp_reg,
+        lhs: current_reg,
+        rhs: end_reg,
+    });
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: cmp_reg,
+        label: body_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::Jmp {
+        label: end_label.clone(),
+    });
+
+    ctx.instrs.push(IrInstr::Label { name: body_label });
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    body_env.insert_const(name, Type::I32);
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: loop_name,
+        src: current_reg,
+    });
+    for stmt in body {
+        lower_stmt(*stmt, arena, ctx, &mut body_env, ret_ty.clone(), fn_table)?;
+    }
+    body_env.pop_scope();
+
+    let reload_reg = alloc(&mut ctx.next_reg);
+    let next_reg = alloc(&mut ctx.next_reg);
+    ctx.instrs.push(IrInstr::LoadVar {
+        dst: reload_reg,
+        name: current_name.clone(),
+    });
+    ctx.instrs.push(IrInstr::CmpEq {
+        dst: stop_cmp_reg,
+        lhs: reload_reg,
+        rhs: end_reg,
+    });
+    ctx.instrs.push(IrInstr::BoolAnd {
+        dst: stop_reg,
+        lhs: stop_cmp_reg,
+        rhs: inclusive_reg,
+    });
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: stop_reg,
+        label: end_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::AddI32 {
+        dst: next_reg,
+        lhs: reload_reg,
+        rhs: one_reg,
+    });
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: current_name,
+        src: next_reg,
+    });
+    ctx.instrs.push(IrInstr::Jmp { label: test_label });
+    ctx.instrs.push(IrInstr::Label { name: end_label });
+    Ok(())
+}
+
 fn bind_let_else_tuple_items(
     items: &[TuplePatternItem],
     tuple_reg: u16,
@@ -1949,6 +2134,9 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
             )
+        }
+        Stmt::ForRange { name, range, body } => {
+            lower_for_range_stmt(*name, *range, body, arena, ctx, env, ret_ty, fn_table)
         }
         Stmt::Break(value) => {
             let (expected_break, end_label, result_name, prior_result_ty) = {
@@ -2544,6 +2732,10 @@ fn lower_loop_expr_stmt(
         Stmt::LetElseTuple { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow let-else".to_string(),
+        }),
+        Stmt::ForRange { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow for-range".to_string(),
         }),
         Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
             pos: 0,
@@ -3740,6 +3932,41 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "interval"
+        )));
+    }
+
+    #[test]
+    fn lower_for_range_to_i32_compare_and_increment_path() {
+        let src = r#"
+            fn main() {
+                for i in 0..=2 {
+                    assert(i == i);
+                }
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("for-range should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::CmpI32Le { .. }
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::CmpI32Lt { .. }
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AddI32 { .. }
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "i"
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name.starts_with("__for_range_")
         )));
     }
 
