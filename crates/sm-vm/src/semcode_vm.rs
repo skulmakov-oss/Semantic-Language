@@ -1779,6 +1779,29 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_record_copy_with_path() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let patched: DecisionContext = ctx with { quality: 1.0 };
+                assert(patched.camera == T);
+                assert(patched.quality == 1.0);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disassemble");
+        assert!(disasm.contains("RECORD_GET"));
+        assert!(disasm.contains("MAKE_RECORD"));
+        run_semcode(&bytes).expect("record copy-with path should run");
+    }
+
+    #[test]
     fn vm_runs_for_range_inclusive_path() {
         let src = r#"
             fn main() {

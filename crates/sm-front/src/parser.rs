@@ -4,8 +4,8 @@ use crate::types::{
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, Stmt, StmtId, SymbolId, Token, TokenKind,
-    TuplePatternItem, Type, UnaryOp,
+    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
+    TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -808,21 +808,34 @@ impl<'a> Parser<'a> {
 
     fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
         let mut expr = self.parse_primary_atom()?;
-        while self.eat(TokenKind::Dot) {
-            let field = self.expect_symbol()?;
-            if !self.eat(TokenKind::LParen) {
-                expr = self
-                    .arena
-                    .alloc_expr(Expr::RecordField(RecordFieldExpr { base: expr, field }));
+        loop {
+            if self.eat(TokenKind::Dot) {
+                let field = self.expect_symbol()?;
+                if !self.eat(TokenKind::LParen) {
+                    expr = self
+                        .arena
+                        .alloc_expr(Expr::RecordField(RecordFieldExpr { base: expr, field }));
+                    continue;
+                }
+                let mut args = vec![CallArg {
+                    name: None,
+                    value: expr,
+                }];
+                args.extend(self.parse_call_args()?);
+                self.expect(TokenKind::RParen, "expected ')' after UFCS method call")?;
+                expr = self.arena.alloc_expr(Expr::Call(field, args));
                 continue;
             }
-            let mut args = vec![CallArg {
-                name: None,
-                value: expr,
-            }];
-            args.extend(self.parse_call_args()?);
-            self.expect(TokenKind::RParen, "expected ')' after UFCS method call")?;
-            expr = self.arena.alloc_expr(Expr::Call(field, args));
+            if self.eat(TokenKind::KwWith) {
+                self.expect(TokenKind::LBrace, "expected '{' after 'with' in record copy-with")?;
+                let fields = self.parse_record_init_fields_after_lbrace()?;
+                expr = self.arena.alloc_expr(Expr::RecordUpdate(RecordUpdateExpr {
+                    base: expr,
+                    fields,
+                }));
+                continue;
+            }
+            break;
         }
         Ok(expr)
     }
@@ -912,6 +925,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_record_literal_after_name(&mut self, name: SymbolId) -> Result<ExprId, FrontendError> {
+        let fields = self.parse_record_init_fields_after_lbrace()?;
+        Ok(self.arena.alloc_expr(Expr::RecordLiteral(RecordLiteralExpr {
+            name,
+            fields,
+        })))
+    }
+
+    fn parse_record_init_fields_after_lbrace(
+        &mut self,
+    ) -> Result<Vec<RecordInitField>, FrontendError> {
         let mut fields = Vec::new();
         while !self.check(TokenKind::RBrace) {
             let field_name = self.expect_symbol()?;
@@ -929,11 +952,8 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RBrace, "expected '}' after record literal")?;
-        Ok(self.arena.alloc_expr(Expr::RecordLiteral(RecordLiteralExpr {
-            name,
-            fields,
-        })))
+        self.expect(TokenKind::RBrace, "expected '}' after record field list")?;
+        Ok(fields)
     }
 
     fn starts_record_literal_head(&self) -> bool {
@@ -1119,6 +1139,13 @@ impl<'a> Parser<'a> {
             }
             Expr::RecordField(field_expr) => {
                 self.ensure_short_lambda_expr_capture_free(field_expr.base, scopes)
+            }
+            Expr::RecordUpdate(update_expr) => {
+                self.ensure_short_lambda_expr_capture_free(update_expr.base, scopes)?;
+                for field in &update_expr.fields {
+                    self.ensure_short_lambda_expr_capture_free(field.value, scopes)?;
+                }
+                Ok(())
             }
             Expr::Var(name) => {
                 if scopes.iter().rev().any(|scope| scope.contains(name)) {
@@ -3057,6 +3084,38 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*base), "ctx");
         assert_eq!(program.arena.symbol_name(field_expr.field), "camera");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_record_copy_with_surface() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let ctx = DecisionContext { camera: T, quality: 0.75 };
+    let patched = ctx with { quality: 1.0 };
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record copy-with should parse");
+        let main = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(main.body[1]) else {
+            panic!("expected second let");
+        };
+        let Expr::RecordUpdate(update_expr) = program.arena.expr(*value) else {
+            panic!("expected record update expr");
+        };
+        let Expr::Var(base) = program.arena.expr(update_expr.base) else {
+            panic!("expected record update base variable");
+        };
+        assert_eq!(program.arena.symbol_name(*base), "ctx");
+        assert_eq!(update_expr.fields.len(), 1);
+        assert_eq!(program.arena.symbol_name(update_expr.fields[0].name), "quality");
     }
 
     #[test]

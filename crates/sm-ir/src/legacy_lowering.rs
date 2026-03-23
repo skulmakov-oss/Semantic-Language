@@ -1283,6 +1283,104 @@ fn lower_expr_with_expected(
             });
             Ok((dst, field.ty.clone()))
         }
+        Expr::RecordUpdate(update_expr) => {
+            let (base_reg, base_ty) = lower_expr(
+                update_expr.base,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
+            let Type::Record(record_name) = base_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "record copy-with lowering requires record base before 'with', got {:?}",
+                        base_ty
+                    ),
+                });
+            };
+            let record = record_table.get(&record_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown record type '{}' in record copy-with lowering",
+                    resolve_symbol_name(arena, record_name)?
+                ),
+            })?;
+            if update_expr.fields.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "record copy-with requires at least one explicit override field".to_string(),
+                });
+            }
+            let mut lowered_overrides = HashMap::new();
+            for field in &update_expr.fields {
+                let expected_field_ty = record
+                    .fields
+                    .iter()
+                    .find(|decl_field| decl_field.name == field.name)
+                    .map(|decl_field| decl_field.ty.clone())
+                    .ok_or(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record copy-with '{}' has no field named '{}' during lowering",
+                            resolve_symbol_name(arena, record_name)?,
+                            resolve_symbol_name(arena, field.name)?
+                        ),
+                    })?;
+                let (reg, _) = lower_expr_with_expected(
+                    field.value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    Some(expected_field_ty),
+                    ret_ty.clone(),
+                )?;
+                if lowered_overrides.insert(field.name, reg).is_some() {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record copy-with '{}' cannot repeat field '{}' during lowering",
+                            resolve_symbol_name(arena, record_name)?,
+                            resolve_symbol_name(arena, field.name)?
+                        ),
+                    });
+                }
+            }
+            let mut ordered_regs = Vec::with_capacity(record.fields.len());
+            for (index, decl_field) in record.fields.iter().enumerate() {
+                if let Some(override_reg) = lowered_overrides.get(&decl_field.name).copied() {
+                    ordered_regs.push(override_reg);
+                    continue;
+                }
+                let reg = alloc(next);
+                out.push(IrInstr::RecordGet {
+                    dst: reg,
+                    src: base_reg,
+                    record_name: resolve_symbol_name(arena, record_name)?.to_string(),
+                    index: u16::try_from(index).map_err(|_| FrontendError {
+                        pos: 0,
+                        message: "record copy-with slot index exceeds v0 limit".to_string(),
+                    })?,
+                });
+                ordered_regs.push(reg);
+            }
+            let dst = alloc(next);
+            out.push(IrInstr::MakeRecord {
+                dst,
+                name: resolve_symbol_name(arena, record_name)?.to_string(),
+                items: ordered_regs,
+            });
+            Ok((dst, Type::Record(record_name)))
+        }
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
             if expected == Some(Type::Fx) {
@@ -4641,6 +4739,40 @@ mod opt_tests {
             instr,
             IrInstr::RecordGet { record_name, index, .. }
                 if record_name == "DecisionContext" && *index == 0
+        )));
+    }
+
+    #[test]
+    fn lower_record_copy_with_to_record_get_and_make_record_ir() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let patched: DecisionContext = ctx with { quality: 1.0 };
+                assert(patched.camera == T);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record copy-with should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::RecordGet { record_name, index, .. }
+                if record_name == "DecisionContext" && *index == 0
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeRecord { name, items, .. }
+                if name == "DecisionContext" && items.len() == 2
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "patched"
         )));
     }
 

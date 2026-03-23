@@ -80,6 +80,12 @@ pub struct RecordFieldExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RecordUpdateExpr {
+    pub base: ExprId,
+    pub fields: Vec<RecordInitField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordPatternItem {
     pub field: SymbolId,
     pub target: RecordPatternTarget,
@@ -101,6 +107,7 @@ pub enum Expr {
     Tuple(Vec<ExprId>),
     RecordLiteral(RecordLiteralExpr),
     RecordField(RecordFieldExpr),
+    RecordUpdate(RecordUpdateExpr),
     Var(SymbolId),
     Call(SymbolId, Vec<CallArg>),
     Unary(UnaryOp, ExprId),
@@ -329,6 +336,7 @@ pub enum TokenKind {
     KwLoop,
     KwBreak,
     KwWhere,
+    KwWith,
     KwReturn,
     KwMatch,
     KwTrue,

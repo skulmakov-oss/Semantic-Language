@@ -93,10 +93,11 @@ Current v0 record limits:
 
 - `RecordName { field: expr, ... }` is the current stage-1 record construction form
 - `record_value.field_name` is the current stage-1 read-only field access form
+- `record_value with { field: expr, ... }` is the current stage-2 immutable record update form
 - record literal fields must appear exactly once by name
 - lowering preserves declaration-slot order rather than source-field order
 - record types may now appear in executable local bindings, parameters, and returns
-- record destructuring and record update are not yet part of the stable source contract
+- record destructuring and record copy-with now participate in the stable source contract
 - record equality is allowed only when every field type already supports stable equality
 - record values are not part of the PROMETHEUS host ABI surface
 - record destructuring, record punning, mutation, methods, and inheritance are not part of this slice
@@ -113,6 +114,7 @@ Current statement forms:
 - `let (a, _): (type_a, type_b) = expr;`
 - `let RecordName { field_name: local_name, other_field: _ } = expr;`
 - `let RecordName { field_name: T, other_field: local_name } = expr else return;`
+- `let next = current with { quality: 1.0 };`
 - `let (a, T) = expr else return;`
 - `let (a, T): (type_a, quad) = expr else return expr;`
 - `let _ = expr;`
@@ -212,6 +214,9 @@ Current expression forms:
 - record field access:
   - `ctx.camera`
   - `ctx.quality`
+- record copy-with:
+  - `ctx with { quality: 1.0 }`
+  - `ctx with { camera: F, quality: 0.25 }`
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`

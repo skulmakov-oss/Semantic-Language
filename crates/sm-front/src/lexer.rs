@@ -306,6 +306,7 @@ fn tokenize_line(
                     "loop" => TokenKind::KwLoop,
                     "break" => TokenKind::KwBreak,
                     "where" => TokenKind::KwWhere,
+                    "with" => TokenKind::KwWith,
                     "return" => TokenKind::KwReturn,
                     "match" => TokenKind::KwMatch,
                     "true" => TokenKind::KwTrue,

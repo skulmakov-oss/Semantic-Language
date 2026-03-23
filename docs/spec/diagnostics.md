@@ -131,6 +131,11 @@ Current message families include:
 - record let-else on non-matching record value
 - record let-else without refutable quad literal field pattern
 - record let-else literal pattern on non-quad field
+- unknown record type in record copy-with
+- record copy-with on non-record base
+- empty record copy-with override set
+- duplicate field in record copy-with
+- unknown field in record copy-with
 - record equality requested outside the stable field-equality subset
 - invalid tuple arity
 - tuple type mismatch

@@ -46,6 +46,8 @@ Current v0 record declaration semantics:
 - stage-1 record values may flow through executable locals, parameters, and returns
 - stage-1 field access uses `record_value.field_name` and resolves against the canonical record declaration
 - stage-1 field access lowers through deterministic declaration-slot reads
+- stage-2 immutable record update uses `record_value with { field: expr, ... }`
+- copy-with preserves the nominal record identity of its base value
 - explicit record destructuring bind uses `let RecordName { field: target, ... } = value;`
 - explicit record destructuring bind currently projects only the named subset of declaration fields
 - `_` targets in explicit record destructuring bind discard the projected field value without creating a source binding
@@ -216,6 +218,8 @@ Current statement meaning:
   tuple items into named bindings
 - record destructuring bind evaluates the right-hand side once before projecting
   the requested record fields into named bindings
+- record copy-with evaluates the base value once, evaluates override expressions
+  left-to-right, then rebuilds the canonical slot carrier in declaration order
 - record `let-else` evaluates the right-hand side once, checks refutable
   `quad` field literals before introducing named bindings, and follows the
   explicit `else return` path on failure
@@ -411,14 +415,17 @@ Current stage-1 record semantics:
 Current v0 limit:
 
 - record field access is read-only and resolves by canonical declaration-slot order
+- record copy-with is immutable and rebuilds a value of the same nominal record type
+- unchanged record fields in copy-with are read from the base value through canonical declaration-slot access
 - record destructuring bind currently supports only statement-level explicit
   `RecordName { field: target }` patterns
 - record `let-else` currently supports only statement-level explicit field
   mappings with `else return`
 - record `let-else` currently allows refutable matching only through explicit
   `quad` literal field targets
-- record destructuring bind does not yet open nested patterns, update, or
-  punning
+- record copy-with currently requires explicit field mappings and does not open
+  punning or mutation semantics
+- record destructuring bind does not yet open nested patterns or punning
 - record equality remains gated to the stable field-equality subset
 - record values are not part of the PROMETHEUS host ABI surface
 

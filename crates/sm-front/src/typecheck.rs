@@ -964,6 +964,15 @@ fn infer_expr_type(
             ret_ty,
             loop_stack,
         ),
+        Expr::RecordUpdate(update_expr) => infer_record_update_type(
+            update_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::Var(v) => env.get(*v).ok_or(FrontendError {
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
@@ -2570,6 +2579,103 @@ mod tests {
     }
 
     #[test]
+    fn record_copy_with_typechecks_for_explicit_override_subset() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let patched: DecisionContext = ctx with { quality: 1.0 };
+                assert(patched.camera == T);
+                assert(patched.quality == 1.0);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("record copy-with should typecheck");
+    }
+
+    #[test]
+    fn record_copy_with_rejects_unknown_field() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T };
+                let patched = ctx with { badge: T };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("unknown copy-with field must reject");
+        assert!(err
+            .message
+            .contains("record copy-with 'DecisionContext' has no field named 'badge'"));
+    }
+
+    #[test]
+    fn record_copy_with_rejects_duplicate_field_override() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let patched = ctx with { quality: 1.0, quality: 2.0 };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("duplicate copy-with field must reject");
+        assert!(err
+            .message
+            .contains("record copy-with 'DecisionContext' cannot repeat field 'quality'"));
+    }
+
+    #[test]
+    fn record_copy_with_rejects_non_record_base() {
+        let src = r#"
+            fn main() {
+                let value: f64 = 1.0;
+                let patched = value with { quality: 0.75 };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-record copy-with base must reject");
+        assert!(err
+            .message
+            .contains("record copy-with requires record base before 'with', got F64"));
+    }
+
+    #[test]
+    fn record_copy_with_rejects_empty_override_set() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T };
+                let patched = ctx with { };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("empty copy-with must reject");
+        assert!(err
+            .message
+            .contains("record copy-with requires at least one explicit override field"));
+    }
+
+    #[test]
     fn record_destructuring_bind_typechecks_for_explicit_field_subset() {
         let src = r#"
             record DecisionContext {
@@ -3470,6 +3576,95 @@ fn infer_record_field_access_type(
             ),
         })?;
     Ok(field.ty.clone())
+}
+
+fn infer_record_update_type(
+    update_expr: &RecordUpdateExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let base_ty = infer_expr_type(
+        update_expr.base,
+        arena,
+        env,
+        table,
+        record_table,
+        ret_ty.clone(),
+        loop_stack,
+    )?;
+    let Type::Record(record_name) = base_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "record copy-with requires record base before 'with', got {:?}",
+                base_ty
+            ),
+        });
+    };
+    let record = record_table.get(&record_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in record copy-with",
+            resolve_symbol_name(arena, record_name)?
+        ),
+    })?;
+    let record_name_text = resolve_symbol_name(arena, record_name)?;
+    if update_expr.fields.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: "record copy-with requires at least one explicit override field".to_string(),
+        });
+    }
+    let mut field_types = BTreeMap::new();
+    for field in &record.fields {
+        field_types.insert(field.name, field.ty.clone());
+    }
+    let mut seen = BTreeSet::new();
+    for field in &update_expr.fields {
+        if !seen.insert(field.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record copy-with '{}' cannot repeat field '{}'",
+                    record_name_text,
+                    resolve_symbol_name(arena, field.name)?
+                ),
+            });
+        }
+        let expected_ty = field_types.get(&field.name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "record copy-with '{}' has no field named '{}'",
+                record_name_text,
+                resolve_symbol_name(arena, field.name)?
+            ),
+        })?;
+        let actual_ty = infer_expr_type(
+            field.value,
+            arena,
+            env,
+            table,
+            record_table,
+            ret_ty.clone(),
+            loop_stack,
+        )?;
+        ensure_binding_value_type(
+            expected_ty.clone(),
+            actual_ty,
+            field.value,
+            arena,
+            format!(
+                "record copy-with '{}.{}'",
+                record_name_text,
+                resolve_symbol_name(arena, field.name)?
+            ),
+        )?;
+    }
+    Ok(Type::Record(record_name))
 }
 
 fn check_match_guard(
