@@ -116,6 +116,9 @@ Current message families include:
 - unsupported expression form inside `requires`
 - let-binding type mismatch
 - discard-binding type mismatch
+- invalid unit annotation on non-numeric type family
+- measured numeric type mismatch across binding/call/return transport
+- `*` / `/` requested on unit-carrying values in the first-wave surface
 - `Option::None` without contextual `Option(T)` type
 - `Result::Ok(...)` / `Result::Err(...)` without contextual `Result(T, E)` type
 - non-const-safe initializer in const declaration

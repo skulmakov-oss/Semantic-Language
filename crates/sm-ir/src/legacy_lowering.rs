@@ -1143,6 +1143,30 @@ fn has_v2_fx_instr(funcs: &[IrFunction]) -> bool {
         .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::LoadFx { .. })))
 }
 
+fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
+    match arena.expr(expr_id) {
+        Expr::NumericLiteral(_) => true,
+        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_numeric_literal_like_expr(*inner, arena),
+        _ => false,
+    }
+}
+
+fn erased_expected(expected: Option<&Type>) -> Option<Type> {
+    expected.map(Type::erase_units)
+}
+
+fn lift_lowered_type(expected: Option<&Type>, actual: &Type, expr_id: ExprId, arena: &AstArena) -> Type {
+    match expected {
+        Some(expected_ty)
+            if matches!(expected_ty.measured_parts(), Some((base, _)) if base == actual)
+                && is_numeric_literal_like_expr(expr_id, arena) =>
+        {
+            expected_ty.clone()
+        }
+        _ => actual.clone(),
+    }
+}
+
 #[derive(Debug, Default)]
 struct StringInterner {
     ids: HashMap<String, u16>,
@@ -1574,47 +1598,50 @@ fn lower_expr_with_expected(
         ),
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
-            if expected == Some(Type::Fx) {
+            let expected_erased = erased_expected(expected.as_ref());
+            if expected_erased == Some(Type::Fx) {
                 let val = try_encode_fx_literal_expr(expr_id, arena)?.ok_or(FrontendError {
                     pos: 0,
                     message: "expected fx literal".to_string(),
                 })?;
                 out.push(IrInstr::LoadFx { dst: r, val });
-                Ok((r, Type::Fx))
+                Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
             } else {
                 let val = i32::try_from(*n).map_err(|_| FrontendError {
                     pos: 0,
                     message: format!("numeric literal {} does not fit in i32", n),
                 })?;
                 out.push(IrInstr::LoadI32 { dst: r, val });
-                Ok((r, Type::I32))
+                Ok((r, lift_lowered_type(expected.as_ref(), &Type::I32, expr_id, arena)))
             }
         }
         Expr::NumericLiteral(NumericLiteral::U32(n)) => {
             let r = alloc(next);
-            if expected == Some(Type::Fx) {
+            let expected_erased = erased_expected(expected.as_ref());
+            if expected_erased == Some(Type::Fx) {
                 let val = try_encode_fx_literal_expr(expr_id, arena)?.ok_or(FrontendError {
                     pos: 0,
                     message: "expected fx literal".to_string(),
                 })?;
                 out.push(IrInstr::LoadFx { dst: r, val });
-                Ok((r, Type::Fx))
+                Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
             } else {
                 out.push(IrInstr::LoadU32 { dst: r, val: *n });
-                Ok((r, Type::U32))
+                Ok((r, lift_lowered_type(expected.as_ref(), &Type::U32, expr_id, arena)))
             }
         }
         Expr::NumericLiteral(NumericLiteral::F64(n)) => {
             let r = alloc(next);
-            if expected == Some(Type::Fx) {
+            let expected_erased = erased_expected(expected.as_ref());
+            if expected_erased == Some(Type::Fx) {
                 out.push(IrInstr::LoadFx {
                     dst: r,
                     val: encode_fx_literal(*n)?,
                 });
-                Ok((r, Type::Fx))
+                Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
             } else {
                 out.push(IrInstr::LoadF64 { dst: r, val: *n });
-                Ok((r, Type::F64))
+                Ok((r, lift_lowered_type(expected.as_ref(), &Type::F64, expr_id, arena)))
             }
         }
         Expr::NumericLiteral(NumericLiteral::Fx(n)) => {
@@ -1623,7 +1650,7 @@ fn lower_expr_with_expected(
                 dst: r,
                 val: encode_fx_literal(*n)?,
             });
-            Ok((r, Type::Fx))
+            Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
         }
         Expr::Var(name) => {
             let ty = env.get(*name).ok_or(FrontendError {
@@ -1795,6 +1822,7 @@ fn lower_expr_with_expected(
             let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
             let mut regs = Vec::new();
             for (i, arg) in ordered_args.iter().enumerate() {
+                let expected_arg_ty = sig.params[i].clone();
                 let (r, t) = lower_expr_with_expected(
                     *arg,
                     arena,
@@ -1805,10 +1833,10 @@ fn lower_expr_with_expected(
                     fn_table,
                     record_table,
                     adt_table,
-                    Some(sig.params[i].clone()),
+                    Some(expected_arg_ty.clone()),
                     ret_ty.clone(),
                 )?;
-                if t != sig.params[i] {
+                if t != expected_arg_ty {
                     return Err(FrontendError {
                         pos: 0,
                         message: format!(
@@ -1816,7 +1844,7 @@ fn lower_expr_with_expected(
                             i,
                             resolve_symbol_name(arena, *name)?,
                             t,
-                            sig.params[i]
+                            expected_arg_ty
                         ),
                     });
                 }
@@ -1840,11 +1868,12 @@ fn lower_expr_with_expected(
             Ok((r, sig.ret.clone()))
         }
         Expr::Unary(op, inner) => {
-            if expected == Some(Type::Fx) {
+            let expected_erased = erased_expected(expected.as_ref());
+            if expected_erased == Some(Type::Fx) {
                 if let Some(value) = try_encode_fx_literal_expr(expr_id, arena)? {
                     let dst = alloc(next);
                     out.push(IrInstr::LoadFx { dst, val: value });
-                    return Ok((dst, Type::Fx));
+                    return Ok((dst, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)));
                 }
             }
             let (src, ty) = lower_expr_with_expected(
@@ -1878,6 +1907,8 @@ fn lower_expr_with_expected(
                 UnaryOp::Pos => {
                     if ty == Type::F64 {
                         Ok((src, Type::F64))
+                    } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
+                        Ok((src, ty))
                     } else {
                         Err(FrontendError {
                             pos: 0,
@@ -1886,12 +1917,16 @@ fn lower_expr_with_expected(
                     }
                 }
                 UnaryOp::Neg => {
-                    if ty != Type::F64 {
+                    let result_ty = if ty == Type::F64 {
+                        Type::F64
+                    } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
+                        ty.clone()
+                    } else {
                         return Err(FrontendError {
                             pos: 0,
                             message: format!("operator - unsupported for {:?}", ty),
                         });
-                    }
+                    };
                     let zero = alloc(next);
                     out.push(IrInstr::LoadF64 {
                         dst: zero,
@@ -1903,7 +1938,7 @@ fn lower_expr_with_expected(
                         lhs: zero,
                         rhs: src,
                     });
-                    Ok((dst, Type::F64))
+                    Ok((dst, result_ty))
                 }
             }
         }
@@ -1941,6 +1976,7 @@ fn lower_expr_with_expected(
                 });
             }
             let dst = alloc(next);
+            let erased_lt = lt.erase_units();
             match op {
                 BinaryOp::AndAnd => match lt {
                     Type::Quad => out.push(IrInstr::QAnd {
@@ -2009,7 +2045,13 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Bool));
                 }
                 BinaryOp::Add => {
-                    if lt != Type::F64 {
+                    if matches!(lt.measured_parts(), Some((_, _))) && erased_lt != Type::F64 {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!("operator + unsupported for {:?}", lt),
+                        });
+                    }
+                    if erased_lt != Type::F64 {
                         return Err(FrontendError {
                             pos: 0,
                             message: format!("operator + unsupported for {:?}", lt),
@@ -2020,10 +2062,16 @@ fn lower_expr_with_expected(
                         lhs: lr,
                         rhs: rr,
                     });
-                    return Ok((dst, Type::F64));
+                    return Ok((dst, lt));
                 }
                 BinaryOp::Sub => {
-                    if lt != Type::F64 {
+                    if matches!(lt.measured_parts(), Some((_, _))) && erased_lt != Type::F64 {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!("operator - unsupported for {:?}", lt),
+                        });
+                    }
+                    if erased_lt != Type::F64 {
                         return Err(FrontendError {
                             pos: 0,
                             message: format!("operator - unsupported for {:?}", lt),
@@ -2034,9 +2082,17 @@ fn lower_expr_with_expected(
                         lhs: lr,
                         rhs: rr,
                     });
-                    return Ok((dst, Type::F64));
+                    return Ok((dst, lt));
                 }
                 BinaryOp::Mul => {
+                    if lt.measured_parts().is_some() {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "*, / on unit-carrying values are rejected in the first-wave units surface"
+                                    .to_string(),
+                        });
+                    }
                     if lt != Type::F64 {
                         return Err(FrontendError {
                             pos: 0,
@@ -2051,6 +2107,14 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::F64));
                 }
                 BinaryOp::Div => {
+                    if lt.measured_parts().is_some() {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "*, / on unit-carrying values are rejected in the first-wave units surface"
+                                    .to_string(),
+                        });
+                    }
                     if lt != Type::F64 {
                         return Err(FrontendError {
                             pos: 0,
@@ -6686,6 +6750,77 @@ mod opt_tests {
             instr,
             IrInstr::AdtGet { adt_name, index, .. } if adt_name == "Result" && *index == 0
         )));
+    }
+
+    #[test]
+    fn lower_units_of_measure_through_existing_numeric_ir_path() {
+        let src = r#"
+            record Measurement {
+                distance: f64[m],
+            }
+
+            fn echo(distance: f64[m], sample: Measurement) -> f64[m] {
+                let total: f64[m] = distance + sample.distance;
+                let same: bool = total == distance;
+                assert(same == false || same == true);
+                return total;
+            }
+
+            fn main() {
+                let sample: Measurement = Measurement { distance: 2.0 };
+                let total: f64[m] = echo(3.0, sample);
+                let expected: f64[m] = 5.0;
+                assert(total == expected);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("units-of-measure values should lower");
+        let echo = ir.iter().find(|func| func.name == "echo").expect("echo fn");
+        assert!(echo
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::RecordGet { record_name, index, .. } if record_name == "Measurement" && *index == 0)));
+        assert!(echo
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+        assert!(echo
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpEq { .. })));
+
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadF64 { val, .. } if (*val - 2.0).abs() < f64::EPSILON)));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadF64 { val, .. } if (*val - 3.0).abs() < f64::EPSILON)));
+        assert!(!main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::MakeTuple { .. })));
+    }
+
+    #[test]
+    fn lower_measured_u32_literal_through_existing_integer_carrier() {
+        let src = r#"
+            fn main() {
+                let ticks: u32[ms] = 1_000u32;
+                let _ = ticks;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("measured u32 literal should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadU32 { val, .. } if *val == 1000)));
     }
 
     #[test]

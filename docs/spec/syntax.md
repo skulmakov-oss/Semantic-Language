@@ -264,6 +264,11 @@ Current expression forms:
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`
+- first-wave units-of-measure annotations:
+  - `f64[m]`
+  - `u32[ms]`
+  - `Option(f64[m])`
+  - `(f64[m], u32[ms])`
 - block expressions with a trailing tail value:
   - `{ let x = 1; x }`
 - `if` expressions with explicit `else` blocks:
@@ -325,6 +330,21 @@ Current v0 tuple limits:
   tuple type
 - tuple field access and tuple pattern matching beyond flat destructuring bind
   are not yet part of the stable surface
+
+Current first-wave units-of-measure syntax rules:
+
+- declared type positions may attach `[unit_symbol]` only to `i32`, `u32`,
+  `f64`, or `fx`
+- unit annotations may appear inside tuples, record fields, `Option(T)`, and
+  `Result(T, E)` payload positions when the annotated inner type is still one
+  of those core numeric families
+- this is a narrow source-level contract only; the execution carrier remains
+  the existing numeric family after semantic validation
+- unit annotations on non-numeric type families are rejected in v0
+- compound unit syntax such as `m/s` or exponent-style unit algebra is not part
+  of the stable surface
+- unannotated numeric literal spelling remains unchanged; units are acquired
+  only through typed positions
 
 Current first-wave `Option` / `Result` standard-form rules:
 

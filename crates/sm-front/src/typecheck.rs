@@ -16,15 +16,44 @@ fn fx_unary_gap_message() -> &'static str {
     "fx unary +/- is not implemented in the canonical Rust-like path yet"
 }
 
+fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
+    match arena.expr(expr_id) {
+        Expr::NumericLiteral(_) => true,
+        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_numeric_literal_like_expr(*inner, arena),
+        _ => false,
+    }
+}
+
 fn is_numeric_for_fx_gap(ty: &Type) -> bool {
-    matches!(ty, Type::I32 | Type::U32 | Type::F64)
+    matches!(ty.erase_units(), Type::I32 | Type::U32 | Type::F64)
 }
 
 fn is_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> bool {
-    match arena.expr(expr_id) {
-        Expr::NumericLiteral(_) => true,
-        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_fx_literal_expr(*inner, arena),
+    is_numeric_literal_like_expr(expr_id, arena)
+}
+
+fn match_unit_lift(expected: &Type, actual: &Type, expr_id: ExprId, arena: &AstArena) -> bool {
+    match expected.measured_parts() {
+        Some((base, _)) if base == actual => is_numeric_literal_like_expr(expr_id, arena),
         _ => false,
+    }
+}
+
+fn measured_numeric_parts(ty: &Type) -> Option<(&Type, SymbolId)> {
+    ty.measured_parts()
+}
+
+fn lift_literal_to_expected_type(
+    expected: Option<&Type>,
+    actual: &Type,
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Option<Type> {
+    match expected {
+        Some(expected_ty) if match_unit_lift(expected_ty, actual, expr_id, arena) => {
+            Some(expected_ty.clone())
+        }
+        _ => None,
     }
 }
 
@@ -1545,6 +1574,7 @@ fn infer_expr_type(
                 ret_ty.clone(),
                 loop_stack,
             )?;
+            let measured = measured_numeric_parts(&t);
             match op {
                 UnaryOp::Not => match t {
                     Type::Quad | Type::Bool => Ok(t),
@@ -1563,6 +1593,20 @@ fn infer_expr_type(
                             pos: 0,
                             message: fx_unary_gap_message().to_string(),
                         })
+                    } else if let Some((base, _)) = measured {
+                        if *base == Type::F64 {
+                            Ok(t)
+                        } else if *base == Type::Fx {
+                            Err(FrontendError {
+                                pos: 0,
+                                message: fx_unary_gap_message().to_string(),
+                            })
+                        } else {
+                            Err(FrontendError {
+                                pos: 0,
+                                message: format!("operator +/- unsupported for {:?}", t),
+                            })
+                        }
                     } else {
                         Err(FrontendError {
                             pos: 0,
@@ -1649,6 +1693,35 @@ fn infer_expr_type(
                     }
                 }
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    if measured_numeric_parts(&lt).is_some() || measured_numeric_parts(&rt).is_some() {
+                        if lt != rt {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!("operator type mismatch: {:?} vs {:?}", lt, rt),
+                            });
+                        }
+                        let (base, _) = measured_numeric_parts(&lt).ok_or(FrontendError {
+                            pos: 0,
+                            message: format!("operator unsupported for {:?}", lt),
+                        })?;
+                        return match op {
+                            BinaryOp::Add | BinaryOp::Sub if *base == Type::F64 => Ok(lt),
+                            BinaryOp::Add | BinaryOp::Sub if *base == Type::Fx => Err(FrontendError {
+                                pos: 0,
+                                message: fx_arithmetic_gap_message().to_string(),
+                            }),
+                            BinaryOp::Mul | BinaryOp::Div => Err(FrontendError {
+                                pos: 0,
+                                message:
+                                    "*, / on unit-carrying values are rejected in the first-wave units surface"
+                                        .to_string(),
+                            }),
+                            _ => Err(FrontendError {
+                                pos: 0,
+                                message: format!("operator unsupported for {:?}", lt),
+                            }),
+                        };
+                    }
                     if lt == Type::Fx && rt == Type::Fx {
                         return Err(FrontendError {
                             pos: 0,
@@ -3784,6 +3857,85 @@ mod tests {
             .message
             .contains("match arm pattern type 'Option' does not match scrutinee Result(T, E)"));
     }
+
+    #[test]
+    fn units_of_measure_typecheck_through_transport_and_supported_operators() {
+        let src = r#"
+            record Measurement {
+                distance: f64[m],
+            }
+
+            fn echo(
+                distance: f64[m],
+                pair: (f64[m], f64[m]),
+                maybe: Option(f64[m]),
+                result: Result(f64[m], quad),
+                sample: Measurement
+            ) -> f64[m] {
+                let left: f64[m] = 1.0;
+                let right: f64[m] = 2.0;
+                let pair_copy: (f64[m], f64[m]) = pair;
+                let maybe_copy: Option(f64[m]) = maybe;
+                let result_copy: Result(f64[m], quad) = result;
+                let total: f64[m] = left + right;
+                let same: bool = total == sample.distance;
+                let _ = pair_copy;
+                let _ = maybe_copy;
+                let _ = result_copy;
+                assert(same == true);
+                return total;
+            }
+
+            fn main() {
+                let sample: Measurement = Measurement { distance: 3.0 };
+                let total: f64[m] = echo(
+                    1.0,
+                    (1.0, 2.0),
+                    Option::Some(1.0),
+                    Result::Ok(2.0),
+                    sample
+                );
+                let expected: f64[m] = 3.0;
+                assert(total == expected);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("first-wave units transport and operators should typecheck");
+    }
+
+    #[test]
+    fn units_of_measure_reject_mismatched_symbols_in_binding() {
+        let src = r#"
+            fn main() {
+                let distance: f64[m] = 1.0;
+                let time: f64[s] = distance;
+                let _ = time;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("different unit symbols must reject");
+        assert!(err.message.contains("type mismatch in let 'time'"));
+    }
+
+    #[test]
+    fn units_of_measure_reject_mul_and_div_in_first_wave() {
+        let src = r#"
+            fn main() {
+                let distance: f64[m] = 1.0;
+                let area: f64[m] = distance * distance;
+                let _ = area;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("mul/div on unit-carrying values must reject in first wave");
+        assert!(err
+            .message
+            .contains("*, / on unit-carrying values are rejected in the first-wave units surface"));
+    }
 }
 
 fn is_builtin_assert_name(
@@ -4490,6 +4642,20 @@ fn ensure_type_resolved(
             }
             Ok(())
         }
+        Type::Measured(base, _) => {
+            ensure_type_resolved(base, record_table, adt_table, arena, context.clone())?;
+            if base.is_core_numeric_scalar() {
+                Ok(())
+            } else {
+                Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unit annotation is allowed only on i32, u32, f64, or fx in {}",
+                        context
+                    ),
+                })
+            }
+        }
         Type::Record(name) => {
             if record_table.contains_key(name) || adt_table.contains_key(name) {
                 Ok(())
@@ -4541,6 +4707,7 @@ fn ensure_executable_type_supported(
             }
             Ok(())
         }
+        Type::Measured(base, _) => ensure_executable_type_supported(base, arena, context),
         Type::Option(item) => ensure_executable_type_supported(item, arena, context),
         Type::Result(ok_ty, err_ty) => {
             ensure_executable_type_supported(ok_ty, arena, context.clone())?;
@@ -4572,6 +4739,7 @@ fn ensure_storage_type_supported(
             }
             Ok(())
         }
+        Type::Measured(base, _) => ensure_storage_type_supported(base, arena, context),
         Type::Option(item) => ensure_storage_type_supported(item, arena, context),
         Type::Result(ok_ty, err_ty) => {
             ensure_storage_type_supported(ok_ty, arena, context.clone())?;
@@ -4718,6 +4886,9 @@ fn supports_stable_equality_type_inner(
         | Type::Fx
         | Type::F64
         | Type::Unit => Ok(true),
+        Type::Measured(base, _) => {
+            supports_stable_equality_type_inner(base, record_table, adt_table, active)
+        }
         Type::QVec(_) => Ok(false),
         Type::RangeI32 => Ok(false),
         Type::Tuple(items) => {
@@ -5091,6 +5262,49 @@ fn infer_expr_type_with_expected(
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
     match arena.expr(expr_id) {
+        Expr::Tuple(items) => {
+            let expected_items = match expected.as_ref() {
+                Some(Type::Tuple(types)) => Some(types),
+                _ => None,
+            };
+            if let Some(types) = expected_items {
+                if types.len() != items.len() {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "tuple arity mismatch in typed position: expected {}, got {}",
+                            types.len(),
+                            items.len()
+                        ),
+                    });
+                }
+            }
+            let mut item_tys = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                let item_expected = expected_items.and_then(|types| types.get(index)).cloned();
+                let item_ty = infer_expr_type_with_expected(
+                    *item,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    item_expected,
+                    ret_ty.clone(),
+                    loop_stack,
+                )?;
+                if item_ty == Type::RangeI32 {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "range literal is not yet part of the stable tuple/user-data surface"
+                                .to_string(),
+                    });
+                }
+                item_tys.push(item_ty);
+            }
+            Ok(Type::Tuple(item_tys))
+        }
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
             arena,
@@ -5102,16 +5316,20 @@ fn infer_expr_type_with_expected(
             ret_ty,
             loop_stack,
         ),
-        _ => infer_expr_type(
-            expr_id,
-            arena,
-            env,
-            table,
-            record_table,
-            adt_table,
-            ret_ty,
-            loop_stack,
-        ),
+        _ => {
+            let actual = infer_expr_type(
+                expr_id,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
+            Ok(lift_literal_to_expected_type(expected.as_ref(), &actual, expr_id, arena)
+                .unwrap_or(actual))
+        }
     }
 }
 
@@ -5573,6 +5791,9 @@ fn ensure_binding_value_type(
     context: String,
 ) -> Result<(), FrontendError> {
     if expected == actual {
+        return Ok(());
+    }
+    if match_unit_lift(&expected, &actual, value_expr, arena) {
         return Ok(());
     }
     if expected == Type::Fx && is_numeric_for_fx_gap(&actual) {

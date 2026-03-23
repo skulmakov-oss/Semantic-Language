@@ -27,6 +27,7 @@ Current source-visible types:
 - `u32`
 - `f64`
 - `fx`
+- measured numeric forms such as `f64[m]` and `u32[ms]`
 - `unit`
 - `qvec(N)` as a reserved parser-level family
 
@@ -125,6 +126,39 @@ Current honest limits:
   long-term contract
 - unary `+` and unary `-` on `fx` are still intentionally limited in the
   canonical Rust-like path
+
+## Units Of Measure
+
+First-wave units of measure are source-level refinements over the existing core
+numeric families.
+
+Current supported forms:
+
+- `i32[unit]`
+- `u32[unit]`
+- `f64[unit]`
+- `fx[unit]`
+
+Current rules:
+
+- the bracket payload is a single unit symbol
+- measured numeric types may appear in locals, parameters, returns, tuple
+  elements, record fields, `Option(T)`, and `Result(T, E)` payload positions
+- assignment, call, return, and pattern-binding transport require exact base
+  type and exact unit-symbol equality
+- `+`, `-`, `==`, and `!=` are valid only when both operands have the same
+  measured type
+- lowering erases the unit annotation after semantic validation and reuses the
+  existing numeric execution carrier
+
+Current honest limits:
+
+- units are not part of the VM value representation or public host ABI shape
+- implicit conversions between unit symbols are not part of the contract
+- compound unit algebra such as `m/s`, `N*m`, or exponent notation is not part
+  of the first-wave surface
+- `*` and `/` on unit-carrying values are intentionally rejected in the
+  first-wave contract
 
 ## QVec
 
