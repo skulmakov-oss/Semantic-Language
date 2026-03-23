@@ -1,5 +1,5 @@
 use crate::*;
-use crate::types::{AdtCtorExpr, NumericLiteral, RecordPatternTarget};
+use crate::types::{AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::ToString;
@@ -451,14 +451,16 @@ fn check_stmt(
             )?;
             ensure_const_initializer_safe(*value, arena, env)?;
             let final_ty = if let Some(ann) = ty {
+                let expected_ty =
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 ensure_binding_value_type(
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
+                    expected_ty.clone(),
                     vt,
                     *value,
                     arena,
                     format!("const '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
-                ann.clone()
+                expected_ty
             } else {
                 vt
             };
@@ -491,14 +493,16 @@ fn check_stmt(
                 loop_stack,
             )?;
             let final_ty = if let Some(ann) = ty {
+                let expected_ty =
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 ensure_binding_value_type(
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
+                    expected_ty.clone(),
                     vt,
                     *value,
                     arena,
                     format!("let '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
-                ann.clone()
+                expected_ty
             } else {
                 vt
             };
@@ -531,14 +535,16 @@ fn check_stmt(
                 loop_stack,
             )?;
             let final_ty = if let Some(ann) = ty {
+                let expected_ty =
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 ensure_binding_value_type(
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
+                    expected_ty.clone(),
                     vt,
                     *value,
                     arena,
                     "tuple destructuring bind".to_string(),
                 )?;
-                ann.clone()
+                expected_ty
             } else {
                 vt
             };
@@ -746,14 +752,16 @@ fn check_stmt(
                 loop_stack,
             )?;
             let final_ty = if let Some(ann) = ty {
+                let expected_ty =
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 ensure_binding_value_type(
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
+                    expected_ty.clone(),
                     vt,
                     *value,
                     arena,
                     "let-else tuple destructuring bind".to_string(),
                 )?;
-                ann.clone()
+                expected_ty
             } else {
                 vt
             };
@@ -1097,10 +1105,10 @@ fn check_stmt(
                 ret_ty.clone(),
                 loop_stack,
             )?;
-            if st != Type::Quad {
+            if !matches!(st, Type::Quad | Type::Adt(_)) {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "match is allowed only for quad scrutinee".to_string(),
+                    message: "match is allowed only for quad or enum scrutinee".to_string(),
                 });
             }
             if default.is_empty() {
@@ -1113,6 +1121,15 @@ fn check_stmt(
             for arm in arms {
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
+                for (name, ty) in bind_match_pattern(
+                    &arm.pat,
+                    &st,
+                    arena,
+                    record_table,
+                    adt_table,
+                )? {
+                    arm_env.insert(name, ty);
+                }
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -1842,6 +1859,33 @@ mod tests {
     }
 
     #[test]
+    fn adt_match_expression_typechecks_with_payload_bindings() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(f64),
+            }
+
+            fn read(value: Maybe) -> f64 {
+                let total: f64 = match value {
+                    Maybe::Some(inner) => { inner }
+                    _ => { 0.0 }
+                };
+                return total;
+            }
+
+            fn main() {
+                let value: Maybe = Maybe::Some(1.0);
+                let total: f64 = read(value);
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("ADT match expression should typecheck");
+    }
+
+    #[test]
     fn match_expression_requires_quad_scrutinee() {
         let src = r#"
             fn main() {
@@ -1856,7 +1900,7 @@ mod tests {
         let err = typecheck_source(src).expect_err("non-quad match expression must reject");
         assert!(err
             .message
-            .contains("match expression is allowed only for quad scrutinee"));
+            .contains("match expression is allowed only for quad or enum scrutinee"));
     }
 
     #[test]
@@ -3630,10 +3674,10 @@ fn infer_match_expr_type(
             ret_ty.clone(),
             loop_stack,
         )?;
-    if scrutinee_ty != Type::Quad {
+    if !matches!(scrutinee_ty, Type::Quad | Type::Adt(_)) {
         return Err(FrontendError {
             pos: 0,
-            message: "match expression is allowed only for quad scrutinee".to_string(),
+            message: "match expression is allowed only for quad or enum scrutinee".to_string(),
         });
     }
     let default = match_expr.default.as_ref().ok_or(FrontendError {
@@ -3643,10 +3687,21 @@ fn infer_match_expr_type(
 
     let mut result_ty = None;
     for arm in &match_expr.arms {
+        let mut arm_env = env.clone();
+        arm_env.push_scope();
+        for (name, ty) in bind_match_pattern(
+            &arm.pat,
+            &scrutinee_ty,
+            arena,
+            record_table,
+            adt_table,
+        )? {
+            arm_env.insert(name, ty);
+        }
         check_match_guard(
             arm.guard,
             arena,
-            env,
+            &arm_env,
             table,
             record_table,
             adt_table,
@@ -3656,7 +3711,7 @@ fn infer_match_expr_type(
         let arm_ty = infer_value_block_type(
             &arm.block,
             arena,
-            env,
+            &arm_env,
             table,
             record_table,
             adt_table,
@@ -3832,10 +3887,10 @@ fn check_loop_expr_stmt(
                 ret_ty.clone(),
                 loop_stack,
             )?;
-            if st != Type::Quad {
+            if !matches!(st, Type::Quad | Type::Adt(_)) {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "match is allowed only for quad scrutinee".to_string(),
+                    message: "match is allowed only for quad or enum scrutinee".to_string(),
                 });
             }
             if default.is_empty() {
@@ -3848,6 +3903,15 @@ fn check_loop_expr_stmt(
             for arm in arms {
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
+                for (name, ty) in bind_match_pattern(
+                    &arm.pat,
+                    &st,
+                    arena,
+                    record_table,
+                    adt_table,
+                )? {
+                    arm_env.insert(name, ty);
+                }
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -4715,6 +4779,109 @@ fn infer_adt_ctor_type(
         )?;
     }
     Ok(Type::Adt(ctor_expr.adt_name))
+}
+
+fn bind_match_pattern(
+    pat: &MatchPattern,
+    scrutinee_ty: &Type,
+    arena: &AstArena,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<Vec<(SymbolId, Type)>, FrontendError> {
+    match (scrutinee_ty, pat) {
+        (Type::Quad, MatchPattern::Quad(_)) => Ok(Vec::new()),
+        (Type::Quad, MatchPattern::Adt(adt_pat)) => Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "enum match pattern '{}::{}' can be used only with enum scrutinee",
+                resolve_symbol_name(arena, adt_pat.adt_name)?,
+                resolve_symbol_name(arena, adt_pat.variant_name)?,
+            ),
+        }),
+        (Type::Adt(scrutinee_name), MatchPattern::Quad(pat)) => Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "quad match pattern '{:?}' can be used only with quad scrutinee, not enum '{}'",
+                pat,
+                resolve_symbol_name(arena, *scrutinee_name)?,
+            ),
+        }),
+        (Type::Adt(scrutinee_name), MatchPattern::Adt(adt_pat)) => {
+            if adt_pat.adt_name != *scrutinee_name {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "match arm pattern enum '{}' does not match scrutinee enum '{}'",
+                        resolve_symbol_name(arena, adt_pat.adt_name)?,
+                        resolve_symbol_name(arena, *scrutinee_name)?,
+                    ),
+                });
+            }
+            let adt = adt_table.get(scrutinee_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown enum type '{}' in match pattern",
+                    resolve_symbol_name(arena, *scrutinee_name)?,
+                ),
+            })?;
+            let variant = adt
+                .variants
+                .iter()
+                .find(|variant| variant.name == adt_pat.variant_name)
+                .ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "enum '{}' has no variant named '{}' in match pattern",
+                        resolve_symbol_name(arena, *scrutinee_name)?,
+                        resolve_symbol_name(arena, adt_pat.variant_name)?,
+                    ),
+                })?;
+            if variant.payload.len() != adt_pat.items.len() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "enum match pattern '{}::{}' expects {} payload items, got {}",
+                        resolve_symbol_name(arena, *scrutinee_name)?,
+                        resolve_symbol_name(arena, adt_pat.variant_name)?,
+                        variant.payload.len(),
+                        adt_pat.items.len(),
+                    ),
+                });
+            }
+
+            let mut seen = BTreeSet::new();
+            let mut bindings = Vec::new();
+            for (index, (item, declared_ty)) in adt_pat
+                .items
+                .iter()
+                .zip(variant.payload.iter())
+                .enumerate()
+            {
+                let payload_ty =
+                    canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
+                if let AdtPatternItem::Bind(name) = item {
+                    if !seen.insert(*name) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "enum match pattern '{}::{}' repeats binding '{}' at payload item {}",
+                                resolve_symbol_name(arena, *scrutinee_name)?,
+                                resolve_symbol_name(arena, adt_pat.variant_name)?,
+                                resolve_symbol_name(arena, *name)?,
+                                index,
+                            ),
+                        });
+                    }
+                    bindings.push((*name, payload_ty));
+                }
+            }
+            Ok(bindings)
+        }
+        (_, MatchPattern::Quad(_)) | (_, MatchPattern::Adt(_)) => Err(FrontendError {
+            pos: 0,
+            message: "match is allowed only for quad or enum scrutinee".to_string(),
+        }),
+    }
 }
 
 fn check_match_guard(

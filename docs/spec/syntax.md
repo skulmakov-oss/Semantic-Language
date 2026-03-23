@@ -161,6 +161,7 @@ Current statement forms:
 - `if condition { ... } else { ... }`
 - `match quad_expr { T => { ... } ... _ => { ... } }`
 - `match quad_expr { T if ready == true => { ... } ... _ => { ... } }`
+- `match maybe_expr { Maybe::Some(value) => { ... } _ => { ... } }`
 - `return;`
 - `return expr;`
 - expression statements: `expr;`
@@ -191,9 +192,11 @@ Current statement rules:
 - `ensures(condition)` is currently a function-level contract clause only
 - `invariant(condition)` is currently a function-level contract clause only
 - `if` conditions must be `bool`
-- `match` is currently restricted to `quad`
+- `match` currently accepts `quad` scrutinees and nominal enum scrutinees
 - `match` requires an explicit default arm `_ => { ... }`
 - `_` in `match` remains the current wildcard/default arm spelling
+- enum match patterns currently require explicit `Enum::Variant`
+- enum match payload patterns are currently flat only and accept only names or `_`
 - unit-returning calls may be used as statements
 - extended numeric literal spelling does not itself widen arithmetic support
 

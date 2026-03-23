@@ -1,11 +1,12 @@
 use crate::lexer::lex_tokens;
 use crate::types::{
-    AdtCtorExpr, AdtDecl, AdtVariant, AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId,
-    FrontendError, Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind,
-    LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm,
-    NumericLiteral, Program, QuadVal, RangeExpr, RecordDecl, RecordField, RecordFieldExpr,
-    RecordInitField, RecordLiteralExpr, RecordPatternItem, RecordPatternTarget, RecordUpdateExpr,
-    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    AdtCtorExpr, AdtDecl, AdtMatchPattern, AdtPatternItem, AdtVariant, AstArena, BinaryOp,
+    BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
+    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
+    LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
+    RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
+    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
+    TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -1320,10 +1321,12 @@ impl<'a> Parser<'a> {
             Expr::Match(match_expr) => {
                 self.ensure_short_lambda_expr_capture_free(match_expr.scrutinee, scopes)?;
                 for arm in &match_expr.arms {
+                    scopes.push(self.short_lambda_match_pattern_bindings(&arm.pat));
                     if let Some(guard) = arm.guard {
                         self.ensure_short_lambda_expr_capture_free(guard, scopes)?;
                     }
                     self.ensure_short_lambda_block_capture_free(&arm.block, scopes)?;
+                    let _ = scopes.pop();
                 }
                 if let Some(default) = &match_expr.default {
                     self.ensure_short_lambda_block_capture_free(default, scopes)?;
@@ -1336,6 +1339,20 @@ impl<'a> Parser<'a> {
                     "short lambda v0 does not currently allow loop expressions in the lambda body"
                         .to_string(),
             }),
+        }
+    }
+
+    fn short_lambda_match_pattern_bindings(&self, pat: &MatchPattern) -> Vec<SymbolId> {
+        match pat {
+            MatchPattern::Quad(_) => Vec::new(),
+            MatchPattern::Adt(adt_pat) => adt_pat
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    AdtPatternItem::Bind(name) => Some(*name),
+                    AdtPatternItem::Discard => None,
+                })
+                .collect(),
         }
     }
 
@@ -1451,7 +1468,7 @@ impl<'a> Parser<'a> {
                 default = Some(block);
                 continue;
             }
-            let pat = self.parse_quad_match_pattern()?;
+            let pat = self.parse_match_pattern()?;
             let guard = self.parse_match_guard_opt()?;
             self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
             let block = self.parse_block()?;
@@ -1483,7 +1500,7 @@ impl<'a> Parser<'a> {
                 default = Some(block);
                 continue;
             }
-            let pat = self.parse_quad_match_pattern()?;
+            let pat = self.parse_match_pattern()?;
             let guard = self.parse_match_guard_opt()?;
             self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
             let block = self.parse_value_block()?;
@@ -1497,21 +1514,66 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_quad_match_pattern(&mut self) -> Result<QuadVal, FrontendError> {
+    fn parse_match_pattern(&mut self) -> Result<MatchPattern, FrontendError> {
         if self.eat(TokenKind::QuadN) {
-            Ok(QuadVal::N)
+            Ok(MatchPattern::Quad(QuadVal::N))
         } else if self.eat(TokenKind::QuadF) {
-            Ok(QuadVal::F)
+            Ok(MatchPattern::Quad(QuadVal::F))
         } else if self.eat(TokenKind::QuadT) {
-            Ok(QuadVal::T)
+            Ok(MatchPattern::Quad(QuadVal::T))
         } else if self.eat(TokenKind::QuadS) {
-            Ok(QuadVal::S)
+            Ok(MatchPattern::Quad(QuadVal::S))
+        } else if self.check(TokenKind::Ident) {
+            let adt_name = self.expect_symbol()?;
+            self.expect(TokenKind::PathSep, "expected '::' in enum match pattern")?;
+            let variant_name = self.expect_symbol()?;
+            let items = if self.eat(TokenKind::LParen) {
+                self.parse_adt_match_pattern_items()?
+            } else {
+                Vec::new()
+            };
+            Ok(MatchPattern::Adt(AdtMatchPattern {
+                adt_name,
+                variant_name,
+                items,
+            }))
         } else {
             Err(FrontendError {
                 pos: self.pos(),
-                message: "expected match pattern N|F|T|S|_".to_string(),
+                message: "expected match pattern N|F|T|S|Enum::Variant|_".to_string(),
             })
         }
+    }
+
+    fn parse_adt_match_pattern_items(&mut self) -> Result<Vec<AdtPatternItem>, FrontendError> {
+        let mut items = Vec::new();
+        if self.check(TokenKind::RParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "enum match pattern payload cannot be empty parentheses; omit '()' for unit variant".to_string(),
+            });
+        }
+        loop {
+            if self.eat(TokenKind::Underscore) {
+                items.push(AdtPatternItem::Discard);
+            } else if self.check(TokenKind::Ident) {
+                items.push(AdtPatternItem::Bind(self.expect_symbol()?));
+            } else {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "enum match payload patterns currently support only flat name/_ items".to_string(),
+                });
+            }
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RParen, "expected ')' after enum match pattern payload")?;
+        Ok(items)
     }
 
     fn parse_match_guard_opt(&mut self) -> Result<Option<ExprId>, FrontendError> {
@@ -2972,6 +3034,42 @@ fn main() {
         ));
         assert_eq!(match_expr.arms.len(), 1);
         assert!(match_expr.arms[0].guard.is_some());
+        assert!(match_expr.default.is_some());
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_adt_match_expression_surface() {
+        let src = r#"
+enum Maybe {
+    None,
+    Some(f64),
+}
+
+fn main() {
+    let value: f64 = match Maybe::Some(1.0) {
+        Maybe::Some(total) => { total }
+        _ => { 0.0 }
+    };
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("ADT match expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected leading let statement");
+        };
+        let Expr::Match(match_expr) = program.arena.expr(*value) else {
+            panic!("expected match expression");
+        };
+        assert_eq!(match_expr.arms.len(), 1);
+        let MatchPattern::Adt(pat) = &match_expr.arms[0].pat else {
+            panic!("expected ADT match pattern");
+        };
+        assert_eq!(program.arena.symbol_name(pat.adt_name), "Maybe");
+        assert_eq!(program.arena.symbol_name(pat.variant_name), "Some");
+        assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
         assert!(match_expr.default.is_some());
     }
 

@@ -51,7 +51,7 @@ Current rule:
 Current rules:
 
 - `quad` participates in equality and implication
-- `match` currently operates only on `quad`
+- `match` currently operates on `quad` and nominal enum scrutinees
 - `quad` is not accepted directly as an `if` condition
 
 ## Bool

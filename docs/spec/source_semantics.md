@@ -500,8 +500,10 @@ Current `guard` semantics:
 
 Current `match` semantics:
 
-- `match` is currently restricted to `quad`
-- arms match only the literal patterns `N`, `F`, `T`, `S`
+- `match` currently accepts `quad` scrutinees and nominal enum scrutinees
+- `quad` arms match only the literal patterns `N`, `F`, `T`, `S`
+- enum arms currently use explicit nominal patterns `Enum::Variant` or
+  `Enum::Variant(name, _)`
 - non-default arms may attach a `bool` guard with `if guard_expr`
 - `_` is required as the default arm
 - `_` currently means wildcard/default only in `match`, not a general rich
@@ -522,7 +524,9 @@ pattern-matching system.
 Current v0 limit:
 
 - the default `_` arm does not yet support guards
-- only literal `quad` patterns and `_` are part of the stable source contract
+- enum match payload patterns are currently flat only and accept only names or `_`
+- nested enum patterns, enum literal payload checks, and exhaustiveness are not
+  yet part of the stable source contract
 
 ## Short Lambdas
 

@@ -532,6 +532,29 @@ fn decode_operands(
                 mark_reg(src);
             }
         }
+        Opcode::AdtTag => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated adt-tag dst register"))?;
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated adt-tag src register"))?;
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated adt-tag type string id"))?;
+            mark_reg(dst);
+            mark_reg(src);
+            refs.string_refs.push((offset, sid as usize, "enum type name"));
+        }
+        Opcode::AdtGet => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated adt-get dst register"))?;
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated adt-get src register"))?;
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated adt-get type string id"))?;
+            read_u16_le(code, cursor).map_err(|_| invalid("truncated adt-get payload index"))?;
+            mark_reg(dst);
+            mark_reg(src);
+            refs.string_refs.push((offset, sid as usize, "enum type name"));
+        }
         Opcode::RecordGet => {
             let dst = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated record-get dst register"))?;

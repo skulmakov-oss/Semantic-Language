@@ -172,6 +172,9 @@ Current message families include:
 - invalid `match` guard condition type
 - `match`-expression branch type mismatch
 - invalid `match` scrutinee or missing `_` arm
+- enum match pattern that does not match the scrutinee enum
+- enum match payload arity mismatch
+- unsupported enum match payload item shape
 - unsupported statement forms inside a value-producing block
 - unsupported operator for a type family
 - explicit `fx` gap messages for still-narrow source cases

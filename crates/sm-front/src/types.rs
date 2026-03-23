@@ -94,6 +94,19 @@ pub struct AdtCtorExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum AdtPatternItem {
+    Bind(SymbolId),
+    Discard,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdtMatchPattern {
+    pub adt_name: SymbolId,
+    pub variant_name: SymbolId,
+    pub items: Vec<AdtPatternItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordPatternItem {
     pub field: SymbolId,
     pub target: RecordPatternTarget,
@@ -219,7 +232,7 @@ pub struct MatchExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchExprArm {
-    pub pat: QuadVal,
+    pub pat: MatchPattern,
     pub guard: Option<ExprId>,
     pub block: BlockExpr,
 }
@@ -244,8 +257,14 @@ pub enum TuplePatternItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum MatchPattern {
+    Quad(QuadVal),
+    Adt(AdtMatchPattern),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
-    pub pat: QuadVal,
+    pub pat: MatchPattern,
     pub guard: Option<ExprId>,
     pub block: Vec<StmtId>,
 }

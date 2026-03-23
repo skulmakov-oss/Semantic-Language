@@ -469,6 +469,17 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::AdtTag => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::AdtGet => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::RecordGet => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -790,6 +801,50 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                         payload,
                     }),
                 )?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::AdtTag => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let expected_name = lookup_str(&f, sid)?.to_string();
+                let adt = get_reg(vm, frame_idx, src)?;
+                let Value::Adt(adt) = adt else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "ADT_TAG source must be enum".to_string(),
+                    ));
+                };
+                if adt.type_name != expected_name {
+                    return Err(RuntimeError::TypeMismatchRuntime(format!(
+                        "ADT_TAG expected enum '{}', got '{}'",
+                        expected_name, adt.type_name
+                    )));
+                }
+                set_reg(vm, frame_idx, dst, Value::I32(i32::from(adt.tag)))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::AdtGet => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let index = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let expected_name = lookup_str(&f, sid)?.to_string();
+                let adt = get_reg(vm, frame_idx, src)?;
+                let Value::Adt(adt) = adt else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "ADT_GET source must be enum".to_string(),
+                    ));
+                };
+                if adt.type_name != expected_name {
+                    return Err(RuntimeError::TypeMismatchRuntime(format!(
+                        "ADT_GET expected enum '{}', got '{}'",
+                        expected_name, adt.type_name
+                    )));
+                }
+                let item = adt.payload.get(index).cloned().ok_or_else(|| {
+                    RuntimeError::BadFormat(format!("adt-get index out of bounds: {}", index))
+                })?;
+                set_reg(vm, frame_idx, dst, item)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::RecordGet => {
@@ -1430,6 +1485,21 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let variant = lookup_str(f, variant_sid)?;
             format!("MAKE_ADT r{}, {}::{}, tag={}, [{}]", d, name, variant, tag, regs)
         }
+        Opcode::AdtTag => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let name = lookup_str(f, sid)?;
+            format!("ADT_TAG r{}, r{}, {}", d, s, name)
+        }
+        Opcode::AdtGet => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let name = lookup_str(f, sid)?;
+            format!("ADT_GET r{}, r{}, {}, {}", d, s, name, i)
+        }
         Opcode::RecordGet => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1869,6 +1939,36 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("MAKE_ADT"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_stage1_adt_match_path() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(f64),
+            }
+
+            fn unwrap(value: Maybe) -> f64 {
+                let total: f64 = match value {
+                    Maybe::Some(inner) => { inner }
+                    _ => { 0.0 }
+                };
+                return total;
+            }
+
+            fn main() {
+                let total: f64 = unwrap(Maybe::Some(2.5));
+                assert(total == 2.5);
+                return;
+            }
+        "#;
+
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("ADT_TAG"));
+        assert!(disasm.contains("ADT_GET"));
         run_semcode(&bytes).expect("run");
     }
 
