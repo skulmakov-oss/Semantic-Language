@@ -1598,6 +1598,42 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_function_invariant_clauses_when_conditions_hold() {
+        let src = r#"
+            fn keep(flag: bool) -> bool
+                invariant(flag == true)
+                invariant(result == flag) {
+                return flag;
+            }
+
+            fn main() {
+                let seen: bool = keep(true);
+                assert(seen == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        run_semcode(&bytes).expect("invariant clauses should pass");
+    }
+
+    #[test]
+    fn vm_traps_on_failed_function_invariant_clause() {
+        let src = r#"
+            fn must_stay_true(flag: bool) -> bool invariant(result == true) {
+                return flag;
+            }
+
+            fn main() {
+                let seen: bool = must_stay_true(false);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let err = run_semcode(&bytes).expect_err("invariant clause should trap");
+        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+    }
+
+    #[test]
     fn vm_runs_bool_ops() {
         let src = r#"
 			fn main() {

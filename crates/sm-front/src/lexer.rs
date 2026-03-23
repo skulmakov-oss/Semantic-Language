@@ -297,6 +297,7 @@ fn tokenize_line(
                     "fn" => TokenKind::KwFn,
                     "requires" => TokenKind::KwRequires,
                     "ensures" => TokenKind::KwEnsures,
+                    "invariant" => TokenKind::KwInvariant,
                     "record" => TokenKind::KwRecord,
                     "const" => TokenKind::KwConst,
                     "let" => TokenKind::KwLet,

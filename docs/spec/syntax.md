@@ -83,6 +83,12 @@ fn name(arg: type, ...) -> ret_type ensures(condition) {
 }
 ```
 
+```sm
+fn name(arg: type, ...) -> ret_type invariant(condition) {
+    ...
+}
+```
+
 Expression-bodied sugar is also part of the current v0 surface:
 
 ```sm
@@ -102,6 +108,8 @@ Current rules:
   before the function body
 - zero or more `ensures(condition)` clauses may appear after any `requires`
   clauses and before the function body
+- zero or more `invariant(condition)` clauses may appear after any
+  `requires/ensures` clauses and before the function body
 - the return type is optional; omitted return type means `unit`
 - function bodies are block-delimited with `{ ... }`
 - `fn ... = expr;` is accepted as shorthand for a single returned expression
@@ -181,6 +189,7 @@ Current statement rules:
 - `assert(condition);` is a statement-level builtin contract form
 - `requires(condition)` is currently a function-level contract clause only
 - `ensures(condition)` is currently a function-level contract clause only
+- `invariant(condition)` is currently a function-level contract clause only
 - `if` conditions must be `bool`
 - `match` is currently restricted to `quad`
 - `match` requires an explicit default arm `_ => { ... }`

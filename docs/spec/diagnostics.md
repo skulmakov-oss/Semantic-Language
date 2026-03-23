@@ -98,6 +98,10 @@ Current message families include:
 - non-bool `ensures` condition
 - unsupported expression form inside `ensures`
 - reserved `result` parameter name while `ensures` clauses are present
+- non-bool `invariant` condition
+- unsupported expression form inside `invariant`
+- reserved `result` parameter name while `invariant` clauses are present
+- `result` referenced from `invariant` on a unit-return function
 - positional arguments after named arguments
 - named arguments on builtin calls
 - unknown named parameter

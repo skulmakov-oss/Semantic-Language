@@ -325,7 +325,13 @@ fn lower_function_to_ir_with_record_table(
     record_table: &RecordTable,
 ) -> Result<IrFunction, FrontendError> {
     let ensures_result_symbol = find_contract_result_symbol(&func.ensures, arena)?;
-    let mut ctx = LoweringCtx::new(func.ensures.clone(), ensures_result_symbol);
+    let invariants_result_symbol = find_contract_result_symbol(&func.invariants, arena)?;
+    let mut ctx = LoweringCtx::new(
+        func.ensures.clone(),
+        ensures_result_symbol,
+        func.invariants.clone(),
+        invariants_result_symbol,
+    );
     let mut env = ScopeEnv::with_params(&func.params);
     ctx.next_reg = u16::try_from(func.params.len()).map_err(|_| FrontendError {
         pos: 0,
@@ -360,6 +366,20 @@ fn lower_function_to_ir_with_record_table(
         }
         ctx.instrs.push(IrInstr::Assert { cond: cond_reg });
     }
+    lower_invariant_clauses(
+        &ctx.invariants,
+        ctx.invariants_result_symbol,
+        None,
+        ContractInvariantPhase::Entry,
+        arena,
+        &mut ctx.next_reg,
+        &mut ctx.instrs,
+        &env,
+        &mut ctx.loop_stack,
+        fn_table,
+        record_table,
+        func.ret.clone(),
+    )?;
     for stmt in &func.body {
         lower_stmt(
             *stmt,
@@ -378,6 +398,20 @@ fn lower_function_to_ir_with_record_table(
                 &ctx.ensures,
                 ctx.ensures_result_symbol,
                 None,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                &env,
+                &mut ctx.loop_stack,
+                fn_table,
+                record_table,
+                func.ret.clone(),
+            )?;
+            lower_invariant_clauses(
+                &ctx.invariants,
+                ctx.invariants_result_symbol,
+                None,
+                ContractInvariantPhase::Exit,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2037,6 +2071,8 @@ fn bind_let_else_record_items(
     else_return: Option<ExprId>,
     contract_ensures: &[ExprId],
     contract_result_symbol: Option<SymbolId>,
+    contract_invariants: &[ExprId],
+    contract_invariant_result_symbol: Option<SymbolId>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
@@ -2127,6 +2163,8 @@ fn bind_let_else_record_items(
                     else_return,
                     contract_ensures,
                     contract_result_symbol,
+                    contract_invariants,
+                    contract_invariant_result_symbol,
                     arena,
                     next,
                     out,
@@ -2415,6 +2453,8 @@ fn bind_let_else_tuple_items(
     else_return: Option<ExprId>,
     contract_ensures: &[ExprId],
     contract_result_symbol: Option<SymbolId>,
+    contract_invariants: &[ExprId],
+    contract_invariant_result_symbol: Option<SymbolId>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
@@ -2488,6 +2528,8 @@ fn bind_let_else_tuple_items(
                     else_return,
                     contract_ensures,
                     contract_result_symbol,
+                    contract_invariants,
+                    contract_invariant_result_symbol,
                     arena,
                     next,
                     out,
@@ -2646,6 +2688,8 @@ fn lower_stmt(
                 *else_return,
                 &ctx.ensures,
                 ctx.ensures_result_symbol,
+                &ctx.invariants,
+                ctx.invariants_result_symbol,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2682,6 +2726,8 @@ fn lower_stmt(
                 *else_return,
                 &ctx.ensures,
                 ctx.ensures_result_symbol,
+                &ctx.invariants,
+                ctx.invariants_result_symbol,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2859,6 +2905,8 @@ fn lower_stmt(
                 *else_return,
                 &ctx.ensures,
                 ctx.ensures_result_symbol,
+                &ctx.invariants,
+                ctx.invariants_result_symbol,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2889,6 +2937,8 @@ fn lower_stmt(
             *v,
             &ctx.ensures,
             ctx.ensures_result_symbol,
+            &ctx.invariants,
+            ctx.invariants_result_symbol,
             arena,
             &mut ctx.next_reg,
             &mut ctx.instrs,
@@ -3359,10 +3409,85 @@ fn lower_ensures_clauses(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContractInvariantPhase {
+    Entry,
+    Exit,
+}
+
+fn lower_invariant_clauses(
+    contract_invariants: &[ExprId],
+    contract_result_symbol: Option<SymbolId>,
+    result_value: Option<(u16, Type)>,
+    phase: ContractInvariantPhase,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    if contract_invariants.is_empty() {
+        return Ok(());
+    }
+
+    let mut contract_env = env.clone();
+    if let Some(result_symbol) = contract_result_symbol {
+        if let Some((result_reg, result_ty)) = result_value.clone() {
+            contract_env.insert_const(result_symbol, result_ty);
+            out.push(IrInstr::StoreVar {
+                name: "result".to_string(),
+                src: result_reg,
+            });
+        }
+    }
+
+    for condition in contract_invariants {
+        let references_result = contract_clause_references_result(*condition, arena)?;
+        if references_result && phase == ContractInvariantPhase::Entry {
+            continue;
+        }
+        if references_result && result_value.is_none() {
+            return Err(FrontendError {
+                pos: 0,
+                message: "invariant clause referencing result requires explicit return value"
+                    .to_string(),
+            });
+        }
+        let (cond_reg, cond_ty) = lower_expr(
+            *condition,
+            arena,
+            next,
+            out,
+            &contract_env,
+            loop_stack,
+            fn_table,
+            record_table,
+            ret_ty.clone(),
+        )?;
+        if cond_ty != Type::Bool {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "invariant clause condition must be bool in lowering, got {:?}",
+                    cond_ty
+                ),
+            });
+        }
+        out.push(IrInstr::Assert { cond: cond_reg });
+    }
+
+    Ok(())
+}
+
 fn lower_return_payload(
     value: Option<ExprId>,
     contract_ensures: &[ExprId],
     contract_result_symbol: Option<SymbolId>,
+    contract_invariants: &[ExprId],
+    contract_invariant_result_symbol: Option<SymbolId>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
@@ -3408,6 +3533,20 @@ fn lower_return_payload(
                 record_table,
                 ret_ty.clone(),
             )?;
+            lower_invariant_clauses(
+                contract_invariants,
+                contract_invariant_result_symbol,
+                Some((reg, ty.clone())),
+                ContractInvariantPhase::Exit,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
             out.push(IrInstr::Ret { src: Some(reg) });
             Ok(())
         }
@@ -3422,6 +3561,20 @@ fn lower_return_payload(
                 contract_ensures,
                 contract_result_symbol,
                 None,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
+            lower_invariant_clauses(
+                contract_invariants,
+                contract_invariant_result_symbol,
+                None,
+                ContractInvariantPhase::Exit,
                 arena,
                 next,
                 out,
@@ -3742,6 +3895,8 @@ fn lower_loop_expr_stmt(
                 loop_stack: loop_stack.clone(),
                 ensures: Vec::new(),
                 ensures_result_symbol: None,
+                invariants: Vec::new(),
+                invariants_result_symbol: None,
                 instrs: core::mem::take(out),
             };
             let result = lower_stmt(stmt_id, arena, &mut ctx, env, ret_ty, fn_table, record_table);
@@ -4077,6 +4232,8 @@ struct LoweringCtx {
     loop_stack: Vec<LoopLoweringFrame>,
     ensures: Vec<ExprId>,
     ensures_result_symbol: Option<SymbolId>,
+    invariants: Vec<ExprId>,
+    invariants_result_symbol: Option<SymbolId>,
     instrs: Vec<IrInstr>,
 }
 
@@ -4089,13 +4246,20 @@ struct LoopLoweringFrame {
 }
 
 impl LoweringCtx {
-    fn new(ensures: Vec<ExprId>, ensures_result_symbol: Option<SymbolId>) -> Self {
+    fn new(
+        ensures: Vec<ExprId>,
+        ensures_result_symbol: Option<SymbolId>,
+        invariants: Vec<ExprId>,
+        invariants_result_symbol: Option<SymbolId>,
+    ) -> Self {
         Self {
             next_reg: 0,
             next_label_id: 0,
             loop_stack: Vec::new(),
             ensures,
             ensures_result_symbol,
+            invariants,
+            invariants_result_symbol,
             instrs: Vec::new(),
         }
     }
@@ -4121,6 +4285,13 @@ fn find_contract_result_symbol(
         }
     }
     Ok(None)
+}
+
+fn contract_clause_references_result(
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Result<bool, FrontendError> {
+    Ok(find_named_var_symbol(expr_id, arena, "result")?.is_some())
 }
 
 fn find_named_var_symbol(
@@ -4691,6 +4862,47 @@ mod opt_tests {
         assert!(result_store < assert_positions[0]);
         assert!(assert_positions[0] < ret_index);
         assert!(assert_positions[1] < ret_index);
+    }
+
+    #[test]
+    fn lower_function_invariant_clauses_to_entry_and_exit_asserts() {
+        let src = r#"
+            fn keep(flag: bool) -> bool
+                invariant(flag == true)
+                invariant(result == flag) {
+                return flag;
+            }
+
+            fn main() {
+                let seen: bool = keep(true);
+                assert(seen == true);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("invariant clauses should lower");
+        let keep = ir.iter().find(|func| func.name == "keep").expect("keep fn");
+        let ret_index = keep
+            .instrs
+            .iter()
+            .position(|instr| matches!(instr, IrInstr::Ret { src: Some(_) }))
+            .expect("return should exist");
+        let result_store = keep
+            .instrs
+            .iter()
+            .position(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "result"))
+            .expect("exit invariant path should store synthetic result binding");
+        let assert_positions: Vec<_> = keep
+            .instrs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, instr)| matches!(instr, IrInstr::Assert { .. }).then_some(idx))
+            .collect();
+        assert_eq!(assert_positions.len(), 3);
+        assert!(assert_positions[0] < result_store);
+        assert!(result_store < assert_positions[1]);
+        assert!(result_store < assert_positions[2]);
+        assert!(assert_positions[2] < ret_index);
     }
 
     #[test]

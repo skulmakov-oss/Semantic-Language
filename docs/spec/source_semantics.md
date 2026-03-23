@@ -38,6 +38,14 @@ Current rules:
   function return path completes
 - multiple `ensures(condition)` clauses evaluate in source order on the exit
   path that produced the return value
+- function-level `invariant(condition)` clauses are first-wave entry/exit
+  contract checks rather than a separate proof system
+- invariant clauses that do not reference `result` execute at both function
+  entry and function exit
+- invariant clauses that reference the synthetic `result` binding execute only
+  on function exit and only for non-unit returns
+- multiple `invariant(condition)` clauses evaluate in source order at each
+  applicable check point
 
 Current v0 record declaration semantics:
 
@@ -65,15 +73,19 @@ Current v0 record declaration semantics:
 
 Current first-wave function-contract semantics:
 
-- only declaration-level `requires` and `ensures` are part of the current
-  stable contract surface
+- only declaration-level `requires`, `ensures`, and narrow `invariant` are
+  part of the current stable contract surface
 - `requires` checks the narrow contract subset in a parameter-only environment
 - `ensures` checks the same narrow subset on the return path
 - non-unit functions may additionally use the synthetic `result` binding inside
-  `ensures`
+  `ensures` and `invariant`
+- `invariant` checks the same narrow subset at function entry and exit
+- `invariant` clauses that reference `result` are exit-only checks
 - `ensures` currently lowers to explicit core assertions before `ret`
-- `ensures` is not yet a general proof/effect system and does not imply
-  `invariant` semantics
+- `invariant` currently lowers to the same explicit core assertion path used by
+  the other contract clauses
+- this slice is not yet a general proof/effect system and does not imply loop,
+  block, or mutation-point invariant semantics
 
 ## Deterministic Evaluation Order
 
@@ -144,17 +156,27 @@ Current default-parameter semantics:
 
 Current first-wave function-contract semantics:
 
-- `requires(condition)` is currently the only declaration-level contract clause
-  in the stable source surface
+- `requires(condition)`, `ensures(condition)`, and narrow
+  `invariant(condition)` are the current declaration-level function contract
+  clauses in the stable source surface
 - each `requires` condition is type-checked in a parameter-only environment
+- each `ensures` condition is type-checked in a parameter-plus-optional-result
+  environment
+- each `invariant` condition is type-checked in the same narrow environment,
+  with `result` allowed only for non-unit returns
 - the current stable subset allows only parameter references, tuple literals,
-  record field reads, and pure unary/binary operator expressions
+  record field reads, optional `result`, and pure unary/binary operator
+  expressions
 - function calls, record construction, record copy-with, range literals,
   blocks, and control-flow expressions are not yet part of the stable
-  `requires` subset
+  contract-expression subset
 - lowering translates each `requires` clause to an explicit core assertion at
   function entry
-- this slice does not yet claim `ensures(...)` or `invariant(...)`
+- lowering translates each `ensures` clause to an explicit core assertion on
+  each return path
+- lowering translates each `invariant` clause to explicit core assertions at
+  function entry and/or function exit depending on whether the clause
+  references `result`
 
 Current v0 limits:
 
