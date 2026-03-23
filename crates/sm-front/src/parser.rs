@@ -3,8 +3,8 @@ use crate::types::{
     AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
-    RangeExpr, RecordDecl, RecordField, RecordInitField, RecordLiteralExpr, Stmt, StmtId,
-    SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
+    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -699,14 +699,12 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self) -> Result<ExprId, FrontendError> {
         let mut expr = self.parse_primary_atom()?;
         while self.eat(TokenKind::Dot) {
-            let name = self.expect_symbol()?;
+            let field = self.expect_symbol()?;
             if !self.eat(TokenKind::LParen) {
-                return Err(FrontendError {
-                    pos: self.pos(),
-                    message:
-                        "UFCS method-call sugar currently requires explicit parentheses '.name(...)'"
-                            .to_string(),
-                });
+                expr = self
+                    .arena
+                    .alloc_expr(Expr::RecordField(RecordFieldExpr { base: expr, field }));
+                continue;
             }
             let mut args = vec![CallArg {
                 name: None,
@@ -714,7 +712,7 @@ impl<'a> Parser<'a> {
             }];
             args.extend(self.parse_call_args()?);
             self.expect(TokenKind::RParen, "expected ')' after UFCS method call")?;
-            expr = self.arena.alloc_expr(Expr::Call(name, args));
+            expr = self.arena.alloc_expr(Expr::Call(field, args));
         }
         Ok(expr)
     }
@@ -1008,6 +1006,9 @@ impl<'a> Parser<'a> {
                     self.ensure_short_lambda_expr_capture_free(field.value, scopes)?;
                 }
                 Ok(())
+            }
+            Expr::RecordField(field_expr) => {
+                self.ensure_short_lambda_expr_capture_free(field_expr.base, scopes)
             }
             Expr::Var(name) => {
                 if scopes.iter().rev().any(|scope| scope.contains(name)) {
@@ -2919,6 +2920,36 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_record_field_access_surface() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+}
+
+fn main() {
+    let ctx = DecisionContext { camera: T };
+    let camera = ctx.camera;
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record field access should parse");
+        let main = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(main.body[1]) else {
+            panic!("expected second let");
+        };
+        let Expr::RecordField(field_expr) = program.arena.expr(*value) else {
+            panic!("expected record field expr");
+        };
+        let Expr::Var(base) = program.arena.expr(field_expr.base) else {
+            panic!("expected field access base variable");
+        };
+        assert_eq!(program.arena.symbol_name(*base), "ctx");
+        assert_eq!(program.arena.symbol_name(field_expr.field), "camera");
+    }
+
+    #[test]
     fn rustlike_parser_rejects_nested_tuple_destructuring_bind() {
         let src = r#"
 fn main() {
@@ -3157,7 +3188,7 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_ufcs_without_parentheses() {
+    fn rustlike_parser_accepts_postfix_field_access_without_parentheses() {
         let src = r#"
 fn abs(value: f64) -> f64 = value;
 
@@ -3167,9 +3198,16 @@ fn main() {
 }
 "#;
 
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("UFCS without parentheses must reject");
-        assert!(err.message.contains("requires explicit parentheses"));
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("postfix field access should parse");
+        let main = &program.functions[1];
+        let Stmt::Let { value, .. } = program.arena.stmt(main.body[0]) else {
+            panic!("expected let statement");
+        };
+        let Expr::RecordField(field_expr) = program.arena.expr(*value) else {
+            panic!("expected record field access");
+        };
+        assert_eq!(program.arena.symbol_name(field_expr.field), "abs");
     }
 
     #[test]

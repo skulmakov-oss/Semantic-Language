@@ -92,11 +92,12 @@ Current rules:
 Current v0 record limits:
 
 - `RecordName { field: expr, ... }` is the current stage-1 record construction form
+- `record_value.field_name` is the current stage-1 read-only field access form
 - record literal fields must appear exactly once by name
 - lowering preserves declaration-slot order rather than source-field order
 - record types are currently allowed only in executable local/const binding positions
 - record types are not yet part of stable executable function signatures or returns
-- field access, destructuring, and record update are not yet part of the stable source contract
+- record destructuring and record update are not yet part of the stable source contract
 - record equality is not yet part of the stable source contract
 - record values are not part of the PROMETHEUS host ABI surface
 - record destructuring, record punning, mutation, methods, and inheritance are not part of this slice
@@ -199,6 +200,9 @@ Current expression forms:
 - record literals:
   - `DecisionContext { camera: T, quality: 0.75 }`
   - `DecisionContext { quality: 0.75, camera: T }`
+- record field access:
+  - `ctx.camera`
+  - `ctx.quality`
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`
@@ -304,9 +308,9 @@ Current UFCS / method-call rules:
 - UFCS currently desugars to ordinary call order: `name(receiver, args...)`
 - UFCS may chain because it remains ordinary expression/call surface after
   desugaring
-- UFCS currently requires explicit parentheses; `.name` without `(...)` is not
-  part of the contract
-- UFCS does not introduce field access, object members, or method declarations
+- `.name` without `(...)` is parsed as field access and then typechecked only
+  against nominal record values
+- UFCS does not introduce object members or method declarations
 
 Current where-clause rules:
 

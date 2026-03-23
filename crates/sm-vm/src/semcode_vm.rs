@@ -458,6 +458,12 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::RecordGet => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::TupleGet => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -747,6 +753,30 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     dst,
                     Value::Record(RecordCarrier { type_name, slots }),
                 )?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::RecordGet => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let index = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let expected_name = lookup_str(&f, sid)?.to_string();
+                let record = get_reg(vm, frame_idx, src)?;
+                let Value::Record(record) = record else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "RECORD_GET source must be record".to_string(),
+                    ));
+                };
+                if record.type_name != expected_name {
+                    return Err(RuntimeError::TypeMismatchRuntime(format!(
+                        "RECORD_GET expected record '{}', got '{}'",
+                        expected_name, record.type_name
+                    )));
+                }
+                let item = record.slots.get(index).cloned().ok_or_else(|| {
+                    RuntimeError::BadFormat(format!("record-get index out of bounds: {}", index))
+                })?;
+                set_reg(vm, frame_idx, dst, item)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::TupleGet => {
@@ -1315,6 +1345,14 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let name = lookup_str(f, sid)?;
             format!("MAKE_RECORD r{}, {}, [{}]", d, name, regs)
         }
+        Opcode::RecordGet => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let name = lookup_str(f, sid)?;
+            format!("RECORD_GET r{}, r{}, {}, {}", d, s, name, i)
+        }
         Opcode::TupleGet => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1599,6 +1637,27 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("MAKE_RECORD"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_stage1_record_field_access_path() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let seen: quad = ctx.camera;
+                assert(seen == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("RECORD_GET"));
         run_semcode(&bytes).expect("run");
     }
 

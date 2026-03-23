@@ -511,6 +511,19 @@ fn decode_operands(
                 mark_reg(src);
             }
         }
+        Opcode::RecordGet => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated record-get dst register"))?;
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated record-get src register"))?;
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated record-get type string id"))?;
+            read_u16_le(code, cursor).map_err(|_| invalid("truncated record-get slot index"))?;
+            mark_reg(dst);
+            mark_reg(src);
+            refs.string_refs
+                .push((offset, sid as usize, "record type name"));
+        }
         Opcode::TupleGet => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get dst register"))?;
             let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get src register"))?;
@@ -781,6 +794,26 @@ mod tests {
             fn main() {
                 let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
                 let _ = ctx;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_stage1_record_get_semcode() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let seen: quad = ctx.camera;
+                assert(seen == T);
                 return;
             }
         "#;

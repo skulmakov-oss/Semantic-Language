@@ -44,7 +44,9 @@ Current v0 record declaration semantics:
 - record literal evaluation is deterministic left-to-right in source field order
 - the canonical runtime carrier stores slots in declaration order, not source order
 - stage-1 record values may flow through executable local and const bindings
-- executable parameters, returns, field access, and record equality remain deferred to later slices
+- stage-1 field access uses `record_value.field_name` and resolves against the canonical record declaration
+- stage-1 field access lowers through deterministic declaration-slot reads
+- executable parameters, returns, and record equality remain deferred to later slices
 
 ## Deterministic Evaluation Order
 
@@ -290,7 +292,7 @@ Current UFCS semantics:
 Current v0 limit:
 
 - UFCS currently requires explicit call parentheses
-- UFCS does not define field access or member lookup
+- `.name` without call parentheses is field access, not UFCS
 - UFCS does not introduce method declarations or object-oriented dispatch
 
 ## Loop Expression
@@ -397,7 +399,8 @@ Current stage-1 record semantics:
 Current v0 limit:
 
 - record values are not yet part of executable parameter or return contracts
-- record field access, destructuring, update, and punning are not yet part of the stable source contract
+- record field access is read-only and resolves by canonical declaration-slot order
+- record destructuring, update, and punning are not yet part of the stable source contract
 - record equality is intentionally rejected
 - record values are not part of the PROMETHEUS host ABI surface
 
@@ -532,7 +535,7 @@ The current source semantics contract does not yet claim stable support for:
 
 - exceptions
 - heap/object semantics
-- executable record construction or field access
+- executable record mutation or structural record/object member model
 - async or concurrency execution
 - user-defined operator overloading
 - lazy evaluation as a first-class source feature

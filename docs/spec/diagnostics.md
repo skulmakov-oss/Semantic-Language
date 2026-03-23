@@ -119,6 +119,8 @@ Current message families include:
 - duplicate field in record literal
 - unknown field in record literal
 - missing field in record literal
+- unknown field in record field access
+- record field access on non-record value
 - record equality is not part of the stage-1 canonical record surface
 - invalid tuple arity
 - tuple type mismatch

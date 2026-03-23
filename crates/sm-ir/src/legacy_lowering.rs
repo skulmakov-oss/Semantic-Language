@@ -43,6 +43,12 @@ pub enum IrInstr {
         name: String,
         items: Vec<u16>,
     },
+    RecordGet {
+        dst: u16,
+        src: u16,
+        record_name: String,
+        index: u16,
+    },
     TupleGet {
         dst: u16,
         src: u16,
@@ -620,6 +626,9 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             IrInstr::MakeRecord { name, .. } => {
                 let _ = interner.id(name)?;
             }
+            IrInstr::RecordGet { record_name, .. } => {
+                let _ = interner.id(record_name)?;
+            }
             IrInstr::Call { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -703,6 +712,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeRecord { items, .. } => 1 + 2 + 2 + 2 + (items.len() * 2),
+        IrInstr::RecordGet { .. } => 1 + 2 + 2 + 2 + 2,
         IrInstr::TupleGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
         IrInstr::StoreVar { .. } => 1 + 2 + 2,
@@ -801,6 +811,18 @@ fn emit_instr(
             for item in items {
                 write_u16_le(out, *item);
             }
+        }
+        IrInstr::RecordGet {
+            dst,
+            src,
+            record_name,
+            index,
+        } => {
+            out.push(Opcode::RecordGet.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *src);
+            write_u16_le(out, interner.lookup(record_name)?);
+            write_u16_le(out, *index);
         }
         IrInstr::TupleGet { dst, src, index } => {
             out.push(Opcode::TupleGet.byte());
@@ -1206,6 +1228,60 @@ fn lower_expr_with_expected(
                 items: ordered_regs,
             });
             Ok((dst, Type::Record(record_literal.name)))
+        }
+        Expr::RecordField(field_expr) => {
+            let (src, base_ty) = lower_expr(
+                field_expr.base,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
+            let Type::Record(record_name) = base_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "record field access lowering requires record base before '.{}', got {:?}",
+                        resolve_symbol_name(arena, field_expr.field)?,
+                        base_ty
+                    ),
+                });
+            };
+            let record = record_table.get(&record_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown record type '{}' in field access lowering",
+                    resolve_symbol_name(arena, record_name)?
+                ),
+            })?;
+            let (index, field) = record
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == field_expr.field)
+                .ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "record type '{}' has no field named '{}' during lowering",
+                        resolve_symbol_name(arena, record_name)?,
+                        resolve_symbol_name(arena, field_expr.field)?
+                    ),
+                })?;
+            let dst = alloc(next);
+            out.push(IrInstr::RecordGet {
+                dst,
+                src,
+                record_name: resolve_symbol_name(arena, record_name)?.to_string(),
+                index: u16::try_from(index).map_err(|_| FrontendError {
+                    pos: 0,
+                    message: "record field slot index exceeds v0 limit".to_string(),
+                })?,
+            });
+            Ok((dst, field.ty.clone()))
         }
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
@@ -4230,6 +4306,30 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "ctx"
+        )));
+    }
+
+    #[test]
+    fn lower_record_field_access_to_record_get_slot() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let seen: quad = ctx.camera;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record field access should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::RecordGet { record_name, index, .. }
+                if record_name == "DecisionContext" && *index == 0
         )));
     }
 

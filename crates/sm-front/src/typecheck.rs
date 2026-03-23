@@ -814,6 +814,15 @@ fn infer_expr_type(
             ret_ty,
             loop_stack,
         ),
+        Expr::RecordField(field_expr) => infer_record_field_access_type(
+            field_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::Var(v) => env.get(*v).ok_or(FrontendError {
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
@@ -2345,6 +2354,59 @@ mod tests {
     }
 
     #[test]
+    fn record_field_access_typechecks_against_canonical_decl() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = ctx.camera;
+                let score: f64 = ctx.quality;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("record field access should typecheck");
+    }
+
+    #[test]
+    fn record_field_access_rejects_unknown_field() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            fn main() {
+                let ctx = DecisionContext { camera: T };
+                let badge = ctx.badge;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("unknown record field must reject");
+        assert!(err.message.contains("record type 'DecisionContext' has no field named 'badge'"));
+    }
+
+    #[test]
+    fn record_field_access_rejects_non_record_base() {
+        let src = r#"
+            fn main() {
+                let value: f64 = 1.0;
+                let bad = value.quality;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-record field access must reject");
+        assert!(err
+            .message
+            .contains("record field access requires record value before '.quality', got F64"));
+    }
+
+    #[test]
     fn ufcs_method_call_typechecks_via_ordinary_call_contract() {
         let src = r#"
             fn scale(value: f64, factor: f64) -> f64 = value * factor;
@@ -3031,6 +3093,56 @@ fn infer_record_literal_type(
         }
     }
     Ok(Type::Record(record_literal.name))
+}
+
+fn infer_record_field_access_type(
+    field_expr: &RecordFieldExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let base_ty = infer_expr_type(
+        field_expr.base,
+        arena,
+        env,
+        table,
+        record_table,
+        ret_ty,
+        loop_stack,
+    )?;
+    let Type::Record(record_name) = base_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "record field access requires record value before '.{}', got {:?}",
+                resolve_symbol_name(arena, field_expr.field)?,
+                base_ty
+            ),
+        });
+    };
+    let record = record_table.get(&record_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in field access",
+            resolve_symbol_name(arena, record_name)?
+        ),
+    })?;
+    let field = record
+        .fields
+        .iter()
+        .find(|field| field.name == field_expr.field)
+        .ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "record type '{}' has no field named '{}'",
+                resolve_symbol_name(arena, record_name)?,
+                resolve_symbol_name(arena, field_expr.field)?
+            ),
+        })?;
+    Ok(field.ty.clone())
 }
 
 fn check_match_guard(
