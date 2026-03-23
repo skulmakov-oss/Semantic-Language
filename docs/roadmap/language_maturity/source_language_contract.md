@@ -38,3 +38,4 @@ Related staged design-target notes:
 - `docs/roadmap/language_maturity/record_data_model.md`
 - `docs/roadmap/language_maturity/record_scenarios.md`
 - `docs/roadmap/language_maturity/range_execution_story.md`
+- `docs/roadmap/language_maturity/units_of_measure_scope.md`
