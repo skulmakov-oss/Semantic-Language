@@ -95,10 +95,9 @@ Current v0 record limits:
 - `record_value.field_name` is the current stage-1 read-only field access form
 - record literal fields must appear exactly once by name
 - lowering preserves declaration-slot order rather than source-field order
-- record types are currently allowed only in executable local/const binding positions
-- record types are not yet part of stable executable function signatures or returns
+- record types may now appear in executable local bindings, parameters, and returns
 - record destructuring and record update are not yet part of the stable source contract
-- record equality is not yet part of the stable source contract
+- record equality is allowed only when every field type already supports stable equality
 - record values are not part of the PROMETHEUS host ABI surface
 - record destructuring, record punning, mutation, methods, and inheritance are not part of this slice
 

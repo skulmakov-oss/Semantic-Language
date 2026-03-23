@@ -1228,9 +1228,20 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
-        (Value::Record(_), Value::Record(_)) => Err(RuntimeError::TypeMismatchRuntime(
-            "record equality is not part of the stage-1 canonical record surface".to_string(),
-        )),
+        (Value::Record(xs), Value::Record(ys)) => {
+            if xs.type_name != ys.type_name {
+                return Ok(false);
+            }
+            if xs.slots.len() != ys.slots.len() {
+                return Ok(false);
+            }
+            for (x, y) in xs.slots.iter().zip(ys.slots.iter()) {
+                if !value_eq(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
         (Value::Unit, Value::Unit) => Ok(true),
         _ => Err(RuntimeError::TypeMismatchRuntime(
             "CmpEq/CmpNe operands must have same runtime type".to_string(),
@@ -1659,6 +1670,29 @@ mod tests {
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("RECORD_GET"));
         run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_record_pass_return_and_safe_equality_path() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn echo(ctx: DecisionContext) -> DecisionContext {
+                return ctx;
+            }
+
+            fn main() {
+                let left: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let right: DecisionContext = echo(left);
+                assert(right == right);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        run_semcode(&bytes).expect("record pass/return/equality should run");
     }
 
     #[test]

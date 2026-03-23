@@ -121,7 +121,7 @@ Current message families include:
 - missing field in record literal
 - unknown field in record field access
 - record field access on non-record value
-- record equality is not part of the stage-1 canonical record surface
+- record equality requested outside the stable field-equality subset
 - invalid tuple arity
 - tuple type mismatch
 - tuple destructuring bind requires tuple value

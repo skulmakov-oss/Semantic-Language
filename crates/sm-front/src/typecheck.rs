@@ -1007,15 +1007,15 @@ fn infer_expr_type(
                         return Err(FrontendError {
                             pos: 0,
                             message:
-                                "range equality is not part of the stable v0 range surface"
+                                    "range equality is not part of the stable v0 range surface"
                                     .to_string(),
                         });
                     }
-                    if contains_stage1_record_carrier(&lt) && contains_stage1_record_carrier(&rt) {
+                    if !supports_stable_equality_type(&lt, record_table)? {
                         return Err(FrontendError {
                             pos: 0,
                             message:
-                                "record equality is not part of the stage-1 canonical record surface"
+                                "record equality is allowed only when every field type already supports stable equality"
                                     .to_string(),
                         });
                     }
@@ -2255,25 +2255,25 @@ mod tests {
     }
 
     #[test]
-    fn record_type_rejects_executable_function_signature_use() {
+    fn record_type_allows_executable_function_signature_use() {
         let src = r#"
             record DecisionContext {
                 camera: quad,
             }
 
-            fn describe(ctx: DecisionContext) {
-                return;
+            fn echo(ctx: DecisionContext) -> DecisionContext {
+                return ctx;
             }
 
             fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T };
+                let mirror: DecisionContext = echo(ctx);
+                let _ = mirror;
                 return;
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record param should reject before carrier lands");
-        assert!(err
-            .message
-            .contains("record type 'DecisionContext' is declared but not yet available in executable parameter 'ctx'"));
+        typecheck_source(src).expect("record params and returns should typecheck");
     }
 
     #[test]
@@ -2335,7 +2335,7 @@ mod tests {
     }
 
     #[test]
-    fn record_literal_rejects_record_equality() {
+    fn record_literal_allows_equality_for_stable_field_subset() {
         let src = r#"
             record DecisionContext {
                 camera: quad,
@@ -2349,8 +2349,30 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record equality must remain gated");
-        assert!(err.message.contains("record equality is not part of the stage-1 canonical record surface"));
+        typecheck_source(src).expect("record equality should typecheck for stable field subset");
+    }
+
+    #[test]
+    fn record_equality_rejects_unsupported_field_subset() {
+        let src = r#"
+            record SensorFrame {
+                mask: qvec,
+            }
+
+            fn compare(left: SensorFrame, right: SensorFrame) {
+                assert(left == right);
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("record equality subset must reject unsupported fields");
+        assert!(err
+            .message
+            .contains("record equality is allowed only when every field type already supports stable equality"));
     }
 
     #[test]
@@ -2978,14 +3000,11 @@ fn ensure_executable_type_supported(
             }
             Ok(())
         }
-        Type::Record(name) => Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "record type '{}' is declared but not yet available in executable {} until the canonical record carrier lands",
-                resolve_symbol_name(arena, *name)?,
-                context
-            ),
-        }),
+        Type::Record(name) => {
+            let _ = resolve_symbol_name(arena, *name)?;
+            let _ = context;
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -3010,11 +3029,54 @@ fn ensure_storage_type_supported(
     }
 }
 
-fn contains_stage1_record_carrier(ty: &Type) -> bool {
+fn supports_stable_equality_type(
+    ty: &Type,
+    record_table: &RecordTable,
+) -> Result<bool, FrontendError> {
+    let mut active = BTreeSet::new();
+    supports_stable_equality_type_inner(ty, record_table, &mut active)
+}
+
+fn supports_stable_equality_type_inner(
+    ty: &Type,
+    record_table: &RecordTable,
+    active: &mut BTreeSet<SymbolId>,
+) -> Result<bool, FrontendError> {
     match ty {
-        Type::Record(_) => true,
-        Type::Tuple(items) => items.iter().any(contains_stage1_record_carrier),
-        _ => false,
+        Type::Quad
+        | Type::Bool
+        | Type::I32
+        | Type::U32
+        | Type::Fx
+        | Type::F64
+        | Type::Unit => Ok(true),
+        Type::QVec(_) => Ok(false),
+        Type::RangeI32 => Ok(false),
+        Type::Tuple(items) => {
+            for item in items {
+                if !supports_stable_equality_type_inner(item, record_table, active)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Type::Record(name) => {
+            if !active.insert(*name) {
+                return Ok(false);
+            }
+            let record = record_table.get(name).ok_or(FrontendError {
+                pos: 0,
+                message: "record equality subset references unknown record type".to_string(),
+            })?;
+            for field in &record.fields {
+                if !supports_stable_equality_type_inner(&field.ty, record_table, active)? {
+                    active.remove(name);
+                    return Ok(false);
+                }
+            }
+            active.remove(name);
+            Ok(true)
+        }
     }
 }
 

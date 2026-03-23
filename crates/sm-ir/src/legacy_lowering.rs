@@ -4259,26 +4259,35 @@ mod opt_tests {
     }
 
     #[test]
-    fn lowering_rejects_executable_record_signature_before_carrier_lands() {
+    fn lower_record_param_return_and_safe_equality_path() {
         let src = r#"
             record DecisionContext {
                 camera: quad,
             }
 
-            fn describe(ctx: DecisionContext) {
-                return;
+            fn echo(ctx: DecisionContext) -> DecisionContext {
+                return ctx;
             }
 
             fn main() {
+                let left: DecisionContext = DecisionContext { camera: T };
+                let right: DecisionContext = echo(left);
+                assert(right == right);
                 return;
             }
         "#;
 
-        let err = compile_program_to_ir(src)
-            .expect_err("executable record type should reject before carrier lands");
-        assert!(err
-            .message
-            .contains("record type 'DecisionContext' is declared but not yet available in executable parameter 'ctx'"));
+        let ir = compile_program_to_ir(src).expect("record params/returns should lower");
+        assert!(ir.iter().any(|func| func.name == "echo"));
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Call { name, .. } if name == "echo"
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::CmpEq { .. }
+        )));
     }
 
     #[test]
