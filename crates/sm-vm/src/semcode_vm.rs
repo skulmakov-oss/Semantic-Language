@@ -1737,6 +1737,27 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_record_destructuring_bind_path() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera, quality: _ } =
+                    DecisionContext { quality: 0.75, camera: T };
+                assert(seen_camera == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disassemble");
+        assert!(disasm.contains("RECORD_GET"));
+        run_semcode(&bytes).expect("record destructuring bind path should run");
+    }
+
+    #[test]
     fn vm_runs_for_range_inclusive_path() {
         let src = r#"
             fn main() {

@@ -4,7 +4,7 @@ use crate::types::{
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordPatternItem, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -233,6 +233,26 @@ impl<'a> Parser<'a> {
                 return Ok(self.arena.alloc_stmt(Stmt::LetTuple { items, ty, value }));
             }
             let name = self.expect_symbol()?;
+            if self.check(TokenKind::LBrace) {
+                self.expect(TokenKind::LBrace, "expected '{' after record pattern name")?;
+                let items = self.parse_record_pattern_items_after_lbrace()?;
+                self.expect(TokenKind::Assign, "expected '='")?;
+                let value = self.parse_expr()?;
+                if self.check(TokenKind::KwElse) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "let-else record pattern is not part of the stable contract in this slice"
+                                .to_string(),
+                    });
+                }
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                return Ok(self.arena.alloc_stmt(Stmt::LetRecord {
+                    record_name: name,
+                    items,
+                    value,
+                }));
+            }
             let ty = if self.eat(TokenKind::Colon) {
                 Some(self.parse_type()?)
             } else {
@@ -458,6 +478,66 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(bind_items)
+    }
+
+    fn parse_record_pattern_items_after_lbrace(
+        &mut self,
+    ) -> Result<Vec<RecordPatternItem>, FrontendError> {
+        let mut items = Vec::new();
+        loop {
+            let field = self.expect_symbol()?;
+            if items
+                .iter()
+                .any(|existing: &RecordPatternItem| existing.field == field)
+            {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: format!(
+                        "record destructuring pattern cannot repeat field '{}'",
+                        self.arena.symbol_name(field)
+                    ),
+                });
+            }
+            self.expect(
+                TokenKind::Colon,
+                "expected ':' after record destructuring field name",
+            )?;
+            let target = if self.eat(TokenKind::Underscore) {
+                None
+            } else {
+                Some(self.expect_symbol()?)
+            };
+            if let Some(target_name) = target {
+                if items.iter().any(|existing| existing.target == Some(target_name)) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: format!(
+                            "record destructuring pattern cannot repeat binding '{}'",
+                            self.arena.symbol_name(target_name)
+                        ),
+                    });
+                }
+            }
+            items.push(RecordPatternItem { field, target });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(
+            TokenKind::RBrace,
+            "expected '}' after record destructuring pattern",
+        )?;
+        if items.is_empty() {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "record destructuring pattern requires at least 1 field".to_string(),
+            });
+        }
+        Ok(items)
     }
 
     fn parse_else_return_payload(
@@ -2947,6 +3027,109 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*base), "ctx");
         assert_eq!(program.arena.symbol_name(field_expr.field), "camera");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_explicit_record_destructuring_bind() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let DecisionContext { camera: seen_camera, quality: _ } =
+        DecisionContext { camera: T, quality: 0.75 };
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record destructuring bind should parse");
+        let main = &program.functions[0];
+        let Stmt::LetRecord {
+            record_name,
+            items,
+            value,
+        } = program.arena.stmt(main.body[0])
+        else {
+            panic!("expected record destructuring let");
+        };
+        assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
+        assert_eq!(items.len(), 2);
+        assert_eq!(program.arena.symbol_name(items[0].field), "camera");
+        assert_eq!(
+            items[0]
+                .target
+                .map(|symbol| program.arena.symbol_name(symbol).to_string()),
+            Some("seen_camera".to_string())
+        );
+        assert_eq!(program.arena.symbol_name(items[1].field), "quality");
+        assert!(items[1].target.is_none());
+        assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_duplicate_field_in_record_destructuring_bind() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+}
+
+fn main() {
+    let DecisionContext { camera: first, camera: second } =
+        DecisionContext { camera: T };
+    return;
+}
+        "#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("duplicate field should reject");
+        assert!(err
+            .message
+            .contains("record destructuring pattern cannot repeat field 'camera'"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_duplicate_binding_in_record_destructuring_bind() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    badge: quad,
+}
+
+fn main() {
+    let DecisionContext { camera: seen, badge: seen } =
+        DecisionContext { camera: T, badge: F };
+    return;
+}
+        "#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("duplicate binding should reject");
+        assert!(err
+            .message
+            .contains("record destructuring pattern cannot repeat binding 'seen'"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_record_destructuring_let_else_surface() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+}
+
+fn main() {
+    let DecisionContext { camera: seen } = DecisionContext { camera: T } else return;
+    return;
+}
+        "#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("record let-else must reject in this slice");
+        assert!(err
+            .message
+            .contains("let-else record pattern is not part of the stable contract in this slice"));
     }
 
     #[test]

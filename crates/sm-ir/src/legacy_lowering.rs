@@ -3,7 +3,7 @@ use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
 use sm_front::{LoopExpr, TuplePatternItem};
-use sm_front::types::NumericLiteral;
+use sm_front::types::{NumericLiteral, RecordPatternItem};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstr {
@@ -1819,6 +1819,71 @@ fn bind_tuple_items(
     Ok(())
 }
 
+fn bind_record_items(
+    record_name: SymbolId,
+    items: &[RecordPatternItem],
+    record_reg: u16,
+    record_ty: &Type,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &mut ScopeEnv,
+    record_table: &RecordTable,
+) -> Result<(), FrontendError> {
+    if *record_ty != Type::Record(record_name) {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "record destructuring bind requires value of type '{}', got {:?}",
+                resolve_symbol_name(arena, record_name)?,
+                record_ty
+            ),
+        });
+    }
+    let record = record_table.get(&record_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in record destructuring bind",
+            resolve_symbol_name(arena, record_name)?
+        ),
+    })?;
+    for item in items {
+        let Some(target) = item.target else {
+            continue;
+        };
+        let (index, field) = record
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == item.field)
+            .ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record type '{}' has no field named '{}' in destructuring bind",
+                    resolve_symbol_name(arena, record_name)?,
+                    resolve_symbol_name(arena, item.field)?
+                ),
+            })?;
+        let reg = alloc(next);
+        let index = u16::try_from(index).map_err(|_| FrontendError {
+            pos: 0,
+            message: "record destructuring bind index exceeds v0 limit".to_string(),
+        })?;
+        out.push(IrInstr::RecordGet {
+            dst: reg,
+            src: record_reg,
+            record_name: resolve_symbol_name(arena, record_name)?.to_string(),
+            index,
+        });
+        env.insert(target, field.ty.clone());
+        out.push(IrInstr::StoreVar {
+            name: resolve_symbol_name(arena, target)?.to_string(),
+            src: reg,
+        });
+    }
+    Ok(())
+}
+
 fn assign_tuple_items(
     items: &[Option<SymbolId>],
     tuple_reg: u16,
@@ -2244,6 +2309,35 @@ fn lower_stmt(
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
                 env,
+            )
+        }
+        Stmt::LetRecord {
+            record_name,
+            items,
+            value,
+        } => {
+            let (record_reg, record_ty) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                record_table,
+                Some(Type::Record(*record_name)),
+                ret_ty.clone(),
+            )?;
+            bind_record_items(
+                *record_name,
+                items,
+                record_reg,
+                &record_ty,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                record_table,
             )
         }
         Stmt::LetElseTuple {
@@ -2772,6 +2866,35 @@ fn lower_value_block_expr(
                 )?;
                 let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
                 bind_tuple_items(items, tuple_reg, &final_ty, arena, next, out, &mut block_env)?;
+            }
+            Stmt::LetRecord {
+                record_name,
+                items,
+                value,
+            } => {
+                let (record_reg, record_ty) = lower_expr_with_expected(
+                    *value,
+                    arena,
+                    next,
+                    out,
+                    &block_env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    Some(Type::Record(*record_name)),
+                    ret_ty.clone(),
+                )?;
+                bind_record_items(
+                    *record_name,
+                    items,
+                    record_reg,
+                    &record_ty,
+                    arena,
+                    next,
+                    out,
+                    &mut block_env,
+                    record_table,
+                )?;
             }
             Stmt::Discard { ty, value } => {
                 let _ = lower_expr_with_expected(
@@ -4339,6 +4462,35 @@ mod opt_tests {
             instr,
             IrInstr::RecordGet { record_name, index, .. }
                 if record_name == "DecisionContext" && *index == 0
+        )));
+    }
+
+    #[test]
+    fn lower_record_destructuring_bind_to_record_get_ir() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera, quality: _ } =
+                    DecisionContext { quality: 0.75, camera: T };
+                assert(seen_camera == T);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record destructuring bind should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::RecordGet { record_name, index, .. }
+                if record_name == "DecisionContext" && *index == 0
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "seen_camera"
         )));
     }
 

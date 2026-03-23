@@ -921,6 +921,26 @@ mod tests {
     }
 
     #[test]
+    fn verifier_accepts_record_destructuring_bind_semcode() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera, quality: _ } =
+                    DecisionContext { quality: 0.75, camera: T };
+                assert(seen_camera == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
     fn verifier_rejects_short_header() {
         let report = verify_semcode(b"SEMC").expect_err("must reject");
         assert_eq!(report.diagnostics[0].code, VerificationCode::BadHeader);

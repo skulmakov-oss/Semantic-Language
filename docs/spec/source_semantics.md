@@ -46,6 +46,9 @@ Current v0 record declaration semantics:
 - stage-1 record values may flow through executable locals, parameters, and returns
 - stage-1 field access uses `record_value.field_name` and resolves against the canonical record declaration
 - stage-1 field access lowers through deterministic declaration-slot reads
+- explicit record destructuring bind uses `let RecordName { field: target, ... } = value;`
+- explicit record destructuring bind currently projects only the named subset of declaration fields
+- `_` targets in explicit record destructuring bind discard the projected field value without creating a source binding
 - record equality is allowed only when every field type already supports stable equality
 
 ## Deterministic Evaluation Order
@@ -209,6 +212,8 @@ Current statement meaning:
 - `let` evaluates the right-hand side before binding the name
 - tuple destructuring bind evaluates the right-hand side once before projecting
   tuple items into named bindings
+- record destructuring bind evaluates the right-hand side once before projecting
+  the requested record fields into named bindings
 - tuple destructuring assignment evaluates the right-hand side once before
   projecting tuple items into existing assignment targets
 - tuple `let-else` introduces named bindings only on the success path; failure
@@ -399,7 +404,10 @@ Current stage-1 record semantics:
 Current v0 limit:
 
 - record field access is read-only and resolves by canonical declaration-slot order
-- record destructuring, update, and punning are not yet part of the stable source contract
+- record destructuring bind currently supports only statement-level explicit
+  `RecordName { field: target }` patterns
+- record destructuring bind does not yet open `let-else`, nested patterns,
+  literal field patterns, update, or punning
 - record equality remains gated to the stable field-equality subset
 - record values are not part of the PROMETHEUS host ABI surface
 

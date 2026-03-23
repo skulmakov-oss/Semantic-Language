@@ -121,6 +121,11 @@ Current message families include:
 - missing field in record literal
 - unknown field in record field access
 - record field access on non-record value
+- duplicate field in record destructuring bind pattern
+- duplicate binding in record destructuring bind pattern
+- unknown record type in record destructuring bind
+- unknown field in record destructuring bind
+- record destructuring bind on non-matching record value
 - record equality requested outside the stable field-equality subset
 - invalid tuple arity
 - tuple type mismatch

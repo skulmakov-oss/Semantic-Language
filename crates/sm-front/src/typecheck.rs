@@ -303,6 +303,54 @@ fn check_stmt(
             }
             Ok(())
         }
+        Stmt::LetRecord {
+            record_name,
+            items,
+            value,
+        } => {
+            let record = record_table.get(record_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown record type '{}' in record destructuring bind",
+                    resolve_symbol_name(arena, *record_name)?
+                ),
+            })?;
+            let value_ty = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                ret_ty.clone(),
+                loop_stack,
+            )?;
+            if value_ty != Type::Record(*record_name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "record destructuring bind requires value of type '{}', got {:?}",
+                        resolve_symbol_name(arena, *record_name)?,
+                        value_ty
+                    ),
+                });
+            }
+            for item in items {
+                let field = record.fields.iter().find(|field| field.name == item.field).ok_or(
+                    FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record type '{}' has no field named '{}' in destructuring bind",
+                            resolve_symbol_name(arena, *record_name)?,
+                            resolve_symbol_name(arena, item.field)?
+                        ),
+                    },
+                )?;
+                if let Some(target) = item.target {
+                    env.insert(target, field.ty.clone());
+                }
+            }
+            Ok(())
+        }
         Stmt::LetElseTuple {
             items,
             ty,
@@ -2426,6 +2474,69 @@ mod tests {
         assert!(err
             .message
             .contains("record field access requires record value before '.quality', got F64"));
+    }
+
+    #[test]
+    fn record_destructuring_bind_typechecks_for_explicit_field_subset() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera, quality: _ } =
+                    DecisionContext { camera: T, quality: 0.75 };
+                let same = seen_camera == T;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("record destructuring bind should typecheck");
+    }
+
+    #[test]
+    fn record_destructuring_bind_rejects_unknown_field() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            fn main() {
+                let DecisionContext { badge: seen_badge } =
+                    DecisionContext { camera: T };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("unknown record field must reject");
+        assert!(err
+            .message
+            .contains("record type 'DecisionContext' has no field named 'badge' in destructuring bind"));
+    }
+
+    #[test]
+    fn record_destructuring_bind_rejects_wrong_record_value() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+            }
+
+            record RuntimeConfig {
+                debug_mode: bool,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera } =
+                    RuntimeConfig { debug_mode: true };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("wrong record value must reject");
+        assert!(err
+            .message
+            .contains("record destructuring bind requires value of type 'DecisionContext'"));
     }
 
     #[test]

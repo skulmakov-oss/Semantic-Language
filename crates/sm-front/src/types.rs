@@ -80,6 +80,12 @@ pub struct RecordFieldExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RecordPatternItem {
+    pub field: SymbolId,
+    pub target: Option<SymbolId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
@@ -113,6 +119,11 @@ pub enum Stmt {
     LetTuple {
         items: Vec<Option<SymbolId>>,
         ty: Option<Type>,
+        value: ExprId,
+    },
+    LetRecord {
+        record_name: SymbolId,
+        items: Vec<RecordPatternItem>,
         value: ExprId,
     },
     LetElseTuple {

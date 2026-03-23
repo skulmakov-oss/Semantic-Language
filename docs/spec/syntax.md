@@ -111,6 +111,7 @@ Current statement forms:
 - `let name: type = expr;`
 - `let (a, b) = expr;`
 - `let (a, _): (type_a, type_b) = expr;`
+- `let RecordName { field_name: local_name, other_field: _ } = expr;`
 - `let (a, T) = expr else return;`
 - `let (a, T): (type_a, quad) = expr else return expr;`
 - `let _ = expr;`
@@ -141,6 +142,10 @@ Current statement rules:
 - `const` initializer syntax mirrors `let` but uses a narrower compile-time-safe expression subset
 - `let _ = expr;` is the current discard-bind surface
 - tuple destructuring bind is currently flat only and accepts only names or `_`
+- record destructuring bind is currently statement-level only
+- record destructuring bind currently requires explicit `RecordName { field: target }` spelling
+- record destructuring bind currently supports only named targets or `_`
+- record destructuring bind currently supports only explicit field mappings, not punning shorthand
 - `let-else` currently requires tuple destructuring target and `else return`
 - `let-else` tuple items are currently flat only and accept only names, `_`,
   or `quad` literals `N/F/T/S`
