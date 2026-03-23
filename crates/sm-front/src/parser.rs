@@ -1633,10 +1633,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
-        if self.eat(TokenKind::LParen) {
-            return self.parse_paren_type_or_tuple();
-        }
-        if self.check(TokenKind::Ident) {
+        let base = if self.eat(TokenKind::LParen) {
+            self.parse_paren_type_or_tuple()?
+        } else if self.check(TokenKind::Ident) {
             let t = self.tokens[self.next_non_layout_idx()].text.clone();
             if t == "qvec" {
                 let _ = self.advance();
@@ -1647,11 +1646,11 @@ impl<'a> Parser<'a> {
                         32
                     };
                     let _ = self.eat(TokenKind::RBracket) || self.eat(TokenKind::RParen);
-                    return Ok(Type::QVec(n));
+                    Type::QVec(n)
+                } else {
+                    Type::QVec(32)
                 }
-                return Ok(Type::QVec(32));
-            }
-            if t == "Option" {
+            } else if t == "Option" {
                 let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
                 if self
                     .tokens
@@ -1663,10 +1662,12 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::LParen, "expected '(' after Option type name")?;
                     let item = self.parse_type()?;
                     self.expect(TokenKind::RParen, "expected ')' after Option type argument")?;
-                    return Ok(Type::Option(Box::new(item)));
+                    Type::Option(Box::new(item))
+                } else {
+                    let record_name = self.expect_symbol()?;
+                    Type::Record(record_name)
                 }
-            }
-            if t == "Result" {
+            } else if t == "Result" {
                 let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
                 if self
                     .tokens
@@ -1680,35 +1681,51 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::Comma, "expected ',' between Result type arguments")?;
                     let err_ty = self.parse_type()?;
                     self.expect(TokenKind::RParen, "expected ')' after Result type arguments")?;
-                    return Ok(Type::Result(Box::new(ok_ty), Box::new(err_ty)));
+                    Type::Result(Box::new(ok_ty), Box::new(err_ty))
+                } else {
+                    let record_name = self.expect_symbol()?;
+                    Type::Record(record_name)
                 }
+            } else {
+                let record_name = self.expect_symbol()?;
+                Type::Record(record_name)
             }
-            let record_name = self.expect_symbol()?;
-            return Ok(Type::Record(record_name));
-        }
-        if self.eat(TokenKind::TyQuad) {
-            return Ok(Type::Quad);
-        }
-        if self.eat(TokenKind::TyBool) {
-            return Ok(Type::Bool);
-        }
-        if self.eat(TokenKind::TyI32) {
-            return Ok(Type::I32);
-        }
-        if self.eat(TokenKind::TyU32) {
-            return Ok(Type::U32);
-        }
-        if self.eat(TokenKind::TyFx) {
-            return Ok(Type::Fx);
-        }
-        if self.eat(TokenKind::TyF64) {
+        } else if self.eat(TokenKind::TyQuad) {
+            Type::Quad
+        } else if self.eat(TokenKind::TyBool) {
+            Type::Bool
+        } else if self.eat(TokenKind::TyI32) {
+            Type::I32
+        } else if self.eat(TokenKind::TyU32) {
+            Type::U32
+        } else if self.eat(TokenKind::TyFx) {
+            Type::Fx
+        } else if self.eat(TokenKind::TyF64) {
             self.require_f64_feature("type 'f64' is disabled by profile policy")?;
-            return Ok(Type::F64);
+            Type::F64
+        } else {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "expected type".to_string(),
+            });
+        };
+        self.parse_optional_measure_annotation(base)
+    }
+
+    fn parse_optional_measure_annotation(&mut self, base: Type) -> Result<Type, FrontendError> {
+        if !self.eat(TokenKind::LBracket) {
+            return Ok(base);
         }
-        Err(FrontendError {
-            pos: self.pos(),
-            message: "expected type".to_string(),
-        })
+        if !base.is_core_numeric_scalar() {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "unit annotation is allowed only on i32, u32, f64, or fx in v0".to_string(),
+            });
+        }
+        let unit = self.expect_symbol()?;
+        self.expect(TokenKind::RBracket, "expected ']' after unit annotation")?;
+        Ok(Type::Measured(Box::new(base), unit))
     }
 
     fn parse_paren_type_or_tuple(&mut self) -> Result<Type, FrontendError> {
@@ -1974,33 +1991,50 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_raw(&mut self) -> Result<Type, FrontendError> {
-        if self.check_raw(TokenKind::Ident) {
+        let base = if self.check_raw(TokenKind::Ident) {
             let t = self.tokens[self.idx].text.clone();
             if t == "qvec" {
                 self.idx += 1;
-                return Ok(Type::QVec(32));
+                Type::QVec(32)
+            } else {
+                return Err(self.error_at_current("expected type", "E0234"));
             }
-        }
-        if self.eat_raw(TokenKind::TyQuad) {
-            return Ok(Type::Quad);
-        }
-        if self.eat_raw(TokenKind::TyBool) {
-            return Ok(Type::Bool);
-        }
-        if self.eat_raw(TokenKind::TyI32) {
-            return Ok(Type::I32);
-        }
-        if self.eat_raw(TokenKind::TyU32) {
-            return Ok(Type::U32);
-        }
-        if self.eat_raw(TokenKind::TyFx) {
-            return Ok(Type::Fx);
-        }
-        if self.eat_raw(TokenKind::TyF64) {
+        } else if self.eat_raw(TokenKind::TyQuad) {
+            Type::Quad
+        } else if self.eat_raw(TokenKind::TyBool) {
+            Type::Bool
+        } else if self.eat_raw(TokenKind::TyI32) {
+            Type::I32
+        } else if self.eat_raw(TokenKind::TyU32) {
+            Type::U32
+        } else if self.eat_raw(TokenKind::TyFx) {
+            Type::Fx
+        } else if self.eat_raw(TokenKind::TyF64) {
             self.require_f64_feature("type 'f64' is disabled by profile policy")?;
-            return Ok(Type::F64);
+            Type::F64
+        } else {
+            return Err(self.error_at_current("expected type", "E0234"));
+        };
+        self.parse_optional_measure_annotation_raw(base)
+    }
+
+    fn parse_optional_measure_annotation_raw(&mut self, base: Type) -> Result<Type, FrontendError> {
+        if !self.eat_raw(TokenKind::LBracket) {
+            return Ok(base);
         }
-        Err(self.error_at_current("expected type", "E0234"))
+        if !base.is_core_numeric_scalar() {
+            return Err(self.error_at_current(
+                "unit annotation is allowed only on i32, u32, f64, or fx in v0",
+                "E0234",
+            ));
+        }
+        if !self.check_raw(TokenKind::Ident) {
+            return Err(self.error_at_current("expected unit symbol", "E0234"));
+        }
+        let unit = self.arena.intern_symbol(&self.tokens[self.idx].text.clone());
+        self.idx += 1;
+        self.expect_raw(TokenKind::RBracket, "expected ']'", "E0234")?;
+        Ok(Type::Measured(Box::new(base), unit))
     }
 
     fn collect_until_raw(&mut self, stop: TokenKind) -> Result<Vec<Token>, FrontendError> {
@@ -3534,6 +3568,103 @@ fn main() {
             }
             other => panic!("expected match stmt, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_units_of_measure_annotations_in_declared_types() {
+        let src = r#"
+record Measurement {
+    distance: f64[m],
+    ticks: u32[ms],
+    maybe: Option(f64[m]),
+}
+
+fn keep(
+    distance: f64[m],
+    pair: (f64[m], u32[ms]),
+    maybe: Option(f64[m]),
+    result: Result(f64[m], quad)
+) -> f64[m] {
+    let reading: f64[m] = 1.0;
+    let _ = pair;
+    let _ = maybe;
+    let _ = result;
+    return reading;
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("units-of-measure annotations should parse");
+        let record = &program.records[0];
+        assert!(matches!(
+            &record.fields[0].ty,
+            Type::Measured(base, unit)
+                if base.as_ref() == &Type::F64 && program.arena.symbol_name(*unit) == "m"
+        ));
+        assert!(matches!(
+            &record.fields[1].ty,
+            Type::Measured(base, unit)
+                if base.as_ref() == &Type::U32 && program.arena.symbol_name(*unit) == "ms"
+        ));
+        assert!(matches!(
+            &record.fields[2].ty,
+            Type::Option(inner)
+                if matches!(
+                    inner.as_ref(),
+                    Type::Measured(base, unit)
+                        if base.as_ref() == &Type::F64
+                            && program.arena.symbol_name(*unit) == "m"
+                )
+        ));
+
+        let func = &program.functions[0];
+        assert!(matches!(
+            &func.params[0].1,
+            Type::Measured(base, unit)
+                if base.as_ref() == &Type::F64 && program.arena.symbol_name(*unit) == "m"
+        ));
+        assert!(matches!(
+            &func.params[1].1,
+            Type::Tuple(items)
+                if items.len() == 2
+                    && matches!(
+                        &items[0],
+                        Type::Measured(base, unit)
+                            if base.as_ref() == &Type::F64
+                                && program.arena.symbol_name(*unit) == "m"
+                    )
+                    && matches!(
+                        &items[1],
+                        Type::Measured(base, unit)
+                            if base.as_ref() == &Type::U32
+                                && program.arena.symbol_name(*unit) == "ms"
+                    )
+        ));
+        assert!(matches!(
+            &func.ret,
+            Type::Measured(base, unit)
+                if base.as_ref() == &Type::F64 && program.arena.symbol_name(*unit) == "m"
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_unit_annotation_on_non_numeric_type() {
+        let src = r#"
+fn main() {
+    let bad: bool[m] = true;
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("non-numeric unit annotations must reject");
+        assert!(err
+            .message
+            .contains("unit annotation is allowed only on i32, u32, f64, or fx in v0"));
     }
 
     #[test]

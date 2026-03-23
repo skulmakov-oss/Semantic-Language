@@ -219,6 +219,19 @@ pub fn canonicalize_declared_type(
                 .map(|item| canonicalize_declared_type(item, record_table, adt_table, arena))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Type::Measured(base, unit) => {
+            let canonical_base = canonicalize_declared_type(base, record_table, adt_table, arena)?;
+            if !canonical_base.is_core_numeric_scalar() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unit annotation '{}' is allowed only on i32, u32, f64, or fx in v0",
+                        resolve_symbol_name(arena, *unit)?
+                    ),
+                });
+            }
+            Ok(Type::Measured(Box::new(canonical_base), *unit))
+        }
         Type::Option(item) => Ok(Type::Option(Box::new(canonicalize_declared_type(
             item,
             record_table,

@@ -45,6 +45,7 @@ impl From<Type> for SemanticType {
             Type::Bool => SemanticType::Bool,
             Type::U32 => SemanticType::Int,
             Type::Unit => SemanticType::Unit,
+            Type::Measured(base, _) => SemanticType::from((*base).clone()),
             Type::RangeI32 => SemanticType::Unknown,
             Type::Tuple(_) => SemanticType::Unknown,
             Type::Option(_) => SemanticType::Unknown,

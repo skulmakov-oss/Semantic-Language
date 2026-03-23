@@ -203,6 +203,31 @@ Current honest limit:
 - exponent notation and binary/octal literal families are not yet part of the
   stable contract
 
+## Units Of Measure
+
+Current first-wave units-of-measure semantics:
+
+- unit annotations refine the source type of `i32`, `u32`, `f64`, or `fx`
+  without changing the underlying execution carrier
+- unsuffixed numeric literals remain ordinary numeric literals and become
+  unit-carrying only through typed positions such as annotated locals,
+  parameters, returns, tuple elements, record fields, and contextual
+  `Option(T)` / `Result(T, E)` payloads
+- assignment, call, return, and pattern-binding transport require exact base
+  family and exact unit-symbol equality
+- unit annotations may travel through tuples, records, `Option(T)`, and
+  `Result(T, E)` when those positions contain supported numeric families
+- lowering erases units after semantic validation and reuses the existing
+  numeric lowering path
+
+Current v0 limits:
+
+- unit annotations are compile-time-only source contracts, not VM value tags
+- implicit conversion between unit symbols is not part of the stable contract
+- compound unit algebra, conversion tables, and inference from untyped numeric
+  literals are not part of the first-wave surface
+- `*` and `/` on unit-carrying values are rejected in the first-wave contract
+
 ## Range Literal
 
 Current range-literal semantics:
@@ -590,6 +615,16 @@ Current operator meaning:
 - `!` works on `bool` and `quad`
 - `->` is quad implication and returns `quad`
 - `+`, `-`, `*`, `/` currently have stable arithmetic meaning only on `f64`
+
+Current first-wave units operator rules:
+
+- `+` and `-` preserve a unit annotation only when both operands have the same
+  measured type
+- `==` and `!=` are valid on unit-carrying values only when both sides have the
+  same measured type
+- `*` and `/` on unit-carrying values are rejected in the first-wave surface
+- after unit validation, lowering reuses the existing numeric execution opcodes
+  rather than widening the runtime operator family
 
 Current honest limit:
 

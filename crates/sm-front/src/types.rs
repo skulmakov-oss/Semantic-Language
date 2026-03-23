@@ -13,6 +13,7 @@ pub enum Type {
     U32,
     Fx,
     F64,
+    Measured(Box<Type>, SymbolId),
     RangeI32,
     Tuple(Vec<Type>),
     Option(Box<Type>),
@@ -20,6 +21,32 @@ pub enum Type {
     Record(SymbolId),
     Adt(SymbolId),
     Unit,
+}
+
+impl Type {
+    pub fn erase_units(&self) -> Type {
+        match self {
+            Type::Measured(base, _) => base.erase_units(),
+            Type::Tuple(items) => Type::Tuple(items.iter().map(Type::erase_units).collect()),
+            Type::Option(item) => Type::Option(Box::new(item.erase_units())),
+            Type::Result(ok_ty, err_ty) => Type::Result(
+                Box::new(ok_ty.erase_units()),
+                Box::new(err_ty.erase_units()),
+            ),
+            _ => self.clone(),
+        }
+    }
+
+    pub fn measured_parts(&self) -> Option<(&Type, SymbolId)> {
+        match self {
+            Type::Measured(base, unit) => Some((base.as_ref(), *unit)),
+            _ => None,
+        }
+    }
+
+    pub fn is_core_numeric_scalar(&self) -> bool {
+        matches!(self, Type::I32 | Type::U32 | Type::Fx | Type::F64)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
