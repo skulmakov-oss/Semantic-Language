@@ -1,14 +1,14 @@
 # Record Data Model
 
-Status: proposed v0
+Status: implemented stage-1 v0
 
 ## Purpose
 
-This document defines the first intentional aggregate family proposed for the
-Semantic executable language surface: nominal records.
+This document defines the first stabilized aggregate family currently available
+in the Semantic executable language surface: nominal records.
 
-It is a design target for the user-data-model workstream, not a claim that the
-current parser or VM already implements this feature.
+It is no longer only a design target. It records the narrow stage-1 contract
+that now exists across parser, sema, IR, verifier, and VM.
 
 ## Why Records First
 
@@ -20,7 +20,7 @@ Records are the right first aggregate family because they:
 - do not require hidden dynamic dispatch
 - compose naturally with existing `quad` and numeric values
 
-## Proposed Surface
+## Canonical Stage-1 Surface
 
 The proposed source form is a nominal `record` declaration:
 
@@ -53,29 +53,30 @@ ctx.quality
 
 ## Type Identity
 
-Proposed rules:
+Current rules:
 
 - record types are nominal, not structural
 - record field order is part of layout, but not the public identity of the
   type
 - field names must be unique within one record declaration
-- an empty record type should not be part of the first stabilized surface
+- an empty record type is not part of the stabilized stage-1 surface
 
 ## Value Semantics
 
-Proposed phase-1 rules:
+Current stage-1 rules:
 
 - record values are immutable after construction
 - record construction requires every declared field exactly once
 - no implicit default field values
 - no field mutation syntax in the first stage
-- passing a record to a function passes the value as one logical source object
+- passing a record to a function passes one nominal logical value through the
+  verified execution path
 
 ## Equality
 
-Phase-1 equality should be explicit and narrow.
+Stage-1 equality is explicit and narrow.
 
-Proposed rules:
+Current rules:
 
 - record equality is allowed only when every field type already supports
   stable equality
@@ -84,9 +85,9 @@ Proposed rules:
 
 ## Pattern And Match Scope
 
-Records should not immediately force a full pattern system.
+Records do not yet reopen a full pattern system.
 
-Phase-1 rule:
+Current stage-1 rule:
 
 - record destructuring and record-pattern matching are out of scope
 - users access fields explicitly rather than through destructuring syntax
@@ -118,42 +119,41 @@ and should not reopen pattern/destructuring ergonomics by accident.
 
 ## Lowering Strategy
 
-The first record implementation should preserve the current deterministic VM
-story.
+The current stage-1 record implementation preserves the deterministic VM story.
 
-Preferred initial strategy:
+Current strategy:
 
 - lower each record value into a fixed compile-time field layout
-- flatten field storage during IR lowering rather than introducing a general
-  heap object model
+- rewrite source field order into canonical declaration-slot order
 - keep record layout statically known to the compiler
+- avoid introducing a general heap object model
 
-That means the first record family should behave more like a named product type
-than like a dynamic object.
+That means the first record family behaves more like a named product type than
+like a dynamic object.
 
 ## IR Implications
 
-The first implementation should aim for the smallest IR change compatible with
-clear semantics.
+The stage-1 implementation keeps the IR change set narrow.
 
-Preferred direction:
+Current direction:
 
-- add explicit record-type metadata in the frontend and sema layers
-- lower field access into deterministic field-slot operations
-- avoid generic dictionary-like runtime operations
+- explicit record-type metadata exists in the frontend and sema layers
+- record construction lowers through canonical `MakeRecord`
+- field access lowers through deterministic `RecordGet`
+- generic dictionary-like runtime operations remain out of scope
 
-The exact IR opcode strategy is intentionally left open, but the contract goal
-is clear: records should lower to predictable slots, not opaque runtime blobs.
+The contract goal remains explicit: records lower to predictable slots, not
+opaque runtime blobs.
 
 ## VM And Verifier Implications
 
-Phase-1 records should not require abandoning the verified execution model.
+Stage-1 records do not abandon the verified execution model.
 
-Expected rules:
+Current rules:
 
-- verifier must be able to validate record-related layout references
-- VM should execute record access through deterministic, bounded operations
-- records must not become a hidden escape hatch around SemCode validation
+- verifier validates record-related layout references
+- VM executes record access through deterministic, bounded operations
+- records do not become a hidden escape hatch around SemCode validation
 
 ## Quad Composition
 
@@ -191,25 +191,26 @@ This phase does not attempt to provide:
 - record-specific generics
 - heap allocation semantics as a user-visible contract
 
-## Example Workload
+## Example Workloads
 
-The record family should unlock examples like:
+The record family already supports stage-1 scenarios such as:
 
 - access-policy contexts
 - structured sensor snapshots
 - semantic decision envelopes
 - grouped runtime configuration inputs
 
-These are more representative of real user data than today's scalar-only local
-packs.
+These are more representative of real user data than scalar-only local packs,
+while staying within the current verified-path contract.
 
 ## Acceptance Criteria
 
-The Stage 1 record family should be considered properly designed when the
+The Stage-1 record family should be considered properly frozen for v0 when the
 repository has:
 
-- a stable proposed source form
+- a stable canonical source form
 - explicit construction and access rules
 - explicit equality and non-goals
 - a documented deterministic lowering direction
 - examples showing why records are better than scalar-only decomposition
+- scenario workloads that compile through the verified path

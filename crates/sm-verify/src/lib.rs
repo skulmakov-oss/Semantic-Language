@@ -847,6 +847,80 @@ mod tests {
     }
 
     #[test]
+    fn verifier_accepts_record_access_policy_scenario() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                badge: quad,
+                override_state: quad,
+                tamper: quad,
+                quality: f64,
+            }
+
+            fn allow(ctx: DecisionContext) -> quad {
+                if ctx.tamper == T || ctx.tamper == S {
+                    return S;
+                }
+                if ctx.override_state == T {
+                    return T;
+                }
+                if ctx.camera == T && ctx.badge == T {
+                    return T;
+                }
+                return N;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext {
+                    quality: 0.50,
+                    tamper: F,
+                    override_state: N,
+                    badge: T,
+                    camera: T,
+                };
+                let decision: quad = allow(ctx);
+                assert(decision == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 2);
+    }
+
+    #[test]
+    fn verifier_accepts_record_runtime_config_scenario() {
+        let src = r#"
+            record RuntimeConfig {
+                max_steps: u32,
+                debug_mode: bool,
+                fallback_state: quad,
+            }
+
+            fn fallback(cfg: RuntimeConfig) -> quad {
+                if cfg.debug_mode == true {
+                    return cfg.fallback_state;
+                }
+                return N;
+            }
+
+            fn main() {
+                let cfg: RuntimeConfig = RuntimeConfig {
+                    fallback_state: S,
+                    debug_mode: true,
+                    max_steps: 16u32,
+                };
+                let state: quad = fallback(cfg);
+                assert(state == S);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 2);
+    }
+
+    #[test]
     fn verifier_rejects_short_header() {
         let report = verify_semcode(b"SEMC").expect_err("must reject");
         assert_eq!(report.diagnostics[0].code, VerificationCode::BadHeader);

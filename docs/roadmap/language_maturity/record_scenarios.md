@@ -1,17 +1,19 @@
 # Record Scenarios
 
-Status: proposed v0
+Status: validated against stage-1 v0
 
 ## Purpose
 
 This document gives concrete user-data scenarios that justify records as the
-first aggregate family for Semantic.
+first aggregate family for Semantic and tracks which parts are already covered
+by the current stage-1 implementation.
 
 The goal is to show real workloads that are awkward in the current scalar-only
 surface and become clearer with nominal records.
 
-These examples are design targets rather than claims that the current parser
-already implements `record`.
+These examples are no longer only design targets. The stage-1 contract now
+supports nominal record declarations, construction, field access, pass/return,
+and equality inside the stable field-equality subset.
 
 ## Why Scenarios Matter
 
@@ -40,7 +42,7 @@ let quality: f64 = 0.50;
 This works, but the source no longer has one named value that represents "the
 current decision context".
 
-The proposed record form is clearer:
+The stage-1 record form is clearer:
 
 ```sm
 record DecisionContext {
@@ -70,6 +72,11 @@ Why this matters:
 - the policy takes one domain object instead of five unrelated parameters
 - field names remain explicit
 - `quad`-oriented semantics stay first-class inside the aggregate
+
+Stage-1 validation status:
+
+- compiles through the verified path
+- runs through the VM with explicit field access and ordinary control flow
 
 ## Scenario 2: Sensor Snapshot
 
@@ -105,12 +112,17 @@ Why this matters:
 - helper functions can accept one meaningful argument
 - later field additions do not explode parameter lists immediately
 
+Stage-1 validation status:
+
+- compiles through the verified path
+- field access resolves deterministically by declaration-slot order
+
 ## Scenario 3: Rule Input Envelope
 
 Semantic is good at deterministic reasoning, but today rule inputs still need
 to be unpacked manually.
 
-A record should allow a clean input envelope:
+A record allows a clean input envelope:
 
 ```sm
 record RuleInput {
@@ -136,6 +148,11 @@ Why this matters:
 - grouped policy inputs read like one contract
 - the code documents intent without relying on naming conventions alone
 
+Stage-1 validation status:
+
+- supported as a nominal input object
+- compatible with pass/return through the verified execution path
+
 ## Scenario 4: Runtime Configuration Bundle
 
 Not every structured value is a policy object. Some are just grouped execution
@@ -157,6 +174,11 @@ Why this matters:
 - users need a source-level way to group config values without pretending they
   are semantic declarations
 
+Current limit:
+
+- record values are still not part of the PROMETHEUS host ABI surface
+- config bundles may participate in verified-local execution, not host calls
+
 ## Comparison With Logos Entities
 
 It is important not to confuse records with `Entity`.
@@ -167,7 +189,7 @@ It is important not to confuse records with `Entity`.
 - domain metadata for the Logos surface
 - part of the system/rule description layer
 
-Records should become:
+Records are currently:
 
 - ordinary executable values
 - usable in Rust-like functions
@@ -177,7 +199,7 @@ That distinction keeps the executable language model cleaner.
 
 ## First-Stage Success Criteria
 
-The first record stage becomes worthwhile when users can stop writing
+The first record stage is worthwhile when users can stop writing
 policy-shaped scalar packs like:
 
 - `camera_state`
@@ -187,6 +209,16 @@ policy-shaped scalar packs like:
 - `quality`
 
 and instead pass one explicit domain value with named fields.
+
+## Explicit Non-Goals Still In Force
+
+The current stage-1 implementation still does not include:
+
+- record destructuring
+- record update / copy-with
+- record punning
+- methods, inheritance, or dynamic dispatch
+- host ABI passage for record values
 
 ## Cross-References
 

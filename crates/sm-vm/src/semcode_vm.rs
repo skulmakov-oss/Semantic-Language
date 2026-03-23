@@ -1696,6 +1696,47 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_record_access_policy_scenario() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                badge: quad,
+                override_state: quad,
+                tamper: quad,
+                quality: f64,
+            }
+
+            fn allow(ctx: DecisionContext) -> quad {
+                if ctx.tamper == T || ctx.tamper == S {
+                    return S;
+                }
+                if ctx.override_state == T {
+                    return T;
+                }
+                if ctx.camera == T && ctx.badge == T {
+                    return T;
+                }
+                return N;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext {
+                    quality: 0.50,
+                    tamper: F,
+                    override_state: N,
+                    badge: T,
+                    camera: T,
+                };
+                let decision: quad = allow(ctx);
+                assert(decision == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        run_semcode(&bytes).expect("record access-policy scenario should run");
+    }
+
+    #[test]
     fn vm_runs_for_range_inclusive_path() {
         let src = r#"
             fn main() {
