@@ -34,6 +34,7 @@ Semantic already has a strong execution contract. What it still lacks is a fully
 Related staged design-target notes:
 
 - `docs/roadmap/language_maturity/function_contract_invariant_scope.md`
+- `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
 - `docs/roadmap/language_maturity/record_data_model.md`
 - `docs/roadmap/language_maturity/record_scenarios.md`
 - `docs/roadmap/language_maturity/range_execution_story.md`
