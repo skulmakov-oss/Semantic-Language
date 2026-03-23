@@ -439,20 +439,21 @@ fn check_stmt(
                     format!("const '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
             }
-            let vt = infer_expr_type(
-                *value,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )?;
             ensure_const_initializer_safe(*value, arena, env)?;
             let final_ty = if let Some(ann) = ty {
                 let expected_ty =
                     canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let vt = infer_expr_type_with_expected(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(expected_ty.clone()),
+                    ret_ty,
+                    loop_stack,
+                )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
                     vt,
@@ -462,6 +463,16 @@ fn check_stmt(
                 )?;
                 expected_ty
             } else {
+                let vt = infer_expr_type(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                )?;
                 vt
             };
             env.insert_const(*name, final_ty);
@@ -482,19 +493,20 @@ fn check_stmt(
                     format!("let '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
             }
-            let vt = infer_expr_type(
-                *value,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )?;
             let final_ty = if let Some(ann) = ty {
                 let expected_ty =
                     canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let vt = infer_expr_type_with_expected(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(expected_ty.clone()),
+                    ret_ty,
+                    loop_stack,
+                )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
                     vt,
@@ -504,6 +516,16 @@ fn check_stmt(
                 )?;
                 expected_ty
             } else {
+                let vt = infer_expr_type(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                )?;
                 vt
             };
             env.insert(*name, final_ty);
@@ -524,19 +546,20 @@ fn check_stmt(
                     "tuple destructuring bind".to_string(),
                 )?;
             }
-            let vt = infer_expr_type(
-                *value,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )?;
             let final_ty = if let Some(ann) = ty {
                 let expected_ty =
                     canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let vt = infer_expr_type_with_expected(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(expected_ty.clone()),
+                    ret_ty,
+                    loop_stack,
+                )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
                     vt,
@@ -546,6 +569,16 @@ fn check_stmt(
                 )?;
                 expected_ty
             } else {
+                let vt = infer_expr_type(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                )?;
                 vt
             };
             let Type::Tuple(item_tys) = final_ty else {
@@ -819,19 +852,22 @@ fn check_stmt(
                     "discard binding".to_string(),
                 )?;
             }
-            let vt = infer_expr_type(
-                *value,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )?;
             if let Some(ann) = ty {
+                let expected_ty =
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let vt = infer_expr_type_with_expected(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(expected_ty.clone()),
+                    ret_ty,
+                    loop_stack,
+                )?;
                 ensure_binding_value_type(
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
+                    expected_ty,
                     vt,
                     *value,
                     arena,
@@ -857,13 +893,14 @@ fn check_stmt(
                     ),
                 });
             }
-            let value_ty = infer_expr_type(
+            let value_ty = infer_expr_type_with_expected(
                 *value,
                 arena,
                 env,
                 table,
                 record_table,
                 adt_table,
+                Some(target_ty.clone()),
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -1346,6 +1383,7 @@ fn infer_expr_type(
             table,
             record_table,
             adt_table,
+            None,
             ret_ty,
             loop_stack,
         ),
@@ -1462,17 +1500,18 @@ fn infer_expr_type(
             };
             let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
             for (i, arg) in ordered_args.iter().enumerate() {
-                let at = infer_expr_type(
+                let expected_ty = sig.params[i].clone();
+                let at = infer_expr_type_with_expected(
                     *arg,
                     arena,
                     env,
                     table,
                     record_table,
                     adt_table,
+                    Some(expected_ty.clone()),
                     ret_ty.clone(),
                     loop_stack,
                 )?;
-                let expected_ty = sig.params[i].clone();
                 if at != expected_ty {
                     if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
                         if !is_fx_literal_expr(*arg, arena) {
@@ -3629,6 +3668,53 @@ mod tests {
 
         typecheck_source(src).expect("adt constructor surface should typecheck");
     }
+
+    #[test]
+    fn option_and_result_standard_forms_typecheck_in_typed_positions() {
+        let src = r#"
+            fn keep(flag: bool) -> Option(bool) {
+                let seen: Option(bool) = Option::None;
+                let _ = seen;
+                return Option::Some(flag);
+            }
+
+            fn settle(flag: bool) -> Result(bool, quad) {
+                if flag {
+                    let value: Result(bool, quad) = Result::Ok(true);
+                    return value;
+                }
+                let value: Result(bool, quad) = Result::Err(N);
+                return value;
+            }
+
+            fn main() {
+                let left: Option(bool) = keep(true);
+                let right: Result(bool, quad) = settle(false);
+                let _ = left;
+                let _ = right;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("Option/Result standard forms should typecheck");
+    }
+
+    #[test]
+    fn result_constructor_requires_contextual_result_type() {
+        let src = r#"
+            fn main() {
+                let value = Result::Ok(true);
+                let _ = value;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("contextless Result constructor must currently reject");
+        assert!(err
+            .message
+            .contains("Result::Ok currently requires contextual Result(T, E) type in v0"));
+    }
 }
 
 fn is_builtin_assert_name(
@@ -4363,6 +4449,13 @@ fn ensure_type_resolved(
                 })
             }
         }
+        Type::Option(item) => {
+            ensure_type_resolved(item, record_table, adt_table, arena, context)
+        }
+        Type::Result(ok_ty, err_ty) => {
+            ensure_type_resolved(ok_ty, record_table, adt_table, arena, context.clone())?;
+            ensure_type_resolved(err_ty, record_table, adt_table, arena, context)
+        }
         _ => Ok(()),
     }
 }
@@ -4378,6 +4471,11 @@ fn ensure_executable_type_supported(
                 ensure_executable_type_supported(item, arena, context.clone())?;
             }
             Ok(())
+        }
+        Type::Option(item) => ensure_executable_type_supported(item, arena, context),
+        Type::Result(ok_ty, err_ty) => {
+            ensure_executable_type_supported(ok_ty, arena, context.clone())?;
+            ensure_executable_type_supported(err_ty, arena, context)
         }
         Type::Record(name) => {
             let _ = resolve_symbol_name(arena, *name)?;
@@ -4404,6 +4502,11 @@ fn ensure_storage_type_supported(
                 ensure_storage_type_supported(item, arena, context.clone())?;
             }
             Ok(())
+        }
+        Type::Option(item) => ensure_storage_type_supported(item, arena, context),
+        Type::Result(ok_ty, err_ty) => {
+            ensure_storage_type_supported(ok_ty, arena, context.clone())?;
+            ensure_storage_type_supported(err_ty, arena, context)
         }
         Type::Record(name) => {
             let _ = resolve_symbol_name(arena, *name)?;
@@ -4556,6 +4659,15 @@ fn supports_stable_equality_type_inner(
             }
             Ok(true)
         }
+        Type::Option(item) => {
+            supports_stable_equality_type_inner(item, record_table, adt_table, active)
+        }
+        Type::Result(ok_ty, err_ty) => {
+            if !supports_stable_equality_type_inner(ok_ty, record_table, adt_table, active)? {
+                return Ok(false);
+            }
+            supports_stable_equality_type_inner(err_ty, record_table, adt_table, active)
+        }
         Type::Record(name) => {
             if !active.insert(*name) {
                 return Ok(false);
@@ -4622,13 +4734,14 @@ fn infer_record_literal_type(
                 resolve_symbol_name(arena, field.name)?
             ),
         })?;
-        let actual_ty = infer_expr_type(
+        let actual_ty = infer_expr_type_with_expected(
             field.value,
             arena,
             env,
             table,
             record_table,
             adt_table,
+            Some(expected_ty.clone()),
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -4781,13 +4894,14 @@ fn infer_record_update_type(
                 resolve_symbol_name(arena, field.name)?
             ),
         })?;
-        let actual_ty = infer_expr_type(
+        let actual_ty = infer_expr_type_with_expected(
             field.value,
             arena,
             env,
             table,
             record_table,
             adt_table,
+            Some(expected_ty.clone()),
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -4813,9 +4927,23 @@ fn infer_adt_ctor_type(
     table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
+    if let Some(ty) = infer_std_form_ctor_type(
+        ctor_expr,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        expected,
+        ret_ty.clone(),
+        loop_stack,
+    )? {
+        return Ok(ty);
+    }
     let adt = adt_table.get(&ctor_expr.adt_name).ok_or(FrontendError {
         pos: 0,
         message: format!(
@@ -4855,13 +4983,14 @@ fn infer_adt_ctor_type(
     {
         let canonical_expected =
             canonicalize_declared_type(expected_ty, record_table, adt_table, arena)?;
-        let actual_ty = infer_expr_type(
+        let actual_ty = infer_expr_type_with_expected(
             *payload_expr,
             arena,
             env,
             table,
             record_table,
             adt_table,
+            Some(canonical_expected.clone()),
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -4879,6 +5008,185 @@ fn infer_adt_ctor_type(
         )?;
     }
     Ok(Type::Adt(ctor_expr.adt_name))
+}
+
+fn infer_expr_type_with_expected(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<Type>,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
+            ctor_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            expected.as_ref(),
+            ret_ty,
+            loop_stack,
+        ),
+        _ => infer_expr_type(
+            expr_id,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        ),
+    }
+}
+
+fn infer_std_form_ctor_type(
+    ctor_expr: &AdtCtorExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<&Type>,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Option<Type>, FrontendError> {
+    let type_name = resolve_symbol_name(arena, ctor_expr.adt_name)?;
+    let variant_name = resolve_symbol_name(arena, ctor_expr.variant_name)?;
+
+    if type_name == "Option" {
+        return match variant_name {
+            "Some" => {
+                if ctor_expr.payload.len() != 1 {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "Option::Some expects exactly one payload item".to_string(),
+                    });
+                }
+                let item_ty = if let Some(Type::Option(item_ty)) = expected {
+                    let expected_item = (**item_ty).clone();
+                    let actual_ty = infer_expr_type_with_expected(
+                        ctor_expr.payload[0],
+                        arena,
+                        env,
+                        table,
+                        record_table,
+                        adt_table,
+                        Some(expected_item.clone()),
+                        ret_ty,
+                        loop_stack,
+                    )?;
+                    ensure_binding_value_type(
+                        expected_item.clone(),
+                        actual_ty,
+                        ctor_expr.payload[0],
+                        arena,
+                        "Option::Some payload".to_string(),
+                    )?;
+                    expected_item
+                } else {
+                    infer_expr_type(
+                        ctor_expr.payload[0],
+                        arena,
+                        env,
+                        table,
+                        record_table,
+                        adt_table,
+                        ret_ty,
+                        loop_stack,
+                    )?
+                };
+                Ok(Some(Type::Option(Box::new(item_ty))))
+            }
+            "None" => {
+                if !ctor_expr.payload.is_empty() {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "Option::None does not accept payload items".to_string(),
+                    });
+                }
+                match expected {
+                    Some(Type::Option(item_ty)) => {
+                        Ok(Some(Type::Option(Box::new((**item_ty).clone()))))
+                    }
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "Option::None currently requires contextual Option(T) type in v0"
+                                .to_string(),
+                    }),
+                }
+            }
+            _ => Err(FrontendError {
+                pos: 0,
+                message: format!("Option has no variant named '{}'", variant_name),
+            }),
+        };
+    }
+
+    if type_name == "Result" {
+        return match variant_name {
+            "Ok" | "Err" => {
+                if ctor_expr.payload.len() != 1 {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "Result::{} expects exactly one payload item",
+                            variant_name
+                        ),
+                    });
+                }
+                let Some(Type::Result(ok_ty, err_ty)) = expected else {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "Result::{} currently requires contextual Result(T, E) type in v0",
+                            variant_name
+                        ),
+                    });
+                };
+                let expected_payload = if variant_name == "Ok" {
+                    (**ok_ty).clone()
+                } else {
+                    (**err_ty).clone()
+                };
+                let actual_ty = infer_expr_type_with_expected(
+                    ctor_expr.payload[0],
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(expected_payload.clone()),
+                    ret_ty,
+                    loop_stack,
+                )?;
+                ensure_binding_value_type(
+                    expected_payload,
+                    actual_ty,
+                    ctor_expr.payload[0],
+                    arena,
+                    format!("Result::{} payload", variant_name),
+                )?;
+                Ok(Some(Type::Result(
+                    Box::new((**ok_ty).clone()),
+                    Box::new((**err_ty).clone()),
+                )))
+            }
+            _ => Err(FrontendError {
+                pos: 0,
+                message: format!("Result has no variant named '{}'", variant_name),
+            }),
+        };
+    }
+
+    Ok(None)
 }
 
 fn bind_match_pattern(
@@ -5088,13 +5396,14 @@ fn check_return_payload(
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     let got = if let Some(expr_id) = value {
-        infer_expr_type(
+        infer_expr_type_with_expected(
             expr_id,
             arena,
             env,
             table,
             record_table,
             adt_table,
+            Some(ret_ty.clone()),
             ret_ty.clone(),
             loop_stack,
         )?

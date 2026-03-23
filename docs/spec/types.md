@@ -54,6 +54,19 @@ Current rules:
 - `match` currently operates on `quad` and nominal enum scrutinees
 - `quad` is not accepted directly as an `if` condition
 
+## Standard Forms
+
+Current first-wave standard forms:
+
+- `Option(T)` is the canonical optional-value type family in declared type
+  positions
+- `Result(T, E)` is the canonical success/error type family in declared type
+  positions
+- these forms are language-owned standard families, not user-defined generic
+  declarations
+- they currently lower through the same canonical aggregate carrier family used
+  by nominal ADTs
+
 ## Bool
 
 `bool` is the ordinary binary condition type.

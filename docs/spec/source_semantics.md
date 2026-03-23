@@ -458,6 +458,33 @@ Current v0 limit:
   tuple-specific operators are not yet part of the stable contract
 - tuple values are not part of the PROMETHEUS host ABI surface
 
+## Option and Result Standard Forms
+
+Current first-wave semantics:
+
+- `Option(T)` and `Result(T, E)` are built-in standard-form types in declared
+  type positions
+- they are not user-declared generic enums and do not imply a general generic
+  type system
+- constructor evaluation reuses the canonical ADT-style carrier path
+- `Option::Some(value)` produces `Option(value_type)` when no stronger context
+  is required
+- `Option::None` currently requires contextual `Option(T)` type from the
+  surrounding typed position
+- `Result::Ok(value)` and `Result::Err(error)` currently require contextual
+  `Result(T, E)` type from the surrounding typed position
+- current verified execution coverage is over constructor creation and typed
+  success/none/error flows, not over dedicated `Option` / `Result` match sugar
+
+Current v0 limit:
+
+- the current slice does not add angle-bracket generics
+- the current slice does not add user-defined parameterized declarations
+- the current slice does not inject hidden prelude enums into the nominal ADT
+  table
+- the current slice does not yet add special `Option` / `Result` match patterns
+  beyond the existing canonical enum machinery
+
 ## Records
 
 Current stage-1 record semantics:

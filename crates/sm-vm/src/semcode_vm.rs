@@ -1943,6 +1943,39 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_option_and_result_standard_form_paths() {
+        let src = r#"
+            fn keep(flag: bool) -> Option(bool) {
+                let fallback: Option(bool) = Option::None;
+                let _ = fallback;
+                return Option::Some(flag);
+            }
+
+            fn settle(flag: bool) -> Result(bool, quad) {
+                if flag {
+                    let value: Result(bool, quad) = Result::Ok(true);
+                    return value;
+                }
+                let value: Result(bool, quad) = Result::Err(N);
+                return value;
+            }
+
+            fn main() {
+                let left: Option(bool) = keep(true);
+                let right: Result(bool, quad) = settle(false);
+                let _ = left;
+                let _ = right;
+                return;
+            }
+        "#;
+
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_ADT"));
+        run_semcode(&bytes).expect("Option/Result standard-form paths should run");
+    }
+
+    #[test]
     fn vm_runs_stage1_adt_match_path() {
         let src = r#"
             enum Maybe {

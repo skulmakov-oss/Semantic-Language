@@ -1569,6 +1569,7 @@ fn lower_expr_with_expected(
             fn_table,
             record_table,
             adt_table,
+            expected,
             ret_ty,
         ),
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
@@ -3689,8 +3690,24 @@ fn lower_adt_ctor_expr(
     fn_table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
+    if let Some(lowered) = lower_std_form_ctor_expr(
+        ctor_expr,
+        arena,
+        next,
+        out,
+        env,
+        loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        expected.clone(),
+        ret_ty.clone(),
+    )? {
+        return Ok(lowered);
+    }
     let adt = adt_table.get(&ctor_expr.adt_name).ok_or(FrontendError {
         pos: 0,
         message: format!(
@@ -3768,6 +3785,171 @@ fn lower_adt_ctor_expr(
         items: regs,
     });
     Ok((dst, Type::Adt(ctor_expr.adt_name)))
+}
+
+fn lower_std_form_ctor_expr(
+    ctor_expr: &AdtCtorExpr,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<Type>,
+    ret_ty: Type,
+) -> Result<Option<(u16, Type)>, FrontendError> {
+    let type_name = resolve_symbol_name(arena, ctor_expr.adt_name)?;
+    let variant_name = resolve_symbol_name(arena, ctor_expr.variant_name)?;
+
+    if type_name == "Option" {
+        match variant_name {
+            "Some" => {
+                if ctor_expr.payload.len() != 1 {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "Option::Some expects exactly one payload item in lowering"
+                                .to_string(),
+                    });
+                }
+                let item_expected = match expected.as_ref() {
+                    Some(Type::Option(item_ty)) => Some((**item_ty).clone()),
+                    _ => None,
+                };
+                let (item_reg, item_ty) = lower_expr_with_expected(
+                    ctor_expr.payload[0],
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    item_expected.clone(),
+                    ret_ty,
+                )?;
+                if let Some(expected_item) = item_expected {
+                    if item_ty != expected_item {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "Option::Some payload type mismatch in lowering: expected {:?}, got {:?}",
+                                expected_item, item_ty
+                            ),
+                        });
+                    }
+                }
+                let dst = alloc(next);
+                out.push(IrInstr::MakeAdt {
+                    dst,
+                    adt_name: "Option".to_string(),
+                    variant_name: "Some".to_string(),
+                    tag: 1,
+                    items: vec![item_reg],
+                });
+                return Ok(Some((dst, Type::Option(Box::new(item_ty)))));
+            }
+            "None" => {
+                if !ctor_expr.payload.is_empty() {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "Option::None does not accept payload items in lowering"
+                            .to_string(),
+                    });
+                }
+                let Some(Type::Option(item_ty)) = expected else {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "Option::None currently requires contextual Option(T) type in v0 lowering"
+                                .to_string(),
+                    });
+                };
+                let dst = alloc(next);
+                out.push(IrInstr::MakeAdt {
+                    dst,
+                    adt_name: "Option".to_string(),
+                    variant_name: "None".to_string(),
+                    tag: 0,
+                    items: Vec::new(),
+                });
+                return Ok(Some((dst, Type::Option(item_ty))));
+            }
+            _ => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!("Option has no variant named '{}' in lowering", variant_name),
+                })
+            }
+        }
+    }
+
+    if type_name == "Result" {
+        if ctor_expr.payload.len() != 1 {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "Result::{} expects exactly one payload item in lowering",
+                    variant_name
+                ),
+            });
+        }
+        let Some(Type::Result(ok_ty, err_ty)) = expected else {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "Result::{} currently requires contextual Result(T, E) type in v0 lowering",
+                    variant_name
+                ),
+            });
+        };
+        let (payload_expected, tag) = match variant_name {
+            "Ok" => ((*ok_ty).clone(), 0),
+            "Err" => ((*err_ty).clone(), 1),
+            _ => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!("Result has no variant named '{}' in lowering", variant_name),
+                })
+            }
+        };
+        let (payload_reg, payload_ty) = lower_expr_with_expected(
+            ctor_expr.payload[0],
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            record_table,
+            adt_table,
+            Some(payload_expected.clone()),
+            ret_ty,
+        )?;
+        if payload_ty != payload_expected {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "Result::{} payload type mismatch in lowering: expected {:?}, got {:?}",
+                    variant_name, payload_expected, payload_ty
+                ),
+            });
+        }
+        let dst = alloc(next);
+        out.push(IrInstr::MakeAdt {
+            dst,
+            adt_name: "Result".to_string(),
+            variant_name: variant_name.to_string(),
+            tag,
+            items: vec![payload_reg],
+        });
+        return Ok(Some((dst, Type::Result(ok_ty, err_ty))));
+    }
+
+    Ok(None)
 }
 
 #[derive(Debug, Clone)]
@@ -6348,6 +6530,58 @@ mod opt_tests {
             instr,
             IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
                 if adt_name == "Maybe" && variant_name == "None" && *tag == 0 && items.is_empty()
+        )));
+    }
+
+    #[test]
+    fn lower_option_and_result_standard_forms_to_canonical_make_adt_ir() {
+        let src = r#"
+            fn keep(flag: bool) -> Option(bool) {
+                let fallback: Option(bool) = Option::None;
+                let _ = fallback;
+                return Option::Some(flag);
+            }
+
+            fn settle(flag: bool) -> Result(bool, quad) {
+                if flag {
+                    let value: Result(bool, quad) = Result::Ok(true);
+                    return value;
+                }
+                let value: Result(bool, quad) = Result::Err(N);
+                return value;
+            }
+
+            fn main() {
+                let left: Option(bool) = keep(true);
+                let right: Result(bool, quad) = settle(false);
+                let _ = left;
+                let _ = right;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("Option/Result standard forms should lower");
+        let keep = ir.iter().find(|func| func.name == "keep").expect("keep fn");
+        assert!(keep.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
+                if adt_name == "Option" && variant_name == "None" && *tag == 0 && items.is_empty()
+        )));
+        assert!(keep.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
+                if adt_name == "Option" && variant_name == "Some" && *tag == 1 && items.len() == 1
+        )));
+        let settle = ir.iter().find(|func| func.name == "settle").expect("settle fn");
+        assert!(settle.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
+                if adt_name == "Result" && variant_name == "Ok" && *tag == 0 && items.len() == 1
+        )));
+        assert!(settle.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
+                if adt_name == "Result" && variant_name == "Err" && *tag == 1 && items.len() == 1
         )));
     }
 

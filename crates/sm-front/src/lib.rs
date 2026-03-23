@@ -219,6 +219,26 @@ pub fn canonicalize_declared_type(
                 .map(|item| canonicalize_declared_type(item, record_table, adt_table, arena))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Type::Option(item) => Ok(Type::Option(Box::new(canonicalize_declared_type(
+            item,
+            record_table,
+            adt_table,
+            arena,
+        )?))),
+        Type::Result(ok_ty, err_ty) => Ok(Type::Result(
+            Box::new(canonicalize_declared_type(
+                ok_ty,
+                record_table,
+                adt_table,
+                arena,
+            )?),
+            Box::new(canonicalize_declared_type(
+                err_ty,
+                record_table,
+                adt_table,
+                arena,
+            )?),
+        )),
         Type::Record(name) => {
             let is_record = record_table.contains_key(name);
             let is_adt = adt_table.contains_key(name);

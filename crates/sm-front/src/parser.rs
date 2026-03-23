@@ -1651,6 +1651,38 @@ impl<'a> Parser<'a> {
                 }
                 return Ok(Type::QVec(32));
             }
+            if t == "Option" {
+                let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
+                if self
+                    .tokens
+                    .get(lookahead)
+                    .map(|tok| tok.kind == TokenKind::LParen)
+                    .unwrap_or(false)
+                {
+                    let _ = self.advance();
+                    self.expect(TokenKind::LParen, "expected '(' after Option type name")?;
+                    let item = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "expected ')' after Option type argument")?;
+                    return Ok(Type::Option(Box::new(item)));
+                }
+            }
+            if t == "Result" {
+                let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
+                if self
+                    .tokens
+                    .get(lookahead)
+                    .map(|tok| tok.kind == TokenKind::LParen)
+                    .unwrap_or(false)
+                {
+                    let _ = self.advance();
+                    self.expect(TokenKind::LParen, "expected '(' after Result type name")?;
+                    let ok_ty = self.parse_type()?;
+                    self.expect(TokenKind::Comma, "expected ',' between Result type arguments")?;
+                    let err_ty = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "expected ')' after Result type arguments")?;
+                    return Ok(Type::Result(Box::new(ok_ty), Box::new(err_ty)));
+                }
+            }
             let record_name = self.expect_symbol()?;
             return Ok(Type::Record(record_name));
         }
@@ -3401,6 +3433,58 @@ fn main() {
                 other => panic!("expected adt constructor expression, got {:?}", other),
             },
             other => panic!("expected let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_option_and_result_standard_form_types() {
+        let src = r#"
+fn wrap(flag: bool) -> Option(bool) {
+    let some: Option(bool) = Option::Some(flag);
+    let none: Option(bool) = Option::None;
+    let ok: Result(bool, quad) = Result::Ok(flag);
+    let err: Result(bool, quad) = Result::Err(N);
+    let _ = some;
+    let _ = none;
+    let _ = ok;
+    let _ = err;
+    return Option::Some(flag);
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("Option/Result standard-form surface should parse");
+        let wrap = &program.functions[0];
+        assert_eq!(wrap.ret, Type::Option(Box::new(Type::Bool)));
+        assert_eq!(wrap.params[0].1, Type::Bool);
+        match program.arena.stmt(wrap.body[0]) {
+            Stmt::Let { ty: Some(ty), value, .. } => {
+                assert_eq!(*ty, Type::Option(Box::new(Type::Bool)));
+                let Expr::AdtCtor(ctor) = program.arena.expr(*value) else {
+                    panic!("expected Option constructor expression");
+                };
+                assert_eq!(program.arena.symbol_name(ctor.adt_name), "Option");
+                assert_eq!(program.arena.symbol_name(ctor.variant_name), "Some");
+            }
+            other => panic!("expected typed let binding, got {:?}", other),
+        }
+        match program.arena.stmt(wrap.body[2]) {
+            Stmt::Let { ty: Some(ty), value, .. } => {
+                assert_eq!(
+                    *ty,
+                    Type::Result(Box::new(Type::Bool), Box::new(Type::Quad))
+                );
+                let Expr::AdtCtor(ctor) = program.arena.expr(*value) else {
+                    panic!("expected Result constructor expression");
+                };
+                assert_eq!(program.arena.symbol_name(ctor.adt_name), "Result");
+                assert_eq!(program.arena.symbol_name(ctor.variant_name), "Ok");
+            }
+            other => panic!("expected typed let binding, got {:?}", other),
         }
     }
 

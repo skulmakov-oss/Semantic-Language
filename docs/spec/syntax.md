@@ -321,6 +321,26 @@ Current v0 tuple limits:
 - tuple field access and tuple pattern matching beyond flat destructuring bind
   are not yet part of the stable surface
 
+Current first-wave `Option` / `Result` standard-form rules:
+
+- declared type positions now accept `Option(type)` and `Result(ok_type, err_type)`
+- canonical constructors are:
+  - `Option::Some(value)`
+  - `Option::None`
+  - `Result::Ok(value)`
+  - `Result::Err(error)`
+- this is a narrow standard-forms surface, not a general generic type system
+- angle-bracket type application and user-defined parameterized declarations are
+  not part of this slice
+- `Option::Some(value)` may infer `Option(T)` from its payload type
+- `Option::None` currently requires contextual `Option(T)` type
+- `Result::Ok(...)` and `Result::Err(...)` currently require contextual
+  `Result(T, E)` type
+- canonical `Option` / `Result` constructors reuse the existing `MakeAdt`
+  lowering family
+- `match` ergonomics for `Option` / `Result` remain a later slice; this wave
+  does not widen the general pattern system
+
 Current precedence, from tighter to looser:
 
 1. primary expressions and calls

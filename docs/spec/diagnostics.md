@@ -116,6 +116,8 @@ Current message families include:
 - unsupported expression form inside `requires`
 - let-binding type mismatch
 - discard-binding type mismatch
+- `Option::None` without contextual `Option(T)` type
+- `Result::Ok(...)` / `Result::Err(...)` without contextual `Result(T, E)` type
 - non-const-safe initializer in const declaration
 - invalid typed numeric literal form
 - range literal requires `i32` bounds

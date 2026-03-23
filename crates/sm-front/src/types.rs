@@ -15,6 +15,8 @@ pub enum Type {
     F64,
     RangeI32,
     Tuple(Vec<Type>),
+    Option(Box<Type>),
+    Result(Box<Type>, Box<Type>),
     Record(SymbolId),
     Adt(SymbolId),
     Unit,
