@@ -336,6 +336,29 @@ fn lower_function_to_ir_with_record_table(
             src: idx as u16,
         });
     }
+    for condition in &func.requires {
+        let (cond_reg, cond_ty) = lower_expr(
+            *condition,
+            arena,
+            &mut ctx.next_reg,
+            &mut ctx.instrs,
+            &env,
+            &mut ctx.loop_stack,
+            fn_table,
+            record_table,
+            func.ret.clone(),
+        )?;
+        if cond_ty != Type::Bool {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "requires clause condition must be bool in lowering, got {:?}",
+                    cond_ty
+                ),
+            });
+        }
+        ctx.instrs.push(IrInstr::Assert { cond: cond_reg });
+    }
     for stmt in &func.body {
         lower_stmt(
             *stmt,
@@ -4407,6 +4430,52 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::Assert { .. })));
+    }
+
+    #[test]
+    fn lower_function_requires_clause_to_entry_asserts() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn decide(ctx: DecisionContext, expected: quad) -> quad
+                requires(ctx.camera == expected)
+                requires(ctx.quality == 0.75) {
+                return ctx.camera;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = decide(ctx, T);
+                assert(seen == T);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("requires clause should lower");
+        let decide = ir
+            .iter()
+            .find(|func| func.name == "decide")
+            .expect("decide fn");
+        let first_assert = decide
+            .instrs
+            .iter()
+            .position(|instr| matches!(instr, IrInstr::Assert { .. }))
+            .expect("requires clause should lower to assert");
+        let param_store = decide
+            .instrs
+            .iter()
+            .position(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "ctx"))
+            .expect("parameter store should exist");
+        assert!(param_store < first_assert);
+        let assert_count = decide
+            .instrs
+            .iter()
+            .filter(|instr| matches!(instr, IrInstr::Assert { .. }))
+            .count();
+        assert_eq!(assert_count, 2);
     }
 
     #[test]

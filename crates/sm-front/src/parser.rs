@@ -124,6 +124,7 @@ impl<'a> Parser<'a> {
         } else {
             Type::Unit
         };
+        let requires = self.parse_requires_clauses()?;
         let body = if self.eat(TokenKind::Assign) {
             let expr = self.parse_expr()?;
             self.expect(
@@ -138,9 +139,21 @@ impl<'a> Parser<'a> {
             name,
             params,
             param_defaults,
+            requires,
             ret,
             body,
         })
+    }
+
+    fn parse_requires_clauses(&mut self) -> Result<Vec<ExprId>, FrontendError> {
+        let mut requires = Vec::new();
+        while self.eat(TokenKind::KwRequires) {
+            self.expect(TokenKind::LParen, "expected '(' after 'requires'")?;
+            let condition = self.parse_expr()?;
+            self.expect(TokenKind::RParen, "expected ')' after requires condition")?;
+            requires.push(condition);
+        }
+        Ok(requires)
     }
 
     fn parse_record_decl(&mut self) -> Result<RecordDecl, FrontendError> {
@@ -2117,7 +2130,7 @@ fn main() { let x: quad = idq(T); return; }
         let src = r#"
 fn idq(q: quad) -> quad = q;
 fn main() { return; }
-"#;
+        "#;
 
         let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect("expression-bodied function should parse");
@@ -2126,6 +2139,49 @@ fn main() { return; }
             panic!("expected desugared return statement");
         };
         assert!(matches!(program.arena.expr(*value), Expr::Var(_)));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_function_requires_clause() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn decide(ctx: DecisionContext) -> quad requires(ctx.camera == T) {
+    return ctx.camera;
+}
+
+fn main() { return; }
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("parse");
+        let decide = &program.functions[0];
+        assert_eq!(program.arena.symbol_name(decide.name), "decide");
+        assert_eq!(decide.requires.len(), 1);
+        assert!(matches!(
+            program.arena.expr(decide.requires[0]),
+            Expr::Binary(_, BinaryOp::Eq, _)
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_expression_bodied_function_with_requires_clause() {
+        let src = r#"
+fn idq(q: quad) -> quad requires(q == T) = q;
+fn main() { return; }
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("parse");
+        let idq = &program.functions[0];
+        assert_eq!(idq.requires.len(), 1);
+        assert!(matches!(
+            program.arena.expr(idq.requires[0]),
+            Expr::Binary(_, BinaryOp::Eq, _)
+        ));
     }
 
     #[test]

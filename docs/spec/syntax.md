@@ -69,6 +69,14 @@ fn name(arg: type, optional_arg: type = expr) -> ret_type {
 }
 ```
 
+First-wave declaration contracts are also part of the current surface:
+
+```sm
+fn name(arg: type, ...) -> ret_type requires(condition) {
+    ...
+}
+```
+
 Expression-bodied sugar is also part of the current v0 surface:
 
 ```sm
@@ -84,6 +92,8 @@ Current rules:
 - `fn` introduces a function
 - parameters are named and typed explicitly
 - trailing parameters may attach a default initializer with `= expr`
+- zero or more `requires(condition)` clauses may appear after the signature and
+  before the function body
 - the return type is optional; omitted return type means `unit`
 - function bodies are block-delimited with `{ ... }`
 - `fn ... = expr;` is accepted as shorthand for a single returned expression
@@ -161,6 +171,7 @@ Current statement rules:
 - `for ... in range` currently accepts only `i32` range expressions
 - `guard` currently supports only the `else return` form
 - `assert(condition);` is a statement-level builtin contract form
+- `requires(condition)` is currently a function-level contract clause only
 - `if` conditions must be `bool`
 - `match` is currently restricted to `quad`
 - `match` requires an explicit default arm `_ => { ... }`
@@ -320,6 +331,18 @@ Current named-argument rules:
 - named arguments reorder to the declared parameter order before ordinary
   type-checking and lowering
 - named arguments are not yet part of the builtin-call surface
+
+Current first-wave `requires` rules:
+
+- `requires(condition)` currently attaches only to ordinary user-defined
+  function declarations
+- `requires(condition)` may appear on block-bodied and expression-bodied
+  functions
+- each `condition` must be `bool`
+- the current stable subset allows only parameter references, tuple literals,
+  record field reads, and pure unary/binary operator expressions
+- call expressions, block/control-flow expressions, range literals, record
+  construction, and record copy-with are not part of this slice
 
 Current UFCS / method-call rules:
 

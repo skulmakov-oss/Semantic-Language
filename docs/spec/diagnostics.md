@@ -101,6 +101,8 @@ Current message families include:
 - required parameter after default parameter
 - non-const-safe default parameter initializer
 - default parameter type mismatch
+- non-bool `requires` condition
+- unsupported expression form inside `requires`
 - let-binding type mismatch
 - discard-binding type mismatch
 - non-const-safe initializer in const declaration

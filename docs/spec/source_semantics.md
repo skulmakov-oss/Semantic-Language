@@ -31,6 +31,9 @@ Current rules:
 - there is no dynamic entrypoint discovery or module-level executable code
 - `fn name(...) -> ret = expr;` is semantically equivalent to a body containing
   only `return expr;`
+- function-level `requires(condition)` clauses execute at callee entry after
+  parameter binding and before ordinary body statements
+- multiple `requires(condition)` clauses evaluate in source order
 
 Current v0 record declaration semantics:
 
@@ -122,6 +125,20 @@ Current default-parameter semantics:
   lowering
 - default initializers must remain within the current const-safe expression
   subset and may not depend on function parameters or local runtime bindings
+
+Current first-wave function-contract semantics:
+
+- `requires(condition)` is currently the only declaration-level contract clause
+  in the stable source surface
+- each `requires` condition is type-checked in a parameter-only environment
+- the current stable subset allows only parameter references, tuple literals,
+  record field reads, and pure unary/binary operator expressions
+- function calls, record construction, record copy-with, range literals,
+  blocks, and control-flow expressions are not yet part of the stable
+  `requires` subset
+- lowering translates each `requires` clause to an explicit core assertion at
+  function entry
+- this slice does not yet claim `ensures(...)` or `invariant(...)`
 
 Current v0 limits:
 

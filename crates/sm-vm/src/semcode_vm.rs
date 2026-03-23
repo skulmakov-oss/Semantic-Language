@@ -1514,6 +1514,48 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_function_requires_clause_when_condition_holds() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn decide(ctx: DecisionContext, expected: quad) -> quad
+                requires(ctx.camera == expected)
+                requires(ctx.quality == 0.75) {
+                return ctx.camera;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = decide(ctx, T);
+                assert(seen == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        run_semcode(&bytes).expect("requires clause should pass");
+    }
+
+    #[test]
+    fn vm_traps_on_failed_function_requires_clause() {
+        let src = r#"
+            fn must_be_true(flag: bool) -> bool requires(flag == true) {
+                return flag;
+            }
+
+            fn main() {
+                let seen: bool = must_be_true(false);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let err = run_semcode(&bytes).expect_err("requires clause should trap");
+        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+    }
+
+    #[test]
     fn vm_runs_bool_ops() {
         let src = r#"
 			fn main() {

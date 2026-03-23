@@ -160,6 +160,7 @@ fn type_check_function_with_record_table(
             )?;
         }
     }
+    check_requires_clauses(func, arena, table, record_table)?;
     let mut env = ScopeEnv::with_params(&func.params);
     let mut loop_stack = Vec::new();
     for stmt in &func.body {
@@ -172,6 +173,38 @@ fn type_check_function_with_record_table(
             record_table,
             &mut loop_stack,
         )?;
+    }
+    Ok(())
+}
+
+fn check_requires_clauses(
+    func: &Function,
+    arena: &AstArena,
+    table: &FnTable,
+    record_table: &RecordTable,
+) -> Result<(), FrontendError> {
+    let env = ScopeEnv::with_params(&func.params);
+    let mut loop_stack = Vec::new();
+    for condition in &func.requires {
+        ensure_requires_expr_supported(*condition, arena)?;
+        let condition_ty = infer_expr_type(
+            *condition,
+            arena,
+            &env,
+            table,
+            record_table,
+            func.ret.clone(),
+            &mut loop_stack,
+        )?;
+        if condition_ty != Type::Bool {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "requires clause condition must be bool, got {:?}",
+                    condition_ty
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -2015,6 +2048,65 @@ mod tests {
     }
 
     #[test]
+    fn function_requires_clause_typechecks_with_param_and_record_field_reads() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn decide(ctx: DecisionContext, expected: quad) -> quad
+                requires(ctx.camera == expected)
+                requires(ctx.quality == 0.75) {
+                return ctx.camera;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = decide(ctx, T);
+                assert(seen == T);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("requires clauses should typecheck");
+    }
+
+    #[test]
+    fn function_requires_clause_requires_bool_condition() {
+        let src = r#"
+            fn choose(count: i32) -> i32 requires(count) {
+                return count;
+            }
+
+            fn main() { return; }
+        "#;
+
+        let err = typecheck_source(src).expect_err("requires clause must require bool");
+        assert!(err
+            .message
+            .contains("requires clause condition must be bool"));
+    }
+
+    #[test]
+    fn function_requires_clause_rejects_call_surface() {
+        let src = r#"
+            fn check(flag: bool) -> bool = flag;
+
+            fn choose(flag: bool) -> bool requires(check(flag)) {
+                return flag;
+            }
+
+            fn main() { return; }
+        "#;
+
+        let err = typecheck_source(src).expect_err("requires clause should reject call surface");
+        assert!(err
+            .message
+            .contains("requires clause currently allows only parameter references"));
+    }
+
+    #[test]
     fn tuple_literals_and_tuple_types_typecheck_through_call_and_return_paths() {
         let src = r#"
             fn pair(flag: bool) -> (i32, bool) {
@@ -3450,6 +3542,31 @@ fn supports_stable_equality_type(
 ) -> Result<bool, FrontendError> {
     let mut active = BTreeSet::new();
     supports_stable_equality_type_inner(ty, record_table, &mut active)
+}
+
+fn ensure_requires_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::QuadLiteral(_)
+        | Expr::BoolLiteral(_)
+        | Expr::NumericLiteral(_)
+        | Expr::Var(_) => Ok(()),
+        Expr::Tuple(items) => {
+            for item in items {
+                ensure_requires_expr_supported(*item, arena)?;
+            }
+            Ok(())
+        }
+        Expr::RecordField(field_expr) => ensure_requires_expr_supported(field_expr.base, arena),
+        Expr::Unary(_, inner) => ensure_requires_expr_supported(*inner, arena),
+        Expr::Binary(lhs, _, rhs) => {
+            ensure_requires_expr_supported(*lhs, arena)?;
+            ensure_requires_expr_supported(*rhs, arena)
+        }
+        _ => Err(FrontendError {
+            pos: 0,
+            message: "requires clause currently allows only parameter references, tuple literals, record field reads, and pure unary/binary operator expressions".to_string(),
+        }),
+    }
 }
 
 fn supports_stable_equality_type_inner(
