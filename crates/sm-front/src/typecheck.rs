@@ -1111,12 +1111,6 @@ fn check_stmt(
                     message: "match is allowed only for quad or enum scrutinee".to_string(),
                 });
             }
-            if default.is_empty() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: "match requires default arm '_'".to_string(),
-                });
-            }
 
             for arm in arms {
                 let mut arm_env = env.clone();
@@ -1155,21 +1149,49 @@ fn check_stmt(
                 arm_env.pop_scope();
             }
 
-            let mut def_env = env.clone();
-            def_env.push_scope();
-            for s in default {
-                check_stmt(
-                    *s,
+            if default.is_empty() {
+                match missing_exhaustive_adt_variants(
+                    &st,
+                    arms.iter().map(|arm| (&arm.pat, arm.guard)),
                     arena,
-                    &mut def_env,
-                    ret_ty.clone(),
-                    table,
-                    record_table,
                     adt_table,
-                    loop_stack,
-                )?;
+                )? {
+                    Some(missing) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(
+                            arena,
+                            match st {
+                                Type::Adt(name) => name,
+                                _ => unreachable!(),
+                            },
+                            &missing,
+                            false,
+                        )?)
+                    }
+                    Some(_) => {}
+                    None => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "match requires default arm '_'".to_string(),
+                        });
+                    }
+                }
+            } else {
+                let mut def_env = env.clone();
+                def_env.push_scope();
+                for s in default {
+                    check_stmt(
+                        *s,
+                        arena,
+                        &mut def_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                    )?;
+                }
+                def_env.pop_scope();
             }
-            def_env.pop_scope();
             Ok(())
         }
         Stmt::Return(v) => check_return_payload(
@@ -1886,6 +1908,33 @@ mod tests {
     }
 
     #[test]
+    fn exhaustive_adt_match_expression_without_default_typechecks() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(f64),
+            }
+
+            fn read(value: Maybe) -> f64 {
+                let total: f64 = match value {
+                    Maybe::None => { 0.0 }
+                    Maybe::Some(inner) => { inner }
+                };
+                return total;
+            }
+
+            fn main() {
+                let value: Maybe = Maybe::Some(1.0);
+                let total: f64 = read(value);
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("exhaustive ADT match expression without default should typecheck");
+    }
+
+    #[test]
     fn match_expression_requires_quad_scrutinee() {
         let src = r#"
             fn main() {
@@ -1918,6 +1967,36 @@ mod tests {
         assert!(err
             .message
             .contains("match expression requires default arm '_'"));
+    }
+
+    #[test]
+    fn non_exhaustive_adt_match_expression_without_default_rejects() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(f64),
+            }
+
+            fn read(value: Maybe) -> f64 {
+                let total: f64 = match value {
+                    Maybe::Some(inner) => { inner }
+                };
+                return total;
+            }
+
+            fn main() {
+                let value: Maybe = Maybe::Some(1.0);
+                let total: f64 = read(value);
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("non-exhaustive ADT match expression without default must reject");
+        assert!(err
+            .message
+            .contains("non-exhaustive match expression for enum 'Maybe'; missing variants: None"));
     }
 
     #[test]
@@ -3680,10 +3759,6 @@ fn infer_match_expr_type(
             message: "match expression is allowed only for quad or enum scrutinee".to_string(),
         });
     }
-    let default = match_expr.default.as_ref().ok_or(FrontendError {
-        pos: 0,
-        message: "match expression requires default arm '_'".to_string(),
-    })?;
 
     let mut result_ty = None;
     for arm in &match_expr.arms {
@@ -3733,29 +3808,54 @@ fn infer_match_expr_type(
         }
     }
 
-    let default_ty = infer_value_block_type(
-        default,
-        arena,
-        env,
-        table,
-        record_table,
-        adt_table,
-        ret_ty,
-        loop_stack,
-    )?;
-    if let Some(expected) = result_ty {
-        if expected != default_ty {
-            return Err(FrontendError {
-                pos: 0,
-                message: format!(
-                    "match expression branch type mismatch: expected {:?}, got {:?}",
-                    expected, default_ty
-                ),
-            });
+    if let Some(default) = match_expr.default.as_ref() {
+        let default_ty = infer_value_block_type(
+            default,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        )?;
+        if let Some(expected) = result_ty {
+            if expected != default_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "match expression branch type mismatch: expected {:?}, got {:?}",
+                        expected, default_ty
+                    ),
+                });
+            }
+            Ok(expected)
+        } else {
+            Ok(default_ty)
         }
-        Ok(expected)
     } else {
-        Ok(default_ty)
+        match missing_exhaustive_adt_variants(
+            &scrutinee_ty,
+            match_expr.arms.iter().map(|arm| (&arm.pat, arm.guard)),
+            arena,
+            adt_table,
+        )? {
+            Some(missing) if !missing.is_empty() => Err(non_exhaustive_match_error(
+                arena,
+                match scrutinee_ty {
+                    Type::Adt(name) => name,
+                    _ => unreachable!(),
+                },
+                &missing,
+                true,
+            )?),
+            Some(_) => Ok(result_ty
+                .expect("exhaustive enum match expression should have at least one arm")),
+            None => Err(FrontendError {
+                pos: 0,
+                message: "match expression requires default arm '_'".to_string(),
+            }),
+        }
     }
 }
 
@@ -4882,6 +4982,66 @@ fn bind_match_pattern(
             message: "match is allowed only for quad or enum scrutinee".to_string(),
         }),
     }
+}
+
+fn missing_exhaustive_adt_variants<'a>(
+    scrutinee_ty: &Type,
+    patterns: impl IntoIterator<Item = (&'a MatchPattern, Option<ExprId>)>,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<Option<Vec<SymbolId>>, FrontendError> {
+    let Type::Adt(adt_name) = scrutinee_ty else {
+        return Ok(None);
+    };
+    let adt = adt_table.get(adt_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown enum type '{}' in match exhaustiveness check",
+            resolve_symbol_name(arena, *adt_name)?,
+        ),
+    })?;
+
+    let mut covered = BTreeSet::new();
+    for (pat, guard) in patterns {
+        if guard.is_some() {
+            continue;
+        }
+        if let MatchPattern::Adt(adt_pat) = pat {
+            if adt_pat.adt_name == *adt_name {
+                covered.insert(adt_pat.variant_name);
+            }
+        }
+    }
+
+    Ok(Some(
+        adt.variants
+            .iter()
+            .filter(|variant| !covered.contains(&variant.name))
+            .map(|variant| variant.name)
+            .collect(),
+    ))
+}
+
+fn non_exhaustive_match_error(
+    arena: &AstArena,
+    adt_name: SymbolId,
+    missing: &[SymbolId],
+    expression: bool,
+) -> Result<FrontendError, FrontendError> {
+    let missing_names = missing
+        .iter()
+        .map(|name| resolve_symbol_name(arena, *name))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(FrontendError {
+        pos: 0,
+        message: format!(
+            "non-exhaustive match{} for enum '{}'; missing variants: {}",
+            if expression { " expression" } else { "" },
+            resolve_symbol_name(arena, adt_name)?,
+            missing_names,
+        ),
+    })
 }
 
 fn check_match_guard(

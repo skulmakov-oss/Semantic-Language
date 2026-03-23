@@ -7,6 +7,7 @@ use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
     RecordPatternTarget,
 };
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstr {
@@ -3206,12 +3207,35 @@ fn lower_stmt(
                     message: "match scrutinee must be quad or enum".to_string(),
                 });
             }
-            if default.is_empty() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: "match requires default arm '_'".to_string(),
-                });
-            }
+            let exhaustive_without_default = if default.is_empty() {
+                match missing_exhaustive_adt_variants(
+                    &scr_ty,
+                    arms.iter().map(|arm| (&arm.pat, arm.guard)),
+                    arena,
+                    adt_table,
+                )? {
+                    Some(missing) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(
+                            arena,
+                            match scr_ty {
+                                Type::Adt(name) => name,
+                                _ => unreachable!(),
+                            },
+                            &missing,
+                            false,
+                        )?)
+                    }
+                    Some(_) => true,
+                    None => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "match requires default arm '_'".to_string(),
+                        });
+                    }
+                }
+            } else {
+                false
+            };
 
             let mid = ctx.next_if_id();
             let end_label = format!("match_{}_end", mid);
@@ -3452,21 +3476,30 @@ fn lower_stmt(
             ctx.instrs.push(IrInstr::Label {
                 name: default_label,
             });
-            let mut def_env = env.clone();
-            def_env.push_scope();
-            for s in default {
-                lower_stmt(
-                    *s,
-                    arena,
-                    ctx,
-                    &mut def_env,
-                    ret_ty.clone(),
-                    fn_table,
-                    record_table,
-                    adt_table,
-                )?;
+            if exhaustive_without_default {
+                let cond = alloc(&mut ctx.next_reg);
+                ctx.instrs.push(IrInstr::LoadBool {
+                    dst: cond,
+                    val: false,
+                });
+                ctx.instrs.push(IrInstr::Assert { cond });
+            } else {
+                let mut def_env = env.clone();
+                def_env.push_scope();
+                for s in default {
+                    lower_stmt(
+                        *s,
+                        arena,
+                        ctx,
+                        &mut def_env,
+                        ret_ty.clone(),
+                        fn_table,
+                        record_table,
+                        adt_table,
+                    )?;
+                }
+                def_env.pop_scope();
             }
-            def_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
                 label: end_label.clone(),
             });
@@ -3870,6 +3903,80 @@ fn lower_adt_match_bindings(
         env.insert(binding.name, binding.ty.clone());
     }
     Ok(())
+}
+
+fn missing_exhaustive_adt_variants<'a>(
+    scrutinee_ty: &Type,
+    patterns: impl IntoIterator<Item = (&'a MatchPattern, Option<ExprId>)>,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<Option<Vec<SymbolId>>, FrontendError> {
+    let Type::Adt(adt_name) = scrutinee_ty else {
+        return Ok(None);
+    };
+    let adt = adt_table.get(adt_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown enum type '{}' in match lowering exhaustiveness check",
+            resolve_symbol_name(arena, *adt_name)?,
+        ),
+    })?;
+
+    let mut covered = BTreeSet::new();
+    for (pat, guard) in patterns {
+        if guard.is_some() {
+            continue;
+        }
+        if let MatchPattern::Adt(adt_pat) = pat {
+            if adt_pat.adt_name == *adt_name {
+                covered.insert(adt_pat.variant_name);
+            }
+        }
+    }
+
+    Ok(Some(
+        adt.variants
+            .iter()
+            .filter(|variant| !covered.contains(&variant.name))
+            .map(|variant| variant.name)
+            .collect(),
+    ))
+}
+
+fn non_exhaustive_match_error(
+    arena: &AstArena,
+    adt_name: SymbolId,
+    missing: &[SymbolId],
+    expression: bool,
+) -> Result<FrontendError, FrontendError> {
+    let missing_names = missing
+        .iter()
+        .map(|name| resolve_symbol_name(arena, *name))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok(FrontendError {
+        pos: 0,
+        message: format!(
+            "non-exhaustive match{} for enum '{}'; missing variants: {}",
+            if expression { " expression" } else { "" },
+            resolve_symbol_name(arena, adt_name)?,
+            missing_names,
+        ),
+    })
+}
+
+fn lower_impossible_match_trap(
+    label: String,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+) {
+    out.push(IrInstr::Label { name: label });
+    let cond = alloc(next);
+    out.push(IrInstr::LoadBool {
+        dst: cond,
+        val: false,
+    });
+    out.push(IrInstr::Assert { cond });
 }
 
 fn lower_match_guard(
@@ -4364,12 +4471,35 @@ fn lower_loop_expr_stmt(
                     message: "match scrutinee must be quad or enum".to_string(),
                 });
             }
-            if default.is_empty() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: "match requires default arm '_'".to_string(),
-                });
-            }
+            let exhaustive_without_default = if default.is_empty() {
+                match missing_exhaustive_adt_variants(
+                    &scr_ty,
+                    arms.iter().map(|arm| (&arm.pat, arm.guard)),
+                    arena,
+                    adt_table,
+                )? {
+                    Some(missing) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(
+                            arena,
+                            match scr_ty {
+                                Type::Adt(name) => name,
+                                _ => unreachable!(),
+                            },
+                            &missing,
+                            false,
+                        )?)
+                    }
+                    Some(_) => true,
+                    None => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "match requires default arm '_'".to_string(),
+                        });
+                    }
+                }
+            } else {
+                false
+            };
 
             let id = alloc_loop_expr_id(next);
             let end_label = format!("loop_match_{}_end", id);
@@ -4570,26 +4700,35 @@ fn lower_loop_expr_stmt(
             out.push(IrInstr::Label {
                 name: default_label,
             });
-            let mut def_env = env.clone();
-            def_env.push_scope();
-            for stmt in default {
-                lower_loop_expr_stmt(
-                    *stmt,
-                    arena,
-                    next,
-                    out,
-                    &mut def_env,
-                    loop_stack,
-                    fn_table,
-                    record_table,
-                    adt_table,
-                    ret_ty.clone(),
-                )?;
+            if exhaustive_without_default {
+                let cond = alloc(next);
+                out.push(IrInstr::LoadBool {
+                    dst: cond,
+                    val: false,
+                });
+                out.push(IrInstr::Assert { cond });
+            } else {
+                let mut def_env = env.clone();
+                def_env.push_scope();
+                for stmt in default {
+                    lower_loop_expr_stmt(
+                        *stmt,
+                        arena,
+                        next,
+                        out,
+                        &mut def_env,
+                        loop_stack,
+                        fn_table,
+                        record_table,
+                        adt_table,
+                        ret_ty.clone(),
+                    )?;
+                }
+                def_env.pop_scope();
+                out.push(IrInstr::Jmp {
+                    label: end_label.clone(),
+                });
             }
-            def_env.pop_scope();
-            out.push(IrInstr::Jmp {
-                label: end_label.clone(),
-            });
             out.push(IrInstr::Label { name: end_label });
             Ok(())
         }
@@ -4653,10 +4792,35 @@ fn lower_match_expr(
             message: "match expression scrutinee must be quad or enum".to_string(),
         });
     }
-    let default = match_expr.default.as_ref().ok_or(FrontendError {
-        pos: 0,
-        message: "match expression requires default arm '_'".to_string(),
-    })?;
+    let exhaustive_without_default = if match_expr.default.is_none() {
+        match missing_exhaustive_adt_variants(
+            &scr_ty,
+            match_expr.arms.iter().map(|arm| (&arm.pat, arm.guard)),
+            arena,
+            adt_table,
+        )? {
+            Some(missing) if !missing.is_empty() => {
+                return Err(non_exhaustive_match_error(
+                    arena,
+                    match scr_ty {
+                        Type::Adt(name) => name,
+                        _ => unreachable!(),
+                    },
+                    &missing,
+                    true,
+                )?)
+            }
+            Some(_) => true,
+            None => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "match expression requires default arm '_'".to_string(),
+                });
+            }
+        }
+    } else {
+        false
+    };
 
     let id = alloc_match_expr_id(next);
     let end_label = format!("match_expr_{}_end", id);
@@ -4893,42 +5057,50 @@ fn lower_match_expr(
         _ => unreachable!("non-matchable scrutinee handled above"),
     }
 
-    out.push(IrInstr::Label {
-        name: default_label,
-    });
-    let (default_reg, default_ty) = lower_value_block_expr(
-        default,
-        arena,
-        next,
-        out,
-        env,
-        loop_stack,
-        fn_table,
-        record_table,
-        adt_table,
-        expected,
-        ret_ty,
-    )?;
-    if let Some(ref expected_ty) = result_ty {
-        if *expected_ty != default_ty {
-            return Err(FrontendError {
-                pos: 0,
-                message: format!(
-                    "match expression branch type mismatch in lowering: expected {:?}, got {:?}",
-                    expected_ty, default_ty
-                ),
-            });
-        }
+    if exhaustive_without_default {
+        lower_impossible_match_trap(default_label, next, out);
     } else {
-        result_ty = Some(default_ty);
+        let default = match_expr
+            .default
+            .as_ref()
+            .expect("non-exhaustive match expression requires explicit default in lowering");
+        out.push(IrInstr::Label {
+            name: default_label,
+        });
+        let (default_reg, default_ty) = lower_value_block_expr(
+            default,
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            record_table,
+            adt_table,
+            expected,
+            ret_ty,
+        )?;
+        if let Some(ref expected_ty) = result_ty {
+            if *expected_ty != default_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "match expression branch type mismatch in lowering: expected {:?}, got {:?}",
+                        expected_ty, default_ty
+                    ),
+                });
+            }
+        } else {
+            result_ty = Some(default_ty);
+        }
+        out.push(IrInstr::StoreVar {
+            name: result_name.clone(),
+            src: default_reg,
+        });
+        out.push(IrInstr::Jmp {
+            label: end_label.clone(),
+        });
     }
-    out.push(IrInstr::StoreVar {
-        name: result_name.clone(),
-        src: default_reg,
-    });
-    out.push(IrInstr::Jmp {
-        label: end_label.clone(),
-    });
 
     out.push(IrInstr::Label { name: end_label });
     let dst = alloc(next);
@@ -4936,7 +5108,10 @@ fn lower_match_expr(
         dst,
         name: result_name,
     });
-    Ok((dst, result_ty.expect("default arm guarantees result type")))
+    Ok((
+        dst,
+        result_ty.expect("match expression lowering must establish a result type"),
+    ))
 }
 
 fn lower_expr_stmt(
@@ -5348,6 +5523,37 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::AdtGet { index: 0, .. })));
+    }
+
+    #[test]
+    fn lower_exhaustive_adt_match_expression_without_default_to_trap_backstop() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(f64),
+            }
+
+            fn main() {
+                let total: f64 = match Maybe::Some(1.0) {
+                    Maybe::None => { 0.0 }
+                    Maybe::Some(inner) => { inner }
+                };
+                let same = total == total;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src)
+            .expect("exhaustive ADT match expression without default should lower");
+        let main = &ir[0];
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AdtTag { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::Assert { .. })));
     }
 
     #[test]

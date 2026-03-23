@@ -505,7 +505,8 @@ Current `match` semantics:
 - enum arms currently use explicit nominal patterns `Enum::Variant` or
   `Enum::Variant(name, _)`
 - non-default arms may attach a `bool` guard with `if guard_expr`
-- `_` is required as the default arm
+- `quad` `match` still requires an explicit default arm `_`
+- enum `match` may omit `_` only when unguarded variant coverage is exhaustive
 - `_` currently means wildcard/default only in `match`, not a general rich
   pattern system
 - the first matching arm is selected deterministically
@@ -515,7 +516,9 @@ Current `match` expression semantics:
 - `match scrutinee { ... }` may appear in value position
 - each non-default arm uses a value-producing block after `=>`
 - expression arms may use the same `if guard_expr` form as statement-side arms
-- `_` is required as the default arm for value-producing `match`
+- value-producing `quad` `match` still requires `_`
+- value-producing enum `match` may omit `_` only when unguarded variant
+  coverage is exhaustive
 - all arms, including `_`, must produce the same type
 
 This is a deliberately narrow source contract rather than a full general
@@ -525,8 +528,9 @@ Current v0 limit:
 
 - the default `_` arm does not yet support guards
 - enum match payload patterns are currently flat only and accept only names or `_`
-- nested enum patterns, enum literal payload checks, and exhaustiveness are not
-  yet part of the stable source contract
+- guarded enum arms do not contribute to exhaustiveness
+- nested enum patterns and enum literal payload checks are not yet part of the
+  stable source contract
 
 ## Short Lambdas
 

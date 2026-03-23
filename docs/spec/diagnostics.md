@@ -97,6 +97,8 @@ Current message families include:
 - unsupported expression form inside `requires`
 - non-bool `ensures` condition
 - unsupported expression form inside `ensures`
+- non-exhaustive enum `match`
+- `quad` match without explicit default arm
 - reserved `result` parameter name while `ensures` clauses are present
 - non-bool `invariant` condition
 - unsupported expression form inside `invariant`

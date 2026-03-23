@@ -1973,6 +1973,36 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_exhaustive_adt_match_without_default_path() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(f64),
+            }
+
+            fn unwrap(value: Maybe) -> f64 {
+                let total: f64 = match value {
+                    Maybe::None => { 0.0 }
+                    Maybe::Some(inner) => { inner }
+                };
+                return total;
+            }
+
+            fn main() {
+                let total: f64 = unwrap(Maybe::Some(2.5));
+                assert(total == 2.5);
+                return;
+            }
+        "#;
+
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("ADT_TAG"));
+        assert!(disasm.contains("ASSERT"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
     fn vm_runs_stage1_record_field_access_path() {
         let src = r#"
             record DecisionContext {
