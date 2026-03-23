@@ -1,19 +1,21 @@
 # Record Scenarios
 
-Status: validated against stage-1 v0
+Status: validated against stage-2 v0
 
 ## Purpose
 
 This document gives concrete user-data scenarios that justify records as the
 first aggregate family for Semantic and tracks which parts are already covered
-by the current stage-1 implementation.
+by the current stage-2 implementation.
 
 The goal is to show real workloads that are awkward in the current scalar-only
 surface and become clearer with nominal records.
 
-These examples are no longer only design targets. The stage-1 contract now
+These examples are no longer only design targets. The stage-2 contract now
 supports nominal record declarations, construction, field access, pass/return,
-and equality inside the stable field-equality subset.
+equality inside the stable field-equality subset, statement-level record
+destructuring, narrow record `let-else`, immutable copy-with, and punning
+shorthand inside canonical nominal record forms.
 
 ## Why Scenarios Matter
 
@@ -73,7 +75,7 @@ Why this matters:
 - field names remain explicit
 - `quad`-oriented semantics stay first-class inside the aggregate
 
-Stage-1 validation status:
+Stage-2 validation status:
 
 - compiles through the verified path
 - runs through the VM with explicit field access and ordinary control flow
@@ -112,7 +114,7 @@ Why this matters:
 - helper functions can accept one meaningful argument
 - later field additions do not explode parameter lists immediately
 
-Stage-1 validation status:
+Stage-2 validation status:
 
 - compiles through the verified path
 - field access resolves deterministically by declaration-slot order
@@ -148,7 +150,7 @@ Why this matters:
 - grouped policy inputs read like one contract
 - the code documents intent without relying on naming conventions alone
 
-Stage-1 validation status:
+Stage-2 validation status:
 
 - supported as a nominal input object
 - compatible with pass/return through the verified execution path
@@ -178,6 +180,49 @@ Current limit:
 
 - record values are still not part of the PROMETHEUS host ABI surface
 - config bundles may participate in verified-local execution, not host calls
+
+## Scenario 5: Ergonomic Patch And Unpack Flow
+
+The second honest record wave is not about a new carrier. It is about making
+the already-canonical carrier easier to work with without opening mutation or a
+general pattern language.
+
+```sm
+record DecisionContext {
+    camera: quad,
+    override_state: quad,
+    quality: f64,
+}
+
+fn main() {
+    let camera: quad = T;
+    let override_state: quad = N;
+    let quality: f64 = 0.75;
+
+    let ctx: DecisionContext = DecisionContext { camera, override_state, quality };
+    let DecisionContext { camera, quality: _ } = ctx;
+    let patched: DecisionContext = ctx with { camera };
+    let DecisionContext { camera: T, override_state, quality } = patched else return;
+
+    assert(camera == T);
+    assert(override_state == N);
+    assert(quality == 0.75);
+    return;
+}
+```
+
+Why this matters:
+
+- construction, unpacking, and update stay nominal and deterministic
+- punning reduces boilerplate without introducing a new runtime path
+- copy-with remains immutable and explicit
+- let-else keeps early-exit ergonomics local without reopening general match
+
+Stage-2 validation status:
+
+- compiles through the verified path
+- runs through the VM using the existing `RecordGet` and `MakeRecord` paths
+- keeps anonymous brace-only forms and mutation out of scope
 
 ## Comparison With Logos Entities
 
@@ -212,11 +257,12 @@ and instead pass one explicit domain value with named fields.
 
 ## Explicit Non-Goals Still In Force
 
-The current stage-1 implementation still does not include:
+The current stage-2 implementation still does not include:
 
-- record destructuring
-- record update / copy-with
-- record punning
+- anonymous brace-only record forms
+- record pattern matching in `match`
+- nested record patterns
+- mutation
 - methods, inheritance, or dynamic dispatch
 - host ABI passage for record values
 

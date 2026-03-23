@@ -1802,6 +1802,37 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_record_stage2_ergonomics_scenario() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                override_state: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let camera: quad = T;
+                let override_state: quad = N;
+                let quality: f64 = 0.75;
+                let ctx: DecisionContext = DecisionContext { camera, override_state, quality };
+                let DecisionContext { camera, quality: _ } = ctx;
+                let patched: DecisionContext = ctx with { camera };
+                let DecisionContext { camera: T, override_state, quality } =
+                    patched else return;
+                assert(camera == T);
+                assert(override_state == N);
+                assert(quality == 0.75);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disassemble");
+        assert!(disasm.contains("RECORD_GET"));
+        assert!(disasm.contains("MAKE_RECORD"));
+        run_semcode(&bytes).expect("record stage-2 ergonomics scenario should run");
+    }
+
+    #[test]
     fn vm_runs_for_range_inclusive_path() {
         let src = r#"
             fn main() {

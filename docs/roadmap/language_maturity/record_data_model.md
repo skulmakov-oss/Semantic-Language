@@ -1,13 +1,13 @@
 # Record Data Model
 
-Status: implemented stage-1 v0
+Status: implemented stage-2 v0
 
 ## Purpose
 
 This document defines the first stabilized aggregate family currently available
 in the Semantic executable language surface: nominal records.
 
-It is no longer only a design target. It records the narrow stage-1 contract
+It is no longer only a design target. It records the narrow stage-2 contract
 that now exists across parser, sema, IR, verifier, and VM.
 
 ## Why Records First
@@ -20,7 +20,7 @@ Records are the right first aggregate family because they:
 - do not require hidden dynamic dispatch
 - compose naturally with existing `quad` and numeric values
 
-## Canonical Stage-1 Surface
+## Canonical Stage-2 Surface
 
 The proposed source form is a nominal `record` declaration:
 
@@ -51,6 +51,16 @@ ctx.camera
 ctx.quality
 ```
 
+Stage-2 ergonomics are now available as sugar over the same nominal slot-based
+carrier:
+
+```sm
+let ctx = DecisionContext { camera, badge, quality, override_state };
+let next = ctx with { quality };
+let DecisionContext { camera, quality: _ } = ctx;
+let DecisionContext { camera: T, quality } = next else return;
+```
+
 ## Type Identity
 
 Current rules:
@@ -63,12 +73,13 @@ Current rules:
 
 ## Value Semantics
 
-Current stage-1 rules:
+Current stage-2 rules:
 
 - record values are immutable after construction
 - record construction requires every declared field exactly once
 - no implicit default field values
-- no field mutation syntax in the first stage
+- copy-with rebuilds a value of the same nominal record type
+- no field mutation syntax exists in the stable surface
 - passing a record to a function passes one nominal logical value through the
   verified execution path
 
@@ -85,41 +96,22 @@ Current rules:
 
 ## Pattern And Match Scope
 
-Records do not yet reopen a full pattern system.
+Records still do not reopen a full pattern system.
 
-Current stage-1 rule:
+Current stage-2 rule:
 
-- record destructuring and record-pattern matching are out of scope
-- users access fields explicitly rather than through destructuring syntax
-
-This keeps the first aggregate family coherent without forcing a broad match
-expansion in the same change wave.
-
-## Record Punning Gate
-
-`record punning` is intentionally not part of the first canonical record layer.
-
-For the `Density-20 Plus` backlog this means `D20P-D01` stays blocked until all
-of the following are true:
-
-- nominal `record` declarations are part of the executable source contract
-- record construction with explicit field names is implemented end-to-end
-- explicit field access lowers through a stable deterministic slot model
-- the repository has a separate decision reopening record destructuring syntax
-
-Until then, forms such as:
-
-```sm
-Point { x, y }
-let { x, y } = point;
-```
-
-must remain out of scope. The first record wave should keep field names explicit
-and should not reopen pattern/destructuring ergonomics by accident.
+- statement-level record destructuring is supported through nominal
+  `RecordName { field: target }`
+- record `let-else` is supported through nominal
+  `RecordName { field: target } = value else return ...;`
+- record punning is sugar only inside canonical nominal record forms
+- record-pattern matching in `match` arms remains out of scope
+- anonymous brace-only record forms such as `let { x, y } = value;` remain out
+  of scope
 
 ## Lowering Strategy
 
-The current stage-1 record implementation preserves the deterministic VM story.
+The current stage-2 record implementation preserves the deterministic VM story.
 
 Current strategy:
 
@@ -133,13 +125,13 @@ like a dynamic object.
 
 ## IR Implications
 
-The stage-1 implementation keeps the IR change set narrow.
+The stage-2 implementation keeps the IR change set narrow.
 
 Current direction:
 
 - explicit record-type metadata exists in the frontend and sema layers
-- record construction lowers through canonical `MakeRecord`
-- field access lowers through deterministic `RecordGet`
+- record construction and copy-with lower through canonical `MakeRecord`
+- field access and destructuring lower through deterministic `RecordGet`
 - generic dictionary-like runtime operations remain out of scope
 
 The contract goal remains explicit: records lower to predictable slots, not
@@ -147,7 +139,7 @@ opaque runtime blobs.
 
 ## VM And Verifier Implications
 
-Stage-1 records do not abandon the verified execution model.
+Stage-2 records do not abandon the verified execution model.
 
 Current rules:
 
@@ -187,13 +179,15 @@ This phase does not attempt to provide:
 - mutable structs
 - inheritance
 - methods or dynamic dispatch
-- record destructuring patterns
+- record pattern matching in `match`
+- anonymous brace-only record forms
+- nested record patterns
 - record-specific generics
 - heap allocation semantics as a user-visible contract
 
 ## Example Workloads
 
-The record family already supports stage-1 scenarios such as:
+The record family already supports stage-2 scenarios such as:
 
 - access-policy contexts
 - structured sensor snapshots
@@ -205,11 +199,11 @@ while staying within the current verified-path contract.
 
 ## Acceptance Criteria
 
-The Stage-1 record family should be considered properly frozen for v0 when the
+The Stage-2 record family should be considered properly frozen for v0 when the
 repository has:
 
 - a stable canonical source form
-- explicit construction and access rules
+- explicit construction, access, destructuring, copy-with, and punning-shorthand rules
 - explicit equality and non-goals
 - a documented deterministic lowering direction
 - examples showing why records are better than scalar-only decomposition
