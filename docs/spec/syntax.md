@@ -98,9 +98,10 @@ Current v0 record limits:
 - lowering preserves declaration-slot order rather than source-field order
 - record types may now appear in executable local bindings, parameters, and returns
 - record destructuring and record copy-with now participate in the stable source contract
+- record punning now participates in the stable source contract only as field shorthand inside canonical nominal record forms
 - record equality is allowed only when every field type already supports stable equality
 - record values are not part of the PROMETHEUS host ABI surface
-- record destructuring, record punning, mutation, methods, and inheritance are not part of this slice
+- anonymous brace-only record literals/patterns, mutation, methods, and inheritance are not part of this slice
 
 ## Statements
 
@@ -146,11 +147,10 @@ Current statement rules:
 - `let _ = expr;` is the current discard-bind surface
 - tuple destructuring bind is currently flat only and accepts only names or `_`
 - record destructuring bind is currently statement-level only
-- record destructuring bind currently requires explicit `RecordName { field: target }` spelling
+- record destructuring bind uses `RecordName { field: target }` and now also allows field shorthand `RecordName { field }`
 - record destructuring bind currently supports only named targets or `_`
-- record destructuring bind currently supports only explicit field mappings, not punning shorthand
 - record `let-else` is currently statement-level only
-- record `let-else` currently requires explicit `RecordName { field: target } = expr else return ...;` spelling
+- record `let-else` uses `RecordName { field: target } = expr else return ...;` and also allows shorthand bind items `RecordName { field }`
 - record `let-else` currently allows refutable items only through explicit `quad` literals `N/F/T/S`
 - plain record destructuring bind does not currently accept quad-literal field targets
 - tuple `let-else` currently requires tuple destructuring target and `else return`
@@ -217,6 +217,11 @@ Current expression forms:
 - record copy-with:
   - `ctx with { quality: 1.0 }`
   - `ctx with { camera: F, quality: 0.25 }`
+  - `ctx with { quality }`
+- record punning shorthand:
+  - `DecisionContext { camera, quality }`
+  - `let DecisionContext { camera, quality: _ } = ctx;`
+  - `let DecisionContext { camera: T, quality } = ctx else return;`
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`

@@ -501,22 +501,22 @@ impl<'a> Parser<'a> {
                     ),
                 });
             }
-            self.expect(
-                TokenKind::Colon,
-                "expected ':' after record destructuring field name",
-            )?;
-            let target = if self.eat(TokenKind::Underscore) {
-                RecordPatternTarget::Discard
-            } else if self.eat(TokenKind::QuadN) {
-                RecordPatternTarget::QuadLiteral(QuadVal::N)
-            } else if self.eat(TokenKind::QuadF) {
-                RecordPatternTarget::QuadLiteral(QuadVal::F)
-            } else if self.eat(TokenKind::QuadT) {
-                RecordPatternTarget::QuadLiteral(QuadVal::T)
-            } else if self.eat(TokenKind::QuadS) {
-                RecordPatternTarget::QuadLiteral(QuadVal::S)
+            let target = if self.eat(TokenKind::Colon) {
+                if self.eat(TokenKind::Underscore) {
+                    RecordPatternTarget::Discard
+                } else if self.eat(TokenKind::QuadN) {
+                    RecordPatternTarget::QuadLiteral(QuadVal::N)
+                } else if self.eat(TokenKind::QuadF) {
+                    RecordPatternTarget::QuadLiteral(QuadVal::F)
+                } else if self.eat(TokenKind::QuadT) {
+                    RecordPatternTarget::QuadLiteral(QuadVal::T)
+                } else if self.eat(TokenKind::QuadS) {
+                    RecordPatternTarget::QuadLiteral(QuadVal::S)
+                } else {
+                    RecordPatternTarget::Bind(self.expect_symbol()?)
+                }
             } else {
-                RecordPatternTarget::Bind(self.expect_symbol()?)
+                RecordPatternTarget::Bind(field)
             };
             if let RecordPatternTarget::Bind(target_name) = target {
                 if items.iter().any(|existing| {
@@ -938,8 +938,11 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
         while !self.check(TokenKind::RBrace) {
             let field_name = self.expect_symbol()?;
-            self.expect(TokenKind::Colon, "expected ':' after record field name")?;
-            let value = self.parse_expr()?;
+            let value = if self.eat(TokenKind::Colon) {
+                self.parse_expr()?
+            } else {
+                self.arena.alloc_expr(Expr::Var(field_name))
+            };
             fields.push(RecordInitField {
                 name: field_name,
                 value,
@@ -962,11 +965,21 @@ impl<'a> Parser<'a> {
             return false;
         }
         let field_idx = self.next_non_layout_idx_from(lbrace_idx + 1);
-        if field_idx >= self.tokens.len() || self.tokens[field_idx].kind != TokenKind::Ident {
+        if field_idx >= self.tokens.len() {
             return false;
         }
-        let colon_idx = self.next_non_layout_idx_from(field_idx + 1);
-        colon_idx < self.tokens.len() && self.tokens[colon_idx].kind == TokenKind::Colon
+        if self.tokens[field_idx].kind == TokenKind::RBrace {
+            return true;
+        }
+        if self.tokens[field_idx].kind != TokenKind::Ident {
+            return false;
+        }
+        let next_idx = self.next_non_layout_idx_from(field_idx + 1);
+        next_idx < self.tokens.len()
+            && matches!(
+                self.tokens[next_idx].kind,
+                TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
+            )
     }
 
     fn starts_short_lambda_head(&self) -> bool {
@@ -3154,6 +3167,78 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_record_field_shorthand_in_literal_and_copy_with() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let camera: quad = T;
+    let quality: f64 = 0.75;
+    let ctx: DecisionContext = DecisionContext { camera, quality };
+    let patched: DecisionContext = ctx with { quality };
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record field shorthand should parse");
+        let main = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(main.body[2]) else {
+            panic!("expected record literal let");
+        };
+        let Expr::RecordLiteral(record) = program.arena.expr(*value) else {
+            panic!("expected record literal expression");
+        };
+        assert!(matches!(program.arena.expr(record.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "camera"));
+        assert!(matches!(program.arena.expr(record.fields[1].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality"));
+
+        let Stmt::Let { value, .. } = program.arena.stmt(main.body[3]) else {
+            panic!("expected record copy-with let");
+        };
+        let Expr::RecordUpdate(update) = program.arena.expr(*value) else {
+            panic!("expected record copy-with expression");
+        };
+        assert_eq!(update.fields.len(), 1);
+        assert!(matches!(program.arena.expr(update.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality"));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_record_pattern_punning_in_bind_and_let_else() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let DecisionContext { camera, quality: _ } =
+        DecisionContext { camera: T, quality: 0.75 };
+    let DecisionContext { camera: T, quality } =
+        DecisionContext { camera: T, quality: 1.0 } else return;
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record pattern punning should parse");
+        let main = &program.functions[0];
+        let Stmt::LetRecord { items, .. } = program.arena.stmt(main.body[0]) else {
+            panic!("expected record destructuring bind");
+        };
+        assert!(matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "camera"));
+        assert!(matches!(items[1].target, RecordPatternTarget::Discard));
+
+        let Stmt::LetElseRecord { items, .. } = program.arena.stmt(main.body[1]) else {
+            panic!("expected record let-else");
+        };
+        assert!(matches!(items[0].target, RecordPatternTarget::QuadLiteral(QuadVal::T)));
+        assert!(matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "quality"));
+    }
+
+    #[test]
     fn rustlike_parser_rejects_duplicate_field_in_record_destructuring_bind() {
         let src = r#"
 record DecisionContext {
@@ -3194,6 +3279,28 @@ fn main() {
         assert!(err
             .message
             .contains("record destructuring pattern cannot repeat binding 'seen'"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_duplicate_binding_in_record_destructuring_bind_with_punning() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    badge: quad,
+}
+
+fn main() {
+    let DecisionContext { camera, badge: camera } =
+        DecisionContext { camera: T, badge: F };
+    return;
+}
+        "#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("duplicate binding via punning should reject");
+        assert!(err
+            .message
+            .contains("record destructuring pattern cannot repeat binding 'camera'"));
     }
 
     #[test]

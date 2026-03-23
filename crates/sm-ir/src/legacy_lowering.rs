@@ -4777,6 +4777,39 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_record_punning_shorthand_via_existing_record_paths() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let camera: quad = T;
+                let quality: f64 = 0.75;
+                let ctx: DecisionContext = DecisionContext { camera, quality };
+                let DecisionContext { camera: seen_camera, quality } = ctx;
+                let patched: DecisionContext = ctx with { quality };
+                assert(seen_camera == patched.camera);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record punning shorthand should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeRecord { name, items, .. }
+                if name == "DecisionContext" && items.len() == 2
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::RecordGet { record_name, .. }
+                if record_name == "DecisionContext"
+        )));
+    }
+
+    #[test]
     fn lower_record_destructuring_bind_to_record_get_ir() {
         let src = r#"
             record DecisionContext {

@@ -48,6 +48,7 @@ Current v0 record declaration semantics:
 - stage-1 field access lowers through deterministic declaration-slot reads
 - stage-2 immutable record update uses `record_value with { field: expr, ... }`
 - copy-with preserves the nominal record identity of its base value
+- record field shorthand is sugar only: `RecordName { field }` means `RecordName { field: field }`, `value with { field }` means `value with { field: field }`, and `let RecordName { field } = value;` means `let RecordName { field: field } = value;`
 - explicit record destructuring bind uses `let RecordName { field: target, ... } = value;`
 - explicit record destructuring bind currently projects only the named subset of declaration fields
 - `_` targets in explicit record destructuring bind discard the projected field value without creating a source binding
@@ -417,15 +418,16 @@ Current v0 limit:
 - record field access is read-only and resolves by canonical declaration-slot order
 - record copy-with is immutable and rebuilds a value of the same nominal record type
 - unchanged record fields in copy-with are read from the base value through canonical declaration-slot access
-- record destructuring bind currently supports only statement-level explicit
-  `RecordName { field: target }` patterns
+- record destructuring bind currently supports only statement-level nominal
+  `RecordName { ... }` patterns
 - record `let-else` currently supports only statement-level explicit field
   mappings with `else return`
 - record `let-else` currently allows refutable matching only through explicit
   `quad` literal field targets
-- record copy-with currently requires explicit field mappings and does not open
-  punning or mutation semantics
-- record destructuring bind does not yet open nested patterns or punning
+- record punning remains sugar over the canonical nominal record forms and does
+  not introduce a separate runtime path
+- anonymous brace-only record forms and nested record patterns remain out of
+  scope
 - record equality remains gated to the stable field-equality subset
 - record values are not part of the PROMETHEUS host ABI surface
 

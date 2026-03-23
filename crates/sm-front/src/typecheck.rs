@@ -2599,6 +2599,28 @@ mod tests {
     }
 
     #[test]
+    fn record_field_shorthand_typechecks_for_literal_and_copy_with() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let camera: quad = T;
+                let quality: f64 = 0.75;
+                let ctx: DecisionContext = DecisionContext { camera, quality };
+                let patched: DecisionContext = ctx with { quality };
+                assert(patched.camera == T);
+                assert(patched.quality == 0.75);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("record field shorthand should typecheck");
+    }
+
+    #[test]
     fn record_copy_with_rejects_unknown_field() {
         let src = r#"
             record DecisionContext {
@@ -2692,6 +2714,28 @@ mod tests {
         "#;
 
         typecheck_source(src).expect("record destructuring bind should typecheck");
+    }
+
+    #[test]
+    fn record_pattern_punning_typechecks_for_bind_and_let_else() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera, quality: _ } =
+                    DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: T, quality } =
+                    DecisionContext { camera: T, quality: 1.0 } else return;
+                assert(camera == T);
+                let _: f64 = quality;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("record pattern punning should typecheck");
     }
 
     #[test]
