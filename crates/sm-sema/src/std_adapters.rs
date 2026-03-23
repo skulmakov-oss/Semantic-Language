@@ -48,6 +48,7 @@ impl From<Type> for SemanticType {
             Type::RangeI32 => SemanticType::Unknown,
             Type::Tuple(_) => SemanticType::Unknown,
             Type::Record(_) => SemanticType::Unknown,
+            Type::Adt(_) => SemanticType::Unknown,
         }
     }
 }

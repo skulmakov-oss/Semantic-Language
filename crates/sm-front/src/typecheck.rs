@@ -1,5 +1,5 @@
 use crate::*;
-use crate::types::{NumericLiteral, RecordPatternTarget};
+use crate::types::{AdtCtorExpr, NumericLiteral, RecordPatternTarget};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::ToString;
@@ -37,26 +37,34 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
     }
     let mut table = BTreeMap::new();
     let record_table = build_record_table(program)?;
+    let adt_table = build_adt_table(program)?;
     let func = &program.functions[0];
     table.insert(
         func.name,
         FnSig {
-            params: func.params.iter().map(|(_, t)| t.clone()).collect(),
+            params: func
+                .params
+                .iter()
+                .map(|(_, t)| canonicalize_declared_type(t, &record_table, &adt_table, &program.arena))
+                .collect::<Result<Vec<_>, _>>()?,
             param_names: Some(func.params.iter().map(|(name, _)| *name).collect()),
             param_defaults: Some(func.param_defaults.clone()),
-            ret: func.ret.clone(),
+            ret: canonicalize_declared_type(&func.ret, &record_table, &adt_table, &program.arena)?,
         },
     );
-    validate_top_level_name_collisions(program, &table, &record_table)?;
-    validate_record_declarations(program, &record_table)?;
-    type_check_function_with_record_table(func, &program.arena, &table, &record_table)
+    validate_top_level_name_collisions(program, &table, &record_table, &adt_table)?;
+    validate_record_declarations(program, &record_table, &adt_table)?;
+    validate_adt_declarations(program, &record_table, &adt_table)?;
+    type_check_function_with_tables(func, &program.arena, &table, &record_table, &adt_table)
 }
 
 pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
     let table = build_fn_table(p)?;
     let record_table = build_record_table(p)?;
-    validate_top_level_name_collisions(p, &table, &record_table)?;
-    validate_record_declarations(p, &record_table)?;
+    let adt_table = build_adt_table(p)?;
+    validate_top_level_name_collisions(p, &table, &record_table, &adt_table)?;
+    validate_record_declarations(p, &record_table, &adt_table)?;
+    validate_adt_declarations(p, &record_table, &adt_table)?;
     let main_id = p
         .arena
         .symbol_to_id
@@ -77,7 +85,7 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
         });
     }
     for f in &p.functions {
-        type_check_function_with_record_table(f, &p.arena, &table, &record_table)?;
+        type_check_function_with_tables(f, &p.arena, &table, &record_table, &adt_table)?;
     }
     Ok(())
 }
@@ -88,14 +96,16 @@ pub fn type_check_function_with_table(
     table: &FnTable,
 ) -> Result<(), FrontendError> {
     let empty_records = RecordTable::new();
-    type_check_function_with_record_table(func, arena, table, &empty_records)
+    let empty_adts = AdtTable::new();
+    type_check_function_with_tables(func, arena, table, &empty_records, &empty_adts)
 }
 
-fn type_check_function_with_record_table(
+fn type_check_function_with_tables(
     func: &Function,
     arena: &AstArena,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     if func.params.len() != func.param_defaults.len() {
         return Err(FrontendError {
@@ -103,10 +113,22 @@ fn type_check_function_with_record_table(
             message: "function parameter/default metadata length mismatch".to_string(),
         });
     }
-    for (name, ty) in &func.params {
+    let canonical_params = func
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            Ok((
+                *name,
+                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, FrontendError>>()?;
+    let canonical_ret = canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?;
+    for (name, ty) in &canonical_params {
         ensure_type_resolved(
             ty,
             record_table,
+            adt_table,
             arena,
             format!("parameter '{}'", resolve_symbol_name(arena, *name)?),
         )?;
@@ -117,19 +139,20 @@ fn type_check_function_with_record_table(
         )?;
     }
     ensure_type_resolved(
-        &func.ret,
+        &canonical_ret,
         record_table,
+        adt_table,
         arena,
         format!("return type of '{}'", resolve_symbol_name(arena, func.name)?),
     )?;
     ensure_executable_type_supported(
-        &func.ret,
+        &canonical_ret,
         arena,
         format!("return type of '{}'", resolve_symbol_name(arena, func.name)?),
     )?;
     let empty_env = ScopeEnv::new();
     let mut default_loop_stack = Vec::new();
-    for ((name, ty), default_expr) in func.params.iter().zip(func.param_defaults.iter()) {
+    for ((name, ty), default_expr) in canonical_params.iter().zip(func.param_defaults.iter()) {
         if let Some(default_expr) = default_expr {
             let default_ty =
                 infer_expr_type(
@@ -138,6 +161,7 @@ fn type_check_function_with_record_table(
                     &empty_env,
                     table,
                     record_table,
+                    adt_table,
                     Type::Unit,
                     &mut default_loop_stack,
                 )?;
@@ -160,19 +184,20 @@ fn type_check_function_with_record_table(
             )?;
         }
     }
-    check_requires_clauses(func, arena, table, record_table)?;
-    check_ensures_clauses(func, arena, table, record_table)?;
-    check_invariant_clauses(func, arena, table, record_table)?;
-    let mut env = ScopeEnv::with_params(&func.params);
+    check_requires_clauses(func, arena, table, record_table, adt_table)?;
+    check_ensures_clauses(func, arena, table, record_table, adt_table, &canonical_ret)?;
+    check_invariant_clauses(func, arena, table, record_table, adt_table, &canonical_ret)?;
+    let mut env = ScopeEnv::with_params(&canonical_params);
     let mut loop_stack = Vec::new();
     for stmt in &func.body {
         check_stmt(
             *stmt,
             arena,
             &mut env,
-            func.ret.clone(),
+            canonical_ret.clone(),
             table,
             record_table,
+            adt_table,
             &mut loop_stack,
         )?;
     }
@@ -184,8 +209,19 @@ fn check_requires_clauses(
     arena: &AstArena,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
-    let env = ScopeEnv::with_params(&func.params);
+    let params = func
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            Ok((
+                *name,
+                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, FrontendError>>()?;
+    let env = ScopeEnv::with_params(&params);
     let mut loop_stack = Vec::new();
     for condition in &func.requires {
         ensure_requires_expr_supported(*condition, arena)?;
@@ -195,7 +231,8 @@ fn check_requires_clauses(
             &env,
             table,
             record_table,
-            func.ret.clone(),
+            adt_table,
+            canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?,
             &mut loop_stack,
         )?;
         if condition_ty != Type::Bool {
@@ -216,15 +253,27 @@ fn check_ensures_clauses(
     arena: &AstArena,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
+    canonical_ret: &Type,
 ) -> Result<(), FrontendError> {
     if func.ensures.is_empty() {
         return Ok(());
     }
     ensure_contract_result_name_available(func, arena)?;
-    let mut env = ScopeEnv::with_params(&func.params);
-    if func.ret != Type::Unit {
+    let params = func
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            Ok((
+                *name,
+                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, FrontendError>>()?;
+    let mut env = ScopeEnv::with_params(&params);
+    if *canonical_ret != Type::Unit {
         if let Some(result_symbol) = arena.symbol_to_id.get("result").copied() {
-            env.insert_const(result_symbol, func.ret.clone());
+            env.insert_const(result_symbol, canonical_ret.clone());
         }
     }
     let mut loop_stack = Vec::new();
@@ -236,7 +285,8 @@ fn check_ensures_clauses(
             &env,
             table,
             record_table,
-            func.ret.clone(),
+            adt_table,
+            canonical_ret.clone(),
             &mut loop_stack,
         )?;
         if condition_ty != Type::Bool {
@@ -257,16 +307,28 @@ fn check_invariant_clauses(
     arena: &AstArena,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
+    canonical_ret: &Type,
 ) -> Result<(), FrontendError> {
     if func.invariants.is_empty() {
         return Ok(());
     }
     ensure_contract_result_name_available(func, arena)?;
     ensure_invariant_result_usage(func, arena)?;
-    let mut env = ScopeEnv::with_params(&func.params);
-    if func.ret != Type::Unit {
+    let params = func
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            Ok((
+                *name,
+                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, FrontendError>>()?;
+    let mut env = ScopeEnv::with_params(&params);
+    if *canonical_ret != Type::Unit {
         if let Some(result_symbol) = arena.symbol_to_id.get("result").copied() {
-            env.insert_const(result_symbol, func.ret.clone());
+            env.insert_const(result_symbol, canonical_ret.clone());
         }
     }
     let mut loop_stack = Vec::new();
@@ -278,7 +340,8 @@ fn check_invariant_clauses(
             &env,
             table,
             record_table,
-            func.ret.clone(),
+            adt_table,
+            canonical_ret.clone(),
             &mut loop_stack,
         )?;
         if condition_ty != Type::Bool {
@@ -356,6 +419,7 @@ fn check_stmt(
     ret_ty: Type,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
@@ -365,20 +429,30 @@ fn check_stmt(
                 ensure_type_resolved(
                     ann,
                     record_table,
+                    adt_table,
                     arena,
                     format!("const '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
                 ensure_storage_type_supported(
-                    ann,
+                    &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     arena,
                     format!("const '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
             }
-            let vt = infer_expr_type(*value, arena, env, table, record_table, ret_ty, loop_stack)?;
+            let vt = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
             ensure_const_initializer_safe(*value, arena, env)?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
-                    ann.clone(),
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     vt,
                     *value,
                     arena,
@@ -396,19 +470,29 @@ fn check_stmt(
                 ensure_type_resolved(
                     ann,
                     record_table,
+                    adt_table,
                     arena,
                     format!("let '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
                 ensure_storage_type_supported(
-                    ann,
+                    &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     arena,
                     format!("let '{}'", resolve_symbol_name(arena, *name)?),
                 )?;
             }
-            let vt = infer_expr_type(*value, arena, env, table, record_table, ret_ty, loop_stack)?;
+            let vt = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
-                    ann.clone(),
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     vt,
                     *value,
                     arena,
@@ -426,19 +510,29 @@ fn check_stmt(
                 ensure_type_resolved(
                     ann,
                     record_table,
+                    adt_table,
                     arena,
                     "tuple destructuring bind".to_string(),
                 )?;
                 ensure_storage_type_supported(
-                    ann,
+                    &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     arena,
                     "tuple destructuring bind".to_string(),
                 )?;
             }
-            let vt = infer_expr_type(*value, arena, env, table, record_table, ret_ty, loop_stack)?;
+            let vt = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
-                    ann.clone(),
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     vt,
                     *value,
                     arena,
@@ -489,6 +583,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -515,7 +610,10 @@ fn check_stmt(
                 )?;
                 match item.target {
                     RecordPatternTarget::Bind(target) => {
-                        env.insert(target, field.ty.clone());
+                        env.insert(
+                            target,
+                            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+                        );
                     }
                     RecordPatternTarget::Discard => {}
                     RecordPatternTarget::QuadLiteral(_) => {
@@ -549,6 +647,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -568,6 +667,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty,
                 loop_stack,
             )?;
@@ -585,17 +685,20 @@ fn check_stmt(
                 )?;
                 match item.target {
                     RecordPatternTarget::Bind(target) => {
-                        env.insert(target, field.ty.clone());
+                        env.insert(
+                            target,
+                            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+                        );
                     }
                     RecordPatternTarget::Discard => {}
                     RecordPatternTarget::QuadLiteral(_) => {
                         saw_refutable_item = true;
-                        if field.ty != Type::Quad {
+                        if canonicalize_declared_type(&field.ty, record_table, adt_table, arena)? != Type::Quad {
                             return Err(FrontendError {
                                 pos: 0,
                                 message: format!(
                                     "record let-else literal pattern requires quad field, got {:?}",
-                                    field.ty
+                                    canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?
                                 ),
                             });
                         }
@@ -622,11 +725,12 @@ fn check_stmt(
                 ensure_type_resolved(
                     ann,
                     record_table,
+                    adt_table,
                     arena,
                     "let-else tuple destructuring bind".to_string(),
                 )?;
                 ensure_storage_type_supported(
-                    ann,
+                    &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     arena,
                     "let-else tuple destructuring bind".to_string(),
                 )?;
@@ -637,12 +741,13 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
             let final_ty = if let Some(ann) = ty {
                 ensure_binding_value_type(
-                    ann.clone(),
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     vt,
                     *value,
                     arena,
@@ -674,6 +779,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty,
                 loop_stack,
             )?;
@@ -698,13 +804,26 @@ fn check_stmt(
         }
         Stmt::Discard { ty, value } => {
             if let Some(ann) = ty {
-                ensure_type_resolved(ann, record_table, arena, "discard binding".to_string())?;
-                ensure_storage_type_supported(ann, arena, "discard binding".to_string())?;
+                ensure_type_resolved(ann, record_table, adt_table, arena, "discard binding".to_string())?;
+                ensure_storage_type_supported(
+                    &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
+                    arena,
+                    "discard binding".to_string(),
+                )?;
             }
-            let vt = infer_expr_type(*value, arena, env, table, record_table, ret_ty, loop_stack)?;
+            let vt = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
             if let Some(ann) = ty {
                 ensure_binding_value_type(
-                    ann.clone(),
+                    canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     vt,
                     *value,
                     arena,
@@ -736,6 +855,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -754,6 +874,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -813,6 +934,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -833,6 +955,7 @@ fn check_stmt(
                     ret_ty.clone(),
                     table,
                     record_table,
+                    adt_table,
                     loop_stack,
                 )?;
             }
@@ -841,7 +964,16 @@ fn check_stmt(
         }
         Stmt::Break(value) => {
             let break_ty =
-                infer_expr_type(*value, arena, env, table, record_table, ret_ty, loop_stack)?;
+                infer_expr_type(
+                    *value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                )?;
             let frame = loop_stack.last_mut().ok_or(FrontendError {
                 pos: 0,
                 message: "break with value is allowed only inside loop expression".to_string(),
@@ -871,6 +1003,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -888,6 +1021,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty,
                 loop_stack,
             )
@@ -903,6 +1037,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -924,6 +1059,7 @@ fn check_stmt(
                     ret_ty.clone(),
                     table,
                     record_table,
+                    adt_table,
                     loop_stack,
                 )?;
             }
@@ -939,6 +1075,7 @@ fn check_stmt(
                     ret_ty.clone(),
                     table,
                     record_table,
+                    adt_table,
                     loop_stack,
                 )?;
             }
@@ -956,6 +1093,7 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -981,6 +1119,7 @@ fn check_stmt(
                     &arm_env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -992,6 +1131,7 @@ fn check_stmt(
                         ret_ty.clone(),
                         table,
                         record_table,
+                        adt_table,
                         loop_stack,
                     )?;
                 }
@@ -1008,6 +1148,7 @@ fn check_stmt(
                     ret_ty.clone(),
                     table,
                     record_table,
+                    adt_table,
                     loop_stack,
                 )?;
             }
@@ -1020,6 +1161,7 @@ fn check_stmt(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty,
             loop_stack,
         ),
@@ -1030,12 +1172,22 @@ fn check_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )? {
                 return Ok(());
             }
-            let _ = infer_expr_type(*e, arena, env, table, record_table, ret_ty, loop_stack)?;
+            let _ = infer_expr_type(
+                *e,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
             Ok(())
         }
     }
@@ -1047,6 +1199,7 @@ fn infer_expr_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -1067,6 +1220,7 @@ fn infer_expr_type(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -1076,6 +1230,7 @@ fn infer_expr_type(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty,
                 loop_stack,
             )?;
@@ -1099,6 +1254,7 @@ fn infer_expr_type(
                     env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -1120,6 +1276,7 @@ fn infer_expr_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty,
             loop_stack,
         ),
@@ -1129,6 +1286,7 @@ fn infer_expr_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty,
             loop_stack,
         ),
@@ -1138,6 +1296,17 @@ fn infer_expr_type(
             env,
             table,
             record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        ),
+        Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
+            ctor_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
             ret_ty,
             loop_stack,
         ),
@@ -1146,7 +1315,16 @@ fn infer_expr_type(
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
         }),
         Expr::Block(block) => {
-            infer_value_block_type(block, arena, env, table, record_table, ret_ty, loop_stack)
+            infer_value_block_type(
+                block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )
         }
         Expr::If(if_expr) => {
             let cond_ty = infer_expr_type(
@@ -1155,6 +1333,7 @@ fn infer_expr_type(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -1173,6 +1352,7 @@ fn infer_expr_type(
                     env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -1183,6 +1363,7 @@ fn infer_expr_type(
                     env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -1198,10 +1379,28 @@ fn infer_expr_type(
             Ok(then_ty)
         }
         Expr::Match(match_expr) => {
-            infer_match_expr_type(match_expr, arena, env, table, record_table, ret_ty, loop_stack)
+            infer_match_expr_type(
+                match_expr,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )
         }
         Expr::Loop(loop_expr) => {
-            infer_loop_expr_type(loop_expr, arena, env, table, record_table, ret_ty, loop_stack)
+            infer_loop_expr_type(
+                loop_expr,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )
         }
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
@@ -1230,6 +1429,7 @@ fn infer_expr_type(
                     env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -1270,6 +1470,7 @@ fn infer_expr_type(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -1307,6 +1508,7 @@ fn infer_expr_type(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -1316,6 +1518,7 @@ fn infer_expr_type(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -1329,12 +1532,15 @@ fn infer_expr_type(
                                     .to_string(),
                         });
                     }
-                    if !supports_stable_equality_type(&lt, record_table)? {
+                    if !supports_stable_equality_type(&lt, record_table, adt_table)? {
+                        let message = if matches!(lt, Type::Record(_)) {
+                            "record equality is allowed only when every field type already supports stable equality"
+                        } else {
+                            "equality is allowed only when the value family already supports stable equality"
+                        };
                         return Err(FrontendError {
                             pos: 0,
-                            message:
-                                "record equality is allowed only when every field type already supports stable equality"
-                                    .to_string(),
+                            message: message.to_string(),
                         });
                     }
                     if lt == rt {
@@ -3278,6 +3484,28 @@ mod tests {
             .message
             .contains("named arguments are not supported for builtin 'pow'"));
     }
+
+    #[test]
+    fn adt_constructor_surface_typechecks_for_nominal_return_and_local_bindings() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(bool),
+            }
+
+            fn choose(flag: bool) -> Maybe = if flag { Maybe::Some(true) } else { Maybe::None };
+
+            fn main() {
+                let left: Maybe = choose(true);
+                let right: Maybe = Maybe::None;
+                let _ = left;
+                let _ = right;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("adt constructor surface should typecheck");
+    }
 }
 
 fn is_builtin_assert_name(
@@ -3294,6 +3522,7 @@ fn check_builtin_assert_stmt(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<bool, FrontendError> {
@@ -3315,6 +3544,7 @@ fn check_builtin_assert_stmt(
         env,
         table,
         record_table,
+        adt_table,
         ret_ty,
         loop_stack,
     )?;
@@ -3333,6 +3563,7 @@ fn infer_value_block_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -3352,6 +3583,7 @@ fn infer_value_block_type(
                     ret_ty.clone(),
                     table,
                     record_table,
+                    adt_table,
                     loop_stack,
                 )?;
             }
@@ -3369,6 +3601,7 @@ fn infer_value_block_type(
         &block_env,
         table,
         record_table,
+        adt_table,
         ret_ty,
         loop_stack,
     )?;
@@ -3382,6 +3615,7 @@ fn infer_match_expr_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -3392,6 +3626,7 @@ fn infer_match_expr_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -3414,6 +3649,7 @@ fn infer_match_expr_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -3423,6 +3659,7 @@ fn infer_match_expr_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -3447,6 +3684,7 @@ fn infer_match_expr_type(
         env,
         table,
         record_table,
+        adt_table,
         ret_ty,
         loop_stack,
     )?;
@@ -3472,6 +3710,7 @@ fn infer_loop_expr_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -3485,6 +3724,7 @@ fn infer_loop_expr_type(
             &mut body_env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -3503,6 +3743,7 @@ fn check_loop_expr_stmt(
     env: &mut ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
@@ -3531,6 +3772,7 @@ fn check_loop_expr_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -3551,6 +3793,7 @@ fn check_loop_expr_stmt(
                     &mut then_env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -3566,6 +3809,7 @@ fn check_loop_expr_stmt(
                     &mut else_env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -3584,6 +3828,7 @@ fn check_loop_expr_stmt(
                 env,
                 table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
                 loop_stack,
             )?;
@@ -3609,6 +3854,7 @@ fn check_loop_expr_stmt(
                     &arm_env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -3619,6 +3865,7 @@ fn check_loop_expr_stmt(
                         &mut arm_env,
                         table,
                         record_table,
+                        adt_table,
                         ret_ty.clone(),
                         loop_stack,
                     )?;
@@ -3635,6 +3882,7 @@ fn check_loop_expr_stmt(
                     &mut def_env,
                     table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                     loop_stack,
                 )?;
@@ -3642,14 +3890,15 @@ fn check_loop_expr_stmt(
             def_env.pop_scope();
             Ok(())
         }
-        _ => check_stmt(stmt_id, arena, env, ret_ty, table, record_table, loop_stack),
+        _ => check_stmt(stmt_id, arena, env, ret_ty, table, record_table, adt_table, loop_stack),
     }
 }
 
 fn validate_top_level_name_collisions(
     program: &Program,
     fn_table: &FnTable,
-    _record_table: &RecordTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     for record in &program.records {
         if fn_table.contains_key(&record.name) {
@@ -3661,6 +3910,35 @@ fn validate_top_level_name_collisions(
                 ),
             });
         }
+        if adt_table.contains_key(&record.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both record and enum",
+                    resolve_symbol_name(&program.arena, record.name)?
+                ),
+            });
+        }
+    }
+    for adt in &program.adts {
+        if fn_table.contains_key(&adt.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both enum and function",
+                    resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+        if record_table.contains_key(&adt.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both enum and record",
+                    resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -3668,6 +3946,7 @@ fn validate_top_level_name_collisions(
 fn validate_record_declarations(
     program: &Program,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     for record in &program.records {
         if record.fields.is_empty() {
@@ -3694,6 +3973,7 @@ fn validate_record_declarations(
             ensure_type_resolved(
                 &field.ty,
                 record_table,
+                adt_table,
                 &program.arena,
                 format!(
                     "field '{}.{}'",
@@ -3707,7 +3987,73 @@ fn validate_record_declarations(
     let mut visited = BTreeSet::new();
     let mut active = BTreeSet::new();
     for record in &program.records {
-        validate_record_acyclic(record.name, record_table, &program.arena, &mut active, &mut visited)?;
+        validate_record_acyclic(
+            record.name,
+            record_table,
+            adt_table,
+            &program.arena,
+            &mut active,
+            &mut visited,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_adt_declarations(
+    program: &Program,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    for adt in &program.adts {
+        if adt.variants.is_empty() {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "enum '{}' must declare at least 1 variant",
+                    resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+        let mut seen = BTreeSet::new();
+        for variant in &adt.variants {
+            if !seen.insert(variant.name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "enum '{}' cannot repeat variant '{}'",
+                        resolve_symbol_name(&program.arena, adt.name)?,
+                        resolve_symbol_name(&program.arena, variant.name)?
+                    ),
+                });
+            }
+            for (index, item_ty) in variant.payload.iter().enumerate() {
+                ensure_type_resolved(
+                    item_ty,
+                    record_table,
+                    adt_table,
+                    &program.arena,
+                    format!(
+                        "variant '{}::{}' payload item {}",
+                        resolve_symbol_name(&program.arena, adt.name)?,
+                        resolve_symbol_name(&program.arena, variant.name)?,
+                        index
+                    ),
+                )?;
+            }
+        }
+    }
+
+    let mut visited = BTreeSet::new();
+    let mut active = BTreeSet::new();
+    for adt in &program.adts {
+        validate_adt_acyclic(
+            adt.name,
+            record_table,
+            adt_table,
+            &program.arena,
+            &mut active,
+            &mut visited,
+        )?;
     }
     Ok(())
 }
@@ -3715,6 +4061,7 @@ fn validate_record_declarations(
 fn validate_record_acyclic(
     record_name: SymbolId,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     arena: &AstArena,
     active: &mut BTreeSet<SymbolId>,
     visited: &mut BTreeSet<SymbolId>,
@@ -3739,16 +4086,54 @@ fn validate_record_acyclic(
         ),
     })?;
     for field in &record.fields {
-        validate_record_type_acyclic(&field.ty, record_table, arena, active, visited)?;
+        validate_nominal_type_acyclic(&field.ty, record_table, adt_table, arena, active, visited)?;
     }
     active.remove(&record_name);
     visited.insert(record_name);
     Ok(())
 }
 
-fn validate_record_type_acyclic(
+fn validate_adt_acyclic(
+    adt_name: SymbolId,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+    active: &mut BTreeSet<SymbolId>,
+    visited: &mut BTreeSet<SymbolId>,
+) -> Result<(), FrontendError> {
+    if visited.contains(&adt_name) {
+        return Ok(());
+    }
+    if !active.insert(adt_name) {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "enum declarations currently do not allow recursive payload graph involving '{}'",
+                resolve_symbol_name(arena, adt_name)?
+            ),
+        });
+    }
+    let adt = adt_table.get(&adt_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown enum type '{}'",
+            resolve_symbol_name(arena, adt_name)?
+        ),
+    })?;
+    for variant in &adt.variants {
+        for item_ty in &variant.payload {
+            validate_nominal_type_acyclic(item_ty, record_table, adt_table, arena, active, visited)?;
+        }
+    }
+    active.remove(&adt_name);
+    visited.insert(adt_name);
+    Ok(())
+}
+
+fn validate_nominal_type_acyclic(
     ty: &Type,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     arena: &AstArena,
     active: &mut BTreeSet<SymbolId>,
     visited: &mut BTreeSet<SymbolId>,
@@ -3756,11 +4141,18 @@ fn validate_record_type_acyclic(
     match ty {
         Type::Tuple(items) => {
             for item in items {
-                validate_record_type_acyclic(item, record_table, arena, active, visited)?;
+                validate_nominal_type_acyclic(item, record_table, adt_table, arena, active, visited)?;
             }
             Ok(())
         }
-        Type::Record(name) => validate_record_acyclic(*name, record_table, arena, active, visited),
+        Type::Record(name) => {
+            if record_table.contains_key(name) {
+                validate_record_acyclic(*name, record_table, adt_table, arena, active, visited)
+            } else {
+                validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited)
+            }
+        }
+        Type::Adt(name) => validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited),
         _ => Ok(()),
     }
 }
@@ -3768,24 +4160,39 @@ fn validate_record_type_acyclic(
 fn ensure_type_resolved(
     ty: &Type,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     arena: &AstArena,
     context: String,
 ) -> Result<(), FrontendError> {
     match ty {
         Type::Tuple(items) => {
             for item in items {
-                ensure_type_resolved(item, record_table, arena, context.clone())?;
+                ensure_type_resolved(item, record_table, adt_table, arena, context.clone())?;
             }
             Ok(())
         }
         Type::Record(name) => {
-            if record_table.contains_key(name) {
+            if record_table.contains_key(name) || adt_table.contains_key(name) {
                 Ok(())
             } else {
                 Err(FrontendError {
                     pos: 0,
                     message: format!(
                         "unknown record type '{}' in {}",
+                        resolve_symbol_name(arena, *name)?,
+                        context
+                    ),
+                })
+            }
+        }
+        Type::Adt(name) => {
+            if adt_table.contains_key(name) {
+                Ok(())
+            } else {
+                Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown enum type '{}' in {}",
                         resolve_symbol_name(arena, *name)?,
                         context
                     ),
@@ -3813,6 +4220,11 @@ fn ensure_executable_type_supported(
             let _ = context;
             Ok(())
         }
+        Type::Adt(name) => {
+            let _ = resolve_symbol_name(arena, *name)?;
+            let _ = context;
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -3833,6 +4245,10 @@ fn ensure_storage_type_supported(
             let _ = resolve_symbol_name(arena, *name)?;
             Ok(())
         }
+        Type::Adt(name) => {
+            let _ = resolve_symbol_name(arena, *name)?;
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -3840,9 +4256,10 @@ fn ensure_storage_type_supported(
 fn supports_stable_equality_type(
     ty: &Type,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<bool, FrontendError> {
     let mut active = BTreeSet::new();
-    supports_stable_equality_type_inner(ty, record_table, &mut active)
+    supports_stable_equality_type_inner(ty, record_table, adt_table, &mut active)
 }
 
 fn ensure_requires_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
@@ -3954,6 +4371,7 @@ fn find_named_var_symbol(
 fn supports_stable_equality_type_inner(
     ty: &Type,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     active: &mut BTreeSet<SymbolId>,
 ) -> Result<bool, FrontendError> {
     match ty {
@@ -3968,7 +4386,7 @@ fn supports_stable_equality_type_inner(
         Type::RangeI32 => Ok(false),
         Type::Tuple(items) => {
             for item in items {
-                if !supports_stable_equality_type_inner(item, record_table, active)? {
+                if !supports_stable_equality_type_inner(item, record_table, adt_table, active)? {
                     return Ok(false);
                 }
             }
@@ -3983,7 +4401,7 @@ fn supports_stable_equality_type_inner(
                 message: "record equality subset references unknown record type".to_string(),
             })?;
             for field in &record.fields {
-                if !supports_stable_equality_type_inner(&field.ty, record_table, active)? {
+                if !supports_stable_equality_type_inner(&field.ty, record_table, adt_table, active)? {
                     active.remove(name);
                     return Ok(false);
                 }
@@ -3991,6 +4409,7 @@ fn supports_stable_equality_type_inner(
             active.remove(name);
             Ok(true)
         }
+        Type::Adt(_) => Ok(false),
     }
 }
 
@@ -4000,6 +4419,7 @@ fn infer_record_literal_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -4013,7 +4433,10 @@ fn infer_record_literal_type(
     let record_name = resolve_symbol_name(arena, record_literal.name)?;
     let mut field_types = BTreeMap::new();
     for field in &record.fields {
-        field_types.insert(field.name, field.ty.clone());
+        field_types.insert(
+            field.name,
+            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+        );
     }
     let mut seen = BTreeSet::new();
     for field in &record_literal.fields {
@@ -4041,6 +4464,7 @@ fn infer_record_literal_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -4077,6 +4501,7 @@ fn infer_record_field_access_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -4086,6 +4511,7 @@ fn infer_record_field_access_type(
         env,
         table,
         record_table,
+        adt_table,
         ret_ty,
         loop_stack,
     )?;
@@ -4118,7 +4544,7 @@ fn infer_record_field_access_type(
                 resolve_symbol_name(arena, field_expr.field)?
             ),
         })?;
-    Ok(field.ty.clone())
+    canonicalize_declared_type(&field.ty, record_table, adt_table, arena)
 }
 
 fn infer_record_update_type(
@@ -4127,6 +4553,7 @@ fn infer_record_update_type(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
@@ -4136,6 +4563,7 @@ fn infer_record_update_type(
         env,
         table,
         record_table,
+        adt_table,
         ret_ty.clone(),
         loop_stack,
     )?;
@@ -4164,7 +4592,10 @@ fn infer_record_update_type(
     }
     let mut field_types = BTreeMap::new();
     for field in &record.fields {
-        field_types.insert(field.name, field.ty.clone());
+        field_types.insert(
+            field.name,
+            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+        );
     }
     let mut seen = BTreeSet::new();
     for field in &update_expr.fields {
@@ -4192,6 +4623,7 @@ fn infer_record_update_type(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?;
@@ -4210,12 +4642,88 @@ fn infer_record_update_type(
     Ok(Type::Record(record_name))
 }
 
+fn infer_adt_ctor_type(
+    ctor_expr: &AdtCtorExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let adt = adt_table.get(&ctor_expr.adt_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown enum type '{}' in constructor",
+            resolve_symbol_name(arena, ctor_expr.adt_name)?
+        ),
+    })?;
+    let variant = adt
+        .variants
+        .iter()
+        .find(|variant| variant.name == ctor_expr.variant_name)
+        .ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "enum '{}' has no variant named '{}'",
+                resolve_symbol_name(arena, ctor_expr.adt_name)?,
+                resolve_symbol_name(arena, ctor_expr.variant_name)?
+            ),
+        })?;
+    if variant.payload.len() != ctor_expr.payload.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "enum constructor '{}::{}' expects {} payload items, got {}",
+                resolve_symbol_name(arena, ctor_expr.adt_name)?,
+                resolve_symbol_name(arena, ctor_expr.variant_name)?,
+                variant.payload.len(),
+                ctor_expr.payload.len()
+            ),
+        });
+    }
+    for (index, (payload_expr, expected_ty)) in ctor_expr
+        .payload
+        .iter()
+        .zip(variant.payload.iter())
+        .enumerate()
+    {
+        let canonical_expected =
+            canonicalize_declared_type(expected_ty, record_table, adt_table, arena)?;
+        let actual_ty = infer_expr_type(
+            *payload_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty.clone(),
+            loop_stack,
+        )?;
+        ensure_binding_value_type(
+            canonical_expected,
+            actual_ty,
+            *payload_expr,
+            arena,
+            format!(
+                "enum constructor '{}::{}' payload item {}",
+                resolve_symbol_name(arena, ctor_expr.adt_name)?,
+                resolve_symbol_name(arena, ctor_expr.variant_name)?,
+                index
+            ),
+        )?;
+    }
+    Ok(Type::Adt(ctor_expr.adt_name))
+}
+
 fn check_match_guard(
     guard: Option<ExprId>,
     arena: &AstArena,
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
@@ -4226,6 +4734,7 @@ fn check_match_guard(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty,
             loop_stack,
         )?;
@@ -4247,6 +4756,7 @@ fn check_return_payload(
     env: &ScopeEnv,
     table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
@@ -4257,6 +4767,7 @@ fn check_return_payload(
             env,
             table,
             record_table,
+            adt_table,
             ret_ty.clone(),
             loop_stack,
         )?

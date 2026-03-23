@@ -16,11 +16,12 @@ use alloc::vec::Vec;
 pub mod types;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
-    AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, FrontendErrorKind,
-    Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
-    LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, Program, QuadVal,
-    RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr, RecordUpdateExpr,
-    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    AdtCtorExpr, AdtDecl, AdtVariant, AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId,
+    FrontendError, FrontendErrorKind, Function, IfExpr, LogosEntity, LogosEntityField,
+    LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
+    MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
+    RecordInitField, RecordLiteralExpr, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
+    TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};
@@ -48,6 +49,9 @@ pub type FnTable = BTreeMap<SymbolId, FnSig>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub type RecordTable = BTreeMap<SymbolId, RecordDecl>;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type AdtTable = BTreeMap<SymbolId, AdtDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +139,8 @@ impl Default for ScopeEnv {
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
+    let record_table = build_record_table(program)?;
+    let adt_table = build_adt_table(program)?;
     let mut out = BTreeMap::new();
     for f in &program.functions {
         if out.contains_key(&f.name) {
@@ -149,10 +155,14 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
         out.insert(
             f.name,
             FnSig {
-                params: f.params.iter().map(|(_, t)| t.clone()).collect(),
+                params: f
+                    .params
+                    .iter()
+                    .map(|(_, t)| canonicalize_declared_type(t, &record_table, &adt_table, &program.arena))
+                    .collect::<Result<Vec<_>, _>>()?,
                 param_names: Some(f.params.iter().map(|(name, _)| *name).collect()),
                 param_defaults: Some(f.param_defaults.clone()),
-                ret: f.ret.clone(),
+                ret: canonicalize_declared_type(&f.ret, &record_table, &adt_table, &program.arena)?,
             },
         );
     }
@@ -175,6 +185,77 @@ pub fn build_record_table(program: &Program) -> Result<RecordTable, FrontendErro
         out.insert(record.name, record.clone());
     }
     Ok(out)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_adt_table(program: &Program) -> Result<AdtTable, FrontendError> {
+    let mut out = BTreeMap::new();
+    for adt in &program.adts {
+        if out.contains_key(&adt.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "duplicate enum '{}'",
+                    resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+        out.insert(adt.name, adt.clone());
+    }
+    Ok(out)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn canonicalize_declared_type(
+    ty: &Type,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<Type, FrontendError> {
+    match ty {
+        Type::Tuple(items) => Ok(Type::Tuple(
+            items
+                .iter()
+                .map(|item| canonicalize_declared_type(item, record_table, adt_table, arena))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Type::Record(name) => {
+            let is_record = record_table.contains_key(name);
+            let is_adt = adt_table.contains_key(name);
+            match (is_record, is_adt) {
+                (true, false) => Ok(Type::Record(*name)),
+                (false, true) => Ok(Type::Adt(*name)),
+                (true, true) => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "top-level name '{}' is ambiguously declared as both record and enum",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                }),
+                (false, false) => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown nominal type '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                }),
+            }
+        }
+        Type::Adt(name) => {
+            if adt_table.contains_key(name) {
+                Ok(Type::Adt(*name))
+            } else {
+                Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown enum type '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                })
+            }
+        }
+        _ => Ok(ty.clone()),
+    }
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -445,6 +526,7 @@ mod tests {
         let ast = parse_rustlike(src).expect("parse");
         match ast {
             AstBundle::RustLike(p) => {
+                assert!(p.adts.is_empty());
                 assert!(p.records.is_empty());
                 assert_eq!(p.functions.len(), 1);
             }

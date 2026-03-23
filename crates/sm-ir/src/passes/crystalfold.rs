@@ -126,6 +126,22 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.remove(&dst);
                 out.push(IrInstr::MakeRecord { dst, name, items });
             }
+            IrInstr::MakeAdt {
+                dst,
+                adt_name,
+                variant_name,
+                tag,
+                items,
+            } => {
+                cst.remove(&dst);
+                out.push(IrInstr::MakeAdt {
+                    dst,
+                    adt_name,
+                    variant_name,
+                    tag,
+                    items,
+                });
+            }
             IrInstr::RecordGet {
                 dst,
                 src,

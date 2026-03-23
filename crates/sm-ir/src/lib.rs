@@ -6,11 +6,11 @@ use std::collections::HashMap;
 #[cfg(feature = "std")]
 mod frontend {
     pub use sm_front::{
-        build_fn_table, build_record_table, builtin_sig, parse_logos_program_with_profile,
-        parse_program_with_profile, reorder_call_args, resolve_symbol_name,
+        build_adt_table, build_fn_table, build_record_table, builtin_sig, canonicalize_declared_type,
+        parse_logos_program_with_profile, parse_program_with_profile, reorder_call_args, resolve_symbol_name,
         type_check_function_with_table, type_check_program, AstArena, BinaryOp, BlockExpr,
         CompileProfile, Expr, ExprId, FnTable, FrontendError, Function, LogosProgram, MatchExpr,
-        OptLevel, QuadVal, RecordTable, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,
+        OptLevel, QuadVal, AdtTable, RecordTable, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,
     };
     pub use sm_profile::ParserProfile;
 }

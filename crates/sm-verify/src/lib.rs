@@ -511,6 +511,27 @@ fn decode_operands(
                 mark_reg(src);
             }
         }
+        Opcode::MakeAdt => {
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated enum dst register"))?;
+            mark_reg(dst);
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated enum type string id"))?;
+            refs.string_refs.push((offset, sid as usize, "enum type name"));
+            let variant_sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated enum variant string id"))?;
+            refs.string_refs
+                .push((offset, variant_sid as usize, "enum variant name"));
+            read_u16_le(code, cursor).map_err(|_| invalid("truncated enum tag"))?;
+            let count =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated enum payload count"))?
+                    as usize;
+            for _ in 0..count {
+                let src = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated enum payload register"))?;
+                mark_reg(src);
+            }
+        }
         Opcode::RecordGet => {
             let dst = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated record-get dst register"))?;

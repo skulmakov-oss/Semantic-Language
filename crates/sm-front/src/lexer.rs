@@ -106,7 +106,10 @@ fn tokenize_line(
                 i += 1;
             }
             b':' => {
-                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b':' {
+                    push_tok(out, TokenKind::PathSep, "::", abs_pos, line_no, col);
+                    i += 2;
+                } else if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
                     push_tok(out, TokenKind::Assign, ":=", abs_pos, line_no, col);
                     i += 2;
                 } else {
@@ -299,6 +302,7 @@ fn tokenize_line(
                     "ensures" => TokenKind::KwEnsures,
                     "invariant" => TokenKind::KwInvariant,
                     "record" => TokenKind::KwRecord,
+                    "enum" => TokenKind::KwEnum,
                     "const" => TokenKind::KwConst,
                     "let" => TokenKind::KwLet,
                     "for" => TokenKind::KwFor,

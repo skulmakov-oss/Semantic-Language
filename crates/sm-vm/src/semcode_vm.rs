@@ -6,7 +6,7 @@ use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
 use prom_cap::{CapabilityChecker, CapabilityDenied};
 use sm_runtime_core::{
-    ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier, RuntimeQuotas,
+    AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier, RuntimeQuotas,
     RuntimeTrap, RuntimeSymbolTable, SymbolId,
 };
 use sm_verify::RejectReport;
@@ -28,6 +28,7 @@ pub enum Value {
     Fx(i32),
     Tuple(Vec<Value>),
     Record(RecordCarrier<Value>),
+    Adt(AdtCarrier<Value>),
     Unit,
 }
 
@@ -458,6 +459,16 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::MakeAdt => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
             Opcode::RecordGet => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -755,6 +766,32 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 )?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::MakeAdt => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let variant_sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let tag = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let type_name = lookup_str(&f, sid)?.to_string();
+                let variant_name = lookup_str(&f, variant_sid)?.to_string();
+                let mut payload = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    payload.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(
+                    vm,
+                    frame_idx,
+                    dst,
+                    Value::Adt(AdtCarrier {
+                        type_name,
+                        variant_name,
+                        tag,
+                        payload,
+                    }),
+                )?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::RecordGet => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1026,6 +1063,9 @@ fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
         Value::Record(_) => Err(RuntimeError::TypeMismatchRuntime(
             "record values are not part of the PROMETHEUS host ABI surface".to_string(),
         )),
+        Value::Adt(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "enum values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
         Value::Unit => Ok(AbiValue::Unit),
     }
 }
@@ -1242,6 +1282,21 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
+        (Value::Adt(xs), Value::Adt(ys)) => {
+            if xs.type_name != ys.type_name
+                || xs.variant_name != ys.variant_name
+                || xs.tag != ys.tag
+                || xs.payload.len() != ys.payload.len()
+            {
+                return Ok(false);
+            }
+            for (x, y) in xs.payload.iter().zip(ys.payload.iter()) {
+                if !value_eq(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
         (Value::Unit, Value::Unit) => Ok(true),
         _ => Err(RuntimeError::TypeMismatchRuntime(
             "CmpEq/CmpNe operands must have same runtime type".to_string(),
@@ -1355,6 +1410,25 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 .join(", ");
             let name = lookup_str(f, sid)?;
             format!("MAKE_RECORD r{}, {}, [{}]", d, name, regs)
+        }
+        Opcode::MakeAdt => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let variant_sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let tag = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let name = lookup_str(f, sid)?;
+            let variant = lookup_str(f, variant_sid)?;
+            format!("MAKE_ADT r{}, {}::{}, tag={}, [{}]", d, name, variant, tag, regs)
         }
         Opcode::RecordGet => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1768,6 +1842,33 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("MAKE_RECORD"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_stage1_enum_constructor_path() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(bool),
+            }
+
+            fn choose(flag: bool) -> Maybe {
+                return Maybe::Some(flag);
+            }
+
+            fn main() {
+                let left: Maybe = choose(true);
+                let right: Maybe = Maybe::None;
+                let _ = left;
+                let _ = right;
+                return;
+            }
+        "#;
+
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_ADT"));
         run_semcode(&bytes).expect("run");
     }
 

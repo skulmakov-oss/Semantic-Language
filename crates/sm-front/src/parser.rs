@@ -1,11 +1,11 @@
 use crate::lexer::lex_tokens;
 use crate::types::{
-    AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr,
-    LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
-    LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
-    RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
-    TokenKind, TuplePatternItem, Type, UnaryOp,
+    AdtCtorExpr, AdtDecl, AdtVariant, AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId,
+    FrontendError, Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind,
+    LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm,
+    NumericLiteral, Program, QuadVal, RangeExpr, RecordDecl, RecordField, RecordFieldExpr,
+    RecordInitField, RecordLiteralExpr, RecordPatternItem, RecordPatternTarget, RecordUpdateExpr,
+    Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -58,6 +58,7 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
+        let mut adts = Vec::new();
         let mut records = Vec::new();
         let mut functions = Vec::new();
         loop {
@@ -67,18 +68,20 @@ impl<'a> Parser<'a> {
             }
             self.idx = i;
             match self.tokens[i].kind {
+                TokenKind::KwEnum => adts.push(self.parse_adt_decl()?),
                 TokenKind::KwFn => functions.push(self.parse_function()?),
                 TokenKind::KwRecord => records.push(self.parse_record_decl()?),
                 _ => {
                     return Err(FrontendError {
                         pos: self.tokens[i].pos,
-                        message: "expected top-level 'fn' or 'record'".to_string(),
+                        message: "expected top-level 'enum', 'fn', or 'record'".to_string(),
                     });
                 }
             }
         }
         Ok(Program {
             arena: ::core::mem::take(&mut self.arena),
+            adts,
             records,
             functions,
         })
@@ -197,6 +200,56 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RBrace, "expected '}' after record declaration")?;
         Ok(RecordDecl { name, fields })
+    }
+
+    fn parse_adt_decl(&mut self) -> Result<AdtDecl, FrontendError> {
+        self.expect(TokenKind::KwEnum, "expected 'enum'")?;
+        let name = self.expect_symbol()?;
+        self.expect(TokenKind::LBrace, "expected '{' after enum name")?;
+        let mut variants = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            let variant_name = self.expect_symbol()?;
+            let payload = if self.eat(TokenKind::LParen) {
+                self.parse_adt_variant_payload_types()?
+            } else {
+                Vec::new()
+            };
+            variants.push(AdtVariant {
+                name: variant_name,
+                payload,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBrace, "expected '}' after enum declaration")?;
+        Ok(AdtDecl { name, variants })
+    }
+
+    fn parse_adt_variant_payload_types(&mut self) -> Result<Vec<Type>, FrontendError> {
+        let mut payload = Vec::new();
+        if self.check(TokenKind::RParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "enum constructor payload cannot be empty parentheses; omit '()' for unit variant".to_string(),
+            });
+        }
+        loop {
+            payload.push(self.parse_type()?);
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RParen, "expected ')' after enum variant payload")?;
+        Ok(payload)
     }
 
     fn parse_block(&mut self) -> Result<Vec<StmtId>, FrontendError> {
@@ -914,6 +967,19 @@ impl<'a> Parser<'a> {
         }
         if self.check(TokenKind::Ident) {
             let name = self.expect_symbol()?;
+            if self.eat(TokenKind::PathSep) {
+                let variant_name = self.expect_symbol()?;
+                let payload = if self.eat(TokenKind::LParen) {
+                    self.parse_adt_ctor_payload_exprs()?
+                } else {
+                    Vec::new()
+                };
+                return Ok(self.arena.alloc_expr(Expr::AdtCtor(AdtCtorExpr {
+                    adt_name: name,
+                    variant_name,
+                    payload,
+                })));
+            }
             if self.eat(TokenKind::LParen) {
                 let args = self.parse_call_args()?;
                 self.expect(TokenKind::RParen, "expected ')'")?;
@@ -929,6 +995,28 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected primary expression".to_string(),
         })
+    }
+
+    fn parse_adt_ctor_payload_exprs(&mut self) -> Result<Vec<ExprId>, FrontendError> {
+        let mut payload = Vec::new();
+        if self.check(TokenKind::RParen) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "enum constructor payload cannot be empty parentheses; omit '()' for unit variant".to_string(),
+            });
+        }
+        loop {
+            payload.push(self.parse_expr()?);
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RParen, "expected ')' after enum constructor payload")?;
+        Ok(payload)
     }
 
     fn parse_paren_expr_or_tuple(&mut self) -> Result<ExprId, FrontendError> {
@@ -1178,6 +1266,12 @@ impl<'a> Parser<'a> {
             Expr::RecordLiteral(record) => {
                 for field in &record.fields {
                     self.ensure_short_lambda_expr_capture_free(field.value, scopes)?;
+                }
+                Ok(())
+            }
+            Expr::AdtCtor(ctor) => {
+                for item in &ctor.payload {
+                    self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
                 }
                 Ok(())
             }
@@ -3158,6 +3252,58 @@ fn main() {
         assert_eq!(record.fields[0].ty, Type::Quad);
         assert_eq!(record.fields[2].ty, Type::F64);
         assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_top_level_enum_and_constructor_surface() {
+        let src = r#"
+enum Maybe {
+    None,
+    Some(bool),
+}
+
+fn main() {
+    let left: Maybe = Maybe::Some(true);
+    let right: Maybe = Maybe::None;
+    let _ = left;
+    let _ = right;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("enum declaration should parse");
+        assert_eq!(program.adts.len(), 1);
+        let adt = &program.adts[0];
+        assert_eq!(program.arena.symbol_name(adt.name), "Maybe");
+        assert_eq!(adt.variants.len(), 2);
+        assert_eq!(program.arena.symbol_name(adt.variants[0].name), "None");
+        assert!(adt.variants[0].payload.is_empty());
+        assert_eq!(program.arena.symbol_name(adt.variants[1].name), "Some");
+        assert_eq!(adt.variants[1].payload, vec![Type::Bool]);
+
+        let main = &program.functions[0];
+        match program.arena.stmt(main.body[0]) {
+            Stmt::Let { value, .. } => match program.arena.expr(*value) {
+                Expr::AdtCtor(ctor) => {
+                    assert_eq!(program.arena.symbol_name(ctor.adt_name), "Maybe");
+                    assert_eq!(program.arena.symbol_name(ctor.variant_name), "Some");
+                    assert_eq!(ctor.payload.len(), 1);
+                }
+                other => panic!("expected adt constructor expression, got {:?}", other),
+            },
+            other => panic!("expected let binding, got {:?}", other),
+        }
+        match program.arena.stmt(main.body[1]) {
+            Stmt::Let { value, .. } => match program.arena.expr(*value) {
+                Expr::AdtCtor(ctor) => {
+                    assert_eq!(program.arena.symbol_name(ctor.variant_name), "None");
+                    assert!(ctor.payload.is_empty());
+                }
+                other => panic!("expected adt constructor expression, got {:?}", other),
+            },
+            other => panic!("expected let binding, got {:?}", other),
+        }
     }
 
     #[test]

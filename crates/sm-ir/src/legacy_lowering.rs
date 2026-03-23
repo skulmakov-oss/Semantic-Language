@@ -3,7 +3,7 @@ use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
 use sm_front::{LoopExpr, TuplePatternItem};
-use sm_front::types::{NumericLiteral, RecordPatternItem, RecordPatternTarget};
+use sm_front::types::{AdtCtorExpr, NumericLiteral, RecordPatternItem, RecordPatternTarget};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstr {
@@ -41,6 +41,13 @@ pub enum IrInstr {
     MakeRecord {
         dst: u16,
         name: String,
+        items: Vec<u16>,
+    },
+    MakeAdt {
+        dst: u16,
+        adt_name: String,
+        variant_name: String,
+        tag: u16,
         items: Vec<u16>,
     },
     RecordGet {
@@ -301,6 +308,7 @@ pub fn lower_expr_to_ir(
     let mut env = ScopeEnv::new();
     let mut loop_stack = Vec::new();
     let empty_records = RecordTable::new();
+    let empty_adts = AdtTable::new();
     for (name, ty) in var_types {
         env.insert(*name, ty.clone());
     }
@@ -313,16 +321,18 @@ pub fn lower_expr_to_ir(
         &mut loop_stack,
         fn_table,
         &empty_records,
+        &empty_adts,
         Type::Unit,
     )?;
     Ok(out)
 }
 
-fn lower_function_to_ir_with_record_table(
+fn lower_function_to_ir_with_tables(
     func: &Function,
     arena: &AstArena,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<IrFunction, FrontendError> {
     let ensures_result_symbol = find_contract_result_symbol(&func.ensures, arena)?;
     let invariants_result_symbol = find_contract_result_symbol(&func.invariants, arena)?;
@@ -332,7 +342,18 @@ fn lower_function_to_ir_with_record_table(
         func.invariants.clone(),
         invariants_result_symbol,
     );
-    let mut env = ScopeEnv::with_params(&func.params);
+    let canonical_params = func
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            Ok((
+                *name,
+                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, FrontendError>>()?;
+    let canonical_ret = canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?;
+    let mut env = ScopeEnv::with_params(&canonical_params);
     ctx.next_reg = u16::try_from(func.params.len()).map_err(|_| FrontendError {
         pos: 0,
         message: "too many function parameters for register space".to_string(),
@@ -353,7 +374,8 @@ fn lower_function_to_ir_with_record_table(
             &mut ctx.loop_stack,
             fn_table,
             record_table,
-            func.ret.clone(),
+            adt_table,
+            canonical_ret.clone(),
         )?;
         if cond_ty != Type::Bool {
             return Err(FrontendError {
@@ -378,6 +400,7 @@ fn lower_function_to_ir_with_record_table(
         &mut ctx.loop_stack,
         fn_table,
         record_table,
+        adt_table,
         func.ret.clone(),
     )?;
     for stmt in &func.body {
@@ -386,9 +409,10 @@ fn lower_function_to_ir_with_record_table(
             arena,
             &mut ctx,
             &mut env,
-            func.ret.clone(),
+            canonical_ret.clone(),
             fn_table,
             record_table,
+            adt_table,
         )?;
     }
 
@@ -405,6 +429,7 @@ fn lower_function_to_ir_with_record_table(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 func.ret.clone(),
             )?;
             lower_invariant_clauses(
@@ -419,6 +444,7 @@ fn lower_function_to_ir_with_record_table(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 func.ret.clone(),
             )?;
             ctx.instrs.push(IrInstr::Ret { src: None });
@@ -447,7 +473,8 @@ pub fn lower_function_to_ir(
 ) -> Result<IrFunction, FrontendError> {
     type_check_function_with_table(func, arena, fn_table)?;
     let empty_records = RecordTable::new();
-    lower_function_to_ir_with_record_table(func, arena, fn_table, &empty_records)
+    let empty_adts = AdtTable::new();
+    lower_function_to_ir_with_tables(func, arena, fn_table, &empty_records, &empty_adts)
 }
 
 pub fn compile_program_to_ir(input: &str) -> Result<Vec<IrFunction>, FrontendError> {
@@ -546,14 +573,16 @@ pub fn compile_program_to_ir_with_options_and_profile(
     let program = parse_program_with_profile(input, parser_profile)?;
     let fn_table = build_fn_table(&program)?;
     let record_table = build_record_table(&program)?;
+    let adt_table = build_adt_table(&program)?;
     type_check_program(&program)?;
     let mut out = Vec::new();
     for f in &program.functions {
-        out.push(lower_function_to_ir_with_record_table(
+        out.push(lower_function_to_ir_with_tables(
             f,
             &program.arena,
             &fn_table,
             &record_table,
+            &adt_table,
         )?);
     }
     if matches!(opt, OptLevel::O1) {
@@ -697,6 +726,14 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             IrInstr::MakeRecord { name, .. } => {
                 let _ = interner.id(name)?;
             }
+            IrInstr::MakeAdt {
+                adt_name,
+                variant_name,
+                ..
+            } => {
+                let _ = interner.id(adt_name)?;
+                let _ = interner.id(variant_name)?;
+            }
             IrInstr::RecordGet { record_name, .. } => {
                 let _ = interner.id(record_name)?;
             }
@@ -783,6 +820,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeRecord { items, .. } => 1 + 2 + 2 + 2 + (items.len() * 2),
+        IrInstr::MakeAdt { items, .. } => 1 + 2 + 2 + 2 + 2 + 2 + (items.len() * 2),
         IrInstr::RecordGet { .. } => 1 + 2 + 2 + 2 + 2,
         IrInstr::TupleGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::LoadVar { .. } => 1 + 2 + 2,
@@ -877,6 +915,27 @@ fn emit_instr(
             let count = u16::try_from(items.len()).map_err(|_| FrontendError {
                 pos: 0,
                 message: "record literal has too many fields".to_string(),
+            })?;
+            write_u16_le(out, count);
+            for item in items {
+                write_u16_le(out, *item);
+            }
+        }
+        IrInstr::MakeAdt {
+            dst,
+            adt_name,
+            variant_name,
+            tag,
+            items,
+        } => {
+            out.push(Opcode::MakeAdt.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, interner.lookup(adt_name)?);
+            write_u16_le(out, interner.lookup(variant_name)?);
+            write_u16_le(out, *tag);
+            let count = u16::try_from(items.len()).map_err(|_| FrontendError {
+                pos: 0,
+                message: "enum constructor has too many payload items".to_string(),
             })?;
             write_u16_le(out, count);
             for item in items {
@@ -1109,6 +1168,7 @@ fn lower_expr(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
     lower_expr_with_expected(
@@ -1120,6 +1180,7 @@ fn lower_expr(
         loop_stack,
         fn_table,
         record_table,
+        adt_table,
         None,
         ret_ty,
     )
@@ -1134,6 +1195,7 @@ fn lower_expr_with_expected(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -1158,6 +1220,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(Type::I32),
                 ret_ty.clone(),
             )?;
@@ -1179,6 +1242,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(Type::I32),
                 ret_ty,
             )?;
@@ -1233,6 +1297,7 @@ fn lower_expr_with_expected(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     item_expected,
                     ret_ty.clone(),
                 )?;
@@ -1275,6 +1340,7 @@ fn lower_expr_with_expected(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     Some(expected_field_ty),
                     ret_ty.clone(),
                 )?;
@@ -1310,6 +1376,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             let Type::Record(record_name) = base_ty else {
@@ -1364,6 +1431,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             let Type::Record(record_name) = base_ty else {
@@ -1412,6 +1480,7 @@ fn lower_expr_with_expected(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     Some(expected_field_ty),
                     ret_ty.clone(),
                 )?;
@@ -1452,6 +1521,18 @@ fn lower_expr_with_expected(
             });
             Ok((dst, Type::Record(record_name)))
         }
+        Expr::AdtCtor(ctor_expr) => lower_adt_ctor_expr(
+            ctor_expr,
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            record_table,
+            adt_table,
+            ret_ty,
+        ),
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
             if expected == Some(Type::Fx) {
@@ -1527,6 +1608,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected,
                 ret_ty,
             )
@@ -1541,6 +1623,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
@@ -1574,6 +1657,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected.clone(),
                 ret_ty.clone(),
             )?;
@@ -1595,6 +1679,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected.clone(),
                 ret_ty.clone(),
             )?;
@@ -1632,6 +1717,7 @@ fn lower_expr_with_expected(
             loop_stack,
             fn_table,
             record_table,
+            adt_table,
             expected,
             ret_ty,
         ),
@@ -1644,6 +1730,7 @@ fn lower_expr_with_expected(
             loop_stack,
             fn_table,
             record_table,
+            adt_table,
             expected,
             ret_ty,
         ),
@@ -1678,6 +1765,7 @@ fn lower_expr_with_expected(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     Some(sig.params[i].clone()),
                     ret_ty.clone(),
                 )?;
@@ -1729,6 +1817,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected,
                 ret_ty,
             )?;
@@ -1789,6 +1878,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected.clone(),
                 ret_ty.clone(),
             )?;
@@ -1801,6 +1891,7 @@ fn lower_expr_with_expected(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected,
                 ret_ty,
             )?;
@@ -1998,6 +2089,7 @@ fn bind_record_items(
     out: &mut Vec<IrInstr>,
     env: &mut ScopeEnv,
     record_table: &RecordTable,
+    _adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     if *record_ty != Type::Record(record_name) {
         return Err(FrontendError {
@@ -2080,6 +2172,7 @@ fn bind_let_else_record_items(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     if *record_ty != Type::Record(record_name) {
@@ -2172,6 +2265,7 @@ fn bind_let_else_record_items(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )?;
                 out.push(IrInstr::Label {
@@ -2282,6 +2376,7 @@ fn lower_for_range_stmt(
     ret_ty: Type,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     let (range_reg, range_ty) = lower_expr_with_expected(
         range,
@@ -2292,6 +2387,7 @@ fn lower_for_range_stmt(
         &mut ctx.loop_stack,
         fn_table,
         record_table,
+        adt_table,
         Some(Type::RangeI32),
         ret_ty.clone(),
     )?;
@@ -2408,6 +2504,7 @@ fn lower_for_range_stmt(
             ret_ty.clone(),
             fn_table,
             record_table,
+            adt_table,
         )?;
     }
     body_env.pop_scope();
@@ -2462,6 +2559,7 @@ fn bind_let_else_tuple_items(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     let Type::Tuple(item_tys) = tuple_ty else {
@@ -2537,6 +2635,7 @@ fn bind_let_else_tuple_items(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )?;
                 out.push(IrInstr::Label {
@@ -2564,6 +2663,7 @@ fn lower_stmt(
     ret_ty: Type,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
@@ -2577,6 +2677,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2598,6 +2699,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2619,6 +2721,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2647,6 +2750,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(Type::Record(*record_name)),
                 ret_ty.clone(),
             )?;
@@ -2660,6 +2764,7 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 record_table,
+                adt_table,
             )
         }
         Stmt::LetElseRecord {
@@ -2677,6 +2782,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(Type::Record(*record_name)),
                 ret_ty.clone(),
             )?;
@@ -2697,6 +2803,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty,
             )
         }
@@ -2715,6 +2822,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2735,6 +2843,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty,
             )
         }
@@ -2748,6 +2857,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ty.clone(),
                 ret_ty.clone(),
             )?;
@@ -2779,6 +2889,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(target_ty),
                 ret_ty.clone(),
             )?;
@@ -2798,6 +2909,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty,
             )?;
             assign_tuple_items(
@@ -2821,6 +2933,7 @@ fn lower_stmt(
                 ret_ty,
                 fn_table,
                 record_table,
+                adt_table,
             )
         }
         Stmt::Break(value) => {
@@ -2845,6 +2958,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 expected_break,
                 ret_ty.clone(),
             )?;
@@ -2886,6 +3000,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
@@ -2914,6 +3029,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             ctx.instrs.push(IrInstr::Label {
@@ -2929,6 +3045,7 @@ fn lower_stmt(
                 env,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             Ok(())
@@ -2946,6 +3063,7 @@ fn lower_stmt(
             &mut ctx.loop_stack,
             fn_table,
             record_table,
+            adt_table,
             ret_ty.clone(),
         ),
         Stmt::If {
@@ -2962,6 +3080,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             if cond_ty != Type::Bool {
@@ -2988,7 +3107,16 @@ fn lower_stmt(
             let mut then_env = env.clone();
             then_env.push_scope();
             for s in then_block {
-                lower_stmt(*s, arena, ctx, &mut then_env, ret_ty.clone(), fn_table, record_table)?;
+                lower_stmt(
+                    *s,
+                    arena,
+                    ctx,
+                    &mut then_env,
+                    ret_ty.clone(),
+                    fn_table,
+                    record_table,
+                    adt_table,
+                )?;
             }
             then_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -2999,7 +3127,16 @@ fn lower_stmt(
             let mut else_env = env.clone();
             else_env.push_scope();
             for s in else_block {
-                lower_stmt(*s, arena, ctx, &mut else_env, ret_ty.clone(), fn_table, record_table)?;
+                lower_stmt(
+                    *s,
+                    arena,
+                    ctx,
+                    &mut else_env,
+                    ret_ty.clone(),
+                    fn_table,
+                    record_table,
+                    adt_table,
+                )?;
             }
             else_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -3023,6 +3160,7 @@ fn lower_stmt(
                 &mut ctx.loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             if scr_ty != Type::Quad {
@@ -3073,7 +3211,16 @@ fn lower_stmt(
                     let mut arm_env = env.clone();
                     arm_env.push_scope();
                     for s in &arm.block {
-                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table, record_table)?;
+                        lower_stmt(
+                            *s,
+                            arena,
+                            ctx,
+                            &mut arm_env,
+                            ret_ty.clone(),
+                            fn_table,
+                            record_table,
+                            adt_table,
+                        )?;
                     }
                     arm_env.pop_scope();
                     ctx.instrs.push(IrInstr::Jmp {
@@ -3126,6 +3273,7 @@ fn lower_stmt(
                         &mut ctx.loop_stack,
                         fn_table,
                         record_table,
+                        adt_table,
                         ret_ty.clone(),
                     )? {
                         let guarded_body_label = format!("match_{}_body_{}", mid, i);
@@ -3139,7 +3287,16 @@ fn lower_stmt(
                         });
                     }
                     for s in &arm.block {
-                        lower_stmt(*s, arena, ctx, &mut arm_env, ret_ty.clone(), fn_table, record_table)?;
+                        lower_stmt(
+                            *s,
+                            arena,
+                            ctx,
+                            &mut arm_env,
+                            ret_ty.clone(),
+                            fn_table,
+                            record_table,
+                            adt_table,
+                        )?;
                     }
                     arm_env.pop_scope();
                     ctx.instrs.push(IrInstr::Jmp {
@@ -3154,7 +3311,16 @@ fn lower_stmt(
             let mut def_env = env.clone();
             def_env.push_scope();
             for s in default {
-                lower_stmt(*s, arena, ctx, &mut def_env, ret_ty.clone(), fn_table, record_table)?;
+                lower_stmt(
+                    *s,
+                    arena,
+                    ctx,
+                    &mut def_env,
+                    ret_ty.clone(),
+                    fn_table,
+                    record_table,
+                    adt_table,
+                )?;
             }
             def_env.pop_scope();
             ctx.instrs.push(IrInstr::Jmp {
@@ -3176,6 +3342,7 @@ fn lower_value_block_expr(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -3193,6 +3360,7 @@ fn lower_value_block_expr(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -3213,6 +3381,7 @@ fn lower_value_block_expr(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -3233,6 +3402,7 @@ fn lower_value_block_expr(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -3253,6 +3423,7 @@ fn lower_value_block_expr(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     Some(Type::Record(*record_name)),
                     ret_ty.clone(),
                 )?;
@@ -3266,6 +3437,7 @@ fn lower_value_block_expr(
                     out,
                     &mut block_env,
                     record_table,
+                    adt_table,
                 )?;
             }
             Stmt::LetElseRecord { .. } => {
@@ -3286,6 +3458,7 @@ fn lower_value_block_expr(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ty.clone(),
                     ret_ty.clone(),
                 )?;
@@ -3300,6 +3473,7 @@ fn lower_value_block_expr(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -3320,11 +3494,103 @@ fn lower_value_block_expr(
         loop_stack,
         fn_table,
         record_table,
+        adt_table,
         expected,
         ret_ty,
     )?;
     block_env.pop_scope();
     Ok(tail)
+}
+
+fn lower_adt_ctor_expr(
+    ctor_expr: &AdtCtorExpr,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+) -> Result<(u16, Type), FrontendError> {
+    let adt = adt_table.get(&ctor_expr.adt_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown enum type '{}' in constructor lowering",
+            resolve_symbol_name(arena, ctor_expr.adt_name)?
+        ),
+    })?;
+    let (tag, variant) = adt
+        .variants
+        .iter()
+        .enumerate()
+        .find(|(_, variant)| variant.name == ctor_expr.variant_name)
+        .ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "enum '{}' has no variant named '{}' in constructor lowering",
+                resolve_symbol_name(arena, ctor_expr.adt_name)?,
+                resolve_symbol_name(arena, ctor_expr.variant_name)?
+            ),
+        })?;
+    if variant.payload.len() != ctor_expr.payload.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "enum constructor '{}::{}' expects {} payload items in lowering, got {}",
+                resolve_symbol_name(arena, ctor_expr.adt_name)?,
+                resolve_symbol_name(arena, ctor_expr.variant_name)?,
+                variant.payload.len(),
+                ctor_expr.payload.len()
+            ),
+        });
+    }
+
+    let mut regs = Vec::with_capacity(ctor_expr.payload.len());
+    for (payload_expr, declared_expected) in ctor_expr.payload.iter().zip(variant.payload.iter()) {
+        let expected_ty =
+            canonicalize_declared_type(declared_expected, record_table, adt_table, arena)?;
+        let (reg, actual_ty) = lower_expr_with_expected(
+            *payload_expr,
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            record_table,
+            adt_table,
+            Some(expected_ty.clone()),
+            ret_ty.clone(),
+        )?;
+        if actual_ty != expected_ty {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "enum constructor '{}::{}' payload type mismatch in lowering: expected {:?}, got {:?}",
+                    resolve_symbol_name(arena, ctor_expr.adt_name)?,
+                    resolve_symbol_name(arena, ctor_expr.variant_name)?,
+                    expected_ty,
+                    actual_ty
+                ),
+            });
+        }
+        regs.push(reg);
+    }
+
+    let dst = alloc(next);
+    out.push(IrInstr::MakeAdt {
+        dst,
+        adt_name: resolve_symbol_name(arena, ctor_expr.adt_name)?.to_string(),
+        variant_name: resolve_symbol_name(arena, ctor_expr.variant_name)?.to_string(),
+        tag: u16::try_from(tag).map_err(|_| FrontendError {
+            pos: 0,
+            message: "enum variant tag exceeds v0 limit".to_string(),
+        })?,
+        items: regs,
+    });
+    Ok((dst, Type::Adt(ctor_expr.adt_name)))
 }
 
 fn lower_match_guard(
@@ -3336,13 +3602,24 @@ fn lower_match_guard(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<Option<u16>, FrontendError> {
     let Some(guard_expr) = guard else {
         return Ok(None);
     };
-    let (guard_reg, guard_ty) =
-        lower_expr(guard_expr, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty)?;
+    let (guard_reg, guard_ty) = lower_expr(
+        guard_expr,
+        arena,
+        next,
+        out,
+        env,
+        loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        ret_ty,
+    )?;
     if guard_ty != Type::Bool {
         return Err(FrontendError {
             pos: 0,
@@ -3363,6 +3640,7 @@ fn lower_ensures_clauses(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     if contract_ensures.is_empty() {
@@ -3392,6 +3670,7 @@ fn lower_ensures_clauses(
             loop_stack,
             fn_table,
             record_table,
+            adt_table,
             ret_ty.clone(),
         )?;
         if cond_ty != Type::Bool {
@@ -3427,6 +3706,7 @@ fn lower_invariant_clauses(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     if contract_invariants.is_empty() {
@@ -3465,6 +3745,7 @@ fn lower_invariant_clauses(
             loop_stack,
             fn_table,
             record_table,
+            adt_table,
             ret_ty.clone(),
         )?;
         if cond_ty != Type::Bool {
@@ -3495,6 +3776,7 @@ fn lower_return_payload(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     match value {
@@ -3508,6 +3790,7 @@ fn lower_return_payload(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(ret_ty.clone()),
                 ret_ty.clone(),
             )?;
@@ -3531,6 +3814,7 @@ fn lower_return_payload(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             lower_invariant_clauses(
@@ -3545,6 +3829,7 @@ fn lower_return_payload(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             out.push(IrInstr::Ret { src: Some(reg) });
@@ -3568,6 +3853,7 @@ fn lower_return_payload(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             lower_invariant_clauses(
@@ -3582,6 +3868,7 @@ fn lower_return_payload(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?;
             out.push(IrInstr::Ret { src: None });
@@ -3599,6 +3886,7 @@ fn lower_loop_expr(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -3630,6 +3918,7 @@ fn lower_loop_expr(
         loop_stack,
         fn_table,
         record_table,
+        adt_table,
         ret_ty.clone(),
     )?;
     }
@@ -3672,6 +3961,7 @@ fn lower_loop_expr_stmt(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
@@ -3693,8 +3983,18 @@ fn lower_loop_expr_stmt(
             then_block,
             else_block,
         } => {
-            let (cond_reg, cond_ty) =
-                lower_expr(*condition, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty.clone())?;
+            let (cond_reg, cond_ty) = lower_expr(
+                *condition,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+            )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
                     pos: 0,
@@ -3728,6 +4028,7 @@ fn lower_loop_expr_stmt(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -3749,6 +4050,7 @@ fn lower_loop_expr_stmt(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -3765,8 +4067,18 @@ fn lower_loop_expr_stmt(
             arms,
             default,
         } => {
-            let (scr_reg, scr_ty) =
-                lower_expr(*scrutinee, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty.clone())?;
+            let (scr_reg, scr_ty) = lower_expr(
+                *scrutinee,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+            )?;
             if scr_ty != Type::Quad {
                 return Err(FrontendError {
                     pos: 0,
@@ -3832,6 +4144,7 @@ fn lower_loop_expr_stmt(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )? {
                     let guarded_body_label = format!("loop_match_{}_body_{}", id, i);
@@ -3854,6 +4167,7 @@ fn lower_loop_expr_stmt(
                         loop_stack,
                         fn_table,
                         record_table,
+                        adt_table,
                         ret_ty.clone(),
                     )?;
                 }
@@ -3878,6 +4192,7 @@ fn lower_loop_expr_stmt(
                     loop_stack,
                     fn_table,
                     record_table,
+                    adt_table,
                     ret_ty.clone(),
                 )?;
             }
@@ -3899,7 +4214,16 @@ fn lower_loop_expr_stmt(
                 invariants_result_symbol: None,
                 instrs: core::mem::take(out),
             };
-            let result = lower_stmt(stmt_id, arena, &mut ctx, env, ret_ty, fn_table, record_table);
+            let result = lower_stmt(
+                stmt_id,
+                arena,
+                &mut ctx,
+                env,
+                ret_ty,
+                fn_table,
+                record_table,
+                adt_table,
+            );
             *next = ctx.next_reg;
             *out = ctx.instrs;
             *loop_stack = ctx.loop_stack;
@@ -3917,6 +4241,7 @@ fn lower_match_expr(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
 ) -> Result<(u16, Type), FrontendError> {
@@ -3929,6 +4254,7 @@ fn lower_match_expr(
         loop_stack,
         fn_table,
         record_table,
+        adt_table,
         ret_ty.clone(),
     )?;
     if scr_ty != Type::Quad {
@@ -3997,6 +4323,7 @@ fn lower_match_expr(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 ret_ty.clone(),
             )?
         {
@@ -4019,6 +4346,7 @@ fn lower_match_expr(
             loop_stack,
             fn_table,
             record_table,
+            adt_table,
             expected.clone(),
             ret_ty.clone(),
         )?;
@@ -4057,6 +4385,7 @@ fn lower_match_expr(
         loop_stack,
         fn_table,
         record_table,
+        adt_table,
         expected,
         ret_ty,
     )?;
@@ -4097,6 +4426,7 @@ fn lower_expr_stmt(
     env: &ScopeEnv,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     lower_expr_stmt_with_parts(
@@ -4108,6 +4438,7 @@ fn lower_expr_stmt(
         &mut ctx.loop_stack,
         fn_table,
         record_table,
+        adt_table,
         ret_ty,
     )
 }
@@ -4139,6 +4470,7 @@ fn lower_expr_stmt_with_parts(
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
     record_table: &RecordTable,
+    adt_table: &AdtTable,
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     let expr = arena.expr(expr_id);
@@ -4159,6 +4491,7 @@ fn lower_expr_stmt_with_parts(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(Type::Bool),
                 ret_ty,
             )?;
@@ -4193,6 +4526,7 @@ fn lower_expr_stmt_with_parts(
                 loop_stack,
                 fn_table,
                 record_table,
+                adt_table,
                 Some(sig.params[i].clone()),
                 ret_ty.clone(),
             )?;
@@ -4221,7 +4555,18 @@ fn lower_expr_stmt_with_parts(
         return Ok(());
     }
 
-    let _ = lower_expr(expr_id, arena, next, out, env, loop_stack, fn_table, record_table, ret_ty)?;
+    let _ = lower_expr(
+        expr_id,
+        arena,
+        next,
+        out,
+        env,
+        loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        ret_ty,
+    )?;
     Ok(())
 }
 
@@ -5211,6 +5556,42 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "ctx"
+        )));
+    }
+
+    #[test]
+    fn lower_enum_constructor_to_make_adt_ir() {
+        let src = r#"
+            enum Maybe {
+                None,
+                Some(bool),
+            }
+
+            fn choose(flag: bool) -> Maybe {
+                return Maybe::Some(flag);
+            }
+
+            fn main() {
+                let value: Maybe = choose(true);
+                let fallback: Maybe = Maybe::None;
+                let _ = value;
+                let _ = fallback;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("enum constructor should lower");
+        let choose = ir.iter().find(|func| func.name == "choose").expect("choose fn");
+        assert!(choose.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
+                if adt_name == "Maybe" && variant_name == "Some" && *tag == 1 && items.len() == 1
+        )));
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
+                if adt_name == "Maybe" && variant_name == "None" && *tag == 0 && items.is_empty()
         )));
     }
 

@@ -16,6 +16,7 @@ pub enum Type {
     RangeI32,
     Tuple(Vec<Type>),
     Record(SymbolId),
+    Adt(SymbolId),
     Unit,
 }
 
@@ -86,6 +87,13 @@ pub struct RecordUpdateExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct AdtCtorExpr {
+    pub adt_name: SymbolId,
+    pub variant_name: SymbolId,
+    pub payload: Vec<ExprId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordPatternItem {
     pub field: SymbolId,
     pub target: RecordPatternTarget,
@@ -108,6 +116,7 @@ pub enum Expr {
     RecordLiteral(RecordLiteralExpr),
     RecordField(RecordFieldExpr),
     RecordUpdate(RecordUpdateExpr),
+    AdtCtor(AdtCtorExpr),
     Var(SymbolId),
     Call(SymbolId, Vec<CallArg>),
     Unary(UnaryOp, ExprId),
@@ -265,9 +274,22 @@ pub struct RecordDecl {
     pub fields: Vec<RecordField>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdtVariant {
+    pub name: SymbolId,
+    pub payload: Vec<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdtDecl {
+    pub name: SymbolId,
+    pub variants: Vec<AdtVariant>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub arena: AstArena,
+    pub adts: Vec<AdtDecl>,
     pub records: Vec<RecordDecl>,
     pub functions: Vec<Function>,
 }
@@ -332,6 +354,7 @@ pub enum TokenKind {
     KwEnsures,
     KwInvariant,
     KwRecord,
+    KwEnum,
     KwConst,
     KwLet,
     KwFor,
@@ -396,6 +419,7 @@ pub enum TokenKind {
     Semi,
     Comma,
     Colon,
+    PathSep,
     Dot,
     LBracket,
     RBracket,

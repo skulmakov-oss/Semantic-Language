@@ -17,6 +17,15 @@ pub struct RecordCarrier<T> {
     pub slots: Vec<T>,
 }
 
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdtCarrier<T> {
+    pub type_name: String,
+    pub variant_name: String,
+    pub tag: u16,
+    pub payload: Vec<T>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolId(pub u32);
 
