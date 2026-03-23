@@ -324,7 +324,8 @@ fn lower_function_to_ir_with_record_table(
     fn_table: &FnTable,
     record_table: &RecordTable,
 ) -> Result<IrFunction, FrontendError> {
-    let mut ctx = LoweringCtx::new();
+    let ensures_result_symbol = find_contract_result_symbol(&func.ensures, arena)?;
+    let mut ctx = LoweringCtx::new(func.ensures.clone(), ensures_result_symbol);
     let mut env = ScopeEnv::with_params(&func.params);
     ctx.next_reg = u16::try_from(func.params.len()).map_err(|_| FrontendError {
         pos: 0,
@@ -373,6 +374,19 @@ fn lower_function_to_ir_with_record_table(
 
     if !ctx.ends_with_ret() {
         if func.ret == Type::Unit {
+            lower_ensures_clauses(
+                &ctx.ensures,
+                ctx.ensures_result_symbol,
+                None,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                &env,
+                &mut ctx.loop_stack,
+                fn_table,
+                record_table,
+                func.ret.clone(),
+            )?;
             ctx.instrs.push(IrInstr::Ret { src: None });
         } else {
             return Err(FrontendError {
@@ -2021,6 +2035,8 @@ fn bind_let_else_record_items(
     record_reg: u16,
     record_ty: &Type,
     else_return: Option<ExprId>,
+    contract_ensures: &[ExprId],
+    contract_result_symbol: Option<SymbolId>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
@@ -2109,6 +2125,8 @@ fn bind_let_else_record_items(
                 });
                 lower_return_payload(
                     else_return,
+                    contract_ensures,
+                    contract_result_symbol,
                     arena,
                     next,
                     out,
@@ -2395,6 +2413,8 @@ fn bind_let_else_tuple_items(
     tuple_reg: u16,
     tuple_ty: &Type,
     else_return: Option<ExprId>,
+    contract_ensures: &[ExprId],
+    contract_result_symbol: Option<SymbolId>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
@@ -2466,6 +2486,8 @@ fn bind_let_else_tuple_items(
                 });
                 lower_return_payload(
                     else_return,
+                    contract_ensures,
+                    contract_result_symbol,
                     arena,
                     next,
                     out,
@@ -2622,6 +2644,8 @@ fn lower_stmt(
                 record_reg,
                 &record_ty,
                 *else_return,
+                &ctx.ensures,
+                ctx.ensures_result_symbol,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2656,6 +2680,8 @@ fn lower_stmt(
                 tuple_reg,
                 &final_ty,
                 *else_return,
+                &ctx.ensures,
+                ctx.ensures_result_symbol,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2831,6 +2857,8 @@ fn lower_stmt(
             });
             lower_return_payload(
                 *else_return,
+                &ctx.ensures,
+                ctx.ensures_result_symbol,
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
@@ -2859,6 +2887,8 @@ fn lower_stmt(
         }
         Stmt::Return(v) => lower_return_payload(
             *v,
+            &ctx.ensures,
+            ctx.ensures_result_symbol,
             arena,
             &mut ctx.next_reg,
             &mut ctx.instrs,
@@ -3272,8 +3302,67 @@ fn lower_match_guard(
     Ok(Some(guard_reg))
 }
 
+fn lower_ensures_clauses(
+    contract_ensures: &[ExprId],
+    contract_result_symbol: Option<SymbolId>,
+    result_value: Option<(u16, Type)>,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    if contract_ensures.is_empty() {
+        return Ok(());
+    }
+
+    let mut contract_env = env.clone();
+    if let Some(result_symbol) = contract_result_symbol {
+        let (result_reg, result_ty) = result_value.ok_or(FrontendError {
+            pos: 0,
+            message: "ensures clause referencing result requires explicit return value".to_string(),
+        })?;
+        contract_env.insert_const(result_symbol, result_ty);
+        out.push(IrInstr::StoreVar {
+            name: "result".to_string(),
+            src: result_reg,
+        });
+    }
+
+    for condition in contract_ensures {
+        let (cond_reg, cond_ty) = lower_expr(
+            *condition,
+            arena,
+            next,
+            out,
+            &contract_env,
+            loop_stack,
+            fn_table,
+            record_table,
+            ret_ty.clone(),
+        )?;
+        if cond_ty != Type::Bool {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "ensures clause condition must be bool in lowering, got {:?}",
+                    cond_ty
+                ),
+            });
+        }
+        out.push(IrInstr::Assert { cond: cond_reg });
+    }
+
+    Ok(())
+}
+
 fn lower_return_payload(
     value: Option<ExprId>,
+    contract_ensures: &[ExprId],
+    contract_result_symbol: Option<SymbolId>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
@@ -3306,6 +3395,19 @@ fn lower_return_payload(
                     ),
                 });
             }
+            lower_ensures_clauses(
+                contract_ensures,
+                contract_result_symbol,
+                Some((reg, ty.clone())),
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
             out.push(IrInstr::Ret { src: Some(reg) });
             Ok(())
         }
@@ -3316,6 +3418,19 @@ fn lower_return_payload(
                     message: format!("return without value in non-unit function ({:?})", ret_ty),
                 });
             }
+            lower_ensures_clauses(
+                contract_ensures,
+                contract_result_symbol,
+                None,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                ret_ty.clone(),
+            )?;
             out.push(IrInstr::Ret { src: None });
             Ok(())
         }
@@ -3625,6 +3740,8 @@ fn lower_loop_expr_stmt(
                 next_reg: *next,
                 next_label_id: out.len() as u32,
                 loop_stack: loop_stack.clone(),
+                ensures: Vec::new(),
+                ensures_result_symbol: None,
                 instrs: core::mem::take(out),
             };
             let result = lower_stmt(stmt_id, arena, &mut ctx, env, ret_ty, fn_table, record_table);
@@ -3958,6 +4075,8 @@ struct LoweringCtx {
     next_reg: u16,
     next_label_id: u32,
     loop_stack: Vec<LoopLoweringFrame>,
+    ensures: Vec<ExprId>,
+    ensures_result_symbol: Option<SymbolId>,
     instrs: Vec<IrInstr>,
 }
 
@@ -3970,11 +4089,13 @@ struct LoopLoweringFrame {
 }
 
 impl LoweringCtx {
-    fn new() -> Self {
+    fn new(ensures: Vec<ExprId>, ensures_result_symbol: Option<SymbolId>) -> Self {
         Self {
             next_reg: 0,
             next_label_id: 0,
             loop_stack: Vec::new(),
+            ensures,
+            ensures_result_symbol,
             instrs: Vec::new(),
         }
     }
@@ -3987,6 +4108,51 @@ impl LoweringCtx {
 
     fn ends_with_ret(&self) -> bool {
         matches!(self.instrs.last(), Some(IrInstr::Ret { .. }))
+    }
+}
+
+fn find_contract_result_symbol(
+    contract_ensures: &[ExprId],
+    arena: &AstArena,
+) -> Result<Option<SymbolId>, FrontendError> {
+    for condition in contract_ensures {
+        if let Some(symbol) = find_named_var_symbol(*condition, arena, "result")? {
+            return Ok(Some(symbol));
+        }
+    }
+    Ok(None)
+}
+
+fn find_named_var_symbol(
+    expr_id: ExprId,
+    arena: &AstArena,
+    name: &str,
+) -> Result<Option<SymbolId>, FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::Var(symbol_id) => {
+            if resolve_symbol_name(arena, *symbol_id)? == name {
+                Ok(Some(*symbol_id))
+            } else {
+                Ok(None)
+            }
+        }
+        Expr::Tuple(items) => {
+            for item in items {
+                if let Some(symbol) = find_named_var_symbol(*item, arena, name)? {
+                    return Ok(Some(symbol));
+                }
+            }
+            Ok(None)
+        }
+        Expr::RecordField(field_expr) => find_named_var_symbol(field_expr.base, arena, name),
+        Expr::Unary(_, inner) => find_named_var_symbol(*inner, arena, name),
+        Expr::Binary(lhs, _, rhs) => {
+            if let Some(symbol) = find_named_var_symbol(*lhs, arena, name)? {
+                return Ok(Some(symbol));
+            }
+            find_named_var_symbol(*rhs, arena, name)
+        }
+        _ => Ok(None),
     }
 }
 
@@ -4476,6 +4642,55 @@ mod opt_tests {
             .filter(|instr| matches!(instr, IrInstr::Assert { .. }))
             .count();
         assert_eq!(assert_count, 2);
+    }
+
+    #[test]
+    fn lower_function_ensures_clause_to_exit_asserts() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn decide(ctx: DecisionContext) -> quad
+                ensures(result == ctx.camera)
+                ensures(ctx.quality == 0.75) {
+                return ctx.camera;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = decide(ctx);
+                assert(seen == T);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("ensures clause should lower");
+        let decide = ir
+            .iter()
+            .find(|func| func.name == "decide")
+            .expect("decide fn");
+        let ret_index = decide
+            .instrs
+            .iter()
+            .position(|instr| matches!(instr, IrInstr::Ret { src: Some(_) }))
+            .expect("return should exist");
+        let result_store = decide
+            .instrs
+            .iter()
+            .position(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "result"))
+            .expect("ensures should store return value into synthetic result binding");
+        let assert_positions: Vec<_> = decide
+            .instrs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, instr)| matches!(instr, IrInstr::Assert { .. }).then_some(idx))
+            .collect();
+        assert_eq!(assert_positions.len(), 2);
+        assert!(result_store < assert_positions[0]);
+        assert!(assert_positions[0] < ret_index);
+        assert!(assert_positions[1] < ret_index);
     }
 
     #[test]

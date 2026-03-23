@@ -247,6 +247,7 @@ pub struct Function {
     pub params: Vec<(SymbolId, Type)>,
     pub param_defaults: Vec<Option<ExprId>>,
     pub requires: Vec<ExprId>,
+    pub ensures: Vec<ExprId>,
     pub ret: Type,
     pub body: Vec<StmtId>,
 }
@@ -327,6 +328,7 @@ pub struct Token {
 pub enum TokenKind {
     KwFn,
     KwRequires,
+    KwEnsures,
     KwRecord,
     KwConst,
     KwLet,

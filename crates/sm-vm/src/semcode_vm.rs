@@ -1556,6 +1556,48 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_function_ensures_clause_when_condition_holds() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn decide(ctx: DecisionContext) -> quad
+                ensures(result == ctx.camera)
+                ensures(ctx.quality == 0.75) {
+                return ctx.camera;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = decide(ctx);
+                assert(seen == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        run_semcode(&bytes).expect("ensures clause should pass");
+    }
+
+    #[test]
+    fn vm_traps_on_failed_function_ensures_clause() {
+        let src = r#"
+            fn must_return_true(flag: bool) -> bool ensures(result == true) {
+                return flag;
+            }
+
+            fn main() {
+                let seen: bool = must_return_true(false);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let err = run_semcode(&bytes).expect_err("ensures clause should trap");
+        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+    }
+
+    #[test]
     fn vm_runs_bool_ops() {
         let src = r#"
 			fn main() {

@@ -93,6 +93,11 @@ Current message families include:
 - invalid `assert` argument count
 - invalid `assert` condition type
 - statement-only `assert` used in value position
+- non-bool `requires` condition
+- unsupported expression form inside `requires`
+- non-bool `ensures` condition
+- unsupported expression form inside `ensures`
+- reserved `result` parameter name while `ensures` clauses are present
 - positional arguments after named arguments
 - named arguments on builtin calls
 - unknown named parameter

@@ -124,7 +124,7 @@ impl<'a> Parser<'a> {
         } else {
             Type::Unit
         };
-        let requires = self.parse_requires_clauses()?;
+        let (requires, ensures) = self.parse_contract_clauses()?;
         let body = if self.eat(TokenKind::Assign) {
             let expr = self.parse_expr()?;
             self.expect(
@@ -140,12 +140,13 @@ impl<'a> Parser<'a> {
             params,
             param_defaults,
             requires,
+            ensures,
             ret,
             body,
         })
     }
 
-    fn parse_requires_clauses(&mut self) -> Result<Vec<ExprId>, FrontendError> {
+    fn parse_contract_clauses(&mut self) -> Result<(Vec<ExprId>, Vec<ExprId>), FrontendError> {
         let mut requires = Vec::new();
         while self.eat(TokenKind::KwRequires) {
             self.expect(TokenKind::LParen, "expected '(' after 'requires'")?;
@@ -153,7 +154,14 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::RParen, "expected ')' after requires condition")?;
             requires.push(condition);
         }
-        Ok(requires)
+        let mut ensures = Vec::new();
+        while self.eat(TokenKind::KwEnsures) {
+            self.expect(TokenKind::LParen, "expected '(' after 'ensures'")?;
+            let condition = self.parse_expr()?;
+            self.expect(TokenKind::RParen, "expected ')' after ensures condition")?;
+            ensures.push(condition);
+        }
+        Ok((requires, ensures))
     }
 
     fn parse_record_decl(&mut self) -> Result<RecordDecl, FrontendError> {
@@ -2180,6 +2188,49 @@ fn main() { return; }
         assert_eq!(idq.requires.len(), 1);
         assert!(matches!(
             program.arena.expr(idq.requires[0]),
+            Expr::Binary(_, BinaryOp::Eq, _)
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_function_ensures_clause() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn decide(ctx: DecisionContext) -> quad ensures(result == ctx.camera) {
+    return ctx.camera;
+}
+
+fn main() { return; }
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("parse");
+        let decide = &program.functions[0];
+        assert_eq!(program.arena.symbol_name(decide.name), "decide");
+        assert_eq!(decide.ensures.len(), 1);
+        assert!(matches!(
+            program.arena.expr(decide.ensures[0]),
+            Expr::Binary(_, BinaryOp::Eq, _)
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_expression_bodied_function_with_ensures_clause() {
+        let src = r#"
+fn idq(q: quad) -> quad ensures(result == q) = q;
+fn main() { return; }
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("parse");
+        let idq = &program.functions[0];
+        assert_eq!(idq.ensures.len(), 1);
+        assert!(matches!(
+            program.arena.expr(idq.ensures[0]),
             Expr::Binary(_, BinaryOp::Eq, _)
         ));
     }

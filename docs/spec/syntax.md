@@ -77,6 +77,12 @@ fn name(arg: type, ...) -> ret_type requires(condition) {
 }
 ```
 
+```sm
+fn name(arg: type, ...) -> ret_type ensures(condition) {
+    ...
+}
+```
+
 Expression-bodied sugar is also part of the current v0 surface:
 
 ```sm
@@ -94,6 +100,8 @@ Current rules:
 - trailing parameters may attach a default initializer with `= expr`
 - zero or more `requires(condition)` clauses may appear after the signature and
   before the function body
+- zero or more `ensures(condition)` clauses may appear after any `requires`
+  clauses and before the function body
 - the return type is optional; omitted return type means `unit`
 - function bodies are block-delimited with `{ ... }`
 - `fn ... = expr;` is accepted as shorthand for a single returned expression
@@ -172,6 +180,7 @@ Current statement rules:
 - `guard` currently supports only the `else return` form
 - `assert(condition);` is a statement-level builtin contract form
 - `requires(condition)` is currently a function-level contract clause only
+- `ensures(condition)` is currently a function-level contract clause only
 - `if` conditions must be `bool`
 - `match` is currently restricted to `quad`
 - `match` requires an explicit default arm `_ => { ... }`
@@ -341,6 +350,21 @@ Current first-wave `requires` rules:
 - each `condition` must be `bool`
 - the current stable subset allows only parameter references, tuple literals,
   record field reads, and pure unary/binary operator expressions
+- call expressions, block/control-flow expressions, range literals, record
+  construction, and record copy-with are not part of this slice
+
+Current first-wave `ensures` rules:
+
+- `ensures(condition)` currently attaches only to ordinary user-defined
+  function declarations
+- `ensures(condition)` may appear on block-bodied and expression-bodied
+  functions
+- each `condition` must be `bool`
+- the current stable subset allows parameter references, optional synthetic
+  `result` binding, tuple literals, record field reads, and pure unary/binary
+  operator expressions
+- the synthetic `result` binding is reserved while `ensures` clauses are
+  present and is available only for non-unit returns
 - call expressions, block/control-flow expressions, range literals, record
   construction, and record copy-with are not part of this slice
 

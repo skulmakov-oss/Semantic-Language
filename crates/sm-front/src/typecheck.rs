@@ -161,6 +161,7 @@ fn type_check_function_with_record_table(
         }
     }
     check_requires_clauses(func, arena, table, record_table)?;
+    check_ensures_clauses(func, arena, table, record_table)?;
     let mut env = ScopeEnv::with_params(&func.params);
     let mut loop_stack = Vec::new();
     for stmt in &func.body {
@@ -201,6 +202,55 @@ fn check_requires_clauses(
                 pos: 0,
                 message: format!(
                     "requires clause condition must be bool, got {:?}",
+                    condition_ty
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn check_ensures_clauses(
+    func: &Function,
+    arena: &AstArena,
+    table: &FnTable,
+    record_table: &RecordTable,
+) -> Result<(), FrontendError> {
+    if func.ensures.is_empty() {
+        return Ok(());
+    }
+    for (name, _) in &func.params {
+        if resolve_symbol_name(arena, *name)? == "result" {
+            return Err(FrontendError {
+                pos: 0,
+                message: "parameter name 'result' is reserved while ensures clauses are present"
+                    .to_string(),
+            });
+        }
+    }
+    let mut env = ScopeEnv::with_params(&func.params);
+    if func.ret != Type::Unit {
+        if let Some(result_symbol) = arena.symbol_to_id.get("result").copied() {
+            env.insert_const(result_symbol, func.ret.clone());
+        }
+    }
+    let mut loop_stack = Vec::new();
+    for condition in &func.ensures {
+        ensure_ensures_expr_supported(*condition, arena)?;
+        let condition_ty = infer_expr_type(
+            *condition,
+            arena,
+            &env,
+            table,
+            record_table,
+            func.ret.clone(),
+            &mut loop_stack,
+        )?;
+        if condition_ty != Type::Bool {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "ensures clause condition must be bool, got {:?}",
                     condition_ty
                 ),
             });
@@ -2107,6 +2157,82 @@ mod tests {
     }
 
     #[test]
+    fn function_ensures_clause_typechecks_with_result_and_record_field_reads() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn decide(ctx: DecisionContext) -> quad
+                ensures(result == ctx.camera)
+                ensures(ctx.quality == 0.75) {
+                return ctx.camera;
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let seen: quad = decide(ctx);
+                assert(seen == T);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("ensures clauses should typecheck");
+    }
+
+    #[test]
+    fn function_ensures_clause_requires_bool_condition() {
+        let src = r#"
+            fn id(count: i32) -> i32 ensures(result) {
+                return count;
+            }
+
+            fn main() { return; }
+        "#;
+
+        let err = typecheck_source(src).expect_err("ensures clause must require bool");
+        assert!(err
+            .message
+            .contains("ensures clause condition must be bool"));
+    }
+
+    #[test]
+    fn function_ensures_clause_rejects_call_surface() {
+        let src = r#"
+            fn check(flag: bool) -> bool = flag;
+
+            fn choose(flag: bool) -> bool ensures(check(result)) {
+                return flag;
+            }
+
+            fn main() { return; }
+        "#;
+
+        let err = typecheck_source(src).expect_err("ensures clause should reject call surface");
+        assert!(err
+            .message
+            .contains("ensures clause currently allows only parameter references, optional result binding"));
+    }
+
+    #[test]
+    fn function_ensures_clause_reserves_result_parameter_name() {
+        let src = r#"
+            fn echo(result: bool) -> bool ensures(result == true) {
+                return result;
+            }
+
+            fn main() { return; }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("ensures clause must reserve synthetic result name");
+        assert!(err
+            .message
+            .contains("parameter name 'result' is reserved while ensures clauses are present"));
+    }
+
+    #[test]
     fn tuple_literals_and_tuple_types_typecheck_through_call_and_return_paths() {
         let src = r#"
             fn pair(flag: bool) -> (i32, bool) {
@@ -3545,6 +3671,29 @@ fn supports_stable_equality_type(
 }
 
 fn ensure_requires_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
+    ensure_contract_expr_supported(
+        expr_id,
+        arena,
+        "requires",
+        "parameter references",
+    )
+}
+
+fn ensure_ensures_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
+    ensure_contract_expr_supported(
+        expr_id,
+        arena,
+        "ensures",
+        "parameter references, optional result binding",
+    )
+}
+
+fn ensure_contract_expr_supported(
+    expr_id: ExprId,
+    arena: &AstArena,
+    clause_name: &str,
+    binding_desc: &str,
+) -> Result<(), FrontendError> {
     match arena.expr(expr_id) {
         Expr::QuadLiteral(_)
         | Expr::BoolLiteral(_)
@@ -3552,19 +3701,25 @@ fn ensure_requires_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(
         | Expr::Var(_) => Ok(()),
         Expr::Tuple(items) => {
             for item in items {
-                ensure_requires_expr_supported(*item, arena)?;
+                ensure_contract_expr_supported(*item, arena, clause_name, binding_desc)?;
             }
             Ok(())
         }
-        Expr::RecordField(field_expr) => ensure_requires_expr_supported(field_expr.base, arena),
-        Expr::Unary(_, inner) => ensure_requires_expr_supported(*inner, arena),
+        Expr::RecordField(field_expr) => {
+            ensure_contract_expr_supported(field_expr.base, arena, clause_name, binding_desc)
+        }
+        Expr::Unary(_, inner) => {
+            ensure_contract_expr_supported(*inner, arena, clause_name, binding_desc)
+        }
         Expr::Binary(lhs, _, rhs) => {
-            ensure_requires_expr_supported(*lhs, arena)?;
-            ensure_requires_expr_supported(*rhs, arena)
+            ensure_contract_expr_supported(*lhs, arena, clause_name, binding_desc)?;
+            ensure_contract_expr_supported(*rhs, arena, clause_name, binding_desc)
         }
         _ => Err(FrontendError {
             pos: 0,
-            message: "requires clause currently allows only parameter references, tuple literals, record field reads, and pure unary/binary operator expressions".to_string(),
+            message: format!(
+                "{clause_name} clause currently allows only {binding_desc}, tuple literals, record field reads, and pure unary/binary operator expressions"
+            ),
         }),
     }
 }

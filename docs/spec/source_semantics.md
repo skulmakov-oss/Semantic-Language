@@ -34,6 +34,10 @@ Current rules:
 - function-level `requires(condition)` clauses execute at callee entry after
   parameter binding and before ordinary body statements
 - multiple `requires(condition)` clauses evaluate in source order
+- function-level `ensures(condition)` clauses execute immediately before each
+  function return path completes
+- multiple `ensures(condition)` clauses evaluate in source order on the exit
+  path that produced the return value
 
 Current v0 record declaration semantics:
 
@@ -58,6 +62,18 @@ Current v0 record declaration semantics:
 - explicit record `let-else` uses `let RecordName { field: target, ... } = value else return ...;`
 - record `let-else` currently treats only explicit `quad` literal field targets as refutable checks
 - record equality is allowed only when every field type already supports stable equality
+
+Current first-wave function-contract semantics:
+
+- only declaration-level `requires` and `ensures` are part of the current
+  stable contract surface
+- `requires` checks the narrow contract subset in a parameter-only environment
+- `ensures` checks the same narrow subset on the return path
+- non-unit functions may additionally use the synthetic `result` binding inside
+  `ensures`
+- `ensures` currently lowers to explicit core assertions before `ret`
+- `ensures` is not yet a general proof/effect system and does not imply
+  `invariant` semantics
 
 ## Deterministic Evaluation Order
 
