@@ -1976,6 +1976,43 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_option_and_result_match_ergonomics_paths() {
+        let src = r#"
+            fn unwrap(opt: Option(bool)) -> bool {
+                let out: bool = match opt {
+                    Option::Some(value) => { value }
+                    Option::None => { false }
+                };
+                return out;
+            }
+
+            fn settle(res: Result(quad, quad)) -> quad {
+                let out: quad = match res {
+                    Result::Ok(value) => { value }
+                    Result::Err(code) => { code }
+                };
+                return out;
+            }
+
+            fn main() {
+                let left: bool = unwrap(Option::Some(true));
+                let right: bool = unwrap(Option::None);
+                let code: quad = settle(Result::Err(S));
+                assert(left == true);
+                assert(right == false);
+                assert(code == S);
+                return;
+            }
+        "#;
+
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("ADT_TAG"));
+        assert!(disasm.contains("ADT_GET"));
+        run_semcode(&bytes).expect("Option/Result match ergonomics paths should run");
+    }
+
+    #[test]
     fn vm_runs_stage1_adt_match_path() {
         let src = r#"
             enum Maybe {

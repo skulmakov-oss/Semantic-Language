@@ -51,7 +51,8 @@ Current rule:
 Current rules:
 
 - `quad` participates in equality and implication
-- `match` currently operates on `quad` and nominal enum scrutinees
+- `match` currently operates on `quad`, nominal enum scrutinees, and the
+  standard-form `Option(T)` / `Result(T, E)` families
 - `quad` is not accepted directly as an `if` condition
 
 ## Standard Forms
@@ -66,6 +67,8 @@ Current first-wave standard forms:
   declarations
 - they currently lower through the same canonical aggregate carrier family used
   by nominal ADTs
+- explicit `Option::Some/None` and `Result::Ok/Err` patterns participate in
+  the stable match surface over these families
 
 ## Bool
 
@@ -137,7 +140,7 @@ Current equality and control rules:
 
 - `==` and `!=` require meaningful same-family comparisons
 - `if` requires `bool`
-- `match` requires `quad`
+- `match` requires `quad`, nominal enum, `Option(T)`, or `Result(T, E)`
 
 ## Function Typing Rules
 

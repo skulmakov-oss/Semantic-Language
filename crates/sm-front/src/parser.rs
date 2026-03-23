@@ -1540,7 +1540,7 @@ impl<'a> Parser<'a> {
         } else {
             Err(FrontendError {
                 pos: self.pos(),
-                message: "expected match pattern N|F|T|S|Enum::Variant|_".to_string(),
+                message: "expected match pattern N|F|T|S|Type::Variant|_".to_string(),
             })
         }
     }
@@ -3485,6 +3485,54 @@ fn main() {
                 assert_eq!(program.arena.symbol_name(ctor.variant_name), "Ok");
             }
             other => panic!("expected typed let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_option_and_result_match_patterns() {
+        let src = r#"
+fn unwrap(opt: Option(bool), res: Result(bool, quad)) {
+    match opt {
+        Option::Some(value) => { let _ = value; }
+        _ => { return; }
+    }
+    match res {
+        Result::Ok(value) => { let _ = value; }
+        Result::Err(code) => { let _ = code; }
+    }
+    return;
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("Option/Result match patterns should parse");
+        let unwrap = &program.functions[0];
+        match program.arena.stmt(unwrap.body[0]) {
+            Stmt::Match { arms, .. } => {
+                let MatchPattern::Adt(pat) = &arms[0].pat else {
+                    panic!("expected Option match pattern");
+                };
+                assert_eq!(program.arena.symbol_name(pat.adt_name), "Option");
+                assert_eq!(program.arena.symbol_name(pat.variant_name), "Some");
+                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+            }
+            other => panic!("expected match stmt, got {:?}", other),
+        }
+        match program.arena.stmt(unwrap.body[1]) {
+            Stmt::Match { arms, default, .. } => {
+                assert!(default.is_empty(), "exhaustive Result match should omit default");
+                let MatchPattern::Adt(pat) = &arms[1].pat else {
+                    panic!("expected Result match pattern");
+                };
+                assert_eq!(program.arena.symbol_name(pat.adt_name), "Result");
+                assert_eq!(program.arena.symbol_name(pat.variant_name), "Err");
+                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+            }
+            other => panic!("expected match stmt, got {:?}", other),
         }
     }
 

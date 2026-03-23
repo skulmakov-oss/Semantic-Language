@@ -2,7 +2,7 @@ use crate::*;
 use crate::types::{AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 
 fn fx_coercion_gap_message() -> &'static str {
     "fx coercion from non-literal numeric expressions is not implemented in the canonical Rust-like path yet"
@@ -1142,10 +1142,12 @@ fn check_stmt(
                 ret_ty.clone(),
                 loop_stack,
             )?;
-            if !matches!(st, Type::Quad | Type::Adt(_)) {
+            if !matches!(st, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "match is allowed only for quad or enum scrutinee".to_string(),
+                    message:
+                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                            .to_string(),
                 });
             }
 
@@ -1187,23 +1189,14 @@ fn check_stmt(
             }
 
             if default.is_empty() {
-                match missing_exhaustive_adt_variants(
+                match missing_exhaustive_sum_variants(
                     &st,
                     arms.iter().map(|arm| (&arm.pat, arm.guard)),
                     arena,
                     adt_table,
                 )? {
-                    Some(missing) if !missing.is_empty() => {
-                        return Err(non_exhaustive_match_error(
-                            arena,
-                            match st {
-                                Type::Adt(name) => name,
-                                _ => unreachable!(),
-                            },
-                            &missing,
-                            false,
-                        )?)
-                    }
+                    Some((family_label, missing)) if !missing.is_empty() =>
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
                     Some(_) => {}
                     None => {
                         return Err(FrontendError {
@@ -1988,7 +1981,7 @@ mod tests {
         let err = typecheck_source(src).expect_err("non-quad match expression must reject");
         assert!(err
             .message
-            .contains("match expression is allowed only for quad or enum scrutinee"));
+            .contains("match expression is allowed only for quad"));
     }
 
     #[test]
@@ -3715,6 +3708,82 @@ mod tests {
             .message
             .contains("Result::Ok currently requires contextual Result(T, E) type in v0"));
     }
+
+    #[test]
+    fn option_and_result_match_patterns_typecheck_without_default_when_exhaustive() {
+        let src = r#"
+            fn unwrap(opt: Option(bool)) -> bool {
+                let out: bool = match opt {
+                    Option::Some(value) => { value }
+                    Option::None => { false }
+                };
+                return out;
+            }
+
+            fn settle(res: Result(quad, quad)) -> quad {
+                let out: quad = match res {
+                    Result::Ok(value) => { value }
+                    Result::Err(code) => { code }
+                };
+                return out;
+            }
+
+            fn main() {
+                let left: bool = unwrap(Option::Some(true));
+                let right: quad = settle(Result::Err(S));
+                assert(left == true);
+                assert(right == S);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("Option/Result match ergonomics should typecheck");
+    }
+
+    #[test]
+    fn option_match_without_none_arm_rejects_as_non_exhaustive() {
+        let src = r#"
+            fn unwrap(opt: Option(bool)) -> bool {
+                let out: bool = match opt {
+                    Option::Some(value) => { value }
+                };
+                return out;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("non-exhaustive Option match expression without default must reject");
+        assert!(err
+            .message
+            .contains("non-exhaustive match expression for Option(T); missing variants: None"));
+    }
+
+    #[test]
+    fn result_pattern_family_must_match_result_scrutinee() {
+        let src = r#"
+            fn settle(res: Result(bool, quad)) -> bool {
+                let out: bool = match res {
+                    Option::Some(value) => { value }
+                    _ => { false }
+                };
+                return out;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("mismatched standard-form match family must reject");
+        assert!(err
+            .message
+            .contains("match arm pattern type 'Option' does not match scrutinee Result(T, E)"));
+    }
 }
 
 fn is_builtin_assert_name(
@@ -3839,10 +3908,15 @@ fn infer_match_expr_type(
             ret_ty.clone(),
             loop_stack,
         )?;
-    if !matches!(scrutinee_ty, Type::Quad | Type::Adt(_)) {
+    if !matches!(
+        scrutinee_ty,
+        Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+    ) {
         return Err(FrontendError {
             pos: 0,
-            message: "match expression is allowed only for quad or enum scrutinee".to_string(),
+            message:
+                "match expression is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                    .to_string(),
         });
     }
 
@@ -3920,21 +3994,14 @@ fn infer_match_expr_type(
             Ok(default_ty)
         }
     } else {
-        match missing_exhaustive_adt_variants(
+        match missing_exhaustive_sum_variants(
             &scrutinee_ty,
             match_expr.arms.iter().map(|arm| (&arm.pat, arm.guard)),
             arena,
             adt_table,
         )? {
-            Some(missing) if !missing.is_empty() => Err(non_exhaustive_match_error(
-                arena,
-                match scrutinee_ty {
-                    Type::Adt(name) => name,
-                    _ => unreachable!(),
-                },
-                &missing,
-                true,
-            )?),
+            Some((family_label, missing)) if !missing.is_empty() =>
+                Err(non_exhaustive_match_error(&family_label, &missing, true)?),
             Some(_) => Ok(result_ty
                 .expect("exhaustive enum match expression should have at least one arm")),
             None => Err(FrontendError {
@@ -4073,10 +4140,12 @@ fn check_loop_expr_stmt(
                 ret_ty.clone(),
                 loop_stack,
             )?;
-            if !matches!(st, Type::Quad | Type::Adt(_)) {
+            if !matches!(st, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "match is allowed only for quad or enum scrutinee".to_string(),
+                    message:
+                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                            .to_string(),
                 });
             }
             if default.is_empty() {
@@ -5189,6 +5258,79 @@ fn infer_std_form_ctor_type(
     Ok(None)
 }
 
+#[derive(Debug, Clone)]
+struct MatchFamilyVariantSpec {
+    name: String,
+    payload: Vec<Type>,
+}
+
+#[derive(Debug, Clone)]
+struct MatchFamilySpec {
+    family_name: String,
+    display_label: String,
+    variants: Vec<MatchFamilyVariantSpec>,
+}
+
+fn resolve_match_family_spec(
+    scrutinee_ty: &Type,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<Option<MatchFamilySpec>, FrontendError> {
+    match scrutinee_ty {
+        Type::Adt(adt_name) => {
+            let adt = adt_table.get(adt_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown enum type '{}' in match resolution",
+                    resolve_symbol_name(arena, *adt_name)?,
+                ),
+            })?;
+            let family_name = resolve_symbol_name(arena, *adt_name)?.to_string();
+            let mut variants = Vec::new();
+            for variant in &adt.variants {
+                variants.push(MatchFamilyVariantSpec {
+                    name: resolve_symbol_name(arena, variant.name)?.to_string(),
+                    payload: variant.payload.clone(),
+                });
+            }
+            Ok(Some(MatchFamilySpec {
+                display_label: format!("enum '{}'", family_name),
+                family_name,
+                variants,
+            }))
+        }
+        Type::Option(item_ty) => Ok(Some(MatchFamilySpec {
+            family_name: "Option".to_string(),
+            display_label: "Option(T)".to_string(),
+            variants: vec![
+                MatchFamilyVariantSpec {
+                    name: "None".to_string(),
+                    payload: Vec::new(),
+                },
+                MatchFamilyVariantSpec {
+                    name: "Some".to_string(),
+                    payload: vec![(**item_ty).clone()],
+                },
+            ],
+        })),
+        Type::Result(ok_ty, err_ty) => Ok(Some(MatchFamilySpec {
+            family_name: "Result".to_string(),
+            display_label: "Result(T, E)".to_string(),
+            variants: vec![
+                MatchFamilyVariantSpec {
+                    name: "Ok".to_string(),
+                    payload: vec![(**ok_ty).clone()],
+                },
+                MatchFamilyVariantSpec {
+                    name: "Err".to_string(),
+                    payload: vec![(**err_ty).clone()],
+                },
+            ],
+        })),
+        _ => Ok(None),
+    }
+}
+
 fn bind_match_pattern(
     pat: &MatchPattern,
     scrutinee_ty: &Type,
@@ -5201,56 +5343,60 @@ fn bind_match_pattern(
         (Type::Quad, MatchPattern::Adt(adt_pat)) => Err(FrontendError {
             pos: 0,
             message: format!(
-                "enum match pattern '{}::{}' can be used only with enum scrutinee",
+                "sum match pattern '{}::{}' can be used only with sum scrutinee",
                 resolve_symbol_name(arena, adt_pat.adt_name)?,
                 resolve_symbol_name(arena, adt_pat.variant_name)?,
             ),
         }),
-        (Type::Adt(scrutinee_name), MatchPattern::Quad(pat)) => Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "quad match pattern '{:?}' can be used only with quad scrutinee, not enum '{}'",
-                pat,
-                resolve_symbol_name(arena, *scrutinee_name)?,
-            ),
-        }),
-        (Type::Adt(scrutinee_name), MatchPattern::Adt(adt_pat)) => {
-            if adt_pat.adt_name != *scrutinee_name {
+        (_, MatchPattern::Quad(pat)) => {
+            let family = resolve_match_family_spec(scrutinee_ty, arena, adt_table)?
+                .expect("non-quad matchable family should resolve");
+            Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "quad match pattern '{:?}' can be used only with quad scrutinee, not {}",
+                    pat, family.display_label
+                ),
+            })
+        }
+        (_, MatchPattern::Adt(adt_pat)) => {
+            let Some(family) = resolve_match_family_spec(scrutinee_ty, arena, adt_table)? else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                            .to_string(),
+                });
+            };
+            let pattern_family = resolve_symbol_name(arena, adt_pat.adt_name)?.to_string();
+            if pattern_family != family.family_name {
                 return Err(FrontendError {
                     pos: 0,
                     message: format!(
-                        "match arm pattern enum '{}' does not match scrutinee enum '{}'",
-                        resolve_symbol_name(arena, adt_pat.adt_name)?,
-                        resolve_symbol_name(arena, *scrutinee_name)?,
+                        "match arm pattern type '{}' does not match scrutinee {}",
+                        pattern_family, family.display_label
                     ),
                 });
             }
-            let adt = adt_table.get(scrutinee_name).ok_or(FrontendError {
-                pos: 0,
-                message: format!(
-                    "unknown enum type '{}' in match pattern",
-                    resolve_symbol_name(arena, *scrutinee_name)?,
-                ),
-            })?;
-            let variant = adt
+            let pattern_variant = resolve_symbol_name(arena, adt_pat.variant_name)?.to_string();
+            let variant = family
                 .variants
                 .iter()
-                .find(|variant| variant.name == adt_pat.variant_name)
+                .find(|variant| variant.name == pattern_variant)
                 .ok_or(FrontendError {
                     pos: 0,
                     message: format!(
-                        "enum '{}' has no variant named '{}' in match pattern",
-                        resolve_symbol_name(arena, *scrutinee_name)?,
-                        resolve_symbol_name(arena, adt_pat.variant_name)?,
+                        "{} has no variant named '{}' in match pattern",
+                        family.display_label, pattern_variant,
                     ),
                 })?;
             if variant.payload.len() != adt_pat.items.len() {
                 return Err(FrontendError {
                     pos: 0,
                     message: format!(
-                        "enum match pattern '{}::{}' expects {} payload items, got {}",
-                        resolve_symbol_name(arena, *scrutinee_name)?,
-                        resolve_symbol_name(arena, adt_pat.variant_name)?,
+                        "match pattern '{}::{}' expects {} payload items, got {}",
+                        family.family_name,
+                        pattern_variant,
                         variant.payload.len(),
                         adt_pat.items.len(),
                     ),
@@ -5272,9 +5418,9 @@ fn bind_match_pattern(
                         return Err(FrontendError {
                             pos: 0,
                             message: format!(
-                                "enum match pattern '{}::{}' repeats binding '{}' at payload item {}",
-                                resolve_symbol_name(arena, *scrutinee_name)?,
-                                resolve_symbol_name(arena, adt_pat.variant_name)?,
+                                "match pattern '{}::{}' repeats binding '{}' at payload item {}",
+                                family.family_name,
+                                pattern_variant,
                                 resolve_symbol_name(arena, *name)?,
                                 index,
                             ),
@@ -5285,29 +5431,18 @@ fn bind_match_pattern(
             }
             Ok(bindings)
         }
-        (_, MatchPattern::Quad(_)) | (_, MatchPattern::Adt(_)) => Err(FrontendError {
-            pos: 0,
-            message: "match is allowed only for quad or enum scrutinee".to_string(),
-        }),
     }
 }
 
-fn missing_exhaustive_adt_variants<'a>(
+fn missing_exhaustive_sum_variants<'a>(
     scrutinee_ty: &Type,
     patterns: impl IntoIterator<Item = (&'a MatchPattern, Option<ExprId>)>,
     arena: &AstArena,
     adt_table: &AdtTable,
-) -> Result<Option<Vec<SymbolId>>, FrontendError> {
-    let Type::Adt(adt_name) = scrutinee_ty else {
+) -> Result<Option<(String, Vec<String>)>, FrontendError> {
+    let Some(family) = resolve_match_family_spec(scrutinee_ty, arena, adt_table)? else {
         return Ok(None);
     };
-    let adt = adt_table.get(adt_name).ok_or(FrontendError {
-        pos: 0,
-        message: format!(
-            "unknown enum type '{}' in match exhaustiveness check",
-            resolve_symbol_name(arena, *adt_name)?,
-        ),
-    })?;
 
     let mut covered = BTreeSet::new();
     for (pat, guard) in patterns {
@@ -5315,39 +5450,36 @@ fn missing_exhaustive_adt_variants<'a>(
             continue;
         }
         if let MatchPattern::Adt(adt_pat) = pat {
-            if adt_pat.adt_name == *adt_name {
-                covered.insert(adt_pat.variant_name);
+            if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name
+            {
+                covered.insert(resolve_symbol_name(arena, adt_pat.variant_name)?.to_string());
             }
         }
     }
 
-    Ok(Some(
-        adt.variants
+    Ok(Some((
+        family.display_label,
+        family
+            .variants
             .iter()
             .filter(|variant| !covered.contains(&variant.name))
-            .map(|variant| variant.name)
+            .map(|variant| variant.name.clone())
             .collect(),
-    ))
+    )))
 }
 
 fn non_exhaustive_match_error(
-    arena: &AstArena,
-    adt_name: SymbolId,
-    missing: &[SymbolId],
+    family_label: &str,
+    missing: &[String],
     expression: bool,
 ) -> Result<FrontendError, FrontendError> {
-    let missing_names = missing
-        .iter()
-        .map(|name| resolve_symbol_name(arena, *name))
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", ");
     Ok(FrontendError {
         pos: 0,
         message: format!(
-            "non-exhaustive match{} for enum '{}'; missing variants: {}",
+            "non-exhaustive match{} for {}; missing variants: {}",
             if expression { " expression" } else { "" },
-            resolve_symbol_name(arena, adt_name)?,
-            missing_names,
+            family_label,
+            missing.join(", "),
         ),
     })
 }

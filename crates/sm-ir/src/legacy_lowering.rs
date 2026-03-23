@@ -3202,30 +3202,23 @@ fn lower_stmt(
                 adt_table,
                 ret_ty.clone(),
             )?;
-            if !matches!(scr_ty, Type::Quad | Type::Adt(_)) {
+            if !matches!(scr_ty, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "match scrutinee must be quad or enum".to_string(),
+                    message:
+                        "match scrutinee must be quad, enum, Option(T), or Result(T, E)"
+                            .to_string(),
                 });
             }
             let exhaustive_without_default = if default.is_empty() {
-                match missing_exhaustive_adt_variants(
+                match missing_exhaustive_sum_variants(
                     &scr_ty,
                     arms.iter().map(|arm| (&arm.pat, arm.guard)),
                     arena,
                     adt_table,
                 )? {
-                    Some(missing) if !missing.is_empty() => {
-                        return Err(non_exhaustive_match_error(
-                            arena,
-                            match scr_ty {
-                                Type::Adt(name) => name,
-                                _ => unreachable!(),
-                            },
-                            &missing,
-                            false,
-                        )?)
-                    }
+                    Some((family_label, missing)) if !missing.is_empty() =>
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
                     Some(_) => true,
                     None => {
                         return Err(FrontendError {
@@ -3368,19 +3361,21 @@ fn lower_stmt(
                         });
                     }
                 }
-                Type::Adt(scrutinee_name) => {
+                Type::Adt(_) | Type::Option(_) | Type::Result(_, _) => {
+                    let family = resolve_match_family_for_lowering(&scr_ty, arena, adt_table)?
+                        .expect("sum scrutinee family should resolve");
                     let scr_tag_reg = alloc(&mut ctx.next_reg);
                     ctx.instrs.push(IrInstr::AdtTag {
                         dst: scr_tag_reg,
                         src: scr_reg,
-                        adt_name: resolve_symbol_name(arena, scrutinee_name)?.to_string(),
+                        adt_name: family.family_name.clone(),
                     });
                     let resolved_patterns = arms
                         .iter()
                         .map(|arm| {
-                            resolve_adt_match_pattern_for_lowering(
+                            resolve_sum_match_pattern_for_lowering(
                                 &arm.pat,
-                                scrutinee_name,
+                                &scr_ty,
                                 arena,
                                 record_table,
                                 adt_table,
@@ -3966,6 +3961,20 @@ struct LoweredAdtMatchPattern {
     bindings: Vec<LoweredAdtMatchBinding>,
 }
 
+#[derive(Debug, Clone)]
+struct LoweredMatchFamilyVariant {
+    name: String,
+    tag: i32,
+    payload: Vec<Type>,
+}
+
+#[derive(Debug, Clone)]
+struct LoweredMatchFamily {
+    family_name: String,
+    display_label: String,
+    variants: Vec<LoweredMatchFamilyVariant>,
+}
+
 fn expect_quad_match_pattern(pat: &MatchPattern) -> Result<QuadVal, FrontendError> {
     match pat {
         MatchPattern::Quad(pat) => Ok(*pat),
@@ -3976,59 +3985,128 @@ fn expect_quad_match_pattern(pat: &MatchPattern) -> Result<QuadVal, FrontendErro
     }
 }
 
-fn resolve_adt_match_pattern_for_lowering(
+fn resolve_match_family_for_lowering(
+    scrutinee_ty: &Type,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<Option<LoweredMatchFamily>, FrontendError> {
+    match scrutinee_ty {
+        Type::Adt(adt_name) => {
+            let adt = adt_table.get(adt_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown enum type '{}' in match lowering",
+                    resolve_symbol_name(arena, *adt_name)?,
+                ),
+            })?;
+            let family_name = resolve_symbol_name(arena, *adt_name)?.to_string();
+            let mut variants = Vec::new();
+            for (tag, variant) in adt.variants.iter().enumerate() {
+                variants.push(LoweredMatchFamilyVariant {
+                    name: resolve_symbol_name(arena, variant.name)?.to_string(),
+                    tag: i32::try_from(tag).map_err(|_| FrontendError {
+                        pos: 0,
+                        message: "enum variant tag exceeds v0 lowering limit".to_string(),
+                    })?,
+                    payload: variant.payload.clone(),
+                });
+            }
+            Ok(Some(LoweredMatchFamily {
+                display_label: format!("enum '{}'", family_name),
+                family_name,
+                variants,
+            }))
+        }
+        Type::Option(item_ty) => Ok(Some(LoweredMatchFamily {
+            family_name: "Option".to_string(),
+            display_label: "Option(T)".to_string(),
+            variants: vec![
+                LoweredMatchFamilyVariant {
+                    name: "None".to_string(),
+                    tag: 0,
+                    payload: Vec::new(),
+                },
+                LoweredMatchFamilyVariant {
+                    name: "Some".to_string(),
+                    tag: 1,
+                    payload: vec![(**item_ty).clone()],
+                },
+            ],
+        })),
+        Type::Result(ok_ty, err_ty) => Ok(Some(LoweredMatchFamily {
+            family_name: "Result".to_string(),
+            display_label: "Result(T, E)".to_string(),
+            variants: vec![
+                LoweredMatchFamilyVariant {
+                    name: "Ok".to_string(),
+                    tag: 0,
+                    payload: vec![(**ok_ty).clone()],
+                },
+                LoweredMatchFamilyVariant {
+                    name: "Err".to_string(),
+                    tag: 1,
+                    payload: vec![(**err_ty).clone()],
+                },
+            ],
+        })),
+        _ => Ok(None),
+    }
+}
+
+fn resolve_sum_match_pattern_for_lowering(
     pat: &MatchPattern,
-    scrutinee_name: SymbolId,
+    scrutinee_ty: &Type,
     arena: &AstArena,
     record_table: &RecordTable,
     adt_table: &AdtTable,
 ) -> Result<LoweredAdtMatchPattern, FrontendError> {
     let MatchPattern::Adt(adt_pat) = pat else {
+        let family = resolve_match_family_for_lowering(scrutinee_ty, arena, adt_table)?
+            .expect("non-quad match family should resolve");
         return Err(FrontendError {
             pos: 0,
             message: format!(
-                "quad match pattern requires quad scrutinee; enum '{}' needs explicit variant patterns in lowering",
-                resolve_symbol_name(arena, scrutinee_name)?,
+                "quad match pattern requires quad scrutinee; {} needs explicit variant patterns in lowering",
+                family.display_label,
             ),
         });
     };
-    if adt_pat.adt_name != scrutinee_name {
+    let Some(family) = resolve_match_family_for_lowering(scrutinee_ty, arena, adt_table)? else {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "match scrutinee must be quad, enum, Option(T), or Result(T, E)".to_string(),
+        });
+    };
+    let pattern_family = resolve_symbol_name(arena, adt_pat.adt_name)?.to_string();
+    if pattern_family != family.family_name {
         return Err(FrontendError {
             pos: 0,
             message: format!(
-                "match arm pattern enum '{}' does not match scrutinee enum '{}' in lowering",
-                resolve_symbol_name(arena, adt_pat.adt_name)?,
-                resolve_symbol_name(arena, scrutinee_name)?,
+                "match arm pattern type '{}' does not match scrutinee {} in lowering",
+                pattern_family, family.display_label,
             ),
         });
     }
-    let adt = adt_table.get(&scrutinee_name).ok_or(FrontendError {
-        pos: 0,
-        message: format!(
-            "unknown enum type '{}' in match lowering",
-            resolve_symbol_name(arena, scrutinee_name)?,
-        ),
-    })?;
-    let (tag, variant) = adt
+    let pattern_variant = resolve_symbol_name(arena, adt_pat.variant_name)?.to_string();
+    let variant = family
         .variants
         .iter()
-        .enumerate()
-        .find(|(_, variant)| variant.name == adt_pat.variant_name)
+        .find(|variant| variant.name == pattern_variant)
         .ok_or(FrontendError {
             pos: 0,
             message: format!(
-                "enum '{}' has no variant named '{}' in match lowering",
-                resolve_symbol_name(arena, scrutinee_name)?,
-                resolve_symbol_name(arena, adt_pat.variant_name)?,
+                "{} has no variant named '{}' in match lowering",
+                family.display_label, pattern_variant,
             ),
         })?;
     if variant.payload.len() != adt_pat.items.len() {
         return Err(FrontendError {
             pos: 0,
             message: format!(
-                "enum match pattern '{}::{}' expects {} payload items in lowering, got {}",
-                resolve_symbol_name(arena, scrutinee_name)?,
-                resolve_symbol_name(arena, adt_pat.variant_name)?,
+                "match pattern '{}::{}' expects {} payload items in lowering, got {}",
+                family.family_name,
+                pattern_variant,
                 variant.payload.len(),
                 adt_pat.items.len(),
             ),
@@ -4053,11 +4131,8 @@ fn resolve_adt_match_pattern_for_lowering(
     }
 
     Ok(LoweredAdtMatchPattern {
-        adt_name: resolve_symbol_name(arena, scrutinee_name)?.to_string(),
-        tag: i32::try_from(tag).map_err(|_| FrontendError {
-            pos: 0,
-            message: "enum variant tag exceeds v0 lowering limit".to_string(),
-        })?,
+        adt_name: family.family_name,
+        tag: variant.tag,
         bindings,
     })
 }
@@ -4087,22 +4162,15 @@ fn lower_adt_match_bindings(
     Ok(())
 }
 
-fn missing_exhaustive_adt_variants<'a>(
+fn missing_exhaustive_sum_variants<'a>(
     scrutinee_ty: &Type,
     patterns: impl IntoIterator<Item = (&'a MatchPattern, Option<ExprId>)>,
     arena: &AstArena,
     adt_table: &AdtTable,
-) -> Result<Option<Vec<SymbolId>>, FrontendError> {
-    let Type::Adt(adt_name) = scrutinee_ty else {
+) -> Result<Option<(String, Vec<String>)>, FrontendError> {
+    let Some(family) = resolve_match_family_for_lowering(scrutinee_ty, arena, adt_table)? else {
         return Ok(None);
     };
-    let adt = adt_table.get(adt_name).ok_or(FrontendError {
-        pos: 0,
-        message: format!(
-            "unknown enum type '{}' in match lowering exhaustiveness check",
-            resolve_symbol_name(arena, *adt_name)?,
-        ),
-    })?;
 
     let mut covered = BTreeSet::new();
     for (pat, guard) in patterns {
@@ -4110,39 +4178,35 @@ fn missing_exhaustive_adt_variants<'a>(
             continue;
         }
         if let MatchPattern::Adt(adt_pat) = pat {
-            if adt_pat.adt_name == *adt_name {
-                covered.insert(adt_pat.variant_name);
+            if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
+                covered.insert(resolve_symbol_name(arena, adt_pat.variant_name)?.to_string());
             }
         }
     }
 
-    Ok(Some(
-        adt.variants
+    Ok(Some((
+        family.display_label,
+        family
+            .variants
             .iter()
             .filter(|variant| !covered.contains(&variant.name))
-            .map(|variant| variant.name)
+            .map(|variant| variant.name.clone())
             .collect(),
-    ))
+    )))
 }
 
 fn non_exhaustive_match_error(
-    arena: &AstArena,
-    adt_name: SymbolId,
-    missing: &[SymbolId],
+    family_label: &str,
+    missing: &[String],
     expression: bool,
 ) -> Result<FrontendError, FrontendError> {
-    let missing_names = missing
-        .iter()
-        .map(|name| resolve_symbol_name(arena, *name))
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", ");
     Ok(FrontendError {
         pos: 0,
         message: format!(
-            "non-exhaustive match{} for enum '{}'; missing variants: {}",
+            "non-exhaustive match{} for {}; missing variants: {}",
             if expression { " expression" } else { "" },
-            resolve_symbol_name(arena, adt_name)?,
-            missing_names,
+            family_label,
+            missing.join(", "),
         ),
     })
 }
@@ -4647,30 +4711,23 @@ fn lower_loop_expr_stmt(
                 adt_table,
                 ret_ty.clone(),
             )?;
-            if !matches!(scr_ty, Type::Quad | Type::Adt(_)) {
+            if !matches!(scr_ty, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "match scrutinee must be quad or enum".to_string(),
+                    message:
+                        "match scrutinee must be quad, enum, Option(T), or Result(T, E)"
+                            .to_string(),
                 });
             }
             let exhaustive_without_default = if default.is_empty() {
-                match missing_exhaustive_adt_variants(
+                match missing_exhaustive_sum_variants(
                     &scr_ty,
                     arms.iter().map(|arm| (&arm.pat, arm.guard)),
                     arena,
                     adt_table,
                 )? {
-                    Some(missing) if !missing.is_empty() => {
-                        return Err(non_exhaustive_match_error(
-                            arena,
-                            match scr_ty {
-                                Type::Adt(name) => name,
-                                _ => unreachable!(),
-                            },
-                            &missing,
-                            false,
-                        )?)
-                    }
+                    Some((family_label, missing)) if !missing.is_empty() =>
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
                     Some(_) => true,
                     None => {
                         return Err(FrontendError {
@@ -4770,19 +4827,21 @@ fn lower_loop_expr_stmt(
                         });
                     }
                 }
-                Type::Adt(scrutinee_name) => {
+                Type::Adt(_) | Type::Option(_) | Type::Result(_, _) => {
+                    let family = resolve_match_family_for_lowering(&scr_ty, arena, adt_table)?
+                        .expect("sum scrutinee family should resolve");
                     let scr_tag_reg = alloc(next);
                     out.push(IrInstr::AdtTag {
                         dst: scr_tag_reg,
                         src: scr_reg,
-                        adt_name: resolve_symbol_name(arena, scrutinee_name)?.to_string(),
+                        adt_name: family.family_name.clone(),
                     });
                     let resolved_patterns = arms
                         .iter()
                         .map(|arm| {
-                            resolve_adt_match_pattern_for_lowering(
+                            resolve_sum_match_pattern_for_lowering(
                                 &arm.pat,
-                                scrutinee_name,
+                                &scr_ty,
                                 arena,
                                 record_table,
                                 adt_table,
@@ -4968,30 +5027,23 @@ fn lower_match_expr(
         adt_table,
         ret_ty.clone(),
     )?;
-    if !matches!(scr_ty, Type::Quad | Type::Adt(_)) {
+    if !matches!(scr_ty, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
         return Err(FrontendError {
             pos: 0,
-            message: "match expression scrutinee must be quad or enum".to_string(),
+            message:
+                "match expression scrutinee must be quad, enum, Option(T), or Result(T, E)"
+                    .to_string(),
         });
     }
     let exhaustive_without_default = if match_expr.default.is_none() {
-        match missing_exhaustive_adt_variants(
+        match missing_exhaustive_sum_variants(
             &scr_ty,
             match_expr.arms.iter().map(|arm| (&arm.pat, arm.guard)),
             arena,
             adt_table,
         )? {
-            Some(missing) if !missing.is_empty() => {
-                return Err(non_exhaustive_match_error(
-                    arena,
-                    match scr_ty {
-                        Type::Adt(name) => name,
-                        _ => unreachable!(),
-                    },
-                    &missing,
-                    true,
-                )?)
-            }
+            Some((family_label, missing)) if !missing.is_empty() =>
+                return Err(non_exhaustive_match_error(&family_label, &missing, true)?),
             Some(_) => true,
             None => {
                 return Err(FrontendError {
@@ -5111,20 +5163,22 @@ fn lower_match_expr(
                 });
             }
         }
-        Type::Adt(scrutinee_name) => {
+        Type::Adt(_) | Type::Option(_) | Type::Result(_, _) => {
+            let family = resolve_match_family_for_lowering(&scr_ty, arena, adt_table)?
+                .expect("sum scrutinee family should resolve");
             let scr_tag_reg = alloc(next);
             out.push(IrInstr::AdtTag {
                 dst: scr_tag_reg,
                 src: scr_reg,
-                adt_name: resolve_symbol_name(arena, scrutinee_name)?.to_string(),
+                adt_name: family.family_name.clone(),
             });
             let resolved_patterns = match_expr
                 .arms
                 .iter()
                 .map(|arm| {
-                    resolve_adt_match_pattern_for_lowering(
+                    resolve_sum_match_pattern_for_lowering(
                         &arm.pat,
-                        scrutinee_name,
+                        &scr_ty,
                         arena,
                         record_table,
                         adt_table,
@@ -6582,6 +6636,55 @@ mod opt_tests {
             instr,
             IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
                 if adt_name == "Result" && variant_name == "Err" && *tag == 1 && items.len() == 1
+        )));
+    }
+
+    #[test]
+    fn lower_option_and_result_match_patterns_to_existing_adt_tag_path() {
+        let src = r#"
+            fn unwrap(opt: Option(bool)) -> bool {
+                let out: bool = match opt {
+                    Option::Some(value) => { value }
+                    Option::None => { false }
+                };
+                return out;
+            }
+
+            fn settle(res: Result(quad, quad)) -> quad {
+                let out: quad = match res {
+                    Result::Ok(value) => { value }
+                    Result::Err(code) => { code }
+                };
+                return out;
+            }
+
+            fn main() {
+                let left: bool = unwrap(Option::Some(true));
+                let right: quad = settle(Result::Err(S));
+                assert(left == true);
+                assert(right == S);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("Option/Result match ergonomics should lower");
+        let unwrap = ir.iter().find(|func| func.name == "unwrap").expect("unwrap fn");
+        assert!(unwrap.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AdtTag { adt_name, .. } if adt_name == "Option"
+        )));
+        assert!(unwrap.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AdtGet { adt_name, index, .. } if adt_name == "Option" && *index == 0
+        )));
+        let settle = ir.iter().find(|func| func.name == "settle").expect("settle fn");
+        assert!(settle.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AdtTag { adt_name, .. } if adt_name == "Result"
+        )));
+        assert!(settle.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AdtGet { adt_name, index, .. } if adt_name == "Result" && *index == 0
         )));
     }
 

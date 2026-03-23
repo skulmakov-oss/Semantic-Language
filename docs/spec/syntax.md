@@ -192,12 +192,17 @@ Current statement rules:
 - `ensures(condition)` is currently a function-level contract clause only
 - `invariant(condition)` is currently a function-level contract clause only
 - `if` conditions must be `bool`
-- `match` currently accepts `quad` scrutinees and nominal enum scrutinees
+- `match` currently accepts `quad` scrutinees, nominal enum scrutinees, and
+  the standard-form `Option(T)` / `Result(T, E)` families
 - `quad` `match` requires an explicit default arm `_ => { ... }`
 - enum `match` may omit `_ => { ... }` only when explicit unguarded variant
   coverage is exhaustive
+- `Option` / `Result` `match` may omit `_ => { ... }` only when explicit
+  unguarded `Some/None` or `Ok/Err` coverage is exhaustive
 - `_` in `match` remains the current wildcard/default arm spelling
 - enum match patterns currently require explicit `Enum::Variant`
+- standard-form match patterns currently require explicit `Option::Some`,
+  `Option::None`, `Result::Ok`, or `Result::Err`
 - enum match payload patterns are currently flat only and accept only names or `_`
 - unit-returning calls may be used as statements
 - extended numeric literal spelling does not itself widen arithmetic support
@@ -338,8 +343,15 @@ Current first-wave `Option` / `Result` standard-form rules:
   `Result(T, E)` type
 - canonical `Option` / `Result` constructors reuse the existing `MakeAdt`
   lowering family
-- `match` ergonomics for `Option` / `Result` remain a later slice; this wave
-  does not widen the general pattern system
+- `match` now accepts explicit standard-form patterns:
+  - `Option::Some(name_or_)`
+  - `Option::None`
+  - `Result::Ok(name_or_)`
+  - `Result::Err(name_or_)`
+- exhaustive `Option` / `Result` matches may omit `_ => { ... }` when all
+  unguarded variants are covered
+- this still reuses the existing canonical ADT-style pattern machinery rather
+  than widening the general pattern system
 
 Current precedence, from tighter to looser:
 

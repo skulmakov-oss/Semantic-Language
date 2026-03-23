@@ -473,8 +473,9 @@ Current first-wave semantics:
   surrounding typed position
 - `Result::Ok(value)` and `Result::Err(error)` currently require contextual
   `Result(T, E)` type from the surrounding typed position
-- current verified execution coverage is over constructor creation and typed
-  success/none/error flows, not over dedicated `Option` / `Result` match sugar
+- current verified execution coverage now includes constructor creation plus
+  explicit `Option::Some/None` and `Result::Ok/Err` match flows over
+  success/none/error paths
 
 Current v0 limit:
 
@@ -482,8 +483,9 @@ Current v0 limit:
 - the current slice does not add user-defined parameterized declarations
 - the current slice does not inject hidden prelude enums into the nominal ADT
   table
-- the current slice does not yet add special `Option` / `Result` match patterns
-  beyond the existing canonical enum machinery
+- `Option` / `Result` match ergonomics are still limited to the existing
+  canonical variant pattern machinery; they do not add bare `Some/Ok` names,
+  nested payload patterns, or a wider generic pattern system
 
 ## Records
 

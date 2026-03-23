@@ -177,6 +177,9 @@ Current message families include:
 - `match`-expression branch type mismatch
 - invalid `match` scrutinee or missing `_` arm
 - enum match pattern that does not match the scrutinee enum
+- standard-form match pattern that does not match the scrutinee `Option(T)` /
+  `Result(T, E)` family
+- non-exhaustive `Option(T)` / `Result(T, E)` match without `_`
 - enum match payload arity mismatch
 - unsupported enum match payload item shape
 - unsupported statement forms inside a value-producing block
