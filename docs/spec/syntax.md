@@ -112,6 +112,7 @@ Current statement forms:
 - `let (a, b) = expr;`
 - `let (a, _): (type_a, type_b) = expr;`
 - `let RecordName { field_name: local_name, other_field: _ } = expr;`
+- `let RecordName { field_name: T, other_field: local_name } = expr else return;`
 - `let (a, T) = expr else return;`
 - `let (a, T): (type_a, quad) = expr else return expr;`
 - `let _ = expr;`
@@ -146,7 +147,11 @@ Current statement rules:
 - record destructuring bind currently requires explicit `RecordName { field: target }` spelling
 - record destructuring bind currently supports only named targets or `_`
 - record destructuring bind currently supports only explicit field mappings, not punning shorthand
-- `let-else` currently requires tuple destructuring target and `else return`
+- record `let-else` is currently statement-level only
+- record `let-else` currently requires explicit `RecordName { field: target } = expr else return ...;` spelling
+- record `let-else` currently allows refutable items only through explicit `quad` literals `N/F/T/S`
+- plain record destructuring bind does not currently accept quad-literal field targets
+- tuple `let-else` currently requires tuple destructuring target and `else return`
 - `let-else` tuple items are currently flat only and accept only names, `_`,
   or `quad` literals `N/F/T/S`
 - tuple destructuring assignment is currently flat only and accepts only names or `_`

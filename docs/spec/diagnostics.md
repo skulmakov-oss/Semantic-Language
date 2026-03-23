@@ -126,6 +126,11 @@ Current message families include:
 - unknown record type in record destructuring bind
 - unknown field in record destructuring bind
 - record destructuring bind on non-matching record value
+- unknown record type in record let-else
+- unknown field in record let-else
+- record let-else on non-matching record value
+- record let-else without refutable quad literal field pattern
+- record let-else literal pattern on non-quad field
 - record equality requested outside the stable field-equality subset
 - invalid tuple arity
 - tuple type mismatch

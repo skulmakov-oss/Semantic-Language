@@ -1,5 +1,5 @@
 use crate::*;
-use crate::types::NumericLiteral;
+use crate::types::{NumericLiteral, RecordPatternTarget};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::ToString;
@@ -345,9 +345,102 @@ fn check_stmt(
                         ),
                     },
                 )?;
-                if let Some(target) = item.target {
-                    env.insert(target, field.ty.clone());
+                match item.target {
+                    RecordPatternTarget::Bind(target) => {
+                        env.insert(target, field.ty.clone());
+                    }
+                    RecordPatternTarget::Discard => {}
+                    RecordPatternTarget::QuadLiteral(_) => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
+                                    .to_string(),
+                        });
+                    }
                 }
+            }
+            Ok(())
+        }
+        Stmt::LetElseRecord {
+            record_name,
+            items,
+            value,
+            else_return,
+        } => {
+            let record = record_table.get(record_name).ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown record type '{}' in record let-else",
+                    resolve_symbol_name(arena, *record_name)?
+                ),
+            })?;
+            let value_ty = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                ret_ty.clone(),
+                loop_stack,
+            )?;
+            if value_ty != Type::Record(*record_name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "record let-else requires value of type '{}', got {:?}",
+                        resolve_symbol_name(arena, *record_name)?,
+                        value_ty
+                    ),
+                });
+            }
+            check_return_payload(
+                *else_return,
+                arena,
+                env,
+                table,
+                record_table,
+                ret_ty,
+                loop_stack,
+            )?;
+            let mut saw_refutable_item = false;
+            for item in items {
+                let field = record.fields.iter().find(|field| field.name == item.field).ok_or(
+                    FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record type '{}' has no field named '{}' in let-else",
+                            resolve_symbol_name(arena, *record_name)?,
+                            resolve_symbol_name(arena, item.field)?
+                        ),
+                    },
+                )?;
+                match item.target {
+                    RecordPatternTarget::Bind(target) => {
+                        env.insert(target, field.ty.clone());
+                    }
+                    RecordPatternTarget::Discard => {}
+                    RecordPatternTarget::QuadLiteral(_) => {
+                        saw_refutable_item = true;
+                        if field.ty != Type::Quad {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "record let-else literal pattern requires quad field, got {:?}",
+                                    field.ty
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            if !saw_refutable_item {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "record let-else requires at least one refutable quad literal field pattern"
+                            .to_string(),
+                });
             }
             Ok(())
         }
@@ -2540,6 +2633,67 @@ mod tests {
     }
 
     #[test]
+    fn record_let_else_typechecks_with_explicit_quad_field_pattern() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: T, quality: score } =
+                    DecisionContext { camera: T, quality: 0.75 } else return;
+                let _: f64 = score;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("record let-else should typecheck");
+    }
+
+    #[test]
+    fn record_let_else_rejects_when_no_refutable_field_is_present() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera, quality: score } =
+                    DecisionContext { camera: T, quality: 0.75 } else return;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("record let-else without refutable field must reject");
+        assert!(err
+            .message
+            .contains("record let-else requires at least one refutable quad literal field pattern"));
+    }
+
+    #[test]
+    fn record_let_else_rejects_non_quad_literal_field_position() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: seen_camera, quality: T } =
+                    DecisionContext { camera: T, quality: 0.75 } else return;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("record let-else quad literal on non-quad field must reject");
+        assert!(err
+            .message
+            .contains("record let-else literal pattern requires quad field"));
+    }
+
+    #[test]
     fn ufcs_method_call_typechecks_via_ordinary_call_contract() {
         let src = r#"
             fn scale(value: f64, factor: f64) -> f64 = value * factor;
@@ -2810,7 +2964,7 @@ fn check_loop_expr_stmt(
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
-        Stmt::LetElseTuple { .. } => Err(FrontendError {
+        Stmt::LetElseTuple { .. } | Stmt::LetElseRecord { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow let-else".to_string(),
         }),

@@ -82,7 +82,14 @@ pub struct RecordFieldExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordPatternItem {
     pub field: SymbolId,
-    pub target: Option<SymbolId>,
+    pub target: RecordPatternTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordPatternTarget {
+    Bind(SymbolId),
+    Discard,
+    QuadLiteral(QuadVal),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,6 +132,12 @@ pub enum Stmt {
         record_name: SymbolId,
         items: Vec<RecordPatternItem>,
         value: ExprId,
+    },
+    LetElseRecord {
+        record_name: SymbolId,
+        items: Vec<RecordPatternItem>,
+        value: ExprId,
+        else_return: Option<ExprId>,
     },
     LetElseTuple {
         items: Vec<TuplePatternItem>,

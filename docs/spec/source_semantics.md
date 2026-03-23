@@ -49,6 +49,8 @@ Current v0 record declaration semantics:
 - explicit record destructuring bind uses `let RecordName { field: target, ... } = value;`
 - explicit record destructuring bind currently projects only the named subset of declaration fields
 - `_` targets in explicit record destructuring bind discard the projected field value without creating a source binding
+- explicit record `let-else` uses `let RecordName { field: target, ... } = value else return ...;`
+- record `let-else` currently treats only explicit `quad` literal field targets as refutable checks
 - record equality is allowed only when every field type already supports stable equality
 
 ## Deterministic Evaluation Order
@@ -214,6 +216,9 @@ Current statement meaning:
   tuple items into named bindings
 - record destructuring bind evaluates the right-hand side once before projecting
   the requested record fields into named bindings
+- record `let-else` evaluates the right-hand side once, checks refutable
+  `quad` field literals before introducing named bindings, and follows the
+  explicit `else return` path on failure
 - tuple destructuring assignment evaluates the right-hand side once before
   projecting tuple items into existing assignment targets
 - tuple `let-else` introduces named bindings only on the success path; failure
@@ -262,6 +267,8 @@ Current v0 limit:
   tuple destructuring binds, `const` bindings, discard binds, and expression
   statements before the tail value
 - tuple `let-else` is not yet part of the stable value-producing block-body
+  contract
+- record `let-else` is not yet part of the stable value-producing block-body
   contract
 - discard bind is accepted in value-producing block bodies, but richer pattern
   destructuring is not yet part of the stable block-expression contract
@@ -406,8 +413,12 @@ Current v0 limit:
 - record field access is read-only and resolves by canonical declaration-slot order
 - record destructuring bind currently supports only statement-level explicit
   `RecordName { field: target }` patterns
-- record destructuring bind does not yet open `let-else`, nested patterns,
-  literal field patterns, update, or punning
+- record `let-else` currently supports only statement-level explicit field
+  mappings with `else return`
+- record `let-else` currently allows refutable matching only through explicit
+  `quad` literal field targets
+- record destructuring bind does not yet open nested patterns, update, or
+  punning
 - record equality remains gated to the stable field-equality subset
 - record values are not part of the PROMETHEUS host ABI surface
 

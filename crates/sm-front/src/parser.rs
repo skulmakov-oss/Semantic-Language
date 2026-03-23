@@ -4,7 +4,8 @@ use crate::types::{
     LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem,
     LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordPatternItem, RecordPatternTarget, Stmt, StmtId, SymbolId, Token, TokenKind,
+    TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -238,14 +239,16 @@ impl<'a> Parser<'a> {
                 let items = self.parse_record_pattern_items_after_lbrace()?;
                 self.expect(TokenKind::Assign, "expected '='")?;
                 let value = self.parse_expr()?;
-                if self.check(TokenKind::KwElse) {
-                    return Err(FrontendError {
-                        pos: self.pos(),
-                        message:
-                            "let-else record pattern is not part of the stable contract in this slice"
-                                .to_string(),
-                    });
+                if self.eat(TokenKind::KwElse) {
+                    let else_return = self.parse_else_return_payload("record let-else")?;
+                    return Ok(self.arena.alloc_stmt(Stmt::LetElseRecord {
+                        record_name: name,
+                        items,
+                        value,
+                        else_return,
+                    }));
                 }
+                let items = self.lower_record_pattern_items_to_bind(items)?;
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::LetRecord {
                     record_name: name,
@@ -503,12 +506,22 @@ impl<'a> Parser<'a> {
                 "expected ':' after record destructuring field name",
             )?;
             let target = if self.eat(TokenKind::Underscore) {
-                None
+                RecordPatternTarget::Discard
+            } else if self.eat(TokenKind::QuadN) {
+                RecordPatternTarget::QuadLiteral(QuadVal::N)
+            } else if self.eat(TokenKind::QuadF) {
+                RecordPatternTarget::QuadLiteral(QuadVal::F)
+            } else if self.eat(TokenKind::QuadT) {
+                RecordPatternTarget::QuadLiteral(QuadVal::T)
+            } else if self.eat(TokenKind::QuadS) {
+                RecordPatternTarget::QuadLiteral(QuadVal::S)
             } else {
-                Some(self.expect_symbol()?)
+                RecordPatternTarget::Bind(self.expect_symbol()?)
             };
-            if let Some(target_name) = target {
-                if items.iter().any(|existing| existing.target == Some(target_name)) {
+            if let RecordPatternTarget::Bind(target_name) = target {
+                if items.iter().any(|existing| {
+                    matches!(existing.target, RecordPatternTarget::Bind(existing_name) if existing_name == target_name)
+                }) {
                     return Err(FrontendError {
                         pos: self.pos(),
                         message: format!(
@@ -536,6 +549,23 @@ impl<'a> Parser<'a> {
                 pos: self.pos(),
                 message: "record destructuring pattern requires at least 1 field".to_string(),
             });
+        }
+        Ok(items)
+    }
+
+    fn lower_record_pattern_items_to_bind(
+        &self,
+        items: Vec<RecordPatternItem>,
+    ) -> Result<Vec<RecordPatternItem>, FrontendError> {
+        for item in &items {
+            if matches!(item.target, RecordPatternTarget::QuadLiteral(_)) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
+                            .to_string(),
+                });
+            }
         }
         Ok(items)
     }
@@ -3058,14 +3088,9 @@ fn main() {
         assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
         assert_eq!(items.len(), 2);
         assert_eq!(program.arena.symbol_name(items[0].field), "camera");
-        assert_eq!(
-            items[0]
-                .target
-                .map(|symbol| program.arena.symbol_name(symbol).to_string()),
-            Some("seen_camera".to_string())
-        );
+        assert!(matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "seen_camera"));
         assert_eq!(program.arena.symbol_name(items[1].field), "quality");
-        assert!(items[1].target.is_none());
+        assert!(matches!(items[1].target, RecordPatternTarget::Discard));
         assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
     }
 
@@ -3113,23 +3138,58 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_record_destructuring_let_else_surface() {
+    fn rustlike_parser_accepts_record_let_else_surface() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let DecisionContext { camera: T, quality: score } =
+        DecisionContext { camera: T, quality: 0.75 } else return;
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record let-else should parse");
+        let main = &program.functions[0];
+        let Stmt::LetElseRecord {
+            record_name,
+            items,
+            value,
+            else_return,
+        } = program.arena.stmt(main.body[0])
+        else {
+            panic!("expected record let-else statement");
+        };
+        assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0].target, RecordPatternTarget::QuadLiteral(QuadVal::T)));
+        assert!(matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "score"));
+        assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
+        assert!(else_return.is_none());
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_quad_literal_record_pattern_without_let_else() {
         let src = r#"
 record DecisionContext {
     camera: quad,
 }
 
 fn main() {
-    let DecisionContext { camera: seen } = DecisionContext { camera: T } else return;
+    let DecisionContext { camera: T } = DecisionContext { camera: T };
     return;
 }
         "#;
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("record let-else must reject in this slice");
+            .expect_err("plain record destructuring with quad literal must reject");
         assert!(err
             .message
-            .contains("let-else record pattern is not part of the stable contract in this slice"));
+            .contains("quad literal record field patterns currently require let-else"));
     }
 
     #[test]

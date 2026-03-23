@@ -1758,6 +1758,27 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_record_let_else_path() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: T, quality: score } =
+                    DecisionContext { quality: 0.75, camera: T } else return;
+                assert(score == 0.75);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disassemble");
+        assert!(disasm.contains("RECORD_GET"));
+        run_semcode(&bytes).expect("record let-else path should run");
+    }
+
+    #[test]
     fn vm_runs_for_range_inclusive_path() {
         let src = r#"
             fn main() {

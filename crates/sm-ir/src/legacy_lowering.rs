@@ -3,7 +3,7 @@ use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
 };
 use sm_front::{LoopExpr, TuplePatternItem};
-use sm_front::types::{NumericLiteral, RecordPatternItem};
+use sm_front::types::{NumericLiteral, RecordPatternItem, RecordPatternTarget};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrInstr {
@@ -1848,9 +1848,6 @@ fn bind_record_items(
         ),
     })?;
     for item in items {
-        let Some(target) = item.target else {
-            continue;
-        };
         let (index, field) = record
             .fields
             .iter()
@@ -1875,9 +1872,149 @@ fn bind_record_items(
             record_name: resolve_symbol_name(arena, record_name)?.to_string(),
             index,
         });
-        env.insert(target, field.ty.clone());
+        match item.target {
+            RecordPatternTarget::Bind(target) => {
+                env.insert(target, field.ty.clone());
+                out.push(IrInstr::StoreVar {
+                    name: resolve_symbol_name(arena, target)?.to_string(),
+                    src: reg,
+                });
+            }
+            RecordPatternTarget::Discard => {}
+            RecordPatternTarget::QuadLiteral(_) => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
+                            .to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn bind_let_else_record_items(
+    record_name: SymbolId,
+    items: &[RecordPatternItem],
+    record_reg: u16,
+    record_ty: &Type,
+    else_return: Option<ExprId>,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &mut ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    ret_ty: Type,
+) -> Result<(), FrontendError> {
+    if *record_ty != Type::Record(record_name) {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "record let-else requires value of type '{}', got {:?}",
+                resolve_symbol_name(arena, record_name)?,
+                record_ty
+            ),
+        });
+    }
+    let record = record_table.get(&record_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in record let-else",
+            resolve_symbol_name(arena, record_name)?
+        ),
+    })?;
+    let pattern_id = alloc_loop_expr_id(next);
+    let mut deferred_binds = Vec::new();
+    let mut saw_refutable_item = false;
+    for item in items {
+        let (index, field) = record
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == item.field)
+            .ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record type '{}' has no field named '{}' in let-else",
+                    resolve_symbol_name(arena, record_name)?,
+                    resolve_symbol_name(arena, item.field)?
+                ),
+            })?;
+        let reg = alloc(next);
+        let index = u16::try_from(index).map_err(|_| FrontendError {
+            pos: 0,
+            message: "record let-else index exceeds v0 limit".to_string(),
+        })?;
+        out.push(IrInstr::RecordGet {
+            dst: reg,
+            src: record_reg,
+            record_name: resolve_symbol_name(arena, record_name)?.to_string(),
+            index,
+        });
+        match item.target {
+            RecordPatternTarget::Bind(target) => {
+                deferred_binds.push((target, reg, field.ty.clone()));
+            }
+            RecordPatternTarget::Discard => {}
+            RecordPatternTarget::QuadLiteral(pat) => {
+                saw_refutable_item = true;
+                if field.ty != Type::Quad {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record let-else literal pattern requires quad field, got {:?}",
+                            field.ty
+                        ),
+                    });
+                }
+                let lit_reg = alloc(next);
+                out.push(IrInstr::LoadQ {
+                    dst: lit_reg,
+                    val: pat,
+                });
+                let cmp_reg = alloc(next);
+                out.push(IrInstr::CmpEq {
+                    dst: cmp_reg,
+                    lhs: reg,
+                    rhs: lit_reg,
+                });
+                let continue_label = format!("let_else_record_{}_field_{}_ok", pattern_id, index);
+                out.push(IrInstr::JmpIf {
+                    cond: cmp_reg,
+                    label: continue_label.clone(),
+                });
+                lower_return_payload(
+                    else_return,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    ret_ty.clone(),
+                )?;
+                out.push(IrInstr::Label {
+                    name: continue_label,
+                });
+            }
+        }
+    }
+    if !saw_refutable_item {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "record let-else requires at least one refutable quad literal field pattern"
+                    .to_string(),
+        });
+    }
+    for (name, reg, item_ty) in deferred_binds {
+        env.insert(name, item_ty);
         out.push(IrInstr::StoreVar {
-            name: resolve_symbol_name(arena, target)?.to_string(),
+            name: resolve_symbol_name(arena, name)?.to_string(),
             src: reg,
         });
     }
@@ -2338,6 +2475,40 @@ fn lower_stmt(
                 &mut ctx.instrs,
                 env,
                 record_table,
+            )
+        }
+        Stmt::LetElseRecord {
+            record_name,
+            items,
+            value,
+            else_return,
+        } => {
+            let (record_reg, record_ty) = lower_expr_with_expected(
+                *value,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                record_table,
+                Some(Type::Record(*record_name)),
+                ret_ty.clone(),
+            )?;
+            bind_let_else_record_items(
+                *record_name,
+                items,
+                record_reg,
+                &record_ty,
+                *else_return,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                record_table,
+                ret_ty,
             )
         }
         Stmt::LetElseTuple {
@@ -2896,6 +3067,14 @@ fn lower_value_block_expr(
                     record_table,
                 )?;
             }
+            Stmt::LetElseRecord { .. } => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "block expression body currently does not allow record let-else"
+                            .to_string(),
+                });
+            }
             Stmt::Discard { ty, value } => {
                 let _ = lower_expr_with_expected(
                     *value,
@@ -3107,7 +3286,7 @@ fn lower_loop_expr_stmt(
     ret_ty: Type,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
-        Stmt::LetElseTuple { .. } => Err(FrontendError {
+        Stmt::LetElseTuple { .. } | Stmt::LetElseRecord { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow let-else".to_string(),
         }),
@@ -4491,6 +4670,43 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "seen_camera"
+        )));
+    }
+
+    #[test]
+    fn lower_record_let_else_to_record_get_and_early_return_ir() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let DecisionContext { camera: T, quality: score } =
+                    DecisionContext { quality: 0.75, camera: T } else return;
+                assert(score == 0.75);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("record let-else should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::RecordGet { record_name, index, .. }
+                if record_name == "DecisionContext" && (*index == 0 || *index == 1)
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::LoadQ { val: QuadVal::T, .. }
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::JmpIf { label, .. } if label.starts_with("let_else_record_")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "score"
         )));
     }
 
