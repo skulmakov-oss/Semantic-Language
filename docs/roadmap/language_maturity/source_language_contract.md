@@ -35,6 +35,7 @@ Related staged design-target notes:
 
 - `docs/roadmap/language_maturity/function_contract_invariant_scope.md`
 - `docs/roadmap/language_maturity/config_schema_contract_scope.md`
+- `docs/roadmap/language_maturity/generated_api_contract_surface_scope.md`
 - `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
 - `docs/roadmap/language_maturity/record_data_model.md`
 - `docs/roadmap/language_maturity/record_scenarios.md`
