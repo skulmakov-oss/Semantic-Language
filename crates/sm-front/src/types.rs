@@ -379,6 +379,12 @@ pub struct ValidationVariantPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationCheck {
+    RequiredField { field: SymbolId },
+    FieldType { field: SymbolId, ty: Type },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationShapePlan {
     Record(Vec<ValidationFieldPlan>),
     TaggedUnion(Vec<ValidationVariantPlan>),
@@ -389,6 +395,7 @@ pub struct ValidationPlan {
     pub schema_name: SymbolId,
     pub role: Option<SchemaRole>,
     pub shape: ValidationShapePlan,
+    pub checks: Vec<ValidationCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

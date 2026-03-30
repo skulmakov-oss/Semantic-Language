@@ -22,7 +22,8 @@ pub use types::{
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
     SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type,
-    UnaryOp, ValidationFieldPlan, ValidationPlan, ValidationShapePlan, ValidationVariantPlan,
+    UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
+    ValidationVariantPlan,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};

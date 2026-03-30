@@ -95,6 +95,12 @@ Current v0 schema declaration semantics:
   the frontend/typecheck path
 - canonical schema declarations may now also derive deterministic compile-time
   validation plans owned by the same frontend/typecheck path
+- record-shaped schemas currently derive first-wave validation checks in
+  declaration order:
+  - required-field checks
+  - field-type compatibility checks
+- tagged-union schemas currently derive canonical validation-plan ownership but
+  do not yet derive first-wave branch checks
 - schema role markers currently contribute compile-time declaration metadata
   only; they do not imply loading, generation, transport, or runtime behavior
 - schema declarations do not currently introduce executable types, runtime

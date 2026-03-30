@@ -156,6 +156,10 @@ pub fn derive_validation_plan_table(program: &Program) -> Result<ValidationPlanT
                 )?,
             ),
         };
+        let checks = match &shape {
+            ValidationShapePlan::Record(fields) => derive_record_validation_checks(fields),
+            ValidationShapePlan::TaggedUnion(_) => Vec::new(),
+        };
 
         plans.insert(
             schema.name,
@@ -163,6 +167,7 @@ pub fn derive_validation_plan_table(program: &Program) -> Result<ValidationPlanT
                 schema_name: schema.name,
                 role: schema.role,
                 shape,
+                checks,
             },
         );
     }
@@ -3374,6 +3379,32 @@ mod tests {
         };
         assert_eq!(**base, Type::U32);
         assert_eq!(resolve_symbol_name(&program.arena, *unit).expect("unit symbol"), "ms");
+        assert_eq!(
+            plan.checks,
+            vec![
+                ValidationCheck::RequiredField {
+                    field: fields[0].name,
+                },
+                ValidationCheck::FieldType {
+                    field: fields[0].name,
+                    ty: fields[0].ty.clone(),
+                },
+                ValidationCheck::RequiredField {
+                    field: fields[1].name,
+                },
+                ValidationCheck::FieldType {
+                    field: fields[1].name,
+                    ty: fields[1].ty.clone(),
+                },
+                ValidationCheck::RequiredField {
+                    field: fields[2].name,
+                },
+                ValidationCheck::FieldType {
+                    field: fields[2].name,
+                    ty: fields[2].ty.clone(),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -3413,6 +3444,7 @@ mod tests {
             variants[1].fields[1].ty,
             Type::Result(Box::new(Type::Quad), Box::new(Type::Bool))
         );
+        assert!(plan.checks.is_empty());
     }
 
     #[test]
@@ -4996,6 +5028,18 @@ fn derive_validation_variant_plans(
             })
         })
         .collect()
+}
+
+fn derive_record_validation_checks(fields: &[ValidationFieldPlan]) -> Vec<ValidationCheck> {
+    let mut checks = Vec::with_capacity(fields.len() * 2);
+    for field in fields {
+        checks.push(ValidationCheck::RequiredField { field: field.name });
+        checks.push(ValidationCheck::FieldType {
+            field: field.name,
+            ty: field.ty.clone(),
+        });
+    }
+    checks
 }
 
 fn validate_tagged_union_schema(

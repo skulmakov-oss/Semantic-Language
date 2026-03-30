@@ -44,6 +44,8 @@ Current compile-time-only declaration families:
   `wire schema`
 - deterministic compile-time validation plans derived from canonical schema
   declarations and referenced declared types
+- first-wave record-schema validation checks for required fields and field-type
+  compatibility, kept in declaration order for inspectability
 
 ## Unit
 
