@@ -4,6 +4,8 @@ pub struct CliPipeline;
 #[cfg(feature = "std")]
 pub use app::{main_entry, run};
 #[cfg(feature = "std")]
+pub use config::{parse_config_document, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValue};
+#[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 pub fn compile_source(
 pub fn build_ir(

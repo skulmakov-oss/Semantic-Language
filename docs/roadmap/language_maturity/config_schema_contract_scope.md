@@ -25,6 +25,14 @@ parallel ad hoc config rules.
 - keep validation deterministic and declaration-order preserving
 - make diagnostics user-facing and stable at the config-contract layer
 
+Current chosen canonical config document surface:
+
+- root object only
+- identifier keys
+- nested object values
+- scalar values limited to string, bool, quad, and decimal/integer numbers
+- no arrays, comments, or alternate wire/config syntaxes in the first slice
+
 ## Intended Slice Order
 
 1. config contract scope checkpoint

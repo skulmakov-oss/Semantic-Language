@@ -3,6 +3,8 @@
 #[cfg(feature = "std")]
 mod app;
 #[cfg(feature = "std")]
+mod config;
+#[cfg(feature = "std")]
 mod formatter;
 
 #[cfg(feature = "std")]
@@ -23,6 +25,8 @@ pub struct CliPipeline;
 
 #[cfg(feature = "std")]
 pub use app::{main_entry, run};
+#[cfg(feature = "std")]
+pub use config::{parse_config_document, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValue};
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 
