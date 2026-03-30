@@ -42,6 +42,15 @@ contracts without maintaining a second parallel API description layer.
 4. deterministic generation for tagged-union schemas
 5. diagnostics/docs freeze for generated API contract artifacts
 
+## Slice-2 Contract Reading
+
+The first code slice for `V03-04` owns only the canonical generated artifact
+shape and formatter in `smc-cli`.
+
+- it introduces one explicit artifact family and one formatter surface
+- it preserves declaration order supplied by later derivation slices
+- it does not yet derive artifacts from canonical schemas
+
 ## Non-Goals
 
 - emitting client SDKs or server stubs
