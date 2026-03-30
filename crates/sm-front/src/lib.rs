@@ -20,8 +20,8 @@ pub use types::{
     FrontendError, FrontendErrorKind, Function, IfExpr, LogosEntity, LogosEntityField,
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
-    RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, Stmt, StmtId,
-    SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaShape,
+    SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};

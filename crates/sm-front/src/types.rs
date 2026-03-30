@@ -341,9 +341,21 @@ pub struct SchemaField {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SchemaDecl {
+pub struct SchemaVariant {
     pub name: SymbolId,
     pub fields: Vec<SchemaField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaShape {
+    Record(Vec<SchemaField>),
+    TaggedUnion(Vec<SchemaVariant>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaDecl {
+    pub name: SymbolId,
+    pub shape: SchemaShape,
 }
 
 #[derive(Debug, Clone, PartialEq)]

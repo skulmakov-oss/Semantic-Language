@@ -38,6 +38,8 @@ Current source-visible types:
 Current compile-time-only declaration families:
 
 - nominal `schema Name { ... }` declarations for boundary/model contracts
+- record-shaped and tagged-union schema forms within that compile-time-only
+  declaration family
 
 ## Unit
 

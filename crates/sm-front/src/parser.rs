@@ -5,8 +5,9 @@ use crate::types::{
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField, Stmt,
-    StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField,
+    SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type,
+    UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -212,9 +213,36 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::KwSchema, "expected 'schema'")?;
         let name = self.expect_symbol()?;
         self.expect(TokenKind::LBrace, "expected '{' after schema name")?;
+        let shape = if self.check(TokenKind::RBrace) {
+            SchemaShape::Record(Vec::new())
+        } else {
+            let first_name = self.expect_symbol()?;
+            if self.check(TokenKind::Colon) {
+                SchemaShape::Record(self.parse_schema_record_fields_after_first(first_name)?)
+            } else if self.check(TokenKind::LBrace) {
+                SchemaShape::TaggedUnion(
+                    self.parse_schema_tagged_union_variants_after_first(first_name)?,
+                )
+            } else {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "schema declaration body must use either 'field: type' entries or 'Variant { ... }' entries"
+                            .to_string(),
+                });
+            }
+        };
+        self.expect(TokenKind::RBrace, "expected '}' after schema declaration")?;
+        Ok(SchemaDecl { name, shape })
+    }
+
+    fn parse_schema_record_fields_after_first(
+        &mut self,
+        first_name: SymbolId,
+    ) -> Result<Vec<SchemaField>, FrontendError> {
         let mut fields = Vec::new();
-        while !self.check(TokenKind::RBrace) {
-            let field_name = self.expect_symbol()?;
+        let mut field_name = first_name;
+        loop {
             self.expect(TokenKind::Colon, "expected ':' after schema field name")?;
             let field_ty = self.parse_type()?;
             fields.push(SchemaField {
@@ -225,12 +253,73 @@ impl<'a> Parser<'a> {
                 if self.check(TokenKind::RBrace) {
                     break;
                 }
+                field_name = self.expect_symbol()?;
+                if !self.check(TokenKind::Colon) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "record-shaped schema declarations cannot mix field entries with tagged-union variants"
+                                .to_string(),
+                    });
+                }
                 continue;
             }
             break;
         }
-        self.expect(TokenKind::RBrace, "expected '}' after schema declaration")?;
-        Ok(SchemaDecl { name, fields })
+        Ok(fields)
+    }
+
+    fn parse_schema_tagged_union_variants_after_first(
+        &mut self,
+        first_name: SymbolId,
+    ) -> Result<Vec<SchemaVariant>, FrontendError> {
+        let mut variants = Vec::new();
+        let mut variant_name = first_name;
+        loop {
+            self.expect(
+                TokenKind::LBrace,
+                "expected '{' after schema variant name in tagged-union schema",
+            )?;
+            let mut fields = Vec::new();
+            while !self.check(TokenKind::RBrace) {
+                let field_name = self.expect_symbol()?;
+                self.expect(TokenKind::Colon, "expected ':' after schema field name")?;
+                let field_ty = self.parse_type()?;
+                fields.push(SchemaField {
+                    name: field_name,
+                    ty: field_ty,
+                });
+                if self.eat(TokenKind::Comma) {
+                    if self.check(TokenKind::RBrace) {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+            self.expect(TokenKind::RBrace, "expected '}' after schema variant payload")?;
+            variants.push(SchemaVariant {
+                name: variant_name,
+                fields,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                variant_name = self.expect_symbol()?;
+                if !self.check(TokenKind::LBrace) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "tagged-union schema declarations cannot mix variant entries with record-shaped fields"
+                                .to_string(),
+                    });
+                }
+                continue;
+            }
+            break;
+        }
+        Ok(variants)
     }
 
     fn parse_adt_decl(&mut self) -> Result<AdtDecl, FrontendError> {
@@ -3474,8 +3563,42 @@ fn main() {
         assert_eq!(program.schemas.len(), 1);
         let schema = &program.schemas[0];
         assert_eq!(program.arena.symbol_name(schema.name), "SensorConfig");
-        assert_eq!(schema.fields.len(), 2);
-        assert_eq!(program.arena.symbol_name(schema.fields[0].name), "interval_ms");
+        let SchemaShape::Record(fields) = &schema.shape else {
+            panic!("expected record-shaped schema");
+        };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(program.arena.symbol_name(fields[0].name), "interval_ms");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_tagged_union_schema_declaration() {
+        let src = r#"
+schema Message {
+    Ping {},
+    Data {
+        value: f64,
+        status: Result(quad, bool),
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tagged-union schema declaration should parse");
+        assert_eq!(program.schemas.len(), 1);
+        let schema = &program.schemas[0];
+        assert_eq!(program.arena.symbol_name(schema.name), "Message");
+        let SchemaShape::TaggedUnion(variants) = &schema.shape else {
+            panic!("expected tagged-union schema");
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(program.arena.symbol_name(variants[0].name), "Ping");
+        assert!(variants[0].fields.is_empty());
+        assert_eq!(program.arena.symbol_name(variants[1].name), "Data");
+        assert_eq!(variants[1].fields.len(), 2);
     }
 
     #[test]

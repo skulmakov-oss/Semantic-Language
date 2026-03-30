@@ -3237,6 +3237,30 @@ mod tests {
     }
 
     #[test]
+    fn tagged_union_schema_declarations_typecheck_as_compile_time_top_level_items() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            schema Payload {
+                Empty {},
+                PointRef {
+                    point: Point,
+                    label: Option(quad),
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("tagged-union schema declarations should typecheck");
+    }
+
+    #[test]
     fn schema_declaration_rejects_duplicate_field_name() {
         let src = r#"
             schema PointPayload {
@@ -3270,6 +3294,49 @@ mod tests {
         assert!(err
             .message
             .contains("schema 'PointPayload' must declare at least 1 field"));
+    }
+
+    #[test]
+    fn tagged_union_schema_rejects_duplicate_variant_name() {
+        let src = r#"
+            schema Payload {
+                Ready {},
+                Ready {
+                    detail: quad,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("duplicate schema variant must reject");
+        assert!(err
+            .message
+            .contains("schema 'Payload' cannot repeat variant 'Ready'"));
+    }
+
+    #[test]
+    fn tagged_union_schema_rejects_duplicate_variant_field_name() {
+        let src = r#"
+            schema Payload {
+                Data {
+                    value: i32,
+                    value: i32,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("duplicate tagged-union schema field must reject");
+        assert!(err
+            .message
+            .contains("schema 'Payload::Data' cannot repeat field 'value'"));
     }
 
     #[test]
@@ -4674,24 +4741,107 @@ fn validate_schema_declarations(
                 resolve_symbol_name(&program.arena, schema.name)?
             ),
         })?;
-        if schema.fields.is_empty() {
+        match &schema.shape {
+            SchemaShape::Record(fields) => validate_record_shaped_schema(
+                schema.name,
+                fields,
+                record_table,
+                adt_table,
+                &program.arena,
+            )?,
+            SchemaShape::TaggedUnion(variants) => validate_tagged_union_schema(
+                schema.name,
+                variants,
+                record_table,
+                adt_table,
+                &program.arena,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn validate_record_shaped_schema(
+    schema_name: SymbolId,
+    fields: &[SchemaField],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    if fields.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "schema '{}' must declare at least 1 field",
+                resolve_symbol_name(arena, schema_name)?
+            ),
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for field in fields {
+        if !seen.insert(field.name) {
             return Err(FrontendError {
                 pos: 0,
                 message: format!(
-                    "schema '{}' must declare at least 1 field",
-                    resolve_symbol_name(&program.arena, schema.name)?
+                    "schema '{}' cannot repeat field '{}'",
+                    resolve_symbol_name(arena, schema_name)?,
+                    resolve_symbol_name(arena, field.name)?
                 ),
             });
         }
-        let mut seen = BTreeSet::new();
-        for field in &schema.fields {
-            if !seen.insert(field.name) {
+        ensure_type_resolved(
+            &field.ty,
+            record_table,
+            adt_table,
+            arena,
+            format!(
+                "schema field '{}.{}'",
+                resolve_symbol_name(arena, schema_name)?,
+                resolve_symbol_name(arena, field.name)?
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_tagged_union_schema(
+    schema_name: SymbolId,
+    variants: &[SchemaVariant],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    if variants.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "schema '{}' must declare at least 1 variant",
+                resolve_symbol_name(arena, schema_name)?
+            ),
+        });
+    }
+    let mut seen_variants = BTreeSet::new();
+    for variant in variants {
+        if !seen_variants.insert(variant.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "schema '{}' cannot repeat variant '{}'",
+                    resolve_symbol_name(arena, schema_name)?,
+                    resolve_symbol_name(arena, variant.name)?
+                ),
+            });
+        }
+        let mut seen_fields = BTreeSet::new();
+        for field in &variant.fields {
+            if !seen_fields.insert(field.name) {
                 return Err(FrontendError {
                     pos: 0,
                     message: format!(
-                        "schema '{}' cannot repeat field '{}'",
-                        resolve_symbol_name(&program.arena, schema.name)?,
-                        resolve_symbol_name(&program.arena, field.name)?
+                        "schema '{}::{}' cannot repeat field '{}'",
+                        resolve_symbol_name(arena, schema_name)?,
+                        resolve_symbol_name(arena, variant.name)?,
+                        resolve_symbol_name(arena, field.name)?
                     ),
                 });
             }
@@ -4699,11 +4849,12 @@ fn validate_schema_declarations(
                 &field.ty,
                 record_table,
                 adt_table,
-                &program.arena,
+                arena,
                 format!(
-                    "schema field '{}.{}'",
-                    resolve_symbol_name(&program.arena, schema.name)?,
-                    resolve_symbol_name(&program.arena, field.name)?
+                    "schema field '{}::{}.{}'",
+                    resolve_symbol_name(arena, schema_name)?,
+                    resolve_symbol_name(arena, variant.name)?,
+                    resolve_symbol_name(arena, field.name)?
                 ),
             )?;
         }
