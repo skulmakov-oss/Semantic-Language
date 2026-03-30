@@ -22,7 +22,7 @@ pub use types::{
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
     SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type,
-    UnaryOp,
+    UnaryOp, ValidationFieldPlan, ValidationPlan, ValidationShapePlan, ValidationVariantPlan,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};
@@ -34,7 +34,10 @@ pub mod parser;
 #[cfg(any(feature = "alloc", feature = "std"))]
 mod typecheck;
 #[cfg(any(feature = "alloc", feature = "std"))]
-pub use typecheck::{type_check_function, type_check_function_with_table, type_check_program};
+pub use typecheck::{
+    derive_validation_plan_table, type_check_function, type_check_function_with_table,
+    type_check_program,
+};
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +59,9 @@ pub type AdtTable = BTreeMap<SymbolId, AdtDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub type SchemaTable = BTreeMap<SymbolId, SchemaDecl>;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type ValidationPlanTable = BTreeMap<SymbolId, ValidationPlan>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]

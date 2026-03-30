@@ -42,6 +42,8 @@ Current compile-time-only declaration families:
   declaration family
 - explicit schema-role metadata via `config schema`, `api schema`, and
   `wire schema`
+- deterministic compile-time validation plans derived from canonical schema
+  declarations and referenced declared types
 
 ## Unit
 

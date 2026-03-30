@@ -93,6 +93,8 @@ Current v0 schema declaration semantics:
   and resolve against the ordinary nominal/executable type tables
 - schema declarations currently live only in the canonical schema table owned by
   the frontend/typecheck path
+- canonical schema declarations may now also derive deterministic compile-time
+  validation plans owned by the same frontend/typecheck path
 - schema role markers currently contribute compile-time declaration metadata
   only; they do not imply loading, generation, transport, or runtime behavior
 - schema declarations do not currently introduce executable types, runtime

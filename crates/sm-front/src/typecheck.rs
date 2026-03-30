@@ -123,6 +123,53 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
     Ok(())
 }
 
+pub fn derive_validation_plan_table(program: &Program) -> Result<ValidationPlanTable, FrontendError> {
+    let record_table = build_record_table(program)?;
+    let adt_table = build_adt_table(program)?;
+    let schema_table = build_schema_table(program)?;
+    let fn_table = build_fn_table(program)?;
+    validate_top_level_name_collisions(program, &fn_table, &record_table, &adt_table, &schema_table)?;
+    validate_record_declarations(program, &record_table, &adt_table)?;
+    validate_adt_declarations(program, &record_table, &adt_table)?;
+    validate_schema_declarations(program, &schema_table, &record_table, &adt_table)?;
+
+    let mut plans = ValidationPlanTable::new();
+    for schema in &program.schemas {
+        let _ = schema_table.get(&schema.name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "missing schema '{}' in canonical schema table",
+                resolve_symbol_name(&program.arena, schema.name)?
+            ),
+        })?;
+
+        let shape = match &schema.shape {
+            SchemaShape::Record(fields) => ValidationShapePlan::Record(
+                derive_validation_field_plans(fields, &record_table, &adt_table, &program.arena)?,
+            ),
+            SchemaShape::TaggedUnion(variants) => ValidationShapePlan::TaggedUnion(
+                derive_validation_variant_plans(
+                    variants,
+                    &record_table,
+                    &adt_table,
+                    &program.arena,
+                )?,
+            ),
+        };
+
+        plans.insert(
+            schema.name,
+            ValidationPlan {
+                schema_name: schema.name,
+                role: schema.role,
+                shape,
+            },
+        );
+    }
+
+    Ok(plans)
+}
+
 pub fn type_check_function_with_table(
     func: &Function,
     arena: &AstArena,
@@ -1758,6 +1805,12 @@ mod tests {
         type_check_program(&program)
     }
 
+    fn derive_validation_plans_from_source(src: &str) -> Result<(Program, ValidationPlanTable), FrontendError> {
+        let program = parse_program(src)?;
+        let plans = derive_validation_plan_table(&program)?;
+        Ok((program, plans))
+    }
+
     #[test]
     fn fx_identity_surface_typechecks() {
         let src = r#"
@@ -3284,6 +3337,82 @@ mod tests {
         "#;
 
         typecheck_source(src).expect("role-marked schema declarations should typecheck");
+    }
+
+    #[test]
+    fn derive_validation_plan_table_returns_canonical_record_schema_plan() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            config schema PointPayload {
+                point: Point,
+                label: Option(quad),
+                interval_ms: u32[ms],
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let (program, plans) =
+            derive_validation_plans_from_source(src).expect("validation plans should derive");
+        let schema_name = program.schemas[0].name;
+        let plan = plans.get(&schema_name).expect("schema plan must exist");
+        assert_eq!(plan.role, Some(SchemaRole::Config));
+        let ValidationShapePlan::Record(fields) = &plan.shape else {
+            panic!("expected record-shaped validation plan");
+        };
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].ty, Type::Record(program.records[0].name));
+        assert_eq!(fields[1].ty, Type::Option(Box::new(Type::Quad)));
+        let Type::Measured(base, unit) = &fields[2].ty else {
+            panic!("expected measured u32 field in validation plan");
+        };
+        assert_eq!(**base, Type::U32);
+        assert_eq!(resolve_symbol_name(&program.arena, *unit).expect("unit symbol"), "ms");
+    }
+
+    #[test]
+    fn derive_validation_plan_table_returns_tagged_union_schema_plan() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            wire schema Envelope {
+                Empty {},
+                Data {
+                    point: Point,
+                    verdict: Result(quad, bool),
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let (program, plans) =
+            derive_validation_plans_from_source(src).expect("validation plans should derive");
+        let schema_name = program.schemas[0].name;
+        let plan = plans.get(&schema_name).expect("schema plan must exist");
+        assert_eq!(plan.role, Some(SchemaRole::Wire));
+        let ValidationShapePlan::TaggedUnion(variants) = &plan.shape else {
+            panic!("expected tagged-union validation plan");
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].fields.len(), 0);
+        assert_eq!(variants[1].fields.len(), 2);
+        assert_eq!(variants[1].fields[0].ty, Type::Record(program.records[0].name));
+        assert_eq!(
+            variants[1].fields[1].ty,
+            Type::Result(Box::new(Type::Quad), Box::new(Type::Bool))
+        );
     }
 
     #[test]
@@ -4828,6 +4957,45 @@ fn validate_record_shaped_schema(
         )?;
     }
     Ok(())
+}
+
+fn derive_validation_field_plans(
+    fields: &[SchemaField],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<Vec<ValidationFieldPlan>, FrontendError> {
+    fields
+        .iter()
+        .map(|field| {
+            Ok(ValidationFieldPlan {
+                name: field.name,
+                ty: canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+            })
+        })
+        .collect()
+}
+
+fn derive_validation_variant_plans(
+    variants: &[SchemaVariant],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<Vec<ValidationVariantPlan>, FrontendError> {
+    variants
+        .iter()
+        .map(|variant| {
+            Ok(ValidationVariantPlan {
+                name: variant.name,
+                fields: derive_validation_field_plans(
+                    &variant.fields,
+                    record_table,
+                    adt_table,
+                    arena,
+                )?,
+            })
+        })
+        .collect()
 }
 
 fn validate_tagged_union_schema(

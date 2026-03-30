@@ -128,12 +128,13 @@ pub mod frontend {
         build_fn_table, builtin_sig, lex, parse_logos_program, parse_program, parse_rustlike,
         parse_logos_program_with_profile, parse_logos_with_profile, parse_program_with_profile,
         parse_rustlike_with_profile, resolve_symbol_name, type_check_function,
-        type_check_function_with_table, type_check_program, AstArena, BinaryOp, CompilePolicyView,
-        CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, FrontendErrorKind,
-        Function, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
-        LogosSystem, LogosWhen, MatchArm, OptLevel, Program, QuadVal, SchemaDecl, SchemaField,
-        SchemaRole, SchemaShape, SchemaVariant, ScopeEnv, Stmt, StmtId, SymbolId, Token,
-        TokenKind, Type, UnaryOp,
+        type_check_function_with_table, type_check_program, derive_validation_plan_table,
+        AstArena, BinaryOp, CompilePolicyView, CompileProfile, Expr, ExprId, FnSig, FnTable,
+        FrontendError, FrontendErrorKind, Function, LogosEntity, LogosEntityField,
+        LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, OptLevel,
+        Program, QuadVal, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
+        ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp, ValidationFieldPlan,
+        ValidationPlan, ValidationPlanTable, ValidationShapePlan, ValidationVariantPlan,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
@@ -163,10 +164,11 @@ pub mod frontend {
         pub use super::{
             build_fn_table, lex, parse_function, parse_logos_program, parse_program,
             resolve_symbol_name, type_check_function, type_check_function_with_table,
-            type_check_program, AstArena, BinaryOp, Expr, ExprId, FnSig, FnTable, FrontendError,
-            Function, LogosEntity, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm,
-            Program, QuadVal, ScopeEnv, SourceMark, Stmt, StmtId, SymbolId, Token, TokenKind,
-            Type, UnaryOp,
+            type_check_program, derive_validation_plan_table, AstArena, BinaryOp, Expr, ExprId,
+            FnSig, FnTable, FrontendError, Function, LogosEntity, LogosLaw, LogosProgram,
+            LogosSystem, LogosWhen, MatchArm, Program, QuadVal, ScopeEnv, SourceMark, Stmt,
+            StmtId, SymbolId, Token, TokenKind, Type, UnaryOp, ValidationFieldPlan,
+            ValidationPlan, ValidationPlanTable, ValidationShapePlan, ValidationVariantPlan,
         };
     }
 

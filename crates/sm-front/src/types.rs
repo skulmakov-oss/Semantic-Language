@@ -366,6 +366,31 @@ pub struct SchemaDecl {
     pub shape: SchemaShape,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationFieldPlan {
+    pub name: SymbolId,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationVariantPlan {
+    pub name: SymbolId,
+    pub fields: Vec<ValidationFieldPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationShapePlan {
+    Record(Vec<ValidationFieldPlan>),
+    TaggedUnion(Vec<ValidationVariantPlan>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationPlan {
+    pub schema_name: SymbolId,
+    pub role: Option<SchemaRole>,
+    pub shape: ValidationShapePlan,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub arena: AstArena,
