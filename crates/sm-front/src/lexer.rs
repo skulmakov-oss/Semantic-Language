@@ -302,6 +302,7 @@ fn tokenize_line(
                     "ensures" => TokenKind::KwEnsures,
                     "invariant" => TokenKind::KwInvariant,
                     "record" => TokenKind::KwRecord,
+                    "schema" => TokenKind::KwSchema,
                     "enum" => TokenKind::KwEnum,
                     "const" => TokenKind::KwConst,
                     "let" => TokenKind::KwLet,

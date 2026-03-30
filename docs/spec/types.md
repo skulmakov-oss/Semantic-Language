@@ -11,6 +11,10 @@ Semantic programs.
 It covers the executable source surface rather than the SemCode or VM
 representation layer.
 
+Compile-time-only declaration families such as `schema Name { ... }` are part
+of the source contract, but they are not yet executable source-visible types or
+VM value families.
+
 Operational source-level meaning such as call resolution, control-flow
 selection, and source diagnostics is specified separately in:
 
@@ -30,6 +34,10 @@ Current source-visible types:
 - measured numeric forms such as `f64[m]` and `u32[ms]`
 - `unit`
 - `qvec(N)` as a reserved parser-level family
+
+Current compile-time-only declaration families:
+
+- nominal `schema Name { ... }` declarations for boundary/model contracts
 
 ## Unit
 
@@ -200,8 +208,8 @@ That means:
 
 The current source type contract does not yet claim stable support for:
 
-- user-defined aggregate types
-- algebraic data types
+- schema names as executable local, parameter, or return types
+- user-defined parameterized algebraic data types
 - generics
 - trait or protocol systems
 - implicit numeric widening across unrelated families

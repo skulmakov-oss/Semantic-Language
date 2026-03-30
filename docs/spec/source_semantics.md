@@ -24,8 +24,11 @@ The current Rust-like executable surface is a deterministic function program.
 
 Current rules:
 
-- top-level source items currently include nominal `record` declarations and executable functions
+- top-level source items currently include nominal `record`, compile-time-only
+  `schema`, and executable function declarations
 - `record` declarations contribute nominal type identity but are not themselves executable entrypoints
+- `schema` declarations contribute compile-time contract metadata only and are
+  not executable entrypoints or value families
 - execution begins at `fn main()`
 - `main` must currently have signature `fn main()`
 - there is no dynamic entrypoint discovery or module-level executable code
@@ -70,6 +73,18 @@ Current v0 record declaration semantics:
 - explicit record `let-else` uses `let RecordName { field: target, ... } = value else return ...;`
 - record `let-else` currently treats only explicit `quad` literal field targets as refutable checks
 - record equality is allowed only when every field type already supports stable equality
+
+Current v0 schema declaration semantics:
+
+- `schema Name { ... }` introduces one compile-time-only schema declaration
+- schema identity is nominal by schema name
+- schema declarations must be non-empty and may not repeat field names
+- schema field types reuse the current declared-type grammar and resolve
+  against the ordinary nominal/executable type tables
+- schema declarations currently live only in the canonical schema table owned by
+  the frontend/typecheck path
+- schema declarations do not currently introduce executable types, runtime
+  carriers, or host ABI shapes
 
 Current first-wave function-contract semantics:
 

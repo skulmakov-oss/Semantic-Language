@@ -45,7 +45,8 @@ Current examples include:
 - `let-else` parse failures such as plain binding targets, discard targets, or
   non-`return` else branches in the current v0 surface
 - `match`-expression parse failures such as invalid literal arm patterns
-- top-level parse failures such as unexpected items other than `fn` or `record`
+- top-level parse failures such as unexpected items other than `fn`, `record`,
+  `schema`, or `enum`
 - extended numeric-literal parse failures such as invalid typed suffix/body
   combinations or decimal-only `f64`/`fx` requirements
 
@@ -75,6 +76,7 @@ Current examples include:
 
 - `f64` surface disabled by profile policy
 - Logos surface disabled by profile policy
+- schema surface disabled by profile policy
 - legacy compatibility paths disabled by profile policy
 
 ## Type Diagnostics
@@ -128,10 +130,17 @@ Current message families include:
 - range literal rejected in tuple/user-data position
 - for-range requires `i32` range expression
 - duplicate record declaration
+- duplicate schema declaration
 - top-level record/function name collision
+- top-level schema/function name collision
+- top-level schema/record name collision
+- top-level schema/enum name collision
 - empty record declaration
+- empty schema declaration
 - duplicate record field name
+- duplicate schema field name
 - unknown record field type
+- unknown schema field type
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal

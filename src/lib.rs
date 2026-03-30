@@ -131,8 +131,8 @@ pub mod frontend {
         type_check_function_with_table, type_check_program, AstArena, BinaryOp, CompilePolicyView,
         CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, FrontendErrorKind,
         Function, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
-        LogosSystem, LogosWhen, MatchArm, OptLevel, Program, QuadVal, ScopeEnv, Stmt, StmtId,
-        SymbolId, Token, TokenKind, Type, UnaryOp,
+        LogosSystem, LogosWhen, MatchArm, OptLevel, Program, QuadVal, SchemaDecl, SchemaField,
+        ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
@@ -153,6 +153,7 @@ pub mod frontend {
             arena: ::core::mem::take(&mut p.arena),
             adts: p.adts,
             records: p.records,
+            schemas: p.schemas,
             functions: p.functions,
         })
     }

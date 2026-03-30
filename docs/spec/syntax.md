@@ -36,11 +36,18 @@ public source-surface contracts are specified separately in:
 
 ## Program Structure
 
-The current Rust-like executable program is a sequence of top-level `record`
-declarations and functions:
+The current Rust-like executable program is a sequence of top-level `record`,
+`schema`, `enum`, and function declarations:
 
 ```sm
 record Name {
+    field: type,
+    ...
+}
+```
+
+```sm
+schema Name {
     field: type,
     ...
 }
@@ -98,9 +105,13 @@ fn name(arg: type, ...) -> ret_type = expr;
 Current rules:
 
 - `record` introduces a nominal top-level record declaration
+- `schema` introduces a compile-time-only top-level schema declaration
 - record declarations must be non-empty
+- schema declarations must be non-empty
 - record field names must be unique within one declaration
+- schema field names must be unique within one declaration
 - record field types currently use the ordinary source type grammar
+- schema field types currently use the ordinary source type grammar
 - `fn` introduces a function
 - parameters are named and typed explicitly
 - trailing parameters may attach a default initializer with `= expr`
@@ -128,6 +139,17 @@ Current v0 record limits:
 - record equality is allowed only when every field type already supports stable equality
 - record values are not part of the PROMETHEUS host ABI surface
 - anonymous brace-only record literals/patterns, mutation, methods, and inheritance are not part of this slice
+
+Current v0 schema limits:
+
+- only record-shaped `schema Name { field: type, ... }` declarations are part
+  of the current surface
+- schema declarations are compile-time-only and do not introduce executable
+  value carriers
+- schema names are not yet valid in executable local, parameter, return, or
+  match type positions
+- tagged-union schemas and role markers such as `config`, `api`, and `wire`
+  remain later `v0.3` slices
 
 ## Statements
 
