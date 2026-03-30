@@ -40,3 +40,4 @@ Related staged design-target notes:
 - `docs/roadmap/language_maturity/range_execution_story.md`
 - `docs/roadmap/language_maturity/schema_first_declarations_scope.md`
 - `docs/roadmap/language_maturity/units_of_measure_scope.md`
+- `docs/roadmap/language_maturity/validation_derived_from_schemas_scope.md`
