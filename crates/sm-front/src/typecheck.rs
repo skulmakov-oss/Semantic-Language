@@ -158,7 +158,9 @@ pub fn derive_validation_plan_table(program: &Program) -> Result<ValidationPlanT
         };
         let checks = match &shape {
             ValidationShapePlan::Record(fields) => derive_record_validation_checks(fields),
-            ValidationShapePlan::TaggedUnion(_) => Vec::new(),
+            ValidationShapePlan::TaggedUnion(variants) => {
+                derive_tagged_union_validation_checks(variants)
+            }
         };
 
         plans.insert(
@@ -3444,7 +3446,35 @@ mod tests {
             variants[1].fields[1].ty,
             Type::Result(Box::new(Type::Quad), Box::new(Type::Bool))
         );
-        assert!(plan.checks.is_empty());
+        assert_eq!(
+            plan.checks,
+            vec![
+                ValidationCheck::TaggedUnionBranch {
+                    variant: variants[0].name,
+                },
+                ValidationCheck::TaggedUnionBranch {
+                    variant: variants[1].name,
+                },
+                ValidationCheck::TaggedUnionBranchRequiredField {
+                    variant: variants[1].name,
+                    field: variants[1].fields[0].name,
+                },
+                ValidationCheck::TaggedUnionBranchFieldType {
+                    variant: variants[1].name,
+                    field: variants[1].fields[0].name,
+                    ty: variants[1].fields[0].ty.clone(),
+                },
+                ValidationCheck::TaggedUnionBranchRequiredField {
+                    variant: variants[1].name,
+                    field: variants[1].fields[1].name,
+                },
+                ValidationCheck::TaggedUnionBranchFieldType {
+                    variant: variants[1].name,
+                    field: variants[1].fields[1].name,
+                    ty: variants[1].fields[1].ty.clone(),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -5038,6 +5068,29 @@ fn derive_record_validation_checks(fields: &[ValidationFieldPlan]) -> Vec<Valida
             field: field.name,
             ty: field.ty.clone(),
         });
+    }
+    checks
+}
+
+fn derive_tagged_union_validation_checks(
+    variants: &[ValidationVariantPlan],
+) -> Vec<ValidationCheck> {
+    let mut checks = Vec::new();
+    for variant in variants {
+        checks.push(ValidationCheck::TaggedUnionBranch {
+            variant: variant.name,
+        });
+        for field in &variant.fields {
+            checks.push(ValidationCheck::TaggedUnionBranchRequiredField {
+                variant: variant.name,
+                field: field.name,
+            });
+            checks.push(ValidationCheck::TaggedUnionBranchFieldType {
+                variant: variant.name,
+                field: field.name,
+                ty: field.ty.clone(),
+            });
+        }
     }
     checks
 }

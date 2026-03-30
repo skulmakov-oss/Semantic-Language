@@ -99,8 +99,11 @@ Current v0 schema declaration semantics:
   declaration order:
   - required-field checks
   - field-type compatibility checks
-- tagged-union schemas currently derive canonical validation-plan ownership but
-  do not yet derive first-wave branch checks
+- tagged-union schemas now also derive first-wave branch checks in variant
+  declaration order:
+  - allowed-branch checks
+  - per-branch required-field checks
+  - per-branch field-type compatibility checks
 - schema role markers currently contribute compile-time declaration metadata
   only; they do not imply loading, generation, transport, or runtime behavior
 - schema declarations do not currently introduce executable types, runtime

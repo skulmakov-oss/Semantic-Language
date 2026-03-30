@@ -46,6 +46,9 @@ Current compile-time-only declaration families:
   declarations and referenced declared types
 - first-wave record-schema validation checks for required fields and field-type
   compatibility, kept in declaration order for inspectability
+- first-wave tagged-union schema branch checks for allowed variants, required
+  per-branch fields, and per-branch field-type compatibility, kept in variant
+  declaration order for inspectability
 
 ## Unit
 
