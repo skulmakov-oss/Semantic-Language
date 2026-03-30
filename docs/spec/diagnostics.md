@@ -145,6 +145,11 @@ Current message families include:
 - duplicate tagged-union schema field name
 - unknown record field type
 - unknown schema field type
+- generated validation-plan failure for missing required record field
+- generated validation-plan failure for incompatible record field type
+- generated validation-plan failure for disallowed tagged-union branch
+- generated validation-plan failure for missing required tagged-union branch field
+- generated validation-plan failure for incompatible tagged-union branch field type
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal
@@ -206,6 +211,8 @@ Current honest limit:
 
 - exact wording of type-check messages is not yet a fully frozen compatibility
   contract
+- generated validation failures are currently documented as deterministic plan
+  categories, not yet as a separate runtime or CLI diagnostic family
 - users should treat the failure class as stable before treating the full text
   as stable
 
