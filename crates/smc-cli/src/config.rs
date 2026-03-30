@@ -1,8 +1,8 @@
 use sm_front::{
     build_record_table, build_schema_table, derive_validation_plan_table, parse_program,
     resolve_symbol_name, FrontendError, Program, QuadVal, RecordDecl, RecordTable, SchemaDecl,
-    SchemaRole, SchemaTable, Type, ValidationFieldPlan, ValidationPlanTable,
-    ValidationShapePlan,
+    SchemaRole, SchemaTable, Type, ValidationFieldPlan, ValidationPlanTable, ValidationShapePlan,
+    ValidationVariantPlan,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -177,12 +177,9 @@ pub fn validate_config_document(
                 &mut diagnostics,
             );
         }
-        ValidationShapePlan::TaggedUnion(_) => diagnostics.push(ConfigValidationDiagnostic {
-            path: "<root>".to_string(),
-            message:
-                "tagged-union config validation is not part of the current V03-03 record slice"
-                    .to_string(),
-        }),
+        ValidationShapePlan::TaggedUnion(variants) => {
+            validate_tagged_union_document(document, variants, contract, &mut diagnostics);
+        }
     }
 
     if diagnostics.is_empty() {
@@ -288,6 +285,53 @@ fn validate_object_entries_against_record_decl(
             });
         }
     }
+}
+
+fn validate_tagged_union_document(
+    document: &ConfigDocument,
+    variants: &[ValidationVariantPlan],
+    contract: &ConfigContract,
+    diagnostics: &mut Vec<ConfigValidationDiagnostic>,
+) {
+    if document.fields.len() != 1 {
+        diagnostics.push(ConfigValidationDiagnostic {
+            path: "<root>".to_string(),
+            message:
+                "tagged-union config document must contain exactly one variant object field"
+                    .to_string(),
+        });
+        return;
+    }
+
+    let selected = &document.fields[0];
+    let Some(variant_plan) = variants.iter().find(|variant| {
+        contract.program.arena.symbol_name(variant.name) == selected.key.as_str()
+    }) else {
+        diagnostics.push(ConfigValidationDiagnostic {
+            path: selected.key.clone(),
+            message: format!("unknown tagged-union variant '{}'", selected.key),
+        });
+        return;
+    };
+
+    let ConfigValue::Object(entries) = &selected.value else {
+        diagnostics.push(type_mismatch(
+            &selected.key,
+            &format!(
+                "expected object payload for variant '{}'",
+                contract.program.arena.symbol_name(variant_plan.name)
+            ),
+        ));
+        return;
+    };
+
+    validate_object_entries_against_plan_fields(
+        entries,
+        &variant_plan.fields,
+        contract,
+        &selected.key,
+        diagnostics,
+    );
 }
 
 fn validate_value_against_type(
@@ -725,6 +769,23 @@ config schema AppConfig {
 "#
     }
 
+    fn sample_tagged_union_config_contract_source() -> &'static str {
+        r#"
+record Point {
+    x: i32,
+    y: i32,
+}
+
+config schema InputEnvelope {
+    Empty {},
+    Data {
+        point: Point,
+        interval_ms: u32[ms],
+    },
+}
+"#
+    }
+
     #[test]
     fn parse_config_document_accepts_nested_object_surface() {
         let doc = parse_config_document(
@@ -896,5 +957,94 @@ api schema ApiPayload {
         assert!(err.diagnostics[0]
             .message
             .contains("schema 'ApiPayload' is not declared as config schema"));
+    }
+
+    #[test]
+    fn validate_config_document_accepts_tagged_union_config_schema() {
+        let contract = build_config_contract(sample_tagged_union_config_contract_source())
+            .expect("config contract should build");
+        let doc = parse_config_document(
+            r#"{
+                Data: {
+                    point: {
+                        x: 10,
+                        y: 20,
+                    },
+                    interval_ms: 250,
+                },
+            }"#,
+        )
+        .expect("config document should parse");
+
+        validate_config_document(&contract, "InputEnvelope", &doc)
+            .expect("tagged-union config document should validate");
+    }
+
+    #[test]
+    fn validate_config_document_rejects_tagged_union_root_with_multiple_variants() {
+        let contract = build_config_contract(sample_tagged_union_config_contract_source())
+            .expect("config contract should build");
+        let doc = parse_config_document(
+            r#"{
+                Empty: {},
+                Data: {
+                    point: {
+                        x: 1,
+                        y: 2,
+                    },
+                    interval_ms: 10,
+                },
+            }"#,
+        )
+        .expect("config document should parse");
+
+        let err = validate_config_document(&contract, "InputEnvelope", &doc)
+            .expect_err("validation should reject multi-variant root");
+
+        assert!(err.diagnostics.iter().any(|diag| {
+            diag.path == "<root>"
+                && diag.message
+                    == "tagged-union config document must contain exactly one variant object field"
+        }));
+    }
+
+    #[test]
+    fn validate_config_document_rejects_unknown_tagged_union_variant() {
+        let contract = build_config_contract(sample_tagged_union_config_contract_source())
+            .expect("config contract should build");
+        let doc = parse_config_document(
+            r#"{
+                Missing: {},
+            }"#,
+        )
+        .expect("config document should parse");
+
+        let err = validate_config_document(&contract, "InputEnvelope", &doc)
+            .expect_err("validation should reject unknown variant");
+
+        assert!(err.diagnostics.iter().any(|diag| {
+            diag.path == "Missing"
+                && diag.message == "unknown tagged-union variant 'Missing'"
+        }));
+    }
+
+    #[test]
+    fn validate_config_document_rejects_non_object_tagged_union_payload() {
+        let contract = build_config_contract(sample_tagged_union_config_contract_source())
+            .expect("config contract should build");
+        let doc = parse_config_document(
+            r#"{
+                Data: true,
+            }"#,
+        )
+        .expect("config document should parse");
+
+        let err = validate_config_document(&contract, "InputEnvelope", &doc)
+            .expect_err("validation should reject non-object payload");
+
+        assert!(err.diagnostics.iter().any(|diag| {
+            diag.path == "Data"
+                && diag.message == "expected object payload for variant 'Data'"
+        }));
     }
 }

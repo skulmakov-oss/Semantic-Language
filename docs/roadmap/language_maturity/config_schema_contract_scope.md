@@ -33,12 +33,18 @@ Current chosen canonical config document surface:
 - scalar values limited to string, bool, quad, and decimal/integer numbers
 - no arrays, comments, or alternate wire/config syntaxes in the first slice
 
-Current second-slice validation boundary:
+Current validation boundary after the record slice:
 
 - validate only record-shaped `config schema` roots
 - allow nested record fields via canonical record declarations
 - allow measured numeric fields through unit-erased numeric compatibility checks
-- keep tagged-union config validation for a later slice
+
+Canonical tagged-union config document choice for the next slice:
+
+- root object still remains the only document form
+- tagged-union configs must contain exactly one root key
+- that key is the selected variant name
+- the corresponding value is the object payload for that variant
 
 ## Intended Slice Order
 
