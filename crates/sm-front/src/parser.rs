@@ -5,8 +5,8 @@ use crate::types::{
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
-    TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField, Stmt,
+    StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -61,6 +61,7 @@ impl<'a> Parser<'a> {
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
         let mut adts = Vec::new();
         let mut records = Vec::new();
+        let mut schemas = Vec::new();
         let mut functions = Vec::new();
         loop {
             let i = self.next_non_layout_idx();
@@ -72,10 +73,12 @@ impl<'a> Parser<'a> {
                 TokenKind::KwEnum => adts.push(self.parse_adt_decl()?),
                 TokenKind::KwFn => functions.push(self.parse_function()?),
                 TokenKind::KwRecord => records.push(self.parse_record_decl()?),
+                TokenKind::KwSchema => schemas.push(self.parse_schema_decl()?),
                 _ => {
                     return Err(FrontendError {
                         pos: self.tokens[i].pos,
-                        message: "expected top-level 'enum', 'fn', or 'record'".to_string(),
+                        message: "expected top-level 'enum', 'fn', 'record', or 'schema'"
+                            .to_string(),
                     });
                 }
             }
@@ -84,6 +87,7 @@ impl<'a> Parser<'a> {
             arena: ::core::mem::take(&mut self.arena),
             adts,
             records,
+            schemas,
             functions,
         })
     }
@@ -201,6 +205,32 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RBrace, "expected '}' after record declaration")?;
         Ok(RecordDecl { name, fields })
+    }
+
+    fn parse_schema_decl(&mut self) -> Result<SchemaDecl, FrontendError> {
+        self.require_schema_surface("schema declarations are disabled by profile policy")?;
+        self.expect(TokenKind::KwSchema, "expected 'schema'")?;
+        let name = self.expect_symbol()?;
+        self.expect(TokenKind::LBrace, "expected '{' after schema name")?;
+        let mut fields = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            let field_name = self.expect_symbol()?;
+            self.expect(TokenKind::Colon, "expected ':' after schema field name")?;
+            let field_ty = self.parse_type()?;
+            fields.push(SchemaField {
+                name: field_name,
+                ty: field_ty,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBrace, "expected '}' after schema declaration")?;
+        Ok(SchemaDecl { name, fields })
     }
 
     fn parse_adt_decl(&mut self) -> Result<AdtDecl, FrontendError> {
@@ -2176,6 +2206,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn require_schema_surface(&self, message: &str) -> Result<(), FrontendError> {
+        if self.policy.profile.features.allow_schema_surface {
+            Ok(())
+        } else {
+            Err(FrontendError::policy_violation(self.pos(), message))
+        }
+    }
+
     fn require_legacy_compatibility(&self, message: &str) -> Result<(), FrontendError> {
         if self.policy.profile.compatibility == CompatibilityMode::LegacySupport {
             Ok(())
@@ -3416,6 +3454,47 @@ fn main() {
         assert_eq!(record.fields[0].ty, Type::Quad);
         assert_eq!(record.fields[2].ty, Type::F64);
         assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_top_level_schema_declaration() {
+        let src = r#"
+schema SensorConfig {
+    interval_ms: u32[ms],
+    fallback: Option(quad),
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("schema declaration should parse");
+        assert_eq!(program.schemas.len(), 1);
+        let schema = &program.schemas[0];
+        assert_eq!(program.arena.symbol_name(schema.name), "SensorConfig");
+        assert_eq!(schema.fields.len(), 2);
+        assert_eq!(program.arena.symbol_name(schema.fields[0].name), "interval_ms");
+    }
+
+    #[test]
+    fn strict_profile_rejects_schema_surface() {
+        let src = r#"
+schema SensorConfig {
+    interval_ms: u32,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::default())
+            .expect_err("strict profile must reject schema surface");
+
+        assert_eq!(err.kind(), FrontendErrorKind::PolicyViolation);
+        assert!(err.message.contains("schema"));
     }
 
     #[test]

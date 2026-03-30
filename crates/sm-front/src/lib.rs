@@ -20,8 +20,8 @@ pub use types::{
     FrontendError, FrontendErrorKind, Function, IfExpr, LogosEntity, LogosEntityField,
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
-    RecordInitField, RecordLiteralExpr, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
-    TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, Stmt, StmtId,
+    SymbolId, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};
@@ -52,6 +52,9 @@ pub type RecordTable = BTreeMap<SymbolId, RecordDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub type AdtTable = BTreeMap<SymbolId, AdtDecl>;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type SchemaTable = BTreeMap<SymbolId, SchemaDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +204,24 @@ pub fn build_adt_table(program: &Program) -> Result<AdtTable, FrontendError> {
             });
         }
         out.insert(adt.name, adt.clone());
+    }
+    Ok(out)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_schema_table(program: &Program) -> Result<SchemaTable, FrontendError> {
+    let mut out = BTreeMap::new();
+    for schema in &program.schemas {
+        if out.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "duplicate schema '{}'",
+                    resolve_symbol_name(&program.arena, schema.name)?
+                ),
+            });
+        }
+        out.insert(schema.name, schema.clone());
     }
     Ok(out)
 }
@@ -561,6 +582,7 @@ mod tests {
             AstBundle::RustLike(p) => {
                 assert!(p.adts.is_empty());
                 assert!(p.records.is_empty());
+                assert!(p.schemas.is_empty());
                 assert_eq!(p.functions.len(), 1);
             }
             AstBundle::Logos(_) => panic!("expected rustlike bundle"),

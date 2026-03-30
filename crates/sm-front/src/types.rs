@@ -334,11 +334,24 @@ pub struct AdtDecl {
     pub variants: Vec<AdtVariant>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaField {
+    pub name: SymbolId,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaDecl {
+    pub name: SymbolId,
+    pub fields: Vec<SchemaField>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub arena: AstArena,
     pub adts: Vec<AdtDecl>,
     pub records: Vec<RecordDecl>,
+    pub schemas: Vec<SchemaDecl>,
     pub functions: Vec<Function>,
 }
 
@@ -402,6 +415,7 @@ pub enum TokenKind {
     KwEnsures,
     KwInvariant,
     KwRecord,
+    KwSchema,
     KwEnum,
     KwConst,
     KwLet,

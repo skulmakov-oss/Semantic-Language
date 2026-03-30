@@ -67,6 +67,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
     let mut table = BTreeMap::new();
     let record_table = build_record_table(program)?;
     let adt_table = build_adt_table(program)?;
+    let schema_table = build_schema_table(program)?;
     let func = &program.functions[0];
     table.insert(
         func.name,
@@ -81,9 +82,10 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
             ret: canonicalize_declared_type(&func.ret, &record_table, &adt_table, &program.arena)?,
         },
     );
-    validate_top_level_name_collisions(program, &table, &record_table, &adt_table)?;
+    validate_top_level_name_collisions(program, &table, &record_table, &adt_table, &schema_table)?;
     validate_record_declarations(program, &record_table, &adt_table)?;
     validate_adt_declarations(program, &record_table, &adt_table)?;
+    validate_schema_declarations(program, &schema_table, &record_table, &adt_table)?;
     type_check_function_with_tables(func, &program.arena, &table, &record_table, &adt_table)
 }
 
@@ -91,9 +93,11 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
     let table = build_fn_table(p)?;
     let record_table = build_record_table(p)?;
     let adt_table = build_adt_table(p)?;
-    validate_top_level_name_collisions(p, &table, &record_table, &adt_table)?;
+    let schema_table = build_schema_table(p)?;
+    validate_top_level_name_collisions(p, &table, &record_table, &adt_table, &schema_table)?;
     validate_record_declarations(p, &record_table, &adt_table)?;
     validate_adt_declarations(p, &record_table, &adt_table)?;
+    validate_schema_declarations(p, &schema_table, &record_table, &adt_table)?;
     let main_id = p
         .arena
         .symbol_to_id
@@ -3212,6 +3216,85 @@ mod tests {
     }
 
     #[test]
+    fn schema_declarations_typecheck_as_compile_time_top_level_items() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            schema PointPayload {
+                point: Point,
+                label: Option(quad),
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("schema declarations should typecheck");
+    }
+
+    #[test]
+    fn schema_declaration_rejects_duplicate_field_name() {
+        let src = r#"
+            schema PointPayload {
+                point: i32,
+                point: i32,
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("duplicate schema field must reject");
+        assert!(err
+            .message
+            .contains("schema 'PointPayload' cannot repeat field 'point'"));
+    }
+
+    #[test]
+    fn schema_declaration_rejects_empty_body() {
+        let src = r#"
+            schema PointPayload {
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("empty schema must reject");
+        assert!(err
+            .message
+            .contains("schema 'PointPayload' must declare at least 1 field"));
+    }
+
+    #[test]
+    fn schema_declaration_rejects_top_level_name_collision_with_record() {
+        let src = r#"
+            record PointPayload {
+                x: i32,
+            }
+
+            schema PointPayload {
+                point: i32,
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("schema/record collision must reject");
+        assert!(err.message.contains(
+            "top-level name 'PointPayload' cannot be used for both record and schema"
+        ));
+    }
+
+    #[test]
     fn record_declaration_rejects_recursive_field_graph() {
         let src = r#"
             record A {
@@ -4370,6 +4453,7 @@ fn validate_top_level_name_collisions(
     fn_table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    schema_table: &SchemaTable,
 ) -> Result<(), FrontendError> {
     for record in &program.records {
         if fn_table.contains_key(&record.name) {
@@ -4386,6 +4470,15 @@ fn validate_top_level_name_collisions(
                 pos: 0,
                 message: format!(
                     "top-level name '{}' cannot be used for both record and enum",
+                    resolve_symbol_name(&program.arena, record.name)?
+                ),
+            });
+        }
+        if schema_table.contains_key(&record.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both record and schema",
                     resolve_symbol_name(&program.arena, record.name)?
                 ),
             });
@@ -4407,6 +4500,44 @@ fn validate_top_level_name_collisions(
                 message: format!(
                     "top-level name '{}' cannot be used for both enum and record",
                     resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+        if schema_table.contains_key(&adt.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both enum and schema",
+                    resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+    }
+    for schema in &program.schemas {
+        if fn_table.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both schema and function",
+                    resolve_symbol_name(&program.arena, schema.name)?
+                ),
+            });
+        }
+        if record_table.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both schema and record",
+                    resolve_symbol_name(&program.arena, schema.name)?
+                ),
+            });
+        }
+        if adt_table.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both schema and enum",
+                    resolve_symbol_name(&program.arena, schema.name)?
                 ),
             });
         }
@@ -4525,6 +4656,57 @@ fn validate_adt_declarations(
             &mut active,
             &mut visited,
         )?;
+    }
+    Ok(())
+}
+
+fn validate_schema_declarations(
+    program: &Program,
+    schema_table: &SchemaTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    for schema in &program.schemas {
+        let _ = schema_table.get(&schema.name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "missing schema '{}' in canonical schema table",
+                resolve_symbol_name(&program.arena, schema.name)?
+            ),
+        })?;
+        if schema.fields.is_empty() {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "schema '{}' must declare at least 1 field",
+                    resolve_symbol_name(&program.arena, schema.name)?
+                ),
+            });
+        }
+        let mut seen = BTreeSet::new();
+        for field in &schema.fields {
+            if !seen.insert(field.name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "schema '{}' cannot repeat field '{}'",
+                        resolve_symbol_name(&program.arena, schema.name)?,
+                        resolve_symbol_name(&program.arena, field.name)?
+                    ),
+                });
+            }
+            ensure_type_resolved(
+                &field.ty,
+                record_table,
+                adt_table,
+                &program.arena,
+                format!(
+                    "schema field '{}.{}'",
+                    resolve_symbol_name(&program.arena, schema.name)?,
+                    resolve_symbol_name(&program.arena, field.name)?
+                ),
+            )?;
+        }
     }
     Ok(())
 }

@@ -18,6 +18,7 @@ pub allow_debug_symbols: bool,
 pub allow_f64_math: bool,
 pub allow_gate_surface: bool,
 pub allow_logos_surface: bool,
+pub allow_schema_surface: bool,
 pub const fn core() -> Self {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
@@ -56,4 +57,3 @@ pub input: &'a str,
 pub target: &'a str,
 pub fn train_profile(samples: &[TrainingSample<'_>]) -> ParserProfile {
 pub fn train_profile_in_place(profile: &mut ParserProfile, samples: &[TrainingSample<'_>]) {
-
