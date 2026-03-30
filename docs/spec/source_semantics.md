@@ -78,9 +78,15 @@ Current v0 schema declaration semantics:
 
 - `schema Name { ... }` introduces one compile-time-only schema declaration
 - schema identity is nominal by schema name
-- schema declarations must be non-empty and may not repeat field names
-- schema field types reuse the current declared-type grammar and resolve
-  against the ordinary nominal/executable type tables
+- schema declarations currently support:
+  - record-shaped forms `schema Name { field: type, ... }`
+  - tagged-union forms `schema Name { Variant { field: type, ... }, ... }`
+- record-shaped schema declarations must be non-empty and may not repeat field
+  names
+- tagged-union schema declarations must declare at least one variant, may not
+  repeat variant names, and may not repeat field names inside one variant
+- schema field and variant-payload types reuse the current declared-type grammar
+  and resolve against the ordinary nominal/executable type tables
 - schema declarations currently live only in the canonical schema table owned by
   the frontend/typecheck path
 - schema declarations do not currently introduce executable types, runtime

@@ -139,6 +139,8 @@ Current message families include:
 - empty schema declaration
 - duplicate record field name
 - duplicate schema field name
+- duplicate tagged-union schema variant name
+- duplicate tagged-union schema field name
 - unknown record field type
 - unknown schema field type
 - recursive record field graph

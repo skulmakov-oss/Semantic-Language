@@ -132,7 +132,8 @@ pub mod frontend {
         CompileProfile, Expr, ExprId, FnSig, FnTable, FrontendError, FrontendErrorKind,
         Function, LogosEntity, LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram,
         LogosSystem, LogosWhen, MatchArm, OptLevel, Program, QuadVal, SchemaDecl, SchemaField,
-        ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+        SchemaShape, SchemaVariant, ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type,
+        UnaryOp,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
