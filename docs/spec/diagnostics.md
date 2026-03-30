@@ -47,6 +47,8 @@ Current examples include:
 - `match`-expression parse failures such as invalid literal arm patterns
 - top-level parse failures such as unexpected items other than `fn`, `record`,
   `schema`, or `enum`
+- malformed role-marked schema declarations such as `config`/`api`/`wire`
+  appearing without a following `schema`
 - extended numeric-literal parse failures such as invalid typed suffix/body
   combinations or decimal-only `f64`/`fx` requirements
 

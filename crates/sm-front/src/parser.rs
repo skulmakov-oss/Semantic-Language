@@ -6,8 +6,8 @@ use crate::types::{
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
     RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField,
-    SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type,
-    UnaryOp,
+    SchemaRole, SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind,
+    TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -70,6 +70,10 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.idx = i;
+            if self.starts_role_marked_schema_decl() {
+                schemas.push(self.parse_schema_decl()?);
+                continue;
+            }
             match self.tokens[i].kind {
                 TokenKind::KwEnum => adts.push(self.parse_adt_decl()?),
                 TokenKind::KwFn => functions.push(self.parse_function()?),
@@ -78,8 +82,9 @@ impl<'a> Parser<'a> {
                 _ => {
                     return Err(FrontendError {
                         pos: self.tokens[i].pos,
-                        message: "expected top-level 'enum', 'fn', 'record', or 'schema'"
-                            .to_string(),
+                        message:
+                            "expected top-level 'enum', 'fn', 'record', 'schema', or role-marked schema declaration"
+                                .to_string(),
                     });
                 }
             }
@@ -210,6 +215,7 @@ impl<'a> Parser<'a> {
 
     fn parse_schema_decl(&mut self) -> Result<SchemaDecl, FrontendError> {
         self.require_schema_surface("schema declarations are disabled by profile policy")?;
+        let role = self.parse_optional_schema_role()?;
         self.expect(TokenKind::KwSchema, "expected 'schema'")?;
         let name = self.expect_symbol()?;
         self.expect(TokenKind::LBrace, "expected '{' after schema name")?;
@@ -233,7 +239,45 @@ impl<'a> Parser<'a> {
             }
         };
         self.expect(TokenKind::RBrace, "expected '}' after schema declaration")?;
-        Ok(SchemaDecl { name, shape })
+        Ok(SchemaDecl { name, role, shape })
+    }
+
+    fn starts_role_marked_schema_decl(&self) -> bool {
+        let i = self.next_non_layout_idx();
+        let Some(first) = self.tokens.get(i) else {
+            return false;
+        };
+        if first.kind != TokenKind::Ident || !Self::is_schema_role_marker_text(&first.text) {
+            return false;
+        }
+        let next = self.next_non_layout_idx_from(i + 1);
+        self.tokens
+            .get(next)
+            .map(|tok| tok.kind == TokenKind::KwSchema)
+            .unwrap_or(false)
+    }
+
+    fn parse_optional_schema_role(&mut self) -> Result<Option<SchemaRole>, FrontendError> {
+        if !self.starts_role_marked_schema_decl() {
+            return Ok(None);
+        }
+        let role_tok = self.advance();
+        let role = match role_tok.text.as_str() {
+            "config" => SchemaRole::Config,
+            "api" => SchemaRole::Api,
+            "wire" => SchemaRole::Wire,
+            _ => {
+                return Err(FrontendError {
+                    pos: role_tok.pos,
+                    message: "unknown schema role marker".to_string(),
+                })
+            }
+        };
+        Ok(Some(role))
+    }
+
+    fn is_schema_role_marker_text(text: &str) -> bool {
+        matches!(text, "config" | "api" | "wire")
     }
 
     fn parse_schema_record_fields_after_first(
@@ -3599,6 +3643,32 @@ fn main() {
         assert!(variants[0].fields.is_empty());
         assert_eq!(program.arena.symbol_name(variants[1].name), "Data");
         assert_eq!(variants[1].fields.len(), 2);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_role_marked_schema_declarations() {
+        let src = r#"
+config schema AppConfig {
+    interval_ms: u32[ms],
+}
+
+wire schema Envelope {
+    Ping {},
+    Data {
+        value: f64,
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("role-marked schema declarations should parse");
+        assert_eq!(program.schemas.len(), 2);
+        assert_eq!(program.schemas[0].role, Some(SchemaRole::Config));
+        assert_eq!(program.schemas[1].role, Some(SchemaRole::Wire));
     }
 
     #[test]

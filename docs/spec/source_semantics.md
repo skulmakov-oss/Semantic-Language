@@ -81,6 +81,10 @@ Current v0 schema declaration semantics:
 - schema declarations currently support:
   - record-shaped forms `schema Name { field: type, ... }`
   - tagged-union forms `schema Name { Variant { field: type, ... }, ... }`
+- schema declarations may now also carry one explicit role marker:
+  - `config schema`
+  - `api schema`
+  - `wire schema`
 - record-shaped schema declarations must be non-empty and may not repeat field
   names
 - tagged-union schema declarations must declare at least one variant, may not
@@ -89,6 +93,8 @@ Current v0 schema declaration semantics:
   and resolve against the ordinary nominal/executable type tables
 - schema declarations currently live only in the canonical schema table owned by
   the frontend/typecheck path
+- schema role markers currently contribute compile-time declaration metadata
+  only; they do not imply loading, generation, transport, or runtime behavior
 - schema declarations do not currently introduce executable types, runtime
   carriers, or host ABI shapes
 

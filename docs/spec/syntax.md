@@ -54,6 +54,13 @@ schema Name {
 ```
 
 ```sm
+config schema Name {
+    field: type,
+    ...
+}
+```
+
+```sm
 schema Name {
     Variant {
         field: type,
@@ -116,6 +123,8 @@ Current rules:
 
 - `record` introduces a nominal top-level record declaration
 - `schema` introduces a compile-time-only top-level schema declaration
+- `config schema`, `api schema`, and `wire schema` introduce the same
+  compile-time-only schema declaration family with explicit role metadata
 - record declarations must be non-empty
 - schema declarations must be non-empty
 - record field names must be unique within one declaration
@@ -160,10 +169,10 @@ Current v0 schema limits:
   are part of the current surface
 - schema declarations are compile-time-only and do not introduce executable
   value carriers
+- schema role markers are currently explicit only as top-level prefixes:
+  `config schema`, `api schema`, and `wire schema`
 - schema names are not yet valid in executable local, parameter, return, or
   match type positions
-- schema role markers such as `config`, `api`, and `wire` remain later `v0.3`
-  slices
 
 ## Statements
 

@@ -346,6 +346,13 @@ pub struct SchemaVariant {
     pub fields: Vec<SchemaField>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaRole {
+    Config,
+    Api,
+    Wire,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaShape {
     Record(Vec<SchemaField>),
@@ -355,6 +362,7 @@ pub enum SchemaShape {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaDecl {
     pub name: SymbolId,
+    pub role: Option<SchemaRole>,
     pub shape: SchemaShape,
 }
 

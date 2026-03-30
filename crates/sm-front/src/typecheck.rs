@@ -3261,6 +3261,32 @@ mod tests {
     }
 
     #[test]
+    fn role_marked_schema_declarations_typecheck_as_compile_time_items() {
+        let src = r#"
+            config schema AppConfig {
+                interval_ms: u32[ms],
+            }
+
+            api schema SensorRequest {
+                payload: Result(quad, bool),
+            }
+
+            wire schema Envelope {
+                Ping {},
+                Data {
+                    value: f64,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("role-marked schema declarations should typecheck");
+    }
+
+    #[test]
     fn schema_declaration_rejects_duplicate_field_name() {
         let src = r#"
             schema PointPayload {
