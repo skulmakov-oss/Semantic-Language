@@ -26,7 +26,7 @@ pub struct CliPipeline;
 #[cfg(feature = "std")]
 pub use app::{main_entry, run};
 #[cfg(feature = "std")]
-pub use config::{parse_config_document, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValue};
+pub use config::{build_config_contract, parse_config_document, validate_config_document, ConfigContract, ConfigContractBuildError, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValidationDiagnostic, ConfigValidationError, ConfigValue};
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 

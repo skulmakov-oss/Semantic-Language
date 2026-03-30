@@ -33,6 +33,13 @@ Current chosen canonical config document surface:
 - scalar values limited to string, bool, quad, and decimal/integer numbers
 - no arrays, comments, or alternate wire/config syntaxes in the first slice
 
+Current second-slice validation boundary:
+
+- validate only record-shaped `config schema` roots
+- allow nested record fields via canonical record declarations
+- allow measured numeric fields through unit-erased numeric compatibility checks
+- keep tagged-union config validation for a later slice
+
 ## Intended Slice Order
 
 1. config contract scope checkpoint
