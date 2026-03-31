@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- No unreleased entries yet.
+
+## v1.1.1 - 2026-04-01
+
 ### Added
 - `v0.1` density-surface wave landed in `main`, including expression-valued
   control, guarded control, composition/call density, flow primitives,
@@ -38,10 +42,12 @@ All notable changes to this project are documented in this file.
   in `docs/roadmap/language_maturity/release_freeze_post_v03_checkpoint.md`.
 
 ### Notes
-- This section records the post-`v0.3` freeze state only; it does not yet cut a
-  new version or tag.
-- The next honest release step is asset/release-note/version-cut housekeeping
-  on top of the current `main`, not another feature wave.
+- This release was cut from exact source commit `087f2f6`.
+- Published assets were validated as:
+  - `smc.exe`
+  - `svm.exe`
+  - `semantic-language-windows-x64-v1.1.1.zip`
+- Downloaded release assets passed the stable smoke matrix before publish.
 
 ## v1.0.0 - 2026-02-14
 

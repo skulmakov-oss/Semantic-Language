@@ -1,6 +1,6 @@
 # Release Version Cut Decision
 
-Status: proposed stable-tag checkpoint
+Status: applied stable-tag checkpoint
 
 ## Goal
 
@@ -72,15 +72,15 @@ folded into this stable-tag decision.
 
 ## Remaining Blocking Step Before Final Stable Cut
 
-The stable tag should still not be cut from this checkpoint alone.
+This blocker was cleared before publish.
 
-One release-facing blocker remains:
+The release-facing blocker that remained at checkpoint time was:
 
 - rerun `docs/roadmap/release_asset_smoke_matrix.md` against downloaded assets
   built for the exact candidate tag `v1.1.1`
 
-Until that happens, the repository is only in a stable-tag candidate state,
-not a final published stable-release state.
+That smoke validation was later completed against the published `v1.1.1`
+assets before the stable release was published.
 
 ## Acceptance Reading
 

@@ -15,7 +15,7 @@ Current repository state:
 - active integration crates: `prom-abi`, `prom-cap`, `prom-gates`, `prom-runtime`, `prom-state`, `prom-rules`, `prom-audit`
 - `prom-*` crates remain separate from compiler and VM internals
 
-Current repository limits that remain before a final stable `v1` tag:
+Current repository limits that remain within the published stable `v1` line:
 
 - richer `fx` arithmetic remains intentionally narrower than the `f64` surface in the canonical Rust-like execution path
 - optimizer surface is fixed to `sm-ir` for the current `v1`; no separate `sm-opt` owner is planned inside the current baseline
@@ -26,9 +26,9 @@ Current repository limits that remain before a final stable `v1` tag:
 
 Current release-line state:
 
-- `main` carries the active narrow `v1` beta line
+- `main` carries the active narrow `v1` stable line
 - release validation runs through boundary guards, public API inventory, runtime matrix/goldens, and the release-bundle verifier
-- published beta releases are expected to ship `smc.exe`, `svm.exe`, and a bundled Windows archive
+- published stable releases are expected to ship `smc.exe`, `svm.exe`, and a bundled Windows archive
 
 Non-negotiable architecture rules:
 

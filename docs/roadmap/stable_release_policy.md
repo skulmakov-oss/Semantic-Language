@@ -1,19 +1,21 @@
 # Semantic Stable Release Policy
 
-Status: beta-to-stable release rule
+Status: stable release discipline
 
-This document defines how the current beta line is allowed to move to a stable release without reopening scope.
+This document defines the release discipline that governed the `v1.1.1` stable
+cut and should continue to govern forward stable releases without reopening
+scope.
 
 ## Scope Freeze
 
-While the repository is on an active beta line:
+While the repository is preparing or validating a stable release:
 
 - do not add new ABI calls
 - do not widen the current PROMETHEUS `v1` scope
 - do not expand runtime semantics beyond the current narrow contract
 - do not turn post-`v1` items into release blockers
 
-Allowed changes during the beta-to-stable window:
+Allowed changes during the release-validation window:
 
 - release-facing docs sync
 - release asset validation

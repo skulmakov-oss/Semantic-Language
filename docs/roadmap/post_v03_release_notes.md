@@ -1,16 +1,15 @@
 # Semantic Post-v0.3 Release Notes
 
-Status: prerelease candidate checkpoint
+Status: published stable release notes
 
-These notes summarize the current release-ready surface after `v0.1`, `v0.2`,
-and `v0.3` have all landed in `main`. They do not themselves cut a version or
-publish assets.
+These notes summarize the published stable release surface after `v0.1`,
+`v0.2`, and `v0.3` all landed in `main`.
 
-## Validated Repository Commit
+## Exact Source Commit
 
-- publish-gate validated commit: `c9e5470`
+- published stable release commit: `087f2f6`
 
-## Selected Forward Stable Tag Candidate
+## Published Stable Tag
 
 - `v1.1.1`
 
@@ -82,9 +81,6 @@ publish assets.
 
 ## Current Known Limits
 
-- no new release tag has been cut from this checkpoint yet
-- downloaded-asset validation for the candidate stable tag `v1.1.1` has not
-  yet been recorded
 - generated API and wire contracts are review/build artifacts, not runtime
   transport engines
 - wire patch types are review metadata only; there is no runtime patch
@@ -94,15 +90,17 @@ publish assets.
 - the `smlsp` / workbench protocol bridge remains outside this release note
   unless promoted separately
 
-## Required Before Tag Cut
+## Validation Contour Used For Release
 
-- run `cargo test --workspace` on the exact release candidate commit
-- run `cargo test --test public_api_contracts`
-- run `pwsh -File scripts/verify_release_bundle.ps1`
-- validate downloaded release assets against
-  `docs/roadmap/release_asset_smoke_matrix.md`
-- decide the next forward version/tag without rewriting existing stable history
-- rerun the smoke matrix against downloaded assets for `v1.1.1`
+- `cargo test --workspace`
+- `cargo test --test public_api_contracts`
+- `cargo test --test golden_semcode`
+- `cargo test --test prometheus_runtime_matrix`
+- `cargo test --test prometheus_runtime_goldens`
+- `cargo test --test prometheus_runtime_negative_goldens`
+- `cargo test --test prometheus_runtime_compat_matrix`
+- `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath artifacts/release/post_v03_release_bundle_manifest.json`
+- downloaded-asset smoke matrix rerun for exact tag `v1.1.1`
 
 ## Notes
 
@@ -117,3 +115,5 @@ publish assets.
   - `docs/roadmap/language_maturity/release_freeze_post_v03_checkpoint.md`
 - version-cut decision note lives in:
   - `docs/roadmap/language_maturity/release_version_cut_decision.md`
+- published release URL:
+  - [Semantic v1.1.1](https://github.com/skulmakov-oss/Semantic-Language/releases/tag/v1.1.1)

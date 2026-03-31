@@ -2,19 +2,19 @@
 
 Current release-control wave:
 
-- keep the active beta release line stable on `main`
+- keep the active stable release line stable on `main`
 - keep new feature work paused while release-facing docs, asset smoke checks, and packaging stay aligned
 
 Current release-maintenance wave:
 
-- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with the published beta line
+- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with the published stable line
 - keep published release assets validated against representative source programs
 - keep release notes and compatibility statements honest about current narrow `v1` limits
 
 Current remaining `v1` wave:
 
 - tighten remaining `fx` numeric contract notes now that the canonical value path is end-to-end
-- keep stable release/tag policy explicit as the repository moves from beta to final
+- keep forward stable release/tag policy explicit without rewriting history
 
 Current post-`v1` wave:
 
@@ -38,6 +38,6 @@ Foundational work already in place:
 Rule of execution:
 
 - do not start semantic runtime before verifier, runtime purity, and quotas are in place;
-- do not reopen scope while the active beta line is being validated;
+- do not reopen scope while the active stable line is being maintained;
 - one PR equals one logical step;
 - contract/spec/tests come before cleanup and optimization.

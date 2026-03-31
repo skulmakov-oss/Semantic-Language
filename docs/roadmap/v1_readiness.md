@@ -1,6 +1,6 @@
 # Semantic v1 Readiness
 
-Status: active beta release line
+Status: published stable release line
 
 This document summarizes the current release-facing readiness state for Semantic v1.
 
@@ -18,14 +18,15 @@ Current repository state has working coverage for:
 - semantic runtime validation matrix and golden baselines
 - CI-enforced boundary, public API, runtime, and release-bundle gates
 
-This means the repository has crossed from architecture-only planning into a published beta release line for the current contract surfaces.
+This means the repository has crossed from architecture-only planning into a
+published stable release line for the current contract surfaces.
 
 Current `v1` boundary decision:
 
 - the official `v1` PROMETHEUS scope is the existing narrow ABI/capability/gate boundary
 - wider planned host calls are not part of the current `v1` commitment
 - ownership alignment for optimizer, SemCode, and CLI is already implemented in code
-- the active beta line is published from `main`
+- the active stable `v1.1.1` line is published from `main`
 
 ## Current Artifact List
 
@@ -46,7 +47,7 @@ Current v1-facing artifact families in the repository:
 - CLI/tooling surface
   - `smc`
   - `svm`
-- published beta assets
+- published stable assets
   - `smc.exe`
   - `svm.exe`
   - Windows release zip
@@ -97,14 +98,14 @@ The repository should be treated as release-valid only if all of the following s
 - semantic runtime negative golden tests
 - semantic runtime compatibility matrix tests
 
-## Next Remaining Release Steps
+## Next Release Maintenance Steps
 
-Current highest-signal remaining work before a final stable `v1` tag:
+Current highest-signal remaining work after the first stable `v1.1.1` tag:
 
-1. keep release-facing docs aligned with the actual published beta line on `main`
-2. keep packaged beta assets validated against representative source programs
-3. freeze final stable tag and packaging expectations without reopening scope
-4. perform one final clean validation pass before a stable `v1` tag
+1. keep release-facing docs aligned with the published stable line on `main`
+2. rerun representative asset smoke for every forward release tag
+3. keep narrow `v1` limits explicit unless a separate scope decision promotes them
+4. treat any future widening as a forward versioned release, not silent drift
 
 ## Contract Rule
 

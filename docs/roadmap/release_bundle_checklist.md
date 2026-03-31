@@ -1,8 +1,9 @@
 # Semantic v1 Release Bundle Checklist
 
-Status: active beta release baseline
+Status: active stable release baseline
 
-Use this checklist before assembling or publishing a release-facing beta or final `v1` bundle.
+Use this checklist before assembling or publishing a release-facing stable or
+prerelease `v1` bundle.
 
 ## Required Documentation Bundle
 
@@ -15,7 +16,7 @@ Verify the bundle includes:
 - `docs/roadmap/compatibility_statement.md`
 - `docs/roadmap/release_asset_smoke_matrix.md`
 - `docs/roadmap/stable_release_policy.md`
-- published asset notes for `smc.exe`, `svm.exe`, and the Windows zip when a GitHub beta release is cut
+- published asset notes for `smc.exe`, `svm.exe`, and the Windows zip when a GitHub release is cut
 
 Reproducible check command:
 

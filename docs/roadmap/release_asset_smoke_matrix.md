@@ -1,22 +1,18 @@
 # Semantic Release Asset Smoke Matrix
 
-Status: prerelease asset validation baseline
+Status: active stable asset validation baseline
 
 This document records the minimum smoke validation required against downloaded release assets, not just locally built binaries.
 
 ## Current Validated Tag
 
-- `v1.1.1-beta4`
-
-## Next Required Rerun
-
-- downloaded assets for candidate stable tag `v1.1.1`
+- `v1.1.1`
 
 ## Validated Assets
 
 - `smc.exe`
 - `svm.exe`
-- `semantic-language-windows-x64-v1.1.1-beta4.zip`
+- `semantic-language-windows-x64-v1.1.1.zip`
 
 ## Current Smoke Matrix
 
@@ -28,10 +24,11 @@ This document records the minimum smoke validation required against downloaded r
 
 ## Current Validation Notes
 
-- the minimal source compiled to `22 bytes`
-- the builtin `f64` source compiled to `257 bytes`
-- the semantic trace source compiled to `6029 bytes`
-- downloaded `beta4` binaries were revalidated from downloaded assets, not only from the local build tree
+- downloaded stable `v1.1.1` assets were revalidated from the published
+  release, not only from the local build tree
+- the stable Windows zip contains exactly:
+  - `smc.exe`
+  - `svm.exe`
 
 ## Smoke Commands
 
@@ -45,8 +42,5 @@ Representative command pattern:
 
 Every published beta or final release should repeat this smoke matrix against
 the downloaded assets for that exact tag.
-
-The next required repetition for a stable cut is the downloaded asset set for
-`v1.1.1`, not only the older `v1.1.1-beta4` bundle.
 
 If a release asset fails this smoke matrix, the tag should be treated as packaging-invalid even if `cargo test --workspace` remains green in the repository.
