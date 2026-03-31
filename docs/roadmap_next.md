@@ -1,5 +1,9 @@
 # Roadmap Next (Post-Base Stabilization)
 
+Release-freeze checkpoint after `v0.1`/`v0.2`/`v0.3` close-out:
+
+- `docs/roadmap/language_maturity/release_freeze_post_v03_checkpoint.md`
+
 This document tracks the next four closure tracks to move Semantic from "working" to "production-disciplined".
 
 ## NEXT-1: Import / Re-export v0.2 to FULL
