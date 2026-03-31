@@ -56,6 +56,16 @@ for tagged wire unions and patch types.
 - it freezes one canonical artifact family for wire unions and wire patch types
 - it does not yet derive artifacts from canonical schemas
 
+## Slice-3 Contract Reading
+
+The second code slice derives tagged wire unions only from canonical tagged-
+union `wire schema` declarations.
+
+- it preserves variant and payload-field declaration order
+- it still leaves record-shaped patch derivation for the next slice
+- `api schema`, `config schema`, and unmarked schemas remain outside this
+  derivation path
+
 ## Non-Goals
 
 - migration execution

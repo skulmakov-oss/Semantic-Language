@@ -1,3 +1,9 @@
+use sm_front::{
+    build_adt_table, build_record_table, canonicalize_declared_type, parse_program,
+    resolve_symbol_name, AstArena, FrontendError, SchemaRole, SchemaShape, Type,
+};
+use std::error::Error;
+use std::fmt;
 use std::fmt::Write;
 
 pub const GENERATED_WIRE_CONTRACT_FORMAT_VERSION: u32 = 1;
@@ -43,6 +49,19 @@ pub struct GeneratedWireContractArtifact {
     pub patch_types: Vec<WirePatchTypeContract>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedWireContractBuildError {
+    pub message: String,
+}
+
+impl fmt::Display for GeneratedWireContractBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "generated wire contract build error: {}", self.message)
+    }
+}
+
+impl Error for GeneratedWireContractBuildError {}
+
 impl GeneratedWireContractArtifact {
     pub fn new(
         tagged_unions: Vec<TaggedWireUnionContract>,
@@ -56,6 +75,65 @@ impl GeneratedWireContractArtifact {
             patch_types,
         }
     }
+}
+
+pub fn build_generated_wire_contract(
+    src: &str,
+) -> Result<GeneratedWireContractArtifact, GeneratedWireContractBuildError> {
+    let program = parse_program(src).map_err(generated_wire_contract_build_error)?;
+    let record_table = build_record_table(&program).map_err(generated_wire_contract_build_error)?;
+    let adt_table = build_adt_table(&program).map_err(generated_wire_contract_build_error)?;
+    let mut tagged_unions = Vec::new();
+
+    for schema in &program.schemas {
+        if schema.role != Some(SchemaRole::Wire) {
+            continue;
+        }
+        let SchemaShape::TaggedUnion(variants) = &schema.shape else {
+            continue;
+        };
+        let schema_name = resolve_symbol_name(&program.arena, schema.name)
+            .map_err(generated_wire_contract_build_error)?
+            .to_string();
+        let variants = variants
+            .iter()
+            .map(|variant| {
+                Ok(TaggedWireUnionVariant {
+                    name: resolve_symbol_name(&program.arena, variant.name)
+                        .map_err(generated_wire_contract_build_error)?
+                        .to_string(),
+                    fields: variant
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            Ok(TaggedWireUnionField {
+                                name: resolve_symbol_name(&program.arena, field.name)
+                                    .map_err(generated_wire_contract_build_error)?
+                                    .to_string(),
+                                ty: display_generated_wire_type(
+                                    &canonicalize_declared_type(
+                                        &field.ty,
+                                        &record_table,
+                                        &adt_table,
+                                        &program.arena,
+                                    )
+                                    .map_err(generated_wire_contract_build_error)?,
+                                    &program.arena,
+                                )
+                                .map_err(generated_wire_contract_build_error)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?,
+                })
+            })
+            .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?;
+        tagged_unions.push(TaggedWireUnionContract {
+            schema_name,
+            variants,
+        });
+    }
+
+    Ok(GeneratedWireContractArtifact::new(tagged_unions, Vec::new()))
 }
 
 pub fn format_generated_wire_contract(artifact: &GeneratedWireContractArtifact) -> String {
@@ -90,6 +168,46 @@ pub fn format_generated_wire_contract(artifact: &GeneratedWireContractArtifact) 
     }
 
     out
+}
+
+fn generated_wire_contract_build_error(error: FrontendError) -> GeneratedWireContractBuildError {
+    GeneratedWireContractBuildError {
+        message: error.message,
+    }
+}
+
+fn display_generated_wire_type(ty: &Type, arena: &AstArena) -> Result<String, FrontendError> {
+    Ok(match ty {
+        Type::Quad => "quad".to_string(),
+        Type::QVec(width) => format!("qvec({})", width),
+        Type::Bool => "bool".to_string(),
+        Type::I32 => "i32".to_string(),
+        Type::U32 => "u32".to_string(),
+        Type::Fx => "fx".to_string(),
+        Type::F64 => "f64".to_string(),
+        Type::Measured(base, unit) => format!(
+            "{}[{}]",
+            display_generated_wire_type(base, arena)?,
+            resolve_symbol_name(arena, *unit)?
+        ),
+        Type::RangeI32 => "range<i32>".to_string(),
+        Type::Tuple(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(|item| display_generated_wire_type(item, arena))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ")
+        ),
+        Type::Option(item) => format!("Option({})", display_generated_wire_type(item, arena)?),
+        Type::Result(ok_ty, err_ty) => format!(
+            "Result({}, {})",
+            display_generated_wire_type(ok_ty, arena)?,
+            display_generated_wire_type(err_ty, arena)?
+        ),
+        Type::Record(name) | Type::Adt(name) => resolve_symbol_name(arena, *name)?.to_string(),
+        Type::Unit => "()".to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -164,6 +282,85 @@ wire union Envelope {
 wire patch Telemetry {
     enabled?: bool
     interval_ms?: u32[ms]
+}
+";
+
+        assert_eq!(formatted, expected);
+    }
+
+    #[test]
+    fn build_generated_wire_contract_derives_only_tagged_wire_unions() {
+        let artifact = build_generated_wire_contract(
+            r#"
+api schema ApiEnvelope {
+    Empty {},
+}
+
+wire schema Envelope {
+    Empty {},
+    Data {
+        count: i32,
+        interval_ms: u32[ms],
+    },
+}
+
+wire schema Telemetry {
+    enabled: bool,
+}
+"#,
+        )
+        .expect("tagged wire-union derivation should build");
+
+        assert_eq!(artifact.tagged_unions.len(), 1);
+        assert_eq!(artifact.patch_types.len(), 0);
+        assert_eq!(artifact.tagged_unions[0].schema_name, "Envelope");
+        assert_eq!(artifact.tagged_unions[0].variants.len(), 2);
+        assert_eq!(artifact.tagged_unions[0].variants[0].name, "Empty");
+        assert!(artifact.tagged_unions[0].variants[0].fields.is_empty());
+        assert_eq!(artifact.tagged_unions[0].variants[1].name, "Data");
+        assert_eq!(artifact.tagged_unions[0].variants[1].fields.len(), 2);
+        assert_eq!(artifact.tagged_unions[0].variants[1].fields[0].name, "count");
+        assert_eq!(artifact.tagged_unions[0].variants[1].fields[0].ty, "i32");
+        assert_eq!(
+            artifact.tagged_unions[0].variants[1].fields[1].name,
+            "interval_ms"
+        );
+        assert_eq!(
+            artifact.tagged_unions[0].variants[1].fields[1].ty,
+            "u32[ms]"
+        );
+    }
+
+    #[test]
+    fn build_generated_wire_contract_preserves_declaration_order_for_variants_and_fields() {
+        let artifact = build_generated_wire_contract(
+            r#"
+wire schema Envelope {
+    Ping {
+        seq: u32,
+        sent_at: u32[ms],
+    },
+    Pong {
+        ack: u32,
+    },
+}
+"#,
+        )
+        .expect("wire union derivation should preserve declaration order");
+
+        let formatted = format_generated_wire_contract(&artifact);
+        let expected = "\
+semantic_wire_contract v1
+generator smc-cli 0.1.0
+
+wire union Envelope {
+    Ping {
+        seq: u32
+        sent_at: u32[ms]
+    }
+    Pong {
+        ack: u32
+    }
 }
 ";
 
