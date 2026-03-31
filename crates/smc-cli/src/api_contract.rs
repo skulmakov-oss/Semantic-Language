@@ -1,3 +1,9 @@
+use sm_front::{
+    build_adt_table, build_record_table, canonicalize_declared_type, parse_program,
+    resolve_symbol_name, AstArena, FrontendError, SchemaRole, SchemaShape, Type,
+};
+use std::error::Error;
+use std::fmt;
 use std::fmt::Write;
 
 pub const GENERATED_API_CONTRACT_FORMAT_VERSION: u32 = 1;
@@ -43,6 +49,19 @@ pub struct GeneratedApiContractArtifact {
     pub schemas: Vec<GeneratedApiSchema>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedApiContractBuildError {
+    pub message: String,
+}
+
+impl fmt::Display for GeneratedApiContractBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "generated API contract build error: {}", self.message)
+    }
+}
+
+impl Error for GeneratedApiContractBuildError {}
+
 impl GeneratedApiContractArtifact {
     pub fn new(schemas: Vec<GeneratedApiSchema>) -> Self {
         Self {
@@ -52,6 +71,67 @@ impl GeneratedApiContractArtifact {
             schemas,
         }
     }
+}
+
+pub fn build_generated_api_contract(
+    src: &str,
+) -> Result<GeneratedApiContractArtifact, GeneratedApiContractBuildError> {
+    let program = parse_program(src).map_err(generated_api_contract_build_error)?;
+    let record_table = build_record_table(&program).map_err(generated_api_contract_build_error)?;
+    let adt_table = build_adt_table(&program).map_err(generated_api_contract_build_error)?;
+    let mut schemas = Vec::new();
+
+    for schema in &program.schemas {
+        let Some(role) = schema.role else {
+            continue;
+        };
+        let Some(generated_role) = generated_role(role) else {
+            continue;
+        };
+        let schema_name = resolve_symbol_name(&program.arena, schema.name)
+            .map_err(generated_api_contract_build_error)?
+            .to_string();
+        let shape = match &schema.shape {
+            SchemaShape::Record(fields) => GeneratedApiSchemaShape::Record(
+                fields
+                    .iter()
+                    .map(|field| {
+                        Ok(GeneratedApiField {
+                            name: resolve_symbol_name(&program.arena, field.name)
+                                .map_err(generated_api_contract_build_error)?
+                                .to_string(),
+                            ty: display_generated_api_type(
+                                &canonicalize_declared_type(
+                                    &field.ty,
+                                    &record_table,
+                                    &adt_table,
+                                    &program.arena,
+                                )
+                                .map_err(generated_api_contract_build_error)?,
+                                &program.arena,
+                            )
+                            .map_err(generated_api_contract_build_error)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, GeneratedApiContractBuildError>>()?,
+            ),
+            SchemaShape::TaggedUnion(_) => {
+                return Err(GeneratedApiContractBuildError {
+                    message: format!(
+                        "generated API contract derivation for tagged-union schema '{}' is not yet available in this slice",
+                        schema_name
+                    ),
+                });
+            }
+        };
+        schemas.push(GeneratedApiSchema {
+            name: schema_name,
+            role: generated_role,
+            shape,
+        });
+    }
+
+    Ok(GeneratedApiContractArtifact::new(schemas))
 }
 
 pub fn format_generated_api_contract(artifact: &GeneratedApiContractArtifact) -> String {
@@ -100,11 +180,62 @@ pub fn format_generated_api_contract(artifact: &GeneratedApiContractArtifact) ->
     out
 }
 
+fn generated_api_contract_build_error(error: FrontendError) -> GeneratedApiContractBuildError {
+    GeneratedApiContractBuildError {
+        message: error.message,
+    }
+}
+
+fn generated_role(role: SchemaRole) -> Option<GeneratedApiSchemaRole> {
+    match role {
+        SchemaRole::Api => Some(GeneratedApiSchemaRole::Api),
+        SchemaRole::Wire => Some(GeneratedApiSchemaRole::Wire),
+        SchemaRole::Config => None,
+    }
+}
+
 fn display_generated_api_role(role: GeneratedApiSchemaRole) -> &'static str {
     match role {
         GeneratedApiSchemaRole::Api => "api",
         GeneratedApiSchemaRole::Wire => "wire",
     }
+}
+
+fn display_generated_api_type(
+    ty: &Type,
+    arena: &AstArena,
+) -> Result<String, FrontendError> {
+    Ok(match ty {
+        Type::Quad => "quad".to_string(),
+        Type::QVec(width) => format!("qvec({})", width),
+        Type::Bool => "bool".to_string(),
+        Type::I32 => "i32".to_string(),
+        Type::U32 => "u32".to_string(),
+        Type::Fx => "fx".to_string(),
+        Type::F64 => "f64".to_string(),
+        Type::Measured(base, unit) => format!(
+            "{}[{}]",
+            display_generated_api_type(base, arena)?,
+            resolve_symbol_name(arena, *unit)?
+        ),
+        Type::RangeI32 => "range<i32>".to_string(),
+        Type::Tuple(items) => format!(
+            "({})",
+            items
+                .iter()
+                .map(|item| display_generated_api_type(item, arena))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ")
+        ),
+        Type::Option(item) => format!("Option({})", display_generated_api_type(item, arena)?),
+        Type::Result(ok_ty, err_ty) => format!(
+            "Result({}, {})",
+            display_generated_api_type(ok_ty, arena)?,
+            display_generated_api_type(err_ty, arena)?
+        ),
+        Type::Record(name) | Type::Adt(name) => resolve_symbol_name(arena, *name)?.to_string(),
+        Type::Unit => "()".to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -178,5 +309,74 @@ wire schema Envelope {
 }
 ";
         assert_eq!(formatted, expected);
+    }
+
+    #[test]
+    fn build_generated_api_contract_derives_record_shaped_api_and_wire_schemas() {
+        let artifact = build_generated_api_contract(
+            r#"
+record Point {
+    x: i32,
+    y: i32,
+}
+
+config schema AppConfig {
+    enabled: bool,
+}
+
+api schema Telemetry {
+    enabled: bool,
+    point: Point,
+    interval_ms: u32[ms],
+}
+
+wire schema Envelope {
+    sample_count: Result(i32, quad),
+}
+"#,
+        )
+        .expect("API contract artifact should build");
+
+        assert_eq!(artifact.schemas.len(), 2);
+        assert_eq!(artifact.schemas[0].name, "Telemetry");
+        assert_eq!(artifact.schemas[0].role, GeneratedApiSchemaRole::Api);
+        let GeneratedApiSchemaShape::Record(fields) = &artifact.schemas[0].shape else {
+            panic!("expected record-shaped API schema");
+        };
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].name, "enabled");
+        assert_eq!(fields[0].ty, "bool");
+        assert_eq!(fields[1].name, "point");
+        assert_eq!(fields[1].ty, "Point");
+        assert_eq!(fields[2].name, "interval_ms");
+        assert_eq!(fields[2].ty, "u32[ms]");
+
+        assert_eq!(artifact.schemas[1].name, "Envelope");
+        assert_eq!(artifact.schemas[1].role, GeneratedApiSchemaRole::Wire);
+        let GeneratedApiSchemaShape::Record(fields) = &artifact.schemas[1].shape else {
+            panic!("expected record-shaped wire schema");
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "sample_count");
+        assert_eq!(fields[0].ty, "Result(i32, quad)");
+    }
+
+    #[test]
+    fn build_generated_api_contract_rejects_tagged_union_schema_until_next_slice() {
+        let err = build_generated_api_contract(
+            r#"
+wire schema Envelope {
+    Empty {},
+    Data {
+        sample_count: i32,
+    },
+}
+"#,
+        )
+        .expect_err("tagged-union generation should stay out of this slice");
+
+        assert!(err
+            .message
+            .contains("tagged-union schema 'Envelope' is not yet available"));
     }
 }

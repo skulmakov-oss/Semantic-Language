@@ -51,6 +51,15 @@ shape and formatter in `smc-cli`.
 - it preserves declaration order supplied by later derivation slices
 - it does not yet derive artifacts from canonical schemas
 
+## Slice-3 Contract Reading
+
+The second code slice derives generated API contract artifacts only for
+record-shaped `api schema` and `wire schema` declarations.
+
+- derivation preserves schema and field declaration order
+- `config schema` and unmarked schemas stay outside the generated API artifact
+- tagged-union generation remains deferred to the next slice
+
 ## Non-Goals
 
 - emitting client SDKs or server stubs
