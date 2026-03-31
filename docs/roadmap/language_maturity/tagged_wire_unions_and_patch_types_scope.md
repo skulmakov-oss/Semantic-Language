@@ -66,6 +66,16 @@ union `wire schema` declarations.
 - `api schema`, `config schema`, and unmarked schemas remain outside this
   derivation path
 
+## Slice-4 Contract Reading
+
+The third code slice derives record patch types only from canonical
+record-shaped `wire schema` declarations.
+
+- patch fields stay in declaration order
+- every emitted patch entry remains explicit review metadata, not runtime patch
+  behavior
+- tagged wire-union derivation remains unchanged and stable
+
 ## Non-Goals
 
 - migration execution

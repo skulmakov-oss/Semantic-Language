@@ -84,56 +84,82 @@ pub fn build_generated_wire_contract(
     let record_table = build_record_table(&program).map_err(generated_wire_contract_build_error)?;
     let adt_table = build_adt_table(&program).map_err(generated_wire_contract_build_error)?;
     let mut tagged_unions = Vec::new();
+    let mut patch_types = Vec::new();
 
     for schema in &program.schemas {
         if schema.role != Some(SchemaRole::Wire) {
             continue;
         }
-        let SchemaShape::TaggedUnion(variants) = &schema.shape else {
-            continue;
-        };
         let schema_name = resolve_symbol_name(&program.arena, schema.name)
             .map_err(generated_wire_contract_build_error)?
             .to_string();
-        let variants = variants
-            .iter()
-            .map(|variant| {
-                Ok(TaggedWireUnionVariant {
-                    name: resolve_symbol_name(&program.arena, variant.name)
-                        .map_err(generated_wire_contract_build_error)?
-                        .to_string(),
-                    fields: variant
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            Ok(TaggedWireUnionField {
-                                name: resolve_symbol_name(&program.arena, field.name)
-                                    .map_err(generated_wire_contract_build_error)?
-                                    .to_string(),
-                                ty: display_generated_wire_type(
-                                    &canonicalize_declared_type(
-                                        &field.ty,
-                                        &record_table,
-                                        &adt_table,
-                                        &program.arena,
-                                    )
-                                    .map_err(generated_wire_contract_build_error)?,
+        match &schema.shape {
+            SchemaShape::TaggedUnion(variants) => {
+                let variants = variants
+                    .iter()
+                    .map(|variant| {
+                        Ok(TaggedWireUnionVariant {
+                            name: resolve_symbol_name(&program.arena, variant.name)
+                                .map_err(generated_wire_contract_build_error)?
+                                .to_string(),
+                            fields: variant
+                                .fields
+                                .iter()
+                                .map(|field| {
+                                    Ok(TaggedWireUnionField {
+                                        name: resolve_symbol_name(&program.arena, field.name)
+                                            .map_err(generated_wire_contract_build_error)?
+                                            .to_string(),
+                                        ty: display_generated_wire_type(
+                                            &canonicalize_declared_type(
+                                                &field.ty,
+                                                &record_table,
+                                                &adt_table,
+                                                &program.arena,
+                                            )
+                                            .map_err(generated_wire_contract_build_error)?,
+                                            &program.arena,
+                                        )
+                                        .map_err(generated_wire_contract_build_error)?,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?;
+                tagged_unions.push(TaggedWireUnionContract {
+                    schema_name,
+                    variants,
+                });
+            }
+            SchemaShape::Record(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|field| {
+                        Ok(WirePatchField {
+                            name: resolve_symbol_name(&program.arena, field.name)
+                                .map_err(generated_wire_contract_build_error)?
+                                .to_string(),
+                            ty: display_generated_wire_type(
+                                &canonicalize_declared_type(
+                                    &field.ty,
+                                    &record_table,
+                                    &adt_table,
                                     &program.arena,
                                 )
                                 .map_err(generated_wire_contract_build_error)?,
-                            })
+                                &program.arena,
+                            )
+                            .map_err(generated_wire_contract_build_error)?,
                         })
-                        .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?,
-                })
-            })
-            .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?;
-        tagged_unions.push(TaggedWireUnionContract {
-            schema_name,
-            variants,
-        });
+                    })
+                    .collect::<Result<Vec<_>, GeneratedWireContractBuildError>>()?;
+                patch_types.push(WirePatchTypeContract { schema_name, fields });
+            }
+        }
     }
 
-    Ok(GeneratedWireContractArtifact::new(tagged_unions, Vec::new()))
+    Ok(GeneratedWireContractArtifact::new(tagged_unions, patch_types))
 }
 
 pub fn format_generated_wire_contract(artifact: &GeneratedWireContractArtifact) -> String {
@@ -312,7 +338,7 @@ wire schema Telemetry {
         .expect("tagged wire-union derivation should build");
 
         assert_eq!(artifact.tagged_unions.len(), 1);
-        assert_eq!(artifact.patch_types.len(), 0);
+        assert_eq!(artifact.patch_types.len(), 1);
         assert_eq!(artifact.tagged_unions[0].schema_name, "Envelope");
         assert_eq!(artifact.tagged_unions[0].variants.len(), 2);
         assert_eq!(artifact.tagged_unions[0].variants[0].name, "Empty");
@@ -329,6 +355,10 @@ wire schema Telemetry {
             artifact.tagged_unions[0].variants[1].fields[1].ty,
             "u32[ms]"
         );
+        assert_eq!(artifact.patch_types[0].schema_name, "Telemetry");
+        assert_eq!(artifact.patch_types[0].fields.len(), 1);
+        assert_eq!(artifact.patch_types[0].fields[0].name, "enabled");
+        assert_eq!(artifact.patch_types[0].fields[0].ty, "bool");
     }
 
     #[test]
@@ -365,5 +395,30 @@ wire union Envelope {
 ";
 
         assert_eq!(formatted, expected);
+    }
+
+    #[test]
+    fn build_generated_wire_contract_preserves_declaration_order_for_patch_fields() {
+        let artifact = build_generated_wire_contract(
+            r#"
+wire schema TelemetryPatch {
+    enabled: bool,
+    interval_ms: u32[ms],
+    retries: i32,
+}
+"#,
+        )
+        .expect("record-shaped wire schema should derive patch type");
+
+        assert_eq!(artifact.tagged_unions.len(), 0);
+        assert_eq!(artifact.patch_types.len(), 1);
+        assert_eq!(artifact.patch_types[0].schema_name, "TelemetryPatch");
+        assert_eq!(artifact.patch_types[0].fields.len(), 3);
+        assert_eq!(artifact.patch_types[0].fields[0].name, "enabled");
+        assert_eq!(artifact.patch_types[0].fields[0].ty, "bool");
+        assert_eq!(artifact.patch_types[0].fields[1].name, "interval_ms");
+        assert_eq!(artifact.patch_types[0].fields[1].ty, "u32[ms]");
+        assert_eq!(artifact.patch_types[0].fields[2].name, "retries");
+        assert_eq!(artifact.patch_types[0].fields[2].ty, "i32");
     }
 }
