@@ -61,6 +61,18 @@ for record-shaped schemas across two explicit schema versions.
   breaking
 - tagged-union compatibility and migration metadata remain deferred
 
+## Slice-4 Contract Reading
+
+The third code slice extends deterministic compatibility classification to
+tagged-union schemas across two explicit schema versions.
+
+- both compared schemas must carry explicit version metadata
+- this slice still classifies only `Equivalent`, `Additive`, or `Breaking`
+- variant additions and payload-field additions are additive
+- variant removals, payload-field removals, and payload type changes are
+  breaking
+- migration metadata remains deferred
+
 ## Non-Goals
 
 - runtime migration execution

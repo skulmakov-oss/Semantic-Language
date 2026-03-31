@@ -100,6 +100,9 @@ Current v0 schema declaration semantics:
 - record-shaped schemas with explicit version metadata may now also participate
   in deterministic tooling-owned compatibility classification across two schema
   revisions
+- tagged-union schemas with explicit version metadata may now also participate
+  in deterministic tooling-owned compatibility classification across two schema
+  revisions
 - the current first-wave compatibility classes are `Equivalent`, `Additive`,
   and `Breaking`
 - canonical schema declarations may now also derive deterministic compile-time

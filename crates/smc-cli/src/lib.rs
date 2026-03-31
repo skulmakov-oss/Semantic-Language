@@ -36,7 +36,7 @@ pub use config::{build_config_contract, parse_config_document, validate_config_d
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 #[cfg(feature = "std")]
-pub use schema_versioning::{classify_record_schema_compatibility, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind};
+pub use schema_versioning::{classify_record_schema_compatibility, classify_tagged_union_schema_compatibility, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind, SchemaVariantChangeKind, TaggedUnionSchemaCompatibilityReport, TaggedUnionSchemaVariantChange};
 
 #[cfg(feature = "std")]
 struct CliFsProvider;
