@@ -97,6 +97,11 @@ Current v0 schema declaration semantics:
   the frontend/typecheck path
 - schema version metadata currently lives only in that canonical schema table as
   compile-time/tooling ownership data
+- record-shaped schemas with explicit version metadata may now also participate
+  in deterministic tooling-owned compatibility classification across two schema
+  revisions
+- the current first-wave compatibility classes are `Equivalent`, `Additive`,
+  and `Breaking`
 - canonical schema declarations may now also derive deterministic compile-time
   validation plans owned by the same frontend/typecheck path
 - record-shaped schemas currently derive first-wave validation checks in

@@ -8,6 +8,8 @@ mod api_contract;
 mod config;
 #[cfg(feature = "std")]
 mod formatter;
+#[cfg(feature = "std")]
+mod schema_versioning;
 
 #[cfg(feature = "std")]
 use ton618_core::diagnostics::diagnostic_catalog;
@@ -33,6 +35,8 @@ pub use api_contract::{build_generated_api_contract, format_generated_api_contra
 pub use config::{build_config_contract, parse_config_document, validate_config_document, ConfigContract, ConfigContractBuildError, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValidationDiagnostic, ConfigValidationError, ConfigValue};
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
+#[cfg(feature = "std")]
+pub use schema_versioning::{classify_record_schema_compatibility, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind};
 
 #[cfg(feature = "std")]
 struct CliFsProvider;

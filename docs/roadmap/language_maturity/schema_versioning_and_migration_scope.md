@@ -50,6 +50,17 @@ The first code slice owns only canonical schema-version metadata.
 - version metadata is retained in the canonical schema table
 - this slice does not yet derive compatibility classes or migration plans
 
+## Slice-3 Contract Reading
+
+The second code slice derives only deterministic compatibility classification
+for record-shaped schemas across two explicit schema versions.
+
+- both compared schemas must carry explicit version metadata
+- this slice currently classifies only `Equivalent`, `Additive`, or `Breaking`
+- field additions are additive; field removals or field-type changes are
+  breaking
+- tagged-union compatibility and migration metadata remain deferred
+
 ## Non-Goals
 
 - runtime migration execution

@@ -9,6 +9,8 @@ pub use api_contract::{build_generated_api_contract, format_generated_api_contra
 pub use config::{build_config_contract, parse_config_document, validate_config_document, ConfigContract, ConfigContractBuildError, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValidationDiagnostic, ConfigValidationError, ConfigValue};
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
+#[cfg(feature = "std")]
+pub use schema_versioning::{classify_record_schema_compatibility, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind};
 pub fn compile_source(
 pub fn build_ir(
 pub fn semantic_check_source(src: &str) -> Result<SemanticReport, String> {
