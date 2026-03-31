@@ -104,6 +104,14 @@ Current v0 schema declaration semantics:
   - allowed-branch checks
   - per-branch required-field checks
   - per-branch field-type compatibility checks
+- `api schema` and `wire schema` declarations may now also derive one
+  deterministic generated API contract artifact family owned by `smc-cli`
+- generated API contract artifacts preserve schema, variant, and field
+  declaration order for reviewability
+- generated API contract artifacts currently carry explicit format-version and
+  generator metadata for reproducibility
+- `config schema` declarations do not participate in generated API artifact
+  derivation in the first-wave contract
 - schema role markers currently contribute compile-time declaration metadata
   only; they do not imply loading, generation, transport, or runtime behavior
 - schema declarations do not currently introduce executable types, runtime

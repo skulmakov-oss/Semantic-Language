@@ -49,6 +49,10 @@ Current compile-time-only declaration families:
 - first-wave tagged-union schema branch checks for allowed variants, required
   per-branch fields, and per-branch field-type compatibility, kept in variant
   declaration order for inspectability
+- deterministic generated API contract artifacts derived only from canonical
+  `api schema` and `wire schema` declarations
+- generated API artifacts preserve declaration order and expose explicit
+  format-version and generator metadata for reproducible review
 
 ## Unit
 

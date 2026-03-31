@@ -150,6 +150,10 @@ Current message families include:
 - generated validation-plan failure for disallowed tagged-union branch
 - generated validation-plan failure for missing required tagged-union branch field
 - generated validation-plan failure for incompatible tagged-union branch field type
+- generated API contract build failure while parsing or validating canonical
+  source/schema declarations
+- generated API contract build failure while canonicalizing declared field or
+  payload types into artifact-surface type text
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal
@@ -213,6 +217,9 @@ Current honest limit:
   contract
 - generated validation failures are currently documented as deterministic plan
   categories, not yet as a separate runtime or CLI diagnostic family
+- generated API contract failures are currently documented as deterministic
+  build-error families prefixed as `generated API contract build error: ...`,
+  not yet as a separate numeric-code taxonomy
 - users should treat the failure class as stable before treating the full text
   as stable
 

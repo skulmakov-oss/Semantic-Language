@@ -1,6 +1,6 @@
 # Generated API Contract Surface Scope
 
-Status: proposed
+Status: first-wave implemented
 
 ## Goal
 
@@ -69,6 +69,18 @@ The third code slice extends generated API contract derivation to tagged-union
 - per-variant payload fields stay in declaration order
 - no client/server stub generation or runtime transport behavior is introduced
 
+## Slice-5 Contract Reading
+
+The final freeze slice does not widen derivation. It freezes the user-facing
+review contract around the already-landed generated artifact family.
+
+- generated API contract build failures stay deterministic wrappers over the
+  current canonical frontend/source diagnostic messages
+- the stable review surface is the canonical text artifact owned by `smc-cli`
+- declaration order, role filtering, format version, and generator metadata are
+  part of the first-wave artifact contract
+- this slice adds no transport, codegen, or runtime behavior
+
 ## Non-Goals
 
 - emitting client SDKs or server stubs
@@ -87,3 +99,6 @@ This issue is done only when:
 - there is no hand-maintained duplicate API description layer
 - user-facing artifact expectations are documented clearly enough for first-wave
   review and version control
+- generated API contract build failures are documented as deterministic build
+  error families even though they do not yet form a separate numeric-code
+  taxonomy
