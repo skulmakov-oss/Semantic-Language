@@ -42,6 +42,7 @@ milestone state.
 2. freeze one repository-local checkpoint for post-`v0.3` release status
 3. prepare release notes / compatibility summary from what is already landed
 4. decide the next public release cut without mixing in a new feature stream
+5. record the forward stable-tag candidate before any final release cut
 
 ## Non-Goals
 

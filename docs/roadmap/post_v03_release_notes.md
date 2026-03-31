@@ -1,14 +1,18 @@
 # Semantic Post-v0.3 Release Notes
 
-Status: prerelease checkpoint
+Status: prerelease candidate checkpoint
 
 These notes summarize the current release-ready surface after `v0.1`, `v0.2`,
 and `v0.3` have all landed in `main`. They do not themselves cut a version or
 publish assets.
 
-## Exact Source Commit
+## Validated Repository Commit
 
-- `main` freeze checkpoint: `4fec82f`
+- publish-gate validated commit: `c9e5470`
+
+## Selected Forward Stable Tag Candidate
+
+- `v1.1.1`
 
 ## Ready Surfaces
 
@@ -79,7 +83,8 @@ publish assets.
 ## Current Known Limits
 
 - no new release tag has been cut from this checkpoint yet
-- published asset validation for the next tag has not yet been recorded
+- downloaded-asset validation for the candidate stable tag `v1.1.1` has not
+  yet been recorded
 - generated API and wire contracts are review/build artifacts, not runtime
   transport engines
 - wire patch types are review metadata only; there is no runtime patch
@@ -97,6 +102,7 @@ publish assets.
 - validate downloaded release assets against
   `docs/roadmap/release_asset_smoke_matrix.md`
 - decide the next forward version/tag without rewriting existing stable history
+- rerun the smoke matrix against downloaded assets for `v1.1.1`
 
 ## Notes
 
@@ -109,3 +115,5 @@ publish assets.
   - `docs/spec/logos.md`
 - post-`v0.3` freeze governance note lives in:
   - `docs/roadmap/language_maturity/release_freeze_post_v03_checkpoint.md`
+- version-cut decision note lives in:
+  - `docs/roadmap/language_maturity/release_version_cut_decision.md`

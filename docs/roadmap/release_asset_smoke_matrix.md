@@ -1,12 +1,16 @@
 # Semantic Release Asset Smoke Matrix
 
-Status: active beta asset validation
+Status: prerelease asset validation baseline
 
 This document records the minimum smoke validation required against downloaded release assets, not just locally built binaries.
 
 ## Current Validated Tag
 
 - `v1.1.1-beta4`
+
+## Next Required Rerun
+
+- downloaded assets for candidate stable tag `v1.1.1`
 
 ## Validated Assets
 
@@ -39,6 +43,10 @@ Representative command pattern:
 
 ## Release Rule
 
-Every published beta or final release should repeat this smoke matrix against the downloaded assets for that exact tag.
+Every published beta or final release should repeat this smoke matrix against
+the downloaded assets for that exact tag.
+
+The next required repetition for a stable cut is the downloaded asset set for
+`v1.1.1`, not only the older `v1.1.1-beta4` bundle.
 
 If a release asset fails this smoke matrix, the tag should be treated as packaging-invalid even if `cargo test --workspace` remains green in the repository.

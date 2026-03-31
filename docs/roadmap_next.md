@@ -3,6 +3,7 @@
 Release-freeze checkpoint after `v0.1`/`v0.2`/`v0.3` close-out:
 
 - `docs/roadmap/language_maturity/release_freeze_post_v03_checkpoint.md`
+- `docs/roadmap/language_maturity/release_version_cut_decision.md`
 
 This document tracks the next four closure tracks to move Semantic from "working" to "production-disciplined".
 
