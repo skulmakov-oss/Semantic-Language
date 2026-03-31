@@ -54,6 +54,13 @@ schema Name {
 ```
 
 ```sm
+schema Name version(2) {
+    field: type,
+    ...
+}
+```
+
+```sm
 config schema Name {
     field: type,
     ...
@@ -171,6 +178,8 @@ Current v0 schema limits:
   value carriers
 - schema role markers are currently explicit only as top-level prefixes:
   `config schema`, `api schema`, and `wire schema`
+- schema declarations may now also attach optional version metadata directly
+  after the schema name: `schema Name version(2) { ... }`
 - schema names are not yet valid in executable local, parameter, return, or
   match type positions
 

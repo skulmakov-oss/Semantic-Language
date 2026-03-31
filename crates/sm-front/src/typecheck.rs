@@ -3347,6 +3347,28 @@ mod tests {
     }
 
     #[test]
+    fn version_marked_schema_declarations_typecheck_as_compile_time_items() {
+        let src = r#"
+            api schema SensorRequest version(2) {
+                payload: Result(quad, bool),
+            }
+
+            wire schema Envelope version(3) {
+                Ping {},
+                Data {
+                    value: f64,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("version-marked schema declarations should typecheck");
+    }
+
+    #[test]
     fn derive_validation_plan_table_returns_canonical_record_schema_plan() {
         let src = r#"
             record Point {

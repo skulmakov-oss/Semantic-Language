@@ -6,8 +6,8 @@ use crate::types::{
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
     RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField,
-    SchemaRole, SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind,
-    TuplePatternItem, Type, UnaryOp,
+    SchemaRole, SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, Token,
+    TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -218,6 +218,7 @@ impl<'a> Parser<'a> {
         let role = self.parse_optional_schema_role()?;
         self.expect(TokenKind::KwSchema, "expected 'schema'")?;
         let name = self.expect_symbol()?;
+        let version = self.parse_optional_schema_version()?;
         self.expect(TokenKind::LBrace, "expected '{' after schema name")?;
         let shape = if self.check(TokenKind::RBrace) {
             SchemaShape::Record(Vec::new())
@@ -239,7 +240,12 @@ impl<'a> Parser<'a> {
             }
         };
         self.expect(TokenKind::RBrace, "expected '}' after schema declaration")?;
-        Ok(SchemaDecl { name, role, shape })
+        Ok(SchemaDecl {
+            name,
+            role,
+            version,
+            shape,
+        })
     }
 
     fn starts_role_marked_schema_decl(&self) -> bool {
@@ -278,6 +284,44 @@ impl<'a> Parser<'a> {
 
     fn is_schema_role_marker_text(text: &str) -> bool {
         matches!(text, "config" | "api" | "wire")
+    }
+
+    fn starts_schema_version_marker(&self) -> bool {
+        let i = self.next_non_layout_idx();
+        let Some(first) = self.tokens.get(i) else {
+            return false;
+        };
+        if first.kind != TokenKind::Ident || first.text != "version" {
+            return false;
+        }
+        let next = self.next_non_layout_idx_from(i + 1);
+        self.tokens
+            .get(next)
+            .map(|tok| tok.kind == TokenKind::LParen)
+            .unwrap_or(false)
+    }
+
+    fn parse_optional_schema_version(&mut self) -> Result<Option<SchemaVersion>, FrontendError> {
+        if !self.starts_schema_version_marker() {
+            return Ok(None);
+        }
+        let marker = self.advance();
+        debug_assert_eq!(marker.text, "version");
+        self.expect(TokenKind::LParen, "expected '(' after schema version marker")?;
+        if !self.check(TokenKind::Num) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "schema version marker currently requires unsuffixed decimal integer"
+                    .to_string(),
+            });
+        }
+        let number = self.advance();
+        let value = parse_schema_version_literal(&number.text).map_err(|message| FrontendError {
+            pos: number.pos,
+            message,
+        })?;
+        self.expect(TokenKind::RParen, "expected ')' after schema version marker")?;
+        Ok(Some(SchemaVersion { value }))
     }
 
     fn parse_schema_record_fields_after_first(
@@ -2519,6 +2563,21 @@ fn parse_decimal_f64_literal(text: &str, kind: &str) -> Result<f64, FrontendErro
     })
 }
 
+fn parse_schema_version_literal(text: &str) -> Result<u32, String> {
+    let (core, suffix) = split_numeric_suffix(text);
+    if suffix.is_some() || core.contains('.') || core.starts_with("0x") || core.starts_with("0X") {
+        return Err("schema version marker currently requires unsuffixed decimal integer".to_string());
+    }
+    let digits = strip_digit_separators(core);
+    let value = digits
+        .parse::<u32>()
+        .map_err(|_| "invalid schema version marker".to_string())?;
+    if value == 0 {
+        return Err("schema version marker must be positive".to_string());
+    }
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3669,6 +3728,63 @@ fn main() {
         assert_eq!(program.schemas.len(), 2);
         assert_eq!(program.schemas[0].role, Some(SchemaRole::Config));
         assert_eq!(program.schemas[1].role, Some(SchemaRole::Wire));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_schema_version_marker() {
+        let src = r#"
+api schema Envelope version(2) {
+    Data {
+        sample_count: i32,
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("schema version marker should parse");
+        assert_eq!(program.schemas.len(), 1);
+        assert_eq!(program.schemas[0].role, Some(SchemaRole::Api));
+        assert_eq!(program.schemas[0].version, Some(SchemaVersion { value: 2 }));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_zero_schema_version_marker() {
+        let src = r#"
+schema Envelope version(0) {
+    value: i32,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("zero schema version must reject");
+        assert!(err.message.contains("schema version marker must be positive"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_suffixed_schema_version_marker() {
+        let src = r#"
+schema Envelope version(1u32) {
+    value: i32,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("suffixed schema version must reject");
+        assert!(err
+            .message
+            .contains("schema version marker currently requires unsuffixed decimal integer"));
     }
 
     #[test]

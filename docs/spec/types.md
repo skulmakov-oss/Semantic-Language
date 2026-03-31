@@ -42,6 +42,7 @@ Current compile-time-only declaration families:
   declaration family
 - explicit schema-role metadata via `config schema`, `api schema`, and
   `wire schema`
+- optional schema-version metadata via `version(<u32>)`
 - deterministic compile-time validation plans derived from canonical schema
   declarations and referenced declared types
 - first-wave record-schema validation checks for required fields and field-type

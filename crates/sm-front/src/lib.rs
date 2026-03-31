@@ -21,7 +21,8 @@ pub use types::{
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
-    SchemaShape, SchemaVariant, Stmt, StmtId, SymbolId, Token, TokenKind, TuplePatternItem, Type,
+    SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, Token, TokenKind,
+    TuplePatternItem, Type,
     UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
     ValidationVariantPlan,
 };
@@ -614,5 +615,29 @@ Law "L" [priority 1]:
     fn lex_via_frontend_crate() {
         let toks = lexer::lex_tokens("fn main() { return; }").expect("lex");
         assert!(!toks.is_empty());
+    }
+
+    #[test]
+    fn build_schema_table_retains_schema_version_metadata() {
+        let program = parse_program(
+            r#"
+api schema Telemetry version(3) {
+    enabled: bool,
+}
+
+fn main() {
+    return;
+}
+"#,
+        )
+        .expect("schema with version should parse");
+
+        let table = build_schema_table(&program).expect("schema table should build");
+        let schema = table
+            .values()
+            .next()
+            .expect("canonical schema table must contain schema");
+        assert_eq!(schema.role, Some(SchemaRole::Api));
+        assert_eq!(schema.version, Some(SchemaVersion { value: 3 }));
     }
 }

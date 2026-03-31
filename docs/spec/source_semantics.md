@@ -85,6 +85,8 @@ Current v0 schema declaration semantics:
   - `config schema`
   - `api schema`
   - `wire schema`
+- schema declarations may now also carry optional `version(<u32>)` metadata
+  immediately after the schema name
 - record-shaped schema declarations must be non-empty and may not repeat field
   names
 - tagged-union schema declarations must declare at least one variant, may not
@@ -93,6 +95,8 @@ Current v0 schema declaration semantics:
   and resolve against the ordinary nominal/executable type tables
 - schema declarations currently live only in the canonical schema table owned by
   the frontend/typecheck path
+- schema version metadata currently lives only in that canonical schema table as
+  compile-time/tooling ownership data
 - canonical schema declarations may now also derive deterministic compile-time
   validation plans owned by the same frontend/typecheck path
 - record-shaped schemas currently derive first-wave validation checks in

@@ -353,6 +353,11 @@ pub enum SchemaRole {
     Wire,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchemaVersion {
+    pub value: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaShape {
     Record(Vec<SchemaField>),
@@ -363,6 +368,7 @@ pub enum SchemaShape {
 pub struct SchemaDecl {
     pub name: SymbolId,
     pub role: Option<SchemaRole>,
+    pub version: Option<SchemaVersion>,
     pub shape: SchemaShape,
 }
 

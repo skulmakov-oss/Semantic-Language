@@ -49,6 +49,8 @@ Current examples include:
   `schema`, or `enum`
 - malformed role-marked schema declarations such as `config`/`api`/`wire`
   appearing without a following `schema`
+- malformed schema version markers such as missing parentheses, non-decimal
+  forms, suffixed literals, or non-positive values
 - extended numeric-literal parse failures such as invalid typed suffix/body
   combinations or decimal-only `f64`/`fx` requirements
 

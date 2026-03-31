@@ -42,6 +42,14 @@ without widening runtime or host boundaries.
 4. deterministic compatibility classification for tagged-union schemas
 5. migration metadata formatting and docs freeze
 
+## Slice-2 Contract Reading
+
+The first code slice owns only canonical schema-version metadata.
+
+- `schema` declarations may now attach optional `version(<u32>)` metadata
+- version metadata is retained in the canonical schema table
+- this slice does not yet derive compatibility classes or migration plans
+
 ## Non-Goals
 
 - runtime migration execution

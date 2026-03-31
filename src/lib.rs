@@ -133,7 +133,7 @@ pub mod frontend {
         FrontendError, FrontendErrorKind, Function, LogosEntity, LogosEntityField,
         LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, OptLevel,
         Program, QuadVal, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
-        ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp, ValidationCheck,
+        SchemaVersion, ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp, ValidationCheck,
         ValidationFieldPlan, ValidationPlan, ValidationPlanTable, ValidationShapePlan,
         ValidationVariantPlan,
     };
