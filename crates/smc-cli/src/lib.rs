@@ -10,6 +10,8 @@ mod config;
 mod formatter;
 #[cfg(feature = "std")]
 mod schema_versioning;
+#[cfg(feature = "std")]
+mod wire_contract;
 
 #[cfg(feature = "std")]
 use ton618_core::diagnostics::diagnostic_catalog;
@@ -37,6 +39,8 @@ pub use config::{build_config_contract, parse_config_document, validate_config_d
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 #[cfg(feature = "std")]
 pub use schema_versioning::{build_schema_migration_metadata, classify_record_schema_compatibility, classify_tagged_union_schema_compatibility, format_schema_migration_metadata, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind, SchemaMigrationChangeSet, SchemaMigrationMetadataArtifact, SchemaMigrationReviewKind, SchemaMigrationShapeKind, SchemaVariantChangeKind, TaggedUnionSchemaCompatibilityReport, TaggedUnionSchemaVariantChange};
+#[cfg(feature = "std")]
+pub use wire_contract::{format_generated_wire_contract, GeneratedWireContractArtifact, TaggedWireUnionContract, TaggedWireUnionField, TaggedWireUnionVariant, WirePatchField, WirePatchTypeContract, GENERATED_WIRE_CONTRACT_FORMAT_VERSION, GENERATED_WIRE_CONTRACT_GENERATOR, GENERATED_WIRE_CONTRACT_GENERATOR_VERSION};
 
 #[cfg(feature = "std")]
 struct CliFsProvider;

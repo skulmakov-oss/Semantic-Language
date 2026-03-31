@@ -53,6 +53,7 @@ for tagged wire unions and patch types.
 
 - it introduces one explicit owner surface in `smc-cli`
 - it defines stable formatter/review expectations
+- it freezes one canonical artifact family for wire unions and wire patch types
 - it does not yet derive artifacts from canonical schemas
 
 ## Non-Goals
