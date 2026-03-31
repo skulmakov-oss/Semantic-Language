@@ -105,6 +105,9 @@ Current v0 schema declaration semantics:
   revisions
 - the current first-wave compatibility classes are `Equivalent`, `Additive`,
   and `Breaking`
+- canonical schema evolution may now also derive tooling-owned migration
+  metadata artifacts and stable formatted review output from those same
+  compatibility reports
 - canonical schema declarations may now also derive deterministic compile-time
   validation plans owned by the same frontend/typecheck path
 - record-shaped schemas currently derive first-wave validation checks in

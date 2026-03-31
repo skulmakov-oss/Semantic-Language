@@ -47,6 +47,8 @@ Current compile-time-only declaration families:
   versions with first-wave classes `Equivalent`, `Additive`, and `Breaking`
 - deterministic tagged-union schema compatibility reports across two explicit
   schema versions with the same first-wave classes
+- canonical schema migration metadata artifacts and stable review formatting
+  derived from those compatibility reports
 - deterministic compile-time validation plans derived from canonical schema
   declarations and referenced declared types
 - first-wave record-schema validation checks for required fields and field-type

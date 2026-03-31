@@ -73,6 +73,18 @@ tagged-union schemas across two explicit schema versions.
   breaking
 - migration metadata remains deferred
 
+## Slice-5 Contract Reading
+
+The final code slice introduces canonical migration metadata artifacts and a
+stable formatter owned by tooling.
+
+- migration metadata is derived only from canonical schema declarations and the
+  deterministic compatibility reports already established in earlier slices
+- metadata remains compile-time/tooling-only; it does not execute or apply
+  migrations
+- the stable formatter is intended for review and diff workflows, not for
+  runtime integration
+
 ## Non-Goals
 
 - runtime migration execution

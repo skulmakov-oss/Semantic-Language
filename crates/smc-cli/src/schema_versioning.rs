@@ -60,6 +60,36 @@ pub struct TaggedUnionSchemaCompatibilityReport {
     pub variant_changes: Vec<TaggedUnionSchemaVariantChange>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaMigrationShapeKind {
+    Record,
+    TaggedUnion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaMigrationReviewKind {
+    NoneRequired,
+    AdditiveReview,
+    BreakingReview,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaMigrationChangeSet {
+    Record(Vec<SchemaFieldChange>),
+    TaggedUnion(Vec<TaggedUnionSchemaVariantChange>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaMigrationMetadataArtifact {
+    pub schema_name: String,
+    pub previous_version: u32,
+    pub next_version: u32,
+    pub shape: SchemaMigrationShapeKind,
+    pub compatibility: SchemaCompatibilityKind,
+    pub review: SchemaMigrationReviewKind,
+    pub changes: SchemaMigrationChangeSet,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaCompatibilityBuildError {
     pub message: String,
@@ -72,6 +102,187 @@ impl fmt::Display for SchemaCompatibilityBuildError {
 }
 
 impl Error for SchemaCompatibilityBuildError {}
+
+pub fn build_schema_migration_metadata(
+    previous_src: &str,
+    next_src: &str,
+    schema_name: &str,
+) -> Result<SchemaMigrationMetadataArtifact, SchemaCompatibilityBuildError> {
+    let previous_program = parse_program(previous_src).map_err(schema_compatibility_build_error)?;
+    let next_program = parse_program(next_src).map_err(schema_compatibility_build_error)?;
+
+    let previous_schema = find_named_schema(&previous_program, schema_name)?;
+    let next_schema = find_named_schema(&next_program, schema_name)?;
+
+    match (&previous_schema.shape, &next_schema.shape) {
+        (SchemaShape::Record(_), SchemaShape::Record(_)) => {
+            let report = classify_record_schema_compatibility(previous_src, next_src, schema_name)?;
+            Ok(SchemaMigrationMetadataArtifact {
+                schema_name: report.schema_name,
+                previous_version: report.previous_version,
+                next_version: report.next_version,
+                shape: SchemaMigrationShapeKind::Record,
+                compatibility: report.compatibility,
+                review: migration_review_for_compatibility(report.compatibility),
+                changes: SchemaMigrationChangeSet::Record(report.changes),
+            })
+        }
+        (SchemaShape::TaggedUnion(_), SchemaShape::TaggedUnion(_)) => {
+            let report =
+                classify_tagged_union_schema_compatibility(previous_src, next_src, schema_name)?;
+            Ok(SchemaMigrationMetadataArtifact {
+                schema_name: report.schema_name,
+                previous_version: report.previous_version,
+                next_version: report.next_version,
+                shape: SchemaMigrationShapeKind::TaggedUnion,
+                compatibility: report.compatibility,
+                review: migration_review_for_compatibility(report.compatibility),
+                changes: SchemaMigrationChangeSet::TaggedUnion(report.variant_changes),
+            })
+        }
+        _ => Err(SchemaCompatibilityBuildError {
+            message: format!(
+                "schema '{}' migration metadata requires stable schema shape across versions",
+                schema_name
+            ),
+        }),
+    }
+}
+
+pub fn format_schema_migration_metadata(artifact: &SchemaMigrationMetadataArtifact) -> String {
+    let mut out = String::new();
+    out.push_str("schema-migration ");
+    out.push_str(&artifact.schema_name);
+    out.push(' ');
+    out.push_str(&artifact.previous_version.to_string());
+    out.push_str(" -> ");
+    out.push_str(&artifact.next_version.to_string());
+    out.push('\n');
+    out.push_str("shape: ");
+    out.push_str(match artifact.shape {
+        SchemaMigrationShapeKind::Record => "record",
+        SchemaMigrationShapeKind::TaggedUnion => "tagged-union",
+    });
+    out.push('\n');
+    out.push_str("compatibility: ");
+    out.push_str(match artifact.compatibility {
+        SchemaCompatibilityKind::Equivalent => "Equivalent",
+        SchemaCompatibilityKind::Additive => "Additive",
+        SchemaCompatibilityKind::Breaking => "Breaking",
+    });
+    out.push('\n');
+    out.push_str("review: ");
+    out.push_str(match artifact.review {
+        SchemaMigrationReviewKind::NoneRequired => "NoneRequired",
+        SchemaMigrationReviewKind::AdditiveReview => "AdditiveReview",
+        SchemaMigrationReviewKind::BreakingReview => "BreakingReview",
+    });
+    out.push('\n');
+    out.push_str("changes:\n");
+    match &artifact.changes {
+        SchemaMigrationChangeSet::Record(changes) => {
+            if changes.is_empty() {
+                out.push_str("- none\n");
+            } else {
+                for change in changes {
+                    out.push_str("- ");
+                    match change.kind {
+                        SchemaFieldChangeKind::Added => {
+                            out.push_str("added field ");
+                            out.push_str(&change.field_name);
+                            out.push_str(": ");
+                            if let Some(next_type) = &change.next_type {
+                                out.push_str(next_type);
+                            } else {
+                                out.push_str("<unknown>");
+                            }
+                        }
+                        SchemaFieldChangeKind::Removed => {
+                            out.push_str("removed field ");
+                            out.push_str(&change.field_name);
+                            if let Some(previous_type) = &change.previous_type {
+                                out.push_str(": ");
+                                out.push_str(previous_type);
+                            }
+                        }
+                        SchemaFieldChangeKind::TypeChanged => {
+                            out.push_str("type-changed field ");
+                            out.push_str(&change.field_name);
+                            out.push_str(": ");
+                            out.push_str(change.previous_type.as_deref().unwrap_or("<unknown>"));
+                            out.push_str(" -> ");
+                            out.push_str(change.next_type.as_deref().unwrap_or("<unknown>"));
+                        }
+                    }
+                    out.push('\n');
+                }
+            }
+        }
+        SchemaMigrationChangeSet::TaggedUnion(changes) => {
+            if changes.is_empty() {
+                out.push_str("- none\n");
+            } else {
+                for change in changes {
+                    match change.kind {
+                        SchemaVariantChangeKind::Added => {
+                            out.push_str("- added variant ");
+                            out.push_str(&change.variant_name);
+                            out.push('\n');
+                        }
+                        SchemaVariantChangeKind::Removed => {
+                            out.push_str("- removed variant ");
+                            out.push_str(&change.variant_name);
+                            out.push('\n');
+                        }
+                        SchemaVariantChangeKind::PayloadChanged => {
+                            out.push_str("- payload-changed variant ");
+                            out.push_str(&change.variant_name);
+                            out.push('\n');
+                            for field_change in &change.field_changes {
+                                out.push_str("  - ");
+                                match field_change.kind {
+                                    SchemaFieldChangeKind::Added => {
+                                        out.push_str("added field ");
+                                        out.push_str(&field_change.field_name);
+                                        out.push_str(": ");
+                                        out.push_str(
+                                            field_change.next_type.as_deref().unwrap_or("<unknown>"),
+                                        );
+                                    }
+                                    SchemaFieldChangeKind::Removed => {
+                                        out.push_str("removed field ");
+                                        out.push_str(&field_change.field_name);
+                                        if let Some(previous_type) = &field_change.previous_type {
+                                            out.push_str(": ");
+                                            out.push_str(previous_type);
+                                        }
+                                    }
+                                    SchemaFieldChangeKind::TypeChanged => {
+                                        out.push_str("type-changed field ");
+                                        out.push_str(&field_change.field_name);
+                                        out.push_str(": ");
+                                        out.push_str(
+                                            field_change
+                                                .previous_type
+                                                .as_deref()
+                                                .unwrap_or("<unknown>"),
+                                        );
+                                        out.push_str(" -> ");
+                                        out.push_str(
+                                            field_change.next_type.as_deref().unwrap_or("<unknown>"),
+                                        );
+                                    }
+                                }
+                                out.push('\n');
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
 
 pub fn classify_record_schema_compatibility(
     previous_src: &str,
@@ -394,6 +605,16 @@ fn require_schema_version<'a>(
             resolve_symbol_name(arena, schema.name).unwrap_or("<invalid-schema>")
         ),
     })
+}
+
+fn migration_review_for_compatibility(
+    compatibility: SchemaCompatibilityKind,
+) -> SchemaMigrationReviewKind {
+    match compatibility {
+        SchemaCompatibilityKind::Equivalent => SchemaMigrationReviewKind::NoneRequired,
+        SchemaCompatibilityKind::Additive => SchemaMigrationReviewKind::AdditiveReview,
+        SchemaCompatibilityKind::Breaking => SchemaMigrationReviewKind::BreakingReview,
+    }
 }
 
 fn classify_variant_field_changes(
@@ -830,5 +1051,158 @@ fn main() {
         assert!(err
             .message
             .contains("currently supports only tagged-union schemas"));
+    }
+
+    #[test]
+    fn build_schema_migration_metadata_for_record_shape_maps_review_kind() {
+        let previous = r#"
+config schema Telemetry version(1) {
+    enabled: bool,
+}
+
+fn main() {
+    return;
+}
+"#;
+        let next = r#"
+config schema Telemetry version(2) {
+    enabled: bool,
+    interval_ms: u32[ms],
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let artifact = build_schema_migration_metadata(previous, next, "Telemetry")
+            .expect("record migration metadata should build");
+
+        assert_eq!(artifact.shape, SchemaMigrationShapeKind::Record);
+        assert_eq!(artifact.compatibility, SchemaCompatibilityKind::Additive);
+        assert_eq!(artifact.review, SchemaMigrationReviewKind::AdditiveReview);
+        let SchemaMigrationChangeSet::Record(changes) = artifact.changes else {
+            panic!("record metadata must retain record change set");
+        };
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].field_name, "interval_ms");
+    }
+
+    #[test]
+    fn build_schema_migration_metadata_for_tagged_union_shape_maps_review_kind() {
+        let previous = r#"
+wire schema Envelope version(3) {
+    Empty {},
+    Data {
+        count: i32,
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+        let next = r#"
+wire schema Envelope version(4) {
+    Data {
+        count: u32,
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let artifact = build_schema_migration_metadata(previous, next, "Envelope")
+            .expect("tagged-union migration metadata should build");
+
+        assert_eq!(artifact.shape, SchemaMigrationShapeKind::TaggedUnion);
+        assert_eq!(artifact.compatibility, SchemaCompatibilityKind::Breaking);
+        assert_eq!(artifact.review, SchemaMigrationReviewKind::BreakingReview);
+        let SchemaMigrationChangeSet::TaggedUnion(changes) = artifact.changes else {
+            panic!("tagged-union metadata must retain tagged-union change set");
+        };
+        assert_eq!(changes.len(), 2);
+    }
+
+    #[test]
+    fn format_schema_migration_metadata_renders_record_changes_deterministically() {
+        let artifact = SchemaMigrationMetadataArtifact {
+            schema_name: "Telemetry".to_string(),
+            previous_version: 1,
+            next_version: 2,
+            shape: SchemaMigrationShapeKind::Record,
+            compatibility: SchemaCompatibilityKind::Additive,
+            review: SchemaMigrationReviewKind::AdditiveReview,
+            changes: SchemaMigrationChangeSet::Record(vec![SchemaFieldChange {
+                field_name: "interval_ms".to_string(),
+                kind: SchemaFieldChangeKind::Added,
+                previous_type: None,
+                next_type: Some("u32[ms]".to_string()),
+            }]),
+        };
+
+        let rendered = format_schema_migration_metadata(&artifact);
+        let expected = "\
+schema-migration Telemetry 1 -> 2
+shape: record
+compatibility: Additive
+review: AdditiveReview
+changes:
+- added field interval_ms: u32[ms]
+";
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn format_schema_migration_metadata_renders_tagged_union_changes_deterministically() {
+        let artifact = SchemaMigrationMetadataArtifact {
+            schema_name: "Envelope".to_string(),
+            previous_version: 3,
+            next_version: 4,
+            shape: SchemaMigrationShapeKind::TaggedUnion,
+            compatibility: SchemaCompatibilityKind::Breaking,
+            review: SchemaMigrationReviewKind::BreakingReview,
+            changes: SchemaMigrationChangeSet::TaggedUnion(vec![
+                TaggedUnionSchemaVariantChange {
+                    variant_name: "Empty".to_string(),
+                    kind: SchemaVariantChangeKind::Removed,
+                    field_changes: Vec::new(),
+                },
+                TaggedUnionSchemaVariantChange {
+                    variant_name: "Data".to_string(),
+                    kind: SchemaVariantChangeKind::PayloadChanged,
+                    field_changes: vec![
+                        SchemaFieldChange {
+                            field_name: "count".to_string(),
+                            kind: SchemaFieldChangeKind::TypeChanged,
+                            previous_type: Some("i32".to_string()),
+                            next_type: Some("u32".to_string()),
+                        },
+                        SchemaFieldChange {
+                            field_name: "status".to_string(),
+                            kind: SchemaFieldChangeKind::Removed,
+                            previous_type: Some("quad".to_string()),
+                            next_type: None,
+                        },
+                    ],
+                },
+            ]),
+        };
+
+        let rendered = format_schema_migration_metadata(&artifact);
+        let expected = "\
+schema-migration Envelope 3 -> 4
+shape: tagged-union
+compatibility: Breaking
+review: BreakingReview
+changes:
+- removed variant Empty
+- payload-changed variant Data
+  - type-changed field count: i32 -> u32
+  - removed field status: quad
+";
+        assert_eq!(rendered, expected);
     }
 }
