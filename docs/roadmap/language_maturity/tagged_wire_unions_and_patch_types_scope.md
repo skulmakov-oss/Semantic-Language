@@ -1,6 +1,6 @@
 # Tagged Wire Unions And Patch Types Scope
 
-Status: proposed
+Status: first-wave implemented
 
 ## Goal
 
@@ -76,6 +76,19 @@ record-shaped `wire schema` declarations.
   behavior
 - tagged wire-union derivation remains unchanged and stable
 
+## Slice-5 Contract Reading
+
+The final freeze slice does not widen derivation. It freezes the user-facing
+review contract around the already-landed wire-contract artifact family.
+
+- generated wire-contract build failures remain deterministic wrappers over the
+  current canonical frontend/source diagnostic messages
+- the stable review surface is the canonical text artifact owned by `smc-cli`
+- tagged-union variant order, payload-field order, patch-field order, format
+  version, and generator metadata are part of the first-wave review contract
+- this slice adds no runtime patch application, transport behavior, or host
+  widening
+
 ## Non-Goals
 
 - migration execution
@@ -96,4 +109,7 @@ This issue is done only when:
 - update semantics remain explicit in docs and tests
 - wire review artifacts stay stable and inspectable enough for checked-in
   review
+- generated wire-contract build failures are documented as deterministic build
+  error families even though they do not yet form a separate numeric-code
+  taxonomy
 - there is no implicit runtime patch engine or widened host/runtime boundary

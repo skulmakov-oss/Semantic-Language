@@ -125,6 +125,17 @@ Current v0 schema declaration semantics:
   declaration order for reviewability
 - generated API contract artifacts currently carry explicit format-version and
   generator metadata for reproducibility
+- `wire schema` declarations may now also derive one deterministic generated
+  wire-contract artifact family owned by `smc-cli`
+- generated wire-contract artifacts currently contain:
+  - tagged wire unions derived from canonical tagged-union `wire schema`
+    declarations
+  - wire patch types derived from canonical record-shaped `wire schema`
+    declarations
+- generated wire-contract artifacts preserve variant, payload-field, and
+  patch-field declaration order for reviewability
+- generated wire-contract artifacts currently carry explicit format-version and
+  generator metadata for reproducibility
 - `config schema` declarations do not participate in generated API artifact
   derivation in the first-wave contract
 - schema role markers currently contribute compile-time declaration metadata
@@ -390,6 +401,12 @@ Current non-goal:
   coroutine-style statement behavior
 - `guard` does not yet support arbitrary `else { ... }` recovery blocks
 - plain reassignment `name = expr;` is not yet part of the public surface
+
+Current generated wire-contract limit:
+
+- generated wire-contract artifacts are review/build outputs only
+- record patch types do not imply a runtime patch application engine
+- tagged wire unions do not imply transport/runtime integration
 
 Current v0 const limit:
 

@@ -156,6 +156,10 @@ Current message families include:
   source/schema declarations
 - generated API contract build failure while canonicalizing declared field or
   payload types into artifact-surface type text
+- generated wire-contract build failure while parsing or validating canonical
+  source/schema declarations
+- generated wire-contract build failure while canonicalizing tagged-union
+  payload or patch-field types into artifact-surface type text
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal
@@ -221,6 +225,9 @@ Current honest limit:
   categories, not yet as a separate runtime or CLI diagnostic family
 - generated API contract failures are currently documented as deterministic
   build-error families prefixed as `generated API contract build error: ...`,
+  not yet as a separate numeric-code taxonomy
+- generated wire-contract failures are currently documented as deterministic
+  build-error families prefixed as `generated wire contract build error: ...`,
   not yet as a separate numeric-code taxonomy
 - users should treat the failure class as stable before treating the full text
   as stable

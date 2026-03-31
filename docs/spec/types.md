@@ -60,6 +60,13 @@ Current compile-time-only declaration families:
   `api schema` and `wire schema` declarations
 - generated API artifacts preserve declaration order and expose explicit
   format-version and generator metadata for reproducible review
+- deterministic generated wire-contract artifacts derived only from canonical
+  `wire schema` declarations
+- generated wire-contract artifacts currently expose:
+  - tagged wire unions from tagged-union `wire schema`
+  - wire patch types from record-shaped `wire schema`
+- generated wire-contract artifacts preserve declaration order and expose
+  explicit format-version and generator metadata for reproducible review
 
 ## Unit
 
