@@ -60,6 +60,15 @@ record-shaped `api schema` and `wire schema` declarations.
 - `config schema` and unmarked schemas stay outside the generated API artifact
 - tagged-union generation remains deferred to the next slice
 
+## Slice-4 Contract Reading
+
+The third code slice extends generated API contract derivation to tagged-union
+`api schema` and `wire schema` declarations.
+
+- variant branches stay in declaration order
+- per-variant payload fields stay in declaration order
+- no client/server stub generation or runtime transport behavior is introduced
+
 ## Non-Goals
 
 - emitting client SDKs or server stubs

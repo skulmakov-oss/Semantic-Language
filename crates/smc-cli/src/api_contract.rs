@@ -115,14 +115,40 @@ pub fn build_generated_api_contract(
                     })
                     .collect::<Result<Vec<_>, GeneratedApiContractBuildError>>()?,
             ),
-            SchemaShape::TaggedUnion(_) => {
-                return Err(GeneratedApiContractBuildError {
-                    message: format!(
-                        "generated API contract derivation for tagged-union schema '{}' is not yet available in this slice",
-                        schema_name
-                    ),
-                });
-            }
+            SchemaShape::TaggedUnion(variants) => GeneratedApiSchemaShape::TaggedUnion(
+                variants
+                    .iter()
+                    .map(|variant| {
+                        Ok(GeneratedApiVariant {
+                            name: resolve_symbol_name(&program.arena, variant.name)
+                                .map_err(generated_api_contract_build_error)?
+                                .to_string(),
+                            fields: variant
+                                .fields
+                                .iter()
+                                .map(|field| {
+                                    Ok(GeneratedApiField {
+                                        name: resolve_symbol_name(&program.arena, field.name)
+                                            .map_err(generated_api_contract_build_error)?
+                                            .to_string(),
+                                        ty: display_generated_api_type(
+                                            &canonicalize_declared_type(
+                                                &field.ty,
+                                                &record_table,
+                                                &adt_table,
+                                                &program.arena,
+                                            )
+                                            .map_err(generated_api_contract_build_error)?,
+                                            &program.arena,
+                                        )
+                                        .map_err(generated_api_contract_build_error)?,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, GeneratedApiContractBuildError>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, GeneratedApiContractBuildError>>()?,
+            ),
         };
         schemas.push(GeneratedApiSchema {
             name: schema_name,
@@ -362,21 +388,34 @@ wire schema Envelope {
     }
 
     #[test]
-    fn build_generated_api_contract_rejects_tagged_union_schema_until_next_slice() {
-        let err = build_generated_api_contract(
+    fn build_generated_api_contract_derives_tagged_union_api_schema_variants() {
+        let artifact = build_generated_api_contract(
             r#"
 wire schema Envelope {
     Empty {},
     Data {
         sample_count: i32,
+        status: quad,
     },
 }
 "#,
         )
-        .expect_err("tagged-union generation should stay out of this slice");
+        .expect("tagged-union generation should now be available");
 
-        assert!(err
-            .message
-            .contains("tagged-union schema 'Envelope' is not yet available"));
+        assert_eq!(artifact.schemas.len(), 1);
+        assert_eq!(artifact.schemas[0].name, "Envelope");
+        assert_eq!(artifact.schemas[0].role, GeneratedApiSchemaRole::Wire);
+        let GeneratedApiSchemaShape::TaggedUnion(variants) = &artifact.schemas[0].shape else {
+            panic!("expected tagged-union generated schema");
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].name, "Empty");
+        assert!(variants[0].fields.is_empty());
+        assert_eq!(variants[1].name, "Data");
+        assert_eq!(variants[1].fields.len(), 2);
+        assert_eq!(variants[1].fields[0].name, "sample_count");
+        assert_eq!(variants[1].fields[0].ty, "i32");
+        assert_eq!(variants[1].fields[1].name, "status");
+        assert_eq!(variants[1].fields[1].ty, "quad");
     }
 }
