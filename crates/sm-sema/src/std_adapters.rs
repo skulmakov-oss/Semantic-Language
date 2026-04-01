@@ -143,9 +143,9 @@ pub fn check_file_with_provider_and_profile(
     provider: &dyn crate::alloc_core::ModuleProvider,
     profile: &ParserProfile,
 ) -> Result<SemanticReport, SemanticError> {
-    let mut visiting: Vec<PathBuf> = Vec::new();
+    let mut visiting: Vec<VisitingImport> = Vec::new();
     let mut loaded: HashMap<PathBuf, (String, LogosProgram)> = HashMap::new();
-    load_module_recursive(root, &mut visiting, &mut loaded, provider, profile)?;
+    load_module_recursive(root, &mut visiting, &mut loaded, provider, profile, false)?;
     let export_sets = build_export_sets(&loaded)?;
     validate_select_imports(&loaded, &export_sets)?;
 
@@ -197,28 +197,53 @@ fn path_contract_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+#[derive(Debug, Clone)]
+struct VisitingImport {
+    path: PathBuf,
+    via_reexport: bool,
+}
+
 fn load_module_recursive(
     path: &Path,
-    visiting: &mut Vec<PathBuf>,
+    visiting: &mut Vec<VisitingImport>,
     loaded: &mut HashMap<PathBuf, (String, LogosProgram)>,
     provider: &dyn crate::alloc_core::ModuleProvider,
     profile: &ParserProfile,
+    via_reexport: bool,
 ) -> Result<(), SemanticError> {
     let key = normalize_lexical(path);
     if loaded.contains_key(&key) {
         return Ok(());
     }
-    if visiting.contains(&key) {
-        let mut chain = visiting
+    if let Some(pos) = visiting.iter().position(|entry| entry.path == key) {
+        let mut full_chain = visiting
             .iter()
-            .map(|p| path_contract_key(p))
+            .map(|entry| path_contract_key(&entry.path))
             .collect::<Vec<_>>();
-        chain.push(path_contract_key(path));
+        full_chain.push(path_contract_key(path));
+        let mut cycle_chain = visiting[pos..]
+            .iter()
+            .map(|entry| path_contract_key(&entry.path))
+            .collect::<Vec<_>>();
+        cycle_chain.push(path_contract_key(path));
+        let reexport_only_cycle =
+            via_reexport && visiting[(pos + 1)..].iter().all(|entry| entry.via_reexport);
+        let (code, message) = if reexport_only_cycle {
+            (
+                "E0243",
+                format!("symbol re-export cycle detected: {}", cycle_chain.join(" -> ")),
+            )
+        } else {
+            (
+                "E0238",
+                format!("cyclic import detected: {}", full_chain.join(" -> ")),
+            )
+        };
         return Err(SemanticError {
             diag: render_diag(
                 DiagLevel::Error,
-                "E0238",
-                format!("cyclic import detected: {}", chain.join(" -> ")),
+                code,
+                message,
                 SourceMark::default(),
                 "",
             ),
@@ -254,13 +279,23 @@ fn load_module_recursive(
         ),
     })?;
 
-    visiting.push(key.clone());
+    visiting.push(VisitingImport {
+        path: key.clone(),
+        via_reexport,
+    });
     let base = path.parent().unwrap_or_else(|| Path::new("."));
     let imports = parse_import_directives(&source);
     validate_import_namespace_rules(&imports, &logos, &source)?;
     for import in imports {
         let import_path = normalize_lexical(&resolve_import_path(base, &import.spec));
-        load_module_recursive(&import_path, visiting, loaded, provider, profile)?;
+        load_module_recursive(
+            &import_path,
+            visiting,
+            loaded,
+            provider,
+            profile,
+            import.reexport,
+        )?;
     }
     let _ = visiting.pop();
     loaded.insert(key, (source, logos));
@@ -1122,6 +1157,7 @@ Law "A" [priority 1]:
         );
         let err = build_export_sets(&loaded).expect_err("must fail cycle");
         assert!(err.to_string().contains("E0243"));
+        assert!(err.to_string().contains("/virtual/a.sm -> /virtual/b.sm -> /virtual/a.sm"));
     }
 
     #[test]

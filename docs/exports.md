@@ -48,7 +48,8 @@ If two exports in one module publish the same public name, compilation fails wit
 
 ## Symbol-level Cycle Policy
 
-Re-export symbol cycles are detected and rejected with `E0243`, with a chain trace.
+Re-export symbol cycles are detected and rejected with `E0243`, with a
+deterministic chain trace that follows the current re-export recursion order.
 
 ## Examples
 

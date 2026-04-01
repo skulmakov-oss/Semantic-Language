@@ -46,7 +46,7 @@ fn imports_docs_fixtures() {
             Err(e) => {
                 let text = e.to_string();
                 assert!(
-                    text.contains(code),
+                    text.contains(&format!("Error [{}]", code)),
                     "case '{}': expected code {}, got:\n{}",
                     case.display(),
                     code,

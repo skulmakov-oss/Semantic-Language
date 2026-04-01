@@ -244,7 +244,7 @@ Current public codes include:
 - `E0240` re-export policy violation
 - `E0241` alias or binding collisions
 - `E0242` public re-export collisions
-- `E0243` symbol re-export cycles
+- `E0243` symbol re-export cycles with deterministic chain traces
 - `E0244` missing selected import symbol
 - `E0245` duplicate select alias, wildcard/select conflict, or kind mismatch
 
@@ -253,6 +253,8 @@ Current guarantees:
 - these diagnostics are rendered as source-level semantic errors
 - line/column information is preserved where available
 - repository tests exercise these failure families directly
+- wildcard overlap is currently resolved by declaration-order fallback rather
+  than by a dedicated ambiguity diagnostic
 
 ## Logos Semantic Diagnostics
 

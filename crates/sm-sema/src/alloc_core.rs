@@ -1250,6 +1250,17 @@ Import "dep/core.sm" as Core
     }
 
     #[test]
+    fn import_resolution_plan_keeps_wildcard_fallbacks_in_declaration_order() {
+        let src = r#"
+Import "dep/first.sm" *
+Import "dep/second.sm" *
+Import "dep/third.sm" *
+"#;
+        let plan = build_import_resolution_plan_core(&parse_import_directives(src));
+        assert_eq!(plan.wildcard_imports, vec!["dep/first.sm", "dep/second.sm", "dep/third.sm"]);
+    }
+
+    #[test]
     fn export_set_keeps_locals_before_reexports_in_import_order() {
         let modules = vec![
             ExportBuildModule {

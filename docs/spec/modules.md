@@ -74,6 +74,9 @@ Clarifications:
   `as X` or the default file-stem alias
 - selected imports participate in unqualified lookup before wildcard imports
 - wildcard imports do not remove namespace-qualified access to the same module
+- if multiple wildcard imports can satisfy one unresolved name, the first
+  matching wildcard import by declaration order wins
+- wildcard overlap does not produce a separate ambiguity diagnostic in v0.2
 
 ## Export Surface
 
@@ -100,6 +103,7 @@ Current determinism rules:
 - dependency export order is preserved within each re-exported set
 - wildcard resolution follows import declaration order
 - symbol-cycle detection is explicit rather than best-effort
+- symbol-cycle traces follow the current re-export recursion order
 
 ## Validation Rules
 

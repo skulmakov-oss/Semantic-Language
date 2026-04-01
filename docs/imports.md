@@ -44,6 +44,9 @@ Current clarification:
 - `Import "dep.sm" { Foo }` binds both `Foo` and namespace alias `dep`
 - `Import "dep.sm" *` still binds namespace alias `dep`
 - explicit selected bindings outrank wildcard-provided names
+- if multiple wildcard imports can provide the same unresolved name, the first
+  wildcard import by declaration order wins in v0.2
+- the current stable surface does not emit a separate wildcard-ambiguity error
 
 ## Validation Rules
 
@@ -53,6 +56,12 @@ Current clarification:
    export kind; mismatches are rejected (`E0245`).
 4. Duplicate selected alias in one import statement is rejected (`E0245`).
 5. `*` cannot be combined with `{...}` in one import statement (`E0245`).
+
+Current non-error policy:
+
+- multiple wildcard imports may overlap on exported names
+- unqualified fallback stays deterministic by import declaration order
+- this is a policy choice, not a separate diagnostic family in v0.2
 
 ## Examples
 
