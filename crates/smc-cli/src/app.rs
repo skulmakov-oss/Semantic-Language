@@ -1107,10 +1107,19 @@ fn ast_pack_key(path: &Path, source: &str) -> Result<u64, String> {
     let mut blob = Vec::new();
     blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
     blob.push(0);
-    blob.extend_from_slice(format!("{:016x}", fnv1a64(source.as_bytes())).as_bytes());
+    blob.extend_from_slice(format!("{:016x}", root_source_fingerprint(source)).as_bytes());
     blob.push(0);
     blob.extend_from_slice(b"frontend-v1-auto");
     Ok(fnv1a64(&blob))
+}
+
+fn root_source_fingerprint(source: &str) -> u64 {
+    fnv1a64(source.as_bytes())
+}
+
+fn downstream_pack_fingerprint(path: &Path, source: &str) -> Result<u64, String> {
+    module_graph_fingerprint(path, CACHE_SCHEMA_VERSION)
+        .or_else(|_| Ok(root_source_fingerprint(source)))
 }
 
 fn ir_pack_key(path: &Path, source: &str, profile: CompileProfile, opt: OptLevel) -> Result<u64, String> {
@@ -1120,7 +1129,7 @@ fn ir_pack_key(path: &Path, source: &str, profile: CompileProfile, opt: OptLevel
     let mut blob = Vec::new();
     blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
     blob.push(0);
-    blob.extend_from_slice(format!("{:016x}", fnv1a64(source.as_bytes())).as_bytes());
+    blob.extend_from_slice(format!("{:016x}", downstream_pack_fingerprint(path, source)?).as_bytes());
     blob.push(0);
     blob.extend_from_slice(format!("profile={:?};opt={:?};lowering=v1", profile, opt).as_bytes());
     Ok(fnv1a64(&blob))
@@ -1139,7 +1148,7 @@ fn smc_pack_key(
     let mut blob = Vec::new();
     blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
     blob.push(0);
-    blob.extend_from_slice(format!("{:016x}", fnv1a64(source.as_bytes())).as_bytes());
+    blob.extend_from_slice(format!("{:016x}", downstream_pack_fingerprint(path, source)?).as_bytes());
     blob.push(0);
     blob.extend_from_slice(
         format!(
@@ -1679,7 +1688,25 @@ fn cmd_hash_smc(args: &[String]) -> Result<(), String> {
     }
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let prev_graph_hash = read_graph_hash(Path::new(CACHE_GRAPH_FILE));
+    let graph_hash_now = if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(Path::new(input)) {
+        let hash = snapshot.hash(CACHE_SCHEMA_VERSION);
+        let _ = snapshot.write_to(Path::new(CACHE_GRAPH_FILE), CACHE_SCHEMA_VERSION);
+        Some(hash)
+    } else {
+        None
+    };
     let exb_key = smc_pack_key(Path::new(input), &src, profile, opt, debug_symbols)?;
+    if trace_cache_enabled && prev_graph_hash.is_some() && prev_graph_hash != graph_hash_now {
+        trace_cache(
+            true,
+            CacheEvent::Invalidate,
+            CacheReason::GraphChanged,
+            Path::new(input),
+            "GRAPH",
+            &format!("{:016x}", exb_key),
+        );
+    }
     let exb_pack = cache_smc_file_for_key(exb_key)?;
     let bytes = match load_blob_pack_ex(&exb_pack, PACK_KIND_SMC)? {
         BlobPackLookup::Hit(cached) => {
@@ -1837,6 +1864,70 @@ Law "C2" [priority 2]:
         .expect("rewrite child");
         let fp2 = module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION).expect("fp2");
         assert_ne!(fp1, fp2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn downstream_pack_keys_follow_dependency_changes_but_ast_stays_root_scoped() {
+        let dir = mk_temp_dir("smc_pack_dep_keys");
+        let root = dir.join("root.sm");
+        let child = dir.join("child.sm");
+        std::fs::write(
+            &root,
+            r#"
+Import "child.sm"
+Law "Root" [priority 1]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("write root");
+        std::fs::write(
+            &child,
+            r#"
+Law "Child" [priority 1]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("write child");
+
+        let source_before = std::fs::read_to_string(&root).expect("read root before");
+        let ast_before = ast_pack_key(&root, &source_before).expect("ast before");
+        let ir_before = ir_pack_key(&root, &source_before, CompileProfile::Auto, OptLevel::O0)
+            .expect("ir before");
+        let smc_before = smc_pack_key(
+            &root,
+            &source_before,
+            CompileProfile::Auto,
+            OptLevel::O0,
+            false,
+        )
+        .expect("smc before");
+
+        std::fs::write(
+            &child,
+            r#"
+Law "Child2" [priority 2]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("rewrite child");
+
+        let source_after = std::fs::read_to_string(&root).expect("read root after");
+        let ast_after = ast_pack_key(&root, &source_after).expect("ast after");
+        let ir_after = ir_pack_key(&root, &source_after, CompileProfile::Auto, OptLevel::O0)
+            .expect("ir after");
+        let smc_after = smc_pack_key(
+            &root,
+            &source_after,
+            CompileProfile::Auto,
+            OptLevel::O0,
+            false,
+        )
+        .expect("smc after");
+
+        assert_eq!(ast_before, ast_after, "AST pack key should stay root-scoped");
+        assert_ne!(ir_before, ir_after, "IR pack key should track dependency changes");
+        assert_ne!(smc_before, smc_after, "SMC pack key should track dependency changes");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
