@@ -1,6 +1,83 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheEvent {
+    Hit,
+    Miss,
+    Invalidate,
+}
+
+impl CacheEvent {
+    fn trace_name(self) -> &'static str {
+        match self {
+            CacheEvent::Hit => "cache_hit",
+            CacheEvent::Miss => "cache_miss",
+            CacheEvent::Invalidate => "invalidate",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheReason {
+    Reused,
+    CacheDisabled,
+    NotFound,
+    HeaderInvalid,
+    KindMismatch,
+    VersionMismatch,
+    ToolchainMismatch,
+    FeatureMismatch,
+    CapsMismatch,
+    PayloadSizeMismatch,
+    ChecksumMismatch,
+    FingerprintMismatch,
+    GraphChanged,
+    DenyPolicy,
+}
+
+impl CacheReason {
+    pub(crate) fn trace_code(self) -> &'static str {
+        match self {
+            CacheReason::Reused => "REUSED",
+            CacheReason::CacheDisabled => "CACHE_DISABLED",
+            CacheReason::NotFound => "NOT_FOUND",
+            CacheReason::HeaderInvalid => "HEADER_INVALID",
+            CacheReason::KindMismatch => "KIND_MISMATCH",
+            CacheReason::VersionMismatch => "SCHEMA_CHANGED",
+            CacheReason::ToolchainMismatch => "TOOLCHAIN_CHANGED",
+            CacheReason::FeatureMismatch => "FEATURES_CHANGED",
+            CacheReason::CapsMismatch => "CAPS_CHANGED",
+            CacheReason::PayloadSizeMismatch => "CORRUPT_PACK",
+            CacheReason::ChecksumMismatch => "CORRUPT_PACK",
+            CacheReason::FingerprintMismatch => "SOURCE_CHANGED",
+            CacheReason::GraphChanged => "DEP_CHANGED",
+            CacheReason::DenyPolicy => "DENY_POLICY",
+        }
+    }
+}
+
+pub(crate) fn emit_trace(
+    enabled: bool,
+    event: CacheEvent,
+    reason: CacheReason,
+    module: &Path,
+    pack_kind: &str,
+    key: &str,
+) {
+    if !enabled {
+        return;
+    }
+    eprintln!(
+        "{{\"event\":\"{}\",\"reason\":\"{}\",\"module\":\"{}\",\"pack_kind\":\"{}\",\"key\":\"{}\"}}",
+        event.trace_name(),
+        reason.trace_code(),
+        escape_json(&module.to_string_lossy()),
+        escape_json(pack_kind),
+        escape_json(key),
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleGraphNode {
     pub(crate) key: String,
@@ -232,6 +309,10 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn escape_json(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +381,28 @@ Law "C2" [priority 2]:
         assert!(text.contains("GH=0000000000000022"));
         assert!(text.contains("MC=3"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trace_reason_codes_are_stable() {
+        let cases = [
+            (CacheReason::Reused, "REUSED"),
+            (CacheReason::CacheDisabled, "CACHE_DISABLED"),
+            (CacheReason::NotFound, "NOT_FOUND"),
+            (CacheReason::HeaderInvalid, "HEADER_INVALID"),
+            (CacheReason::KindMismatch, "KIND_MISMATCH"),
+            (CacheReason::VersionMismatch, "SCHEMA_CHANGED"),
+            (CacheReason::ToolchainMismatch, "TOOLCHAIN_CHANGED"),
+            (CacheReason::FeatureMismatch, "FEATURES_CHANGED"),
+            (CacheReason::CapsMismatch, "CAPS_CHANGED"),
+            (CacheReason::PayloadSizeMismatch, "CORRUPT_PACK"),
+            (CacheReason::ChecksumMismatch, "CORRUPT_PACK"),
+            (CacheReason::FingerprintMismatch, "SOURCE_CHANGED"),
+            (CacheReason::GraphChanged, "DEP_CHANGED"),
+            (CacheReason::DenyPolicy, "DENY_POLICY"),
+        ];
+        for (reason, expected) in cases {
+            assert_eq!(reason.trace_code(), expected);
+        }
     }
 }

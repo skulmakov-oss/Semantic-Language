@@ -1,7 +1,7 @@
 use ton618_core::diagnostics::diagnostic_catalog;
 use crate::incremental::{
-    module_graph_fingerprint, module_graph_module_count, read_graph_hash, update_cache_index,
-    ModuleGraphSnapshot,
+    emit_trace, module_graph_fingerprint, module_graph_module_count, read_graph_hash,
+    update_cache_index, CacheEvent, CacheReason, ModuleGraphSnapshot,
 };
 use crate::{format_path, FormatterMode};
 use sm_emit::{
@@ -1044,35 +1044,6 @@ impl DenyPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum CacheEvent {
-    Hit,
-    Miss,
-    Invalidate,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum CacheReason {
-    Reused,
-    CacheDisabled,
-    NotFound,
-    HeaderInvalid,
-    KindMismatch,
-    VersionMismatch,
-    ToolchainMismatch,
-    FeatureMismatch,
-    CapsMismatch,
-    PayloadSizeMismatch,
-    ChecksumMismatch,
-    FingerprintMismatch,
-    GraphChanged,
-    DenyPolicy,
-}
-
-fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 fn trace_cache(
     enabled: bool,
     event: CacheEvent,
@@ -1081,38 +1052,7 @@ fn trace_cache(
     pack_kind: &str,
     key: &str,
 ) {
-    if !enabled {
-        return;
-    }
-    let event_s = match event {
-        CacheEvent::Hit => "cache_hit",
-        CacheEvent::Miss => "cache_miss",
-        CacheEvent::Invalidate => "invalidate",
-    };
-    let reason_s = match reason {
-        CacheReason::Reused => "REUSED",
-        CacheReason::CacheDisabled => "CACHE_DISABLED",
-        CacheReason::NotFound => "NOT_FOUND",
-        CacheReason::HeaderInvalid => "HEADER_INVALID",
-        CacheReason::KindMismatch => "KIND_MISMATCH",
-        CacheReason::VersionMismatch => "SCHEMA_CHANGED",
-        CacheReason::ToolchainMismatch => "TOOLCHAIN_CHANGED",
-        CacheReason::FeatureMismatch => "FEATURES_CHANGED",
-        CacheReason::CapsMismatch => "CAPS_CHANGED",
-        CacheReason::PayloadSizeMismatch => "CORRUPT_PACK",
-        CacheReason::ChecksumMismatch => "CORRUPT_PACK",
-        CacheReason::FingerprintMismatch => "SOURCE_CHANGED",
-        CacheReason::GraphChanged => "DEP_CHANGED",
-        CacheReason::DenyPolicy => "DENY_POLICY",
-    };
-    eprintln!(
-        "{{\"event\":\"{}\",\"reason\":\"{}\",\"module\":\"{}\",\"pack_kind\":\"{}\",\"key\":\"{}\"}}",
-        event_s,
-        reason_s,
-        escape_json(&module.to_string_lossy()),
-        escape_json(pack_kind),
-        escape_json(key),
-    );
+    emit_trace(enabled, event, reason, module, pack_kind, key);
 }
 
 fn parse_deny_value(v: &str, policy: &mut DenyPolicy) {
