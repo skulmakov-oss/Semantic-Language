@@ -11,7 +11,7 @@ Current pending ownership notes:
 - optimizer surface is owned by `sm-ir` in the current `v1` baseline; a future `sm-opt` split would require an explicit follow-up decision and code move
 - SemCode format contract is owned by `sm-ir` in the current `v1` baseline; `sm-emit` remains a producer-facing facade and compatibility layer
 - public CLI contract is owned by `smc-cli` in the current `v1` baseline; root `smc` is a thin entrypoint wrapper over that owner
-- `ton618_core`, `src/bin/support/**`, and `ton618-core` remain allowlisted compatibility shims only and must not grow into second owners
+- `ton618_core` and `ton618-core` remain allowlisted compatibility shims only and must not grow into second owners
 
 Allowed flow:
 

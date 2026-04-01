@@ -32,7 +32,7 @@ Ownership rules:
 - `sm-opt` is not a canonical owner crate for `v1`; optimizer contract lives in `sm-ir` unless a later architecture decision creates a separate owner with matching code movement;
 - `sm-emit` is a producer-facing facade in the current `v1` baseline; the SemCode header/opcode/capability contract is owned by `sm-ir`;
 - `smc-cli` is the canonical owner of the public CLI contract in the current `v1` baseline; root `smc` and `svm` binaries are process entrypoints and not second CLI owners;
-- `ton618_core` and `src/bin/support/**` are retained compatibility shims, not canonical public owners;
+- `ton618_core` is a retained compatibility shim, not a canonical public owner;
 - `ton618-core` is a retained compatibility-named primitive crate, not a second owner for `sm-*` public contracts;
 - `sm-vm` consumes SemCode but does not own its format contract;
 - `sm-verify` owns admission, `sm-vm` executes only admitted code;

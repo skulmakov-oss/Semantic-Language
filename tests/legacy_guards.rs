@@ -74,9 +74,6 @@ fn root_src_rust_inventory_is_explicit() {
         "src/bin/smc.rs",
         "src/bin/svm.rs",
         "src/bin/ton618_core.rs",
-        "src/bin/support/mod.rs",
-        "src/bin/support/language.rs",
-        "src/bin/support/parser.rs",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -144,9 +141,6 @@ fn root_smc_is_thin_wrapper_over_smc_cli() {
 fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
     let explicit_shims = [
         "src/bin/ton618_core.rs",
-        "src/bin/support/mod.rs",
-        "src/bin/support/language.rs",
-        "src/bin/support/parser.rs",
         "crates/ton618-core/src/lib.rs",
     ];
 
@@ -186,23 +180,9 @@ fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
 }
 
 #[test]
-fn support_directory_inventory_is_explicit() {
-    let mut files = Vec::new();
-    collect_rs_files(Path::new("src/bin/support"), &mut files);
-    let found: BTreeSet<String> = files
-        .into_iter()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .collect();
-    let expected: BTreeSet<String> = [
-        "src/bin/support/mod.rs",
-        "src/bin/support/language.rs",
-        "src/bin/support/parser.rs",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert_eq!(
-        found, expected,
-        "legacy support helpers must remain an explicit, closed inventory"
+fn legacy_support_directory_is_removed() {
+    assert!(
+        !Path::new("src/bin/support").exists(),
+        "legacy support directory must be removed after inlining compatibility helpers"
     );
 }

@@ -54,9 +54,6 @@ Remaining compatibility perimeter:
 - `src/bin/ton618_core.rs`
   - retained as a legacy CLI shim for pre-v1 `ton618_core` workflows
   - not a canonical public CLI owner
-- `src/bin/support/**`
-  - retained only as helper modules for the `ton618_core` shim
-  - not canonical frontend/profile/parser owners
 - `crates/ton618-core`
   - retained as a compatibility-named low-level primitive crate
   - not a second owner for `sm-*` platform contracts

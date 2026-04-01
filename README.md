@@ -144,7 +144,7 @@ Optional:
 - `crates/sm-vm` - verified-only VM execution.
 - `crates/smc-cli` - canonical public CLI owner.
 - `src/bin/smc.rs` and `src/bin/svm.rs` - root process entrypoints.
-- `src/bin/ton618_core.rs` and `src/bin/support/**` - legacy compatibility CLI perimeter.
+- `src/bin/ton618_core.rs` - legacy compatibility CLI perimeter.
 - `crates/ton618-core` - retained compatibility-named low-level primitive crate.
 - `tests/golden/*` and `tests/golden_snapshots/**` - format and runtime golden baselines.
 

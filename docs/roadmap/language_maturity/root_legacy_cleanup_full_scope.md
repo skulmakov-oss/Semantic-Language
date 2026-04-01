@@ -9,7 +9,6 @@ Bring root-level legacy compatibility down to one explicit perimeter:
 - root shim library
 - root process entrypoints
 - legacy `ton618_core` compatibility bin
-- legacy support helpers used only by that compatibility bin
 
 Everything outside that perimeter should live under canonical crate owners.
 
