@@ -1,4 +1,8 @@
 use ton618_core::diagnostics::diagnostic_catalog;
+use crate::incremental::{
+    module_graph_fingerprint, module_graph_module_count, read_graph_hash, update_cache_index,
+    ModuleGraphSnapshot,
+};
 use crate::{format_path, FormatterMode};
 use sm_emit::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug,
@@ -11,7 +15,7 @@ use sm_ir::{compile_program_to_ir_with_options_and_profile, lower_logos_laws_to_
 use sm_sema::{check_file_with_provider_and_profile, check_source_with_profile, ModuleProvider};
 use sm_verify::verify_semcode;
 use sm_vm::{disasm_semcode, run_semcode, run_verified_semcode};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -272,15 +276,14 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
     let t_read = Instant::now();
-    let prev_graph_hash = read_graph_hash();
+    let prev_graph_hash = read_graph_hash(Path::new(CACHE_GRAPH_FILE));
     let mut graph_hash_now = None;
-    if let Ok(nodes) = module_graph_nodes(&root) {
-        let blob = encode_graph(&nodes);
-        graph_hash_now = Some(fnv1a64(&blob));
-        let _ = write_graph_bin(&nodes);
+    if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(&root) {
+        graph_hash_now = Some(snapshot.hash(CACHE_SCHEMA_VERSION));
+        let _ = snapshot.write_to(Path::new(CACHE_GRAPH_FILE), CACHE_SCHEMA_VERSION);
     }
     if !no_cache {
-        if let Ok(fp) = module_graph_fingerprint(&root) {
+        if let Ok(fp) = module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION) {
             let cache_path = cache_file_for_root(&root)?;
             match load_cache_entry_ex(&cache_path, fp) {
                 Ok(CacheLookup::Hit(cached)) => {
@@ -357,7 +360,7 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
         report.scheduled_laws.len()
     );
     if !no_cache {
-        if let Ok(fp) = module_graph_fingerprint(&root) {
+        if let Ok(fp) = module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION) {
             let cache_path = cache_file_for_root(&root)?;
             let entry = CacheEntry {
                 fingerprint: fp,
@@ -367,7 +370,13 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
             };
             let _ = save_cache_entry(&cache_path, &entry);
             let mc = module_graph_module_count(&root).unwrap_or(1);
-            let _ = update_cache_index(&root, fp, graph_hash_now, mc);
+            let _ = update_cache_index(
+                Path::new(CACHE_INDEX_FILE),
+                &root,
+                fp,
+                graph_hash_now,
+                mc,
+            );
             if trace_cache_enabled {
                 if prev_graph_hash != graph_hash_now {
                     trace_cache(
@@ -437,7 +446,7 @@ fn cmd_watch(args: &[String]) -> Result<(), String> {
     let mut last_fp: Option<u64> = None;
     let mut last_snapshot: Option<String> = None;
     loop {
-        match module_graph_fingerprint(&root) {
+        match module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION) {
             Ok(fp) => {
                 if last_fp != Some(fp) {
                     let t0 = Instant::now();
@@ -644,11 +653,11 @@ fn cmd_lint(args: &[String]) -> Result<(), String> {
     let root = PathBuf::from(input);
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
-    if let Ok(nodes) = module_graph_nodes(&root) {
-        let _ = write_graph_bin(&nodes);
+    if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(&root) {
+        let _ = snapshot.write_to(Path::new(CACHE_GRAPH_FILE), CACHE_SCHEMA_VERSION);
     }
     if !no_cache && deny.deny_all_warnings {
-        if let Ok(fp) = module_graph_fingerprint(&root) {
+        if let Ok(fp) = module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION) {
             let cache_path = cache_file_for_root(&root)?;
             match load_cache_entry_ex(&cache_path, fp) {
                 Ok(CacheLookup::Hit(cached)) => {
@@ -966,6 +975,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     h
 }
 
+#[cfg(test)]
 fn parse_import_specs(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in source.lines() {
@@ -997,142 +1007,6 @@ fn parse_import_specs(source: &str) -> Vec<String> {
         }
     }
     out
-}
-
-fn resolve_import(base: &Path, spec: &str) -> PathBuf {
-    let mut p = PathBuf::from(spec);
-    if p.extension().is_none() {
-        p.set_extension("exo");
-    }
-    if p.is_absolute() {
-        p
-    } else {
-        base.join(p)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ModuleGraphNode {
-    key: String,
-    deps: Vec<String>,
-    source_hash: u64,
-    exports_hash: u64,
-}
-
-fn canonical_module_key(canonical: &Path, root_base: &Path) -> String {
-    if let Ok(rel) = canonical.strip_prefix(root_base) {
-        let s = rel.to_string_lossy().replace('\\', "/");
-        if s.is_empty() {
-            ".".to_string()
-        } else {
-            s
-        }
-    } else {
-        canonical.to_string_lossy().replace('\\', "/")
-    }
-}
-
-fn collect_module_graph(
-    path: &Path,
-    root_base: &Path,
-    visiting: &mut HashSet<PathBuf>,
-    graph: &mut HashMap<PathBuf, (u64, Vec<PathBuf>)>,
-) -> Result<(), String> {
-    let canonical = path
-        .canonicalize()
-        .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
-    if graph.contains_key(&canonical) {
-        return Ok(());
-    }
-    if !visiting.insert(canonical.clone()) {
-        return Err(format!("cyclic import while scanning '{}'", canonical.display()));
-    }
-    let src = std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("read '{}': {}", canonical.display(), e))?;
-    let source_hash = fnv1a64(src.as_bytes());
-    let base = canonical.parent().unwrap_or_else(|| Path::new("."));
-    let mut deps = Vec::new();
-    for spec in parse_import_specs(&src) {
-        let child = resolve_import(base, &spec);
-        let child_canonical = child
-            .canonicalize()
-            .map_err(|e| format!("resolve '{}': {}", child.display(), e))?;
-        deps.push(child_canonical.clone());
-        collect_module_graph(&child_canonical, root_base, visiting, graph)?;
-    }
-    deps.sort();
-    deps.dedup();
-    let _ = root_base;
-    graph.insert(canonical.clone(), (source_hash, deps));
-    let _ = visiting.remove(&canonical);
-    Ok(())
-}
-
-fn module_graph_nodes(root: &Path) -> Result<Vec<ModuleGraphNode>, String> {
-    let root_canonical = root
-        .canonicalize()
-        .map_err(|e| format!("resolve '{}': {}", root.display(), e))?;
-    let root_base = root_canonical.parent().unwrap_or_else(|| Path::new("."));
-    let mut visiting = HashSet::new();
-    let mut graph: HashMap<PathBuf, (u64, Vec<PathBuf>)> = HashMap::new();
-    collect_module_graph(&root_canonical, root_base, &mut visiting, &mut graph)?;
-    let mut items: Vec<(PathBuf, (u64, Vec<PathBuf>))> = graph.into_iter().collect();
-    items.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut out = Vec::with_capacity(items.len());
-    for (path, (source_hash, deps)) in items {
-        let mut dep_keys: Vec<String> = deps
-            .iter()
-            .map(|d| canonical_module_key(d, root_base))
-            .collect();
-        dep_keys.sort();
-        let key = canonical_module_key(&path, root_base);
-        // v0.1: exports hash follows source hash; future pass can plug smc exports hash.
-        out.push(ModuleGraphNode {
-            key,
-            deps: dep_keys,
-            source_hash,
-            exports_hash: source_hash,
-        });
-    }
-    Ok(out)
-}
-
-fn encode_graph(nodes: &[ModuleGraphNode]) -> Vec<u8> {
-    let mut blob = Vec::new();
-    blob.extend_from_slice(format!("EXOGRAPH {} {}\n", CACHE_SCHEMA_VERSION, nodes.len()).as_bytes());
-    for n in nodes {
-        blob.extend_from_slice(n.key.as_bytes());
-        blob.push(0);
-        blob.extend_from_slice(format!("{:016x}", n.source_hash).as_bytes());
-        blob.push(0);
-        blob.extend_from_slice(format!("{:016x}", n.exports_hash).as_bytes());
-        blob.push(0);
-        blob.extend_from_slice(n.deps.join(",").as_bytes());
-        blob.push(b'\n');
-    }
-    blob
-}
-
-fn write_graph_bin(nodes: &[ModuleGraphNode]) -> Result<(), String> {
-    ensure_cache_layout()?;
-    let blob = encode_graph(nodes);
-    std::fs::write(CACHE_GRAPH_FILE, blob)
-        .map_err(|e| format!("write cache graph '{}': {}", CACHE_GRAPH_FILE, e))
-}
-
-fn read_graph_hash() -> Option<u64> {
-    let bytes = std::fs::read(CACHE_GRAPH_FILE).ok()?;
-    Some(fnv1a64(&bytes))
-}
-
-fn module_graph_fingerprint(root: &Path) -> Result<u64, String> {
-    let nodes = module_graph_nodes(root)?;
-    let blob = encode_graph(&nodes);
-    Ok(fnv1a64(&blob))
-}
-
-fn module_graph_module_count(root: &Path) -> Result<usize, String> {
-    Ok(module_graph_nodes(root)?.len())
 }
 
 #[derive(Debug, Clone)]
@@ -1360,46 +1234,6 @@ fn ensure_cache_layout() -> Result<(), String> {
     }
     let _ = CACHE_ROOT_DIR;
     Ok(())
-}
-
-fn update_cache_index(
-    root: &Path,
-    fingerprint: u64,
-    graph_hash: Option<u64>,
-    module_count: usize,
-) -> Result<(), String> {
-    ensure_cache_layout()?;
-    let root_key = root
-        .canonicalize()
-        .map_err(|e| format!("resolve '{}': {}", root.display(), e))?
-        .to_string_lossy()
-        .replace('\\', "/");
-    let mut entries = std::collections::BTreeMap::<String, String>::new();
-    if let Ok(text) = std::fs::read_to_string(CACHE_INDEX_FILE) {
-        for line in text.lines() {
-            if !line.starts_with("K ") {
-                continue;
-            }
-            if let Some((k, rest)) = line[2..].split_once('\t') {
-                entries.insert(k.to_string(), rest.to_string());
-            }
-        }
-    }
-    let gh = graph_hash.unwrap_or(0);
-    entries.insert(
-        root_key.clone(),
-        format!("FP={:016x}\tGH={:016x}\tMC={}", fingerprint, gh, module_count),
-    );
-    let mut out = String::from("EXOIDX v2\n");
-    for (k, v) in entries {
-        out.push_str("K ");
-        out.push_str(&k);
-        out.push('\t');
-        out.push_str(&v);
-        out.push('\n');
-    }
-    std::fs::write(CACHE_INDEX_FILE, out)
-        .map_err(|e| format!("write cache index '{}': {}", CACHE_INDEX_FILE, e))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2052,7 +1886,7 @@ Law "C" [priority 1]:
 "#,
         )
         .expect("write child");
-        let fp1 = module_graph_fingerprint(&root).expect("fp1");
+        let fp1 = module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION).expect("fp1");
         std::fs::write(
             &child,
             r#"
@@ -2061,7 +1895,7 @@ Law "C2" [priority 2]:
 "#,
         )
         .expect("rewrite child");
-        let fp2 = module_graph_fingerprint(&root).expect("fp2");
+        let fp2 = module_graph_fingerprint(&root, CACHE_SCHEMA_VERSION).expect("fp2");
         assert_ne!(fp1, fp2);
         let _ = std::fs::remove_dir_all(&dir);
     }

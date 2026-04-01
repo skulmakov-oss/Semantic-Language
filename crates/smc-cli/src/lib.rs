@@ -9,6 +9,8 @@ mod config;
 #[cfg(feature = "std")]
 mod formatter;
 #[cfg(feature = "std")]
+mod incremental;
+#[cfg(feature = "std")]
 mod schema_versioning;
 #[cfg(feature = "std")]
 mod wire_contract;
