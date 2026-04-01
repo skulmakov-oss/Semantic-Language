@@ -49,8 +49,10 @@ Current clarification:
 
 1. Duplicate namespace alias in one module is rejected (`E0241`).
 2. Missing selected symbol is rejected (`E0244`).
-3. Duplicate selected alias in one import statement is rejected (`E0245`).
-4. `*` cannot be combined with `{...}` in one import statement (`E0245`).
+3. Selected kind qualifiers such as `Entity:Foo` must match the dependency
+   export kind; mismatches are rejected (`E0245`).
+4. Duplicate selected alias in one import statement is rejected (`E0245`).
+5. `*` cannot be combined with `{...}` in one import statement (`E0245`).
 
 ## Examples
 
@@ -74,6 +76,14 @@ Invalid (`E0245`):
 
 ```exo
 Import "dep.sm" { A as X, B as X }
+Law "Root" [priority 1]:
+    When true -> System.recovery()
+```
+
+Invalid (`E0245` kind mismatch):
+
+```exo
+Import "dep.sm" { Entity:A }
 Law "Root" [priority 1]:
     When true -> System.recovery()
 ```

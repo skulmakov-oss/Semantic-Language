@@ -108,7 +108,8 @@ Current module-surface validation includes:
 - duplicate namespace alias rejection (`E0241`)
 - missing selected symbol rejection (`E0244`)
 - duplicate selected alias rejection (`E0245`)
-- public-name collision rejection (`E0242`)
+- selected-import kind mismatch rejection (`E0245`)
+- public re-export collision rejection (`E0242`)
 - symbol-level re-export cycle rejection (`E0243`)
 - invalid wildcard/select combination rejection (`E0245`)
 
