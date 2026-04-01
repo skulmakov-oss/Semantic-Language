@@ -62,6 +62,32 @@ fn root_src_contains_only_lib_and_bin_dir() {
 }
 
 #[test]
+fn root_src_rust_inventory_is_explicit() {
+    let mut rs_files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut rs_files);
+    let found: BTreeSet<String> = rs_files
+        .into_iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let expected: BTreeSet<String> = [
+        "src/lib.rs",
+        "src/bin/smc.rs",
+        "src/bin/svm.rs",
+        "src/bin/ton618_core.rs",
+        "src/bin/support/mod.rs",
+        "src/bin/support/language.rs",
+        "src/bin/support/parser.rs",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(
+        found, expected,
+        "root/src rust inventory must stay inside the explicit cleanup allowlist"
+    );
+}
+
+#[test]
 fn root_src_bans_legacy_patterns() {
     let mut files = Vec::new();
     collect_rs_files(Path::new("src"), &mut files);
@@ -156,5 +182,27 @@ fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
     assert!(
         matches.iter().any(|rel| rel == "src/bin/ton618_core.rs"),
         "legacy compatibility bin must remain explicit"
+    );
+}
+
+#[test]
+fn support_directory_inventory_is_explicit() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/bin/support"), &mut files);
+    let found: BTreeSet<String> = files
+        .into_iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let expected: BTreeSet<String> = [
+        "src/bin/support/mod.rs",
+        "src/bin/support/language.rs",
+        "src/bin/support/parser.rs",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(
+        found, expected,
+        "legacy support helpers must remain an explicit, closed inventory"
     );
 }
