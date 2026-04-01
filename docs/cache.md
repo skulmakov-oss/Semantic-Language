@@ -35,8 +35,9 @@ Validation fails on any mismatch and is surfaced via trace reasons.
 
 - `AstPack`: file canonical path + source hash + frontend marker
 - `SemPack`: module graph fingerprint (`module_graph_fingerprint`)
-- `IrPack`: source hash + profile + opt-level
-- `ExbPack`: source hash + profile + opt-level + debug-symbol flag
+- `IrPack`: file canonical path + source hash + profile + opt-level
+- `ExbPack`: file canonical path + source hash + profile + opt-level +
+  debug-symbol flag
 
 ## Trace Reasons (`--trace-cache`)
 
@@ -64,8 +65,9 @@ Reasons currently emitted:
 
 ## Invalidation Scope (Current)
 
-- `SOURCE_CHANGED`: current module stage invalidated, downstream rebuilt.
-- `DEP_CHANGED`: dependency graph/fingerprint changed, downstream rebuilt.
+- `SOURCE_CHANGED`: current root-scoped stage invalidated and rebuilt.
+- `DEP_CHANGED`: semantic dependency graph/fingerprint changed, downstream
+  semantic analysis rebuilt.
 - `TOOLCHAIN_CHANGED`: all packs for current target become misses.
 - `FEATURES_CHANGED`: pack misses for changed feature hash (all affected stages).
 - `SCHEMA_CHANGED`: pack misses due to schema mismatch.
@@ -88,4 +90,16 @@ These are used in integration tests to force specific cache-reason paths.
 - `hash-smc` supports `--trace-cache` for EXB cache diagnostics.
 - Dependency changes are reported as `DEP_CHANGED`.
 - Corrupted pack payloads are reported as `CORRUPT_PACK`.
+
+## Reuse Smoke Matrix
+
+The current freeze relies on three focused integration tests:
+
+- `tests/cache_trace_reason_matrix.rs` freezes reason-code names and
+  miss/invalidate categories.
+- `tests/cache_trace_dep_changed.rs` proves dependency edits surface
+  `DEP_CHANGED` on the semantic path.
+- `tests/cache_reuse_smoke.rs` proves unchanged reruns reuse semantic and EXB
+  packs, and that a dependency-triggered rebuild settles back to `REUSED` on
+  the next unchanged run.
 

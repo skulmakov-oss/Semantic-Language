@@ -1,12 +1,13 @@
-# Persistent Incremental Packs To FULL
+# Persistent Incremental Packs Full Scope
 
-Status: proposed post-stable closure track
+Status: completed post-stable closure track
+Related track: `NEXT-2`
 
 ## Goal
 
-Define the narrow closure boundary for bringing the current incremental pack
-pipeline from "working baseline" to "FULL" without reopening language, runtime,
-or packaging scope.
+Freeze the persistent incremental cache contract so reuse and invalidation
+behavior is explicit, deterministic, and test-backed for the currently
+supported CLI pack flows.
 
 ## Why This Is A Post-Stable Track
 
@@ -21,44 +22,52 @@ It is a tooling-discipline closure track intended to:
 - prevent stale downstream reuse after dependency changes
 - add inspectable smoke coverage for reuse and invalidation behavior
 
-## In Scope
+## Included In NEXT-2
 
-The `NEXT-2` closure track may include only:
+- stable on-disk cache layout and pack header validation
+- explicit `--trace-cache` reason codes for hits, misses, and invalidation
+- dependency-aware semantic-pack invalidation via module-graph fingerprinting
+- root-scoped `AstPack`, `IrPack`, and `SmcPack` key rules for current
+  single-root CLI commands
+- reuse smoke scenarios that prove:
+  - unchanged reruns reuse cache entries
+  - dependency edits invalidate semantic analysis and then settle back to reuse
+  - EXB hashing reuses generated packs on unchanged reruns
 
-- dependency-aware `CacheIndex` ownership and graph metadata
-- deterministic rebuild reason codes for `--trace-cache`
-- strict downstream invalidation rules across Ast/Sem/Ir/Exb pack families
-- stable reuse/invalidation smoke scenarios and fixtures
-- documentation sync for incremental ownership and trace semantics
+## Explicit Non-Goals
 
-## Out Of Scope
+- remote or distributed cache layers
+- package-manager or workspace cache federation
+- runtime-side cache integration
+- new CLI flags or alternate cache stores
+- widening `prom-*` or host/runtime boundaries
 
-This closure track must not silently expand into:
+## Honest Current Contract
 
-- package manager or lockfile redesign
-- distributed/shared cache systems
-- build farm or remote execution infrastructure
-- runtime/`prom-*` widening
-- unrelated CLI surface redesign
-- new language features disguised as cache invalidation work
+- `AstPack` is root-scoped and keyed by canonical input path plus source hash.
+- `SemPack` is dependency-aware and keyed by module-graph fingerprint.
+- `IrPack` is root-scoped for current `hash-ir` single-root compilation.
+- `SmcPack` is root-scoped for current `hash-smc` single-root compilation.
+- `DEP_CHANGED` is emitted when the semantic module graph changes between runs.
+- `REUSED` is emitted only for real cache hits on the current pack family.
 
-## Intended Slice Order
+This means "leaf change rebuilds only downstream" is satisfied for the current
+multi-module semantic path, while AST/IR/EXB remain intentionally root-scoped
+until their command surfaces become graph-driven.
 
-1. docs/governance checkpoint
-2. dependency-aware cache graph ownership
-3. formal trace reason codes
-4. strict downstream invalidation completion
-5. reuse smoke/perf freeze
+## Acceptance Freeze
 
-## Acceptance Reading
+`NEXT-2` is considered done when all of the following stay green and aligned
+with `docs/cache.md`:
 
-`NEXT-2` is done only when:
+- `cargo test --test cache_trace_reason_matrix`
+- `cargo test --test cache_trace_dep_changed`
+- `cargo test --test cache_reuse_smoke`
 
-- cache reuse and invalidation reasons are explicit and deterministic
-- dependency changes invalidate all downstream packs and only downstream packs
-- `--trace-cache` output uses stable named reasons rather than ad hoc wording
-- smoke coverage demonstrates predictable reuse across representative pipelines
+## Slice History
 
-## Non-Goal Reminder
-
-This track is a tooling closure pass, not a new product surface wave.
+1. cache layout and stage-key contract documented in `docs/cache.md`
+2. deterministic `--trace-cache` reason-code matrix added
+3. semantic downstream invalidation via dependency graph covered
+4. reuse smoke scenarios frozen for unchanged reruns and post-rebuild steady
+   state

@@ -32,6 +32,12 @@ Acceptance:
 
 ## NEXT-2: Persistent Incremental Packs to FULL
 
+Checkpoint:
+- `docs/roadmap/language_maturity/persistent_incremental_packs_full_scope.md`
+
+Status:
+- completed for the current CLI cache surface
+
 Goal:
 - Complete dependency-aware reuse/invalidation across Ast/Sem/Ir/Exb packs.
 
