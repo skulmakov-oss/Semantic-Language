@@ -27,12 +27,23 @@ Wildcard import form is parsed and validated by policy rules.
 5. `Import pub "a/b/c" { Foo }`  
 Re-export selected symbols from dependency module.
 
+Every current `Import` also creates one namespace alias:
+
+- explicit alias from `as X`, or
+- default alias from the imported file stem
+
 ## Resolve Behavior
 
-1. Local symbols
-2. Explicit select imports
-3. Namespace-qualified access (`X.Foo`)
-4. Wildcards by import declaration order
+1. Local symbols always win; conflicting import bindings are rejected with `E0241`.
+2. Explicit select imports create direct local bindings.
+3. Namespace-qualified access (`X.Foo`) stays available for every import alias.
+4. Wildcards are fallback-only and are consulted by import declaration order.
+
+Current clarification:
+
+- `Import "dep.sm" { Foo }` binds both `Foo` and namespace alias `dep`
+- `Import "dep.sm" *` still binds namespace alias `dep`
+- explicit selected bindings outrank wildcard-provided names
 
 ## Validation Rules
 

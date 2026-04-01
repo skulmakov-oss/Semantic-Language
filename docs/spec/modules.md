@@ -62,9 +62,18 @@ Import pub "a/b/c" { Foo }
 Current effective resolution order:
 
 1. local symbols
-2. explicit selected imports
+2. explicit selected imports as direct local bindings
 3. namespace-qualified access such as `X.Foo`
-4. wildcard imports in declaration order
+4. wildcard imports in declaration order as fallback for unresolved names
+
+Clarifications:
+
+- local/import alias conflicts are rejected with `E0241` instead of being
+  resolved by shadowing
+- every `Import` still creates one namespace alias, using either explicit
+  `as X` or the default file-stem alias
+- selected imports participate in unqualified lookup before wildcard imports
+- wildcard imports do not remove namespace-qualified access to the same module
 
 ## Export Surface
 
@@ -86,7 +95,9 @@ Current export provenance model distinguishes:
 
 Current determinism rules:
 
-- export ordering is deterministic by declaration order
+- local export ordering is deterministic by declaration order
+- re-exports are appended after local exports in import declaration order
+- dependency export order is preserved within each re-exported set
 - wildcard resolution follows import declaration order
 - symbol-cycle detection is explicit rather than best-effort
 

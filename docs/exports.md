@@ -36,6 +36,12 @@ Each exported item stores provenance:
 
 Export ordering is deterministic by declaration order (`decl_order` ascending).
 
+Current clarification:
+
+- local exports stay first in local declaration order
+- re-exports append after locals in import declaration order
+- within one re-exported dependency set, dependency export order is preserved
+
 ## Collision Policy
 
 If two exports in one module publish the same public name, compilation fails with `E0242`.
