@@ -1,6 +1,6 @@
 # Root Legacy Cleanup To FULL
 
-Status: proposed post-stable closure track
+Status: completed post-stable closure track
 
 ## Goal
 
@@ -45,7 +45,7 @@ This track must not silently expand into:
 - broad crate renaming
 - compatibility-bin removal without an explicit deprecation decision
 
-## Intended Slice Order
+## Slice History
 
 1. docs/governance checkpoint
 2. exact root inventory guard tightening
@@ -60,6 +60,12 @@ This track must not silently expand into:
 - compatibility-named root code is visibly narrow
 - CI guards fail on any new root legacy expansion
 - repository docs describe the root perimeter honestly
+
+This acceptance boundary is now frozen through:
+
+- `tests/legacy_guards.rs` as the exact root inventory gate
+- `.github/workflows/ci.yml` `boundary-enforcement` job
+- release-facing checklist wording in `docs/roadmap/release_bundle_checklist.md`
 
 ## Non-Goal Reminder
 

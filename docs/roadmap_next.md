@@ -49,10 +49,8 @@ Acceptance:
 Goal:
 - Root contains only shim + bins; no legacy backend sources.
 
-Tasks:
-1. Final inventory and migration/removal.
-2. Strengthen CI and guard tests.
-3. Verify root cleanliness policy.
+Status:
+- completed; see `docs/roadmap/language_maturity/root_legacy_cleanup_full_scope.md`
 
 Acceptance:
 - `root/src` clean by policy; guard tests enforce it.

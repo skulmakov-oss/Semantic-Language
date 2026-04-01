@@ -6,7 +6,9 @@ Root is now **shim + bins only**.
 
 Allowed in `root/src`:
 - `src/lib.rs`
-- `src/bin/**/*.rs`
+- `src/bin/smc.rs`
+- `src/bin/svm.rs`
+- `src/bin/ton618_core.rs`
 
 Everything else was migrated to workspace crates, moved to assets, or removed.
 
@@ -19,10 +21,6 @@ src/
     smc.rs
     svm.rs
     ton618_core.rs
-    support/
-      mod.rs
-      language.rs
-      parser.rs
 ```
 
 ## What Was Removed from Root
@@ -62,8 +60,9 @@ Remaining compatibility perimeter:
 
 `tests/legacy_guards.rs` enforces:
 - no path adapters from crates to root (`#[path = "../../../src/..."]`)
-- root/src allowlist policy (`lib.rs` + `bin/**`)
+- exact root/src allowlist policy (`lib.rs`, `smc.rs`, `svm.rs`, `ton618_core.rs`)
 - ban of legacy patterns in root source (`legacy_`, `#[path =`, `include!`, `mod legacy`)
-- explicit compatibility markers on the allowlisted `ton618`/`support` shims
+- explicit compatibility markers on the allowlisted `ton618` shim
 - narrow allowlist for remaining `ton618` naming
+- removal of `src/bin/support/` as a required invariant
 

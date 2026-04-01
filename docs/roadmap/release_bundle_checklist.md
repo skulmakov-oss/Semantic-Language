@@ -38,6 +38,7 @@ Verify these are green before the bundle is considered releasable:
 
 - CI must run these as explicit release-facing jobs, not only via broad workspace test aggregation
 - `.github/workflows/ci.yml` should include `boundary-enforcement`, `public-api-guard`, `runtime-release-gates`, and `release-bundle-process`
+- `boundary-enforcement` must keep `cargo test --test legacy_guards --quiet` as an explicit root cleanliness gate, not only as part of a broad test bundle
 - `cargo test --workspace`
 - `cargo test --test public_api_contracts`
 - `cargo test --test golden_semcode`
@@ -68,6 +69,7 @@ Verify published assets are checked against at least:
 
 Do not mark the bundle release-ready if:
 
+- root inventory docs disagree with `tests/legacy_guards.rs`
 - any known limit was silently dropped from the docs
 - compatibility-sensitive tests were not run
 - runtime snapshots were regenerated without review
