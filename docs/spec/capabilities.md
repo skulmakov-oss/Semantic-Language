@@ -17,10 +17,10 @@ Current admitted post-stable capability kind:
 
 - `StateQuery`
 - `StateUpdate`
+- `EventPost`
 
 Current owned planned post-stable capability kinds:
 
-- `EventPost`
 - `ClockRead`
 
 Current `v1` scope rule:
@@ -42,6 +42,7 @@ Current canonical mapping:
 - `PulseEmit` call -> `PulseEmit` capability
 - `StateQuery` call -> `StateQuery` capability
 - `StateUpdate` call -> `StateUpdate` capability
+- `EventPost` call -> `EventPost` capability
 
 Non-`v1` note:
 
@@ -49,8 +50,10 @@ Non-`v1` note:
   the narrow `v1` manifest baseline
 - capability mapping for `StateUpdate` is also admitted post-stable without
   changing the narrow `v1` manifest baseline
-- capability mapping for `EventPost` and `ClockRead` remains planned and does
-  not by itself widen runtime admission
+- capability mapping for `EventPost` is also admitted post-stable without
+  changing the narrow `v1` manifest baseline
+- capability mapping for `ClockRead` remains planned and does not by itself
+  widen runtime admission
 
 ## Enforcement Rule
 

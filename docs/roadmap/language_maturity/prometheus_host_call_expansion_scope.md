@@ -67,10 +67,10 @@ Currently admitted post-stable families:
 
 - `StateQuery`
 - `StateUpdate`
+- `EventPost`
 
 Remaining planned families:
 
-- `EventPost`
 - `ClockRead`
 
 The track does not imply that all planned families must land in one slice.
@@ -81,3 +81,4 @@ The track does not imply that all planned families must land in one slice.
 2. ABI/capability declaration ownership for planned host-call families
 3. `StateQuery` verifier/VM/runtime admission via generic host path
 4. `StateUpdate` verifier/VM/runtime admission via generic host path
+5. `EventPost` verifier/VM/runtime admission via generic host path

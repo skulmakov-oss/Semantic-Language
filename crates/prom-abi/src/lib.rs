@@ -147,6 +147,7 @@ pub trait PrometheusHostAbi {
     fn pulse_emit(&mut self, signal: &str) -> Result<(), AbiError>;
     fn state_query(&mut self, key: &str) -> Result<AbiValue, AbiError>;
     fn state_update(&mut self, key: &str, value: AbiValue) -> Result<(), AbiError>;
+    fn event_post(&mut self, signal: &str) -> Result<(), AbiError>;
 }
 
 #[derive(Debug, Default)]
@@ -156,6 +157,7 @@ pub struct RecordingHostAbi {
     pub pulses: alloc::vec::Vec<String>,
     pub state_queries: alloc::vec::Vec<String>,
     pub state_updates: alloc::vec::Vec<(String, AbiValue)>,
+    pub event_posts: alloc::vec::Vec<String>,
     pub next_read: AbiValue,
     pub next_state_query: AbiValue,
 }
@@ -199,6 +201,11 @@ impl PrometheusHostAbi for RecordingHostAbi {
 
     fn state_update(&mut self, key: &str, value: AbiValue) -> Result<(), AbiError> {
         self.state_updates.push((key.to_string(), value));
+        Ok(())
+    }
+
+    fn event_post(&mut self, signal: &str) -> Result<(), AbiError> {
+        self.event_posts.push(signal.to_string());
         Ok(())
     }
 }
@@ -251,5 +258,12 @@ mod tests {
             host.state_updates,
             alloc::vec![("decision.mode".to_string(), AbiValue::Bool(true))]
         );
+    }
+
+    #[test]
+    fn recording_host_captures_event_post_calls() {
+        let mut host = RecordingHostAbi::default();
+        host.event_post("alert.raised").expect("event post");
+        assert_eq!(host.event_posts, alloc::vec!["alert.raised".to_string()]);
     }
 }

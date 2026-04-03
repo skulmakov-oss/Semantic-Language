@@ -205,6 +205,14 @@ impl<'a, B: GateBinding> PrometheusHostAbi for GateHostAdapter<'a, B> {
             format!("state update '{}' is not bound by gate adapter", key),
         ))
     }
+
+    fn event_post(&mut self, signal: &str) -> Result<(), AbiError> {
+        Err(AbiError::new(
+            HostCallId::EventPost,
+            AbiFailureKind::Unavailable,
+            format!("event post '{}' is not bound by gate adapter", signal),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
