@@ -157,16 +157,23 @@ Current rules:
   the public Rust-like path
 - contextual literal admission into `fx` is supported only where the expected
   type is already `fx`
+- on current `main`, plain `fx` unary `+` / `-` and plain binary `+`, `-`,
+  `*`, `/` between already-typed `fx` operands are admitted by source typing as
+  part of the post-stable expansion track
 - stable `fx` behavior in the current line is value transport plus equality, not
   full arithmetic parity with `f64`
 
 Current honest limits:
 
-- richer `fx` arithmetic remains narrower than the `f64` surface
+- the published stable `v1.1.1` line still remains narrower than the `f64`
+  arithmetic surface
+- canonical lowering/verified execution for the widened plain `fx` arithmetic
+  surface has not landed yet and currently reports an explicit compile-time gap
 - coercion from non-literal non-`fx` expressions is not yet the full intended
   long-term contract
 - unary `+` and unary `-` on `fx` are admitted only for literal formation in
-  the canonical Rust-like path and are not general-purpose `fx` operators
+  the published stable `v1.1.1` contract; the widened post-stable path is
+  tracked separately
 - post-stable widening for general-purpose `fx` arithmetic is tracked
   separately in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`

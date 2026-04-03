@@ -67,3 +67,9 @@ This track is done only when:
   post-stable widened contract
 - no part of the work quietly widens units, host ABI, or general numeric
   coercion rules
+
+## Slice History
+
+1. docs/governance checkpoint
+2. plain `fx` unary/binary arithmetic admitted by source typing, with explicit
+   canonical-lowering gap diagnostics until the lowering/VM slice lands

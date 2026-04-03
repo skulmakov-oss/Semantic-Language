@@ -710,8 +710,11 @@ Current first-wave units operator rules:
 
 Current honest limit:
 
-- `fx` value flow is supported, but `fx` arithmetic is intentionally narrower
-  than `f64` arithmetic in the Rust-like source surface
+- the published stable `v1.1.1` line keeps `fx` arithmetic intentionally
+  narrower than `f64` arithmetic in the Rust-like source surface
+- current `main` now admits plain `fx` unary/binary arithmetic at source typing
+  level, but canonical lowering still reports an explicit staged gap for that
+  widened surface
 - any widening of general-purpose `fx` arithmetic is post-stable work tracked
   in `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 

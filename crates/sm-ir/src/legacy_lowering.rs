@@ -225,6 +225,10 @@ pub struct LogosIrLaw {
 
 const FX_SCALE: i32 = 1_000;
 
+fn fx_arithmetic_lowering_gap_message() -> &'static str {
+    "plain fx arithmetic lowering is not implemented in the canonical path yet"
+}
+
 fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
     let scaled = value * FX_SCALE as f64;
     if !scaled.is_finite() {
@@ -1907,6 +1911,11 @@ fn lower_expr_with_expected(
                 UnaryOp::Pos => {
                     if ty == Type::F64 {
                         Ok((src, Type::F64))
+                    } else if ty == Type::Fx {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        })
                     } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
                         Ok((src, ty))
                     } else {
@@ -1917,7 +1926,12 @@ fn lower_expr_with_expected(
                     }
                 }
                 UnaryOp::Neg => {
-                    let result_ty = if ty == Type::F64 {
+                    let result_ty = if ty == Type::Fx {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        });
+                    } else if ty == Type::F64 {
                         Type::F64
                     } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
                         ty.clone()
@@ -2045,6 +2059,12 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Bool));
                 }
                 BinaryOp::Add => {
+                    if lt == Type::Fx {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        });
+                    }
                     if matches!(lt.measured_parts(), Some((_, _))) && erased_lt != Type::F64 {
                         return Err(FrontendError {
                             pos: 0,
@@ -2065,6 +2085,12 @@ fn lower_expr_with_expected(
                     return Ok((dst, lt));
                 }
                 BinaryOp::Sub => {
+                    if lt == Type::Fx {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        });
+                    }
                     if matches!(lt.measured_parts(), Some((_, _))) && erased_lt != Type::F64 {
                         return Err(FrontendError {
                             pos: 0,
@@ -2085,6 +2111,12 @@ fn lower_expr_with_expected(
                     return Ok((dst, lt));
                 }
                 BinaryOp::Mul => {
+                    if lt == Type::Fx {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        });
+                    }
                     if lt.measured_parts().is_some() {
                         return Err(FrontendError {
                             pos: 0,
@@ -2107,6 +2139,12 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::F64));
                 }
                 BinaryOp::Div => {
+                    if lt == Type::Fx {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        });
+                    }
                     if lt.measured_parts().is_some() {
                         return Err(FrontendError {
                             pos: 0,
@@ -6101,6 +6139,24 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::LoadFx { val, .. } if *val == 1250)));
+    }
+
+    #[test]
+    fn plain_fx_arithmetic_reports_explicit_lowering_gap_until_next_slice() {
+        let src = r#"
+            fn add(x: fx, y: fx) -> fx {
+                return x + y;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src).expect_err("plain fx arithmetic lowering must still reject");
+        assert!(err
+            .message
+            .contains("plain fx arithmetic lowering is not implemented in the canonical path yet"));
     }
 
     #[test]

@@ -8,12 +8,8 @@ fn fx_coercion_gap_message() -> &'static str {
     "fx coercion from non-literal numeric expressions is not implemented in the canonical Rust-like path yet"
 }
 
-fn fx_arithmetic_gap_message() -> &'static str {
-    "fx arithmetic is not implemented in the canonical Rust-like path yet"
-}
-
-fn fx_unary_gap_message() -> &'static str {
-    "fx unary +/- is not implemented in the canonical Rust-like path yet"
+fn fx_measured_arithmetic_gap_message() -> &'static str {
+    "unit-carrying fx arithmetic is not part of the first post-stable fx arithmetic slice yet"
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
@@ -1644,20 +1640,15 @@ fn infer_expr_type(
                 UnaryOp::Pos | UnaryOp::Neg => {
                     if t == Type::F64 {
                         Ok(Type::F64)
-                    } else if t == Type::Fx && is_fx_literal_expr(expr_id, arena) {
-                        Ok(Type::Fx)
                     } else if t == Type::Fx {
-                        Err(FrontendError {
-                            pos: 0,
-                            message: fx_unary_gap_message().to_string(),
-                        })
+                        Ok(Type::Fx)
                     } else if let Some((base, _)) = measured {
                         if *base == Type::F64 {
                             Ok(t)
                         } else if *base == Type::Fx {
                             Err(FrontendError {
                                 pos: 0,
-                                message: fx_unary_gap_message().to_string(),
+                                message: fx_measured_arithmetic_gap_message().to_string(),
                             })
                         } else {
                             Err(FrontendError {
@@ -1764,10 +1755,12 @@ fn infer_expr_type(
                         })?;
                         return match op {
                             BinaryOp::Add | BinaryOp::Sub if *base == Type::F64 => Ok(lt),
-                            BinaryOp::Add | BinaryOp::Sub if *base == Type::Fx => Err(FrontendError {
-                                pos: 0,
-                                message: fx_arithmetic_gap_message().to_string(),
-                            }),
+                            BinaryOp::Add | BinaryOp::Sub if *base == Type::Fx => {
+                                Err(FrontendError {
+                                    pos: 0,
+                                    message: fx_measured_arithmetic_gap_message().to_string(),
+                                })
+                            }
                             BinaryOp::Mul | BinaryOp::Div => Err(FrontendError {
                                 pos: 0,
                                 message:
@@ -1781,10 +1774,7 @@ fn infer_expr_type(
                         };
                     }
                     if lt == Type::Fx && rt == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_gap_message().to_string(),
-                        });
+                        return Ok(Type::Fx);
                     }
                     if lt == Type::F64 && rt == Type::F64 {
                         Ok(Type::F64)
@@ -1945,10 +1935,14 @@ mod tests {
     }
 
     #[test]
-    fn fx_arithmetic_reports_explicit_gap() {
+    fn plain_fx_arithmetic_typechecks_in_post_stable_track() {
         let src = r#"
             fn add(x: fx, y: fx) -> fx {
-                return x + y;
+                let sum: fx = x + y;
+                let diff: fx = -sum;
+                let same: fx = +diff;
+                let prod: fx = same * y;
+                return prod / x;
             }
 
             fn main() {
@@ -1956,8 +1950,24 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("fx arithmetic should reject");
-        assert!(err.message.contains("fx arithmetic is not implemented"));
+        typecheck_source(src).expect("plain fx arithmetic should typecheck in the first post-stable slice");
+    }
+
+    #[test]
+    fn measured_fx_addition_still_reports_narrow_slice_gap() {
+        let src = r#"
+            fn main() {
+                let x: fx[m] = 1.0fx;
+                let y: fx[m] = 2.0fx;
+                let sum: fx[m] = x + y;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("measured fx arithmetic must stay outside the first slice");
+        assert!(err
+            .message
+            .contains("unit-carrying fx arithmetic is not part of the first post-stable fx arithmetic slice yet"));
     }
 
     #[test]

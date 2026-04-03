@@ -215,7 +215,11 @@ Current message families include:
 - unsupported enum match payload item shape
 - unsupported statement forms inside a value-producing block
 - unsupported operator for a type family
-- explicit `fx` gap messages for still-narrow source cases
+- explicit `fx` coercion gap messages for still-narrow source cases
+- explicit lowering-gap messages for plain `fx` unary/binary arithmetic now
+  admitted by source typing on current `main`
+- explicit gap messages for unit-carrying `fx` arithmetic outside the first
+  post-stable `fx` arithmetic slice
 
 Current honest limit:
 
