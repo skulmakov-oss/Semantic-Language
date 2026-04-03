@@ -7,7 +7,7 @@ extern crate std;
 use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_MATH,
-    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY,
+    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY, CAP_STATE_UPDATE,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -759,6 +759,16 @@ fn decode_operands(
             refs.string_refs
                 .push((offset, sid as usize, "state query key"));
         }
+        Opcode::StateUpdate => {
+            refs.required_capabilities |= CAP_STATE_UPDATE;
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated state update key id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "state update key"));
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated state-update src register"))?;
+            mark_reg(src);
+        }
         Opcode::Ret => {
             let has_src = read_u8(code, cursor).map_err(|_| invalid("truncated return flag"))?;
             if has_src != 0 {
@@ -927,6 +937,28 @@ mod tests {
         .expect("emit");
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.header.rev, 5);
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_state_update_semcode() {
+        let bytes = emit_ir_to_semcode(
+            &[IrFunction {
+                name: "main".to_string(),
+                instrs: vec![
+                    IrInstr::LoadBool { dst: 0, val: true },
+                    IrInstr::StateUpdate {
+                        key: "decision.mode".to_string(),
+                        src: 0,
+                    },
+                    IrInstr::Ret { src: None },
+                ],
+            }],
+            false,
+        )
+        .expect("emit");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 6);
         assert_eq!(verified.functions.len(), 1);
     }
 
@@ -1303,6 +1335,31 @@ mod tests {
         )
         .expect("emit");
         bytes[7] = b'3';
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::CapabilityViolation
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_state_update_under_v4_capabilities() {
+        let mut bytes = emit_ir_to_semcode(
+            &[IrFunction {
+                name: "main".to_string(),
+                instrs: vec![
+                    IrInstr::LoadBool { dst: 0, val: true },
+                    IrInstr::StateUpdate {
+                        key: "decision.mode".to_string(),
+                        src: 0,
+                    },
+                    IrInstr::Ret { src: None },
+                ],
+            }],
+            false,
+        )
+        .expect("emit");
+        bytes[7] = b'4';
         let report = verify_semcode(&bytes).expect_err("must reject");
         assert_eq!(
             report.diagnostics[0].code,

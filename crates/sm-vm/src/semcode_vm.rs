@@ -569,6 +569,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::StateUpdate => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::Ret => {
                 let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
                 if has_src {
@@ -614,6 +618,7 @@ trait VmHostBridge {
     fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError>;
     fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError>;
     fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError>;
+    fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError>;
 }
 
 struct LegacyVmHost;
@@ -638,6 +643,10 @@ impl VmHostBridge for LegacyVmHost {
 
     fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
         Ok(Value::I32(stable_state_query_fallback(key)))
+    }
+
+    fn state_update(&mut self, _key: &str, _value: Value) -> Result<(), RuntimeError> {
+        Ok(())
     }
 }
 
@@ -680,6 +689,15 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
         self.host
             .state_query(key)
             .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateUpdate)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_update(key, value_to_abi(value)?)
             .map_err(RuntimeError::HostAbi)
     }
 }
@@ -1125,6 +1143,15 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let key = lookup_str(&f, sid)?;
                 let value = host.state_query(key)?;
                 set_reg(vm, frame_idx, dst, value)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::StateUpdate => {
+                bump_effect_calls(vm)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let key = lookup_str(&f, sid)?;
+                let value = get_reg(vm, frame_idx, src)?;
+                host.state_update(key, value)?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::Ret => {
@@ -1710,6 +1737,11 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("STATE_QUERY r{}, s{}", d, sid)
+        }
+        Opcode::StateUpdate => {
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("STATE_UPDATE s{}, r{}", sid, src)
         }
         Opcode::Ret => {
             let has = read_u8(&f.code, &mut cur).map_err(map_format_err)?;

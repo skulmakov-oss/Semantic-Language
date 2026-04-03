@@ -33,6 +33,7 @@ Current supported header family:
 - `SEMCODE2`
 - `SEMCODE3`
 - `SEMCODE4`
+- `SEMCODE5`
 
 Observed runtime support in the current toolchain:
 
@@ -41,6 +42,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE2`: epoch `0`, revision `3`
 - `SEMCODE3`: epoch `0`, revision `4`
 - `SEMCODE4`: epoch `0`, revision `5`
+- `SEMCODE5`: epoch `0`, revision `6`
 
 Header responsibilities:
 
@@ -91,6 +93,13 @@ Compatibility rules:
 - keeps `SEMCODE0..3` fixed for older artifacts that do not use the widened
   host-call family
 
+`SEMCODE5`
+
+- promoted contract used when emitted program usage requires admitted
+  post-stable `StateUpdate` host calls
+- keeps `SEMCODE0..4` fixed for older artifacts that do not use the widened
+  write-side host-call family
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -114,6 +123,7 @@ Current canonical capability families:
 - `CAP_FX_MATH`
 - `CAP_GATE_SURFACE`
 - `CAP_STATE_QUERY`
+- `CAP_STATE_UPDATE`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:

@@ -61,19 +61,23 @@ This track is done only when:
 - stable-facing docs continue to distinguish the published `v1.1.1` boundary
   from the post-stable widened contract
 
-## Planned First-Wave Candidates
+## Planned First-Wave Families
 
-The current non-`v1` candidate family remains:
+Currently admitted post-stable families:
 
 - `StateQuery`
 - `StateUpdate`
+
+Remaining planned families:
+
 - `EventPost`
 - `ClockRead`
 
-The track does not imply that all four must land in one slice.
+The track does not imply that all planned families must land in one slice.
 
 ## Slice History
 
 1. docs/governance checkpoint
 2. ABI/capability declaration ownership for planned host-call families
 3. `StateQuery` verifier/VM/runtime admission via generic host path
+4. `StateUpdate` verifier/VM/runtime admission via generic host path

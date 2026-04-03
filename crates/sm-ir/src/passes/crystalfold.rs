@@ -96,6 +96,7 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.remove(&dst);
                 out.push(IrInstr::StateQuery { dst, key });
             }
+            IrInstr::StateUpdate { key, src } => out.push(IrInstr::StateUpdate { key, src }),
             IrInstr::Ret { src } => {
                 cst.clear();
                 out.push(IrInstr::Ret { src });

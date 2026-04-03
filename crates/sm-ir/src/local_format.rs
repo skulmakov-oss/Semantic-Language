@@ -3,6 +3,7 @@ pub const MAGIC1: [u8; 8] = *b"SEMCODE1";
 pub const MAGIC2: [u8; 8] = *b"SEMCODE2";
 pub const MAGIC3: [u8; 8] = *b"SEMCODE3";
 pub const MAGIC4: [u8; 8] = *b"SEMCODE4";
+pub const MAGIC5: [u8; 8] = *b"SEMCODE5";
 
 pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
 pub const CAP_F64_MATH: u32 = 1 << 1;
@@ -10,6 +11,7 @@ pub const CAP_GATE_SURFACE: u32 = 1 << 2;
 pub const CAP_FX_VALUES: u32 = 1 << 3;
 pub const CAP_FX_MATH: u32 = 1 << 4;
 pub const CAP_STATE_QUERY: u32 = 1 << 5;
+pub const CAP_STATE_UPDATE: u32 = 1 << 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SemcodeHeaderSpec {
@@ -59,8 +61,21 @@ pub const HEADER_V4: SemcodeHeaderSpec = SemcodeHeaderSpec {
         | CAP_STATE_QUERY,
 };
 
+pub const HEADER_V5: SemcodeHeaderSpec = SemcodeHeaderSpec {
+    magic: MAGIC5,
+    epoch: 0,
+    rev: 6,
+    capabilities: CAP_DEBUG_SYMBOLS
+        | CAP_F64_MATH
+        | CAP_GATE_SURFACE
+        | CAP_FX_VALUES
+        | CAP_FX_MATH
+        | CAP_STATE_QUERY
+        | CAP_STATE_UPDATE,
+};
+
 pub fn supported_headers() -> &'static [SemcodeHeaderSpec] {
-    &[HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4]
+    &[HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5]
 }
 
 pub fn header_spec_from_magic(magic: &[u8; 8]) -> Option<SemcodeHeaderSpec> {
@@ -117,6 +132,7 @@ pub enum Opcode {
     GateWrite = 0x61,
     PulseEmit = 0x62,
     StateQuery = 0x63,
+    StateUpdate = 0x64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +205,7 @@ impl Opcode {
             x if x == Self::GateWrite as u8 => Ok(Self::GateWrite),
             x if x == Self::PulseEmit as u8 => Ok(Self::PulseEmit),
             x if x == Self::StateQuery as u8 => Ok(Self::StateQuery),
+            x if x == Self::StateUpdate as u8 => Ok(Self::StateUpdate),
             _ => Err(SemcodeFormatError::UnknownOpcode(v)),
         }
     }

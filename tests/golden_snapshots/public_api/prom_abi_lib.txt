@@ -32,6 +32,7 @@ pub reads: alloc::vec::Vec<(u16, u16)>,
 pub writes: alloc::vec::Vec<(u16, u16, AbiValue)>,
 pub pulses: alloc::vec::Vec<String>,
 pub state_queries: alloc::vec::Vec<String>,
+pub state_updates: alloc::vec::Vec<(String, AbiValue)>,
 pub next_read: AbiValue,
 pub next_state_query: AbiValue,
 pub fn with_read_value(next_read: AbiValue) -> Self {

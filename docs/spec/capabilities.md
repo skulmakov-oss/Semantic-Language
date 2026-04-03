@@ -16,10 +16,10 @@ Current canonical capability kinds:
 Current admitted post-stable capability kind:
 
 - `StateQuery`
+- `StateUpdate`
 
 Current owned planned post-stable capability kinds:
 
-- `StateUpdate`
 - `EventPost`
 - `ClockRead`
 
@@ -41,13 +41,16 @@ Current canonical mapping:
 - `GateWrite` call -> `GateWrite` capability
 - `PulseEmit` call -> `PulseEmit` capability
 - `StateQuery` call -> `StateQuery` capability
+- `StateUpdate` call -> `StateUpdate` capability
 
 Non-`v1` note:
 
 - capability mapping for `StateQuery` is admitted post-stable without changing
   the narrow `v1` manifest baseline
-- capability mapping for `StateUpdate`, `EventPost`, and `ClockRead` remains
-  planned and does not by itself widen runtime admission
+- capability mapping for `StateUpdate` is also admitted post-stable without
+  changing the narrow `v1` manifest baseline
+- capability mapping for `EventPost` and `ClockRead` remains planned and does
+  not by itself widen runtime admission
 
 ## Enforcement Rule
 

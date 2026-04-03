@@ -1,7 +1,7 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4,
+    MAGIC3, MAGIC4, MAGIC5,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
@@ -214,6 +214,10 @@ pub enum IrInstr {
     StateQuery {
         dst: u16,
         key: String,
+    },
+    StateUpdate {
+        key: String,
+        src: u16,
     },
     Ret {
         src: Option<u16>,
@@ -725,7 +729,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v4_state_query_instr(funcs) {
+    if has_v5_state_update_instr(funcs) {
+        out.extend_from_slice(&MAGIC5);
+    } else if has_v4_state_query_instr(funcs) {
         out.extend_from_slice(&MAGIC4);
     } else if has_v3_fx_math_instr(funcs) {
         out.extend_from_slice(&MAGIC3);
@@ -793,6 +799,9 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
                 let _ = interner.id(signal)?;
             }
             IrInstr::StateQuery { key, .. } => {
+                let _ = interner.id(key)?;
+            }
+            IrInstr::StateUpdate { key, .. } => {
                 let _ = interner.id(key)?;
             }
             _ => {}
@@ -906,6 +915,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::GateWrite { .. } => 1 + 2 + 2 + 2,
         IrInstr::PulseEmit { .. } => 1 + 2,
         IrInstr::StateQuery { .. } => 1 + 2 + 2,
+        IrInstr::StateUpdate { .. } => 1 + 2 + 2,
         IrInstr::Ret { src: Some(_) } => 1 + 1 + 2,
         IrInstr::Ret { src: None } => 1 + 1,
     };
@@ -1141,6 +1151,11 @@ fn emit_instr(
             write_u16_le(out, *dst);
             write_u16_le(out, interner.lookup(key)?);
         }
+        IrInstr::StateUpdate { key, src } => {
+            out.push(Opcode::StateUpdate.byte());
+            write_u16_le(out, interner.lookup(key)?);
+            write_u16_le(out, *src);
+        }
         IrInstr::Ret { src } => {
             out.push(Opcode::Ret.byte());
             match src {
@@ -1209,6 +1224,12 @@ fn has_v4_state_query_instr(funcs: &[IrFunction]) -> bool {
     funcs
         .iter()
         .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::StateQuery { .. })))
+}
+
+fn has_v5_state_update_instr(funcs: &[IrFunction]) -> bool {
+    funcs
+        .iter()
+        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::StateUpdate { .. })))
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {

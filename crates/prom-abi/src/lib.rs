@@ -146,6 +146,7 @@ pub trait PrometheusHostAbi {
     fn gate_write(&mut self, device_id: u16, port: u16, value: AbiValue) -> Result<(), AbiError>;
     fn pulse_emit(&mut self, signal: &str) -> Result<(), AbiError>;
     fn state_query(&mut self, key: &str) -> Result<AbiValue, AbiError>;
+    fn state_update(&mut self, key: &str, value: AbiValue) -> Result<(), AbiError>;
 }
 
 #[derive(Debug, Default)]
@@ -154,6 +155,7 @@ pub struct RecordingHostAbi {
     pub writes: alloc::vec::Vec<(u16, u16, AbiValue)>,
     pub pulses: alloc::vec::Vec<String>,
     pub state_queries: alloc::vec::Vec<String>,
+    pub state_updates: alloc::vec::Vec<(String, AbiValue)>,
     pub next_read: AbiValue,
     pub next_state_query: AbiValue,
 }
@@ -194,6 +196,11 @@ impl PrometheusHostAbi for RecordingHostAbi {
         self.state_queries.push(key.to_string());
         Ok(self.next_state_query.clone())
     }
+
+    fn state_update(&mut self, key: &str, value: AbiValue) -> Result<(), AbiError> {
+        self.state_updates.push((key.to_string(), value));
+        Ok(())
+    }
 }
 
 impl Default for AbiValue {
@@ -233,5 +240,16 @@ mod tests {
         let result = host.state_query("decision.mode").expect("state query");
         assert_eq!(result, AbiValue::I32(7));
         assert_eq!(host.state_queries, alloc::vec!["decision.mode".to_string()]);
+    }
+
+    #[test]
+    fn recording_host_captures_state_update_calls() {
+        let mut host = RecordingHostAbi::default();
+        host.state_update("decision.mode", AbiValue::Bool(true))
+            .expect("state update");
+        assert_eq!(
+            host.state_updates,
+            alloc::vec![("decision.mode".to_string(), AbiValue::Bool(true))]
+        );
     }
 }
