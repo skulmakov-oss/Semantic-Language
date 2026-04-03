@@ -65,6 +65,7 @@ Current persisted replay rule:
 - `AuditReplayArchive` wraps session metadata, recorded events, and replay
   metadata under one explicit archive envelope
 - archive metadata is explicit through `format_version`
+- archive materialization/loading uses one canonical deterministic text envelope
 - persisted replay ownership does not widen orchestration or runtime recovery
   semantics by implication
 

@@ -4,8 +4,10 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use prom_cap::{CapabilityKind, CapabilityManifestMetadata};
+use prom_cap::{CapabilityKind, CapabilityManifestMetadata, CapabilityManifestVersion};
 use sm_runtime_core::ExecutionContext;
+
+const AUDIT_REPLAY_ARCHIVE_MAGIC: &str = "semantic_audit_replay_archive";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AuditEventId(pub u64);
@@ -58,6 +60,11 @@ pub struct AuditReplayArchive {
     pub session: AuditSessionMetadata,
     pub events: Vec<AuditEvent>,
     pub replay: ReplayMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditReplayArchiveFormatError {
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +128,530 @@ impl AuditReplayArchive {
             replay,
         }
     }
+
+    pub fn to_canonical_text(&self) -> String {
+        let mut out = String::new();
+        out.push_str(AUDIT_REPLAY_ARCHIVE_MAGIC);
+        out.push('\t');
+        out.push_str(&self.format_version.to_string());
+        out.push('\n');
+        out.push_str("session\t");
+        out.push_str(display_execution_context(self.session.context));
+        out.push('\t');
+        out.push_str(&escape_archive_field(&self.session.capability_manifest.schema));
+        out.push('\t');
+        out.push_str(display_manifest_version(
+            self.session.capability_manifest.version,
+        ));
+        out.push('\t');
+        out.push_str(if self.session.gate_registry_bound {
+            "true"
+        } else {
+            "false"
+        });
+        out.push('\n');
+        out.push_str("events\t");
+        out.push_str(&self.events.len().to_string());
+        out.push('\n');
+
+        for event in &self.events {
+            out.push_str("event\t");
+            out.push_str(&event.id.0.to_string());
+            encode_event_kind(&mut out, &event.kind);
+            out.push('\n');
+        }
+
+        out.push_str("replay\t");
+        out.push_str(&self.replay.event_count.to_string());
+        out.push('\t');
+        match self.replay.last_event_id {
+            Some(id) => out.push_str(&id.0.to_string()),
+            None => out.push_str("none"),
+        }
+        out.push('\n');
+
+        out
+    }
+
+    pub fn from_canonical_text(src: &str) -> Result<Self, AuditReplayArchiveFormatError> {
+        let mut lines = src.lines();
+        let header = lines
+            .next()
+            .ok_or_else(|| AuditReplayArchiveFormatError::new("missing archive header"))?;
+        let header_parts = split_archive_line(header);
+        if header_parts.len() != 2 || header_parts[0] != AUDIT_REPLAY_ARCHIVE_MAGIC {
+            return Err(AuditReplayArchiveFormatError::new(
+                "invalid archive header",
+            ));
+        }
+        let format_version = parse_u32_field(header_parts[1], "archive format version")?;
+        if format_version != AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION {
+            return Err(AuditReplayArchiveFormatError::new(format!(
+                "unsupported archive format version {}; expected {}",
+                format_version, AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION
+            )));
+        }
+
+        let session_line = lines
+            .next()
+            .ok_or_else(|| AuditReplayArchiveFormatError::new("missing session line"))?;
+        let session_parts = split_archive_line(session_line);
+        if session_parts.len() != 5 || session_parts[0] != "session" {
+            return Err(AuditReplayArchiveFormatError::new("invalid session line"));
+        }
+        let session = AuditSessionMetadata {
+            context: parse_execution_context(session_parts[1])?,
+            capability_manifest: CapabilityManifestMetadata {
+                schema: unescape_archive_field(session_parts[2])?,
+                version: parse_manifest_version(session_parts[3])?,
+            },
+            gate_registry_bound: parse_bool_field(session_parts[4], "gate registry bound")?,
+        };
+
+        let events_line = lines
+            .next()
+            .ok_or_else(|| AuditReplayArchiveFormatError::new("missing event count line"))?;
+        let event_count_parts = split_archive_line(events_line);
+        if event_count_parts.len() != 2 || event_count_parts[0] != "events" {
+            return Err(AuditReplayArchiveFormatError::new(
+                "invalid event count line",
+            ));
+        }
+        let expected_event_count = parse_usize_field(event_count_parts[1], "event count")?;
+
+        let mut events = Vec::with_capacity(expected_event_count);
+        for _ in 0..expected_event_count {
+            let event_line = lines
+                .next()
+                .ok_or_else(|| AuditReplayArchiveFormatError::new("missing event line"))?;
+            let parts = split_archive_line(event_line);
+            if !parts.is_empty() && parts[0] == "replay" {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "replay event count does not match archive events",
+                ));
+            }
+            if parts.len() < 3 || parts[0] != "event" {
+                return Err(AuditReplayArchiveFormatError::new("invalid event line"));
+            }
+            let id = AuditEventId(parse_u64_field(parts[1], "event id")?);
+            let kind = decode_event_kind(&parts[2..])?;
+            events.push(AuditEvent { id, kind });
+        }
+
+        let replay_line = lines
+            .next()
+            .ok_or_else(|| AuditReplayArchiveFormatError::new("missing replay line"))?;
+        let replay_parts = split_archive_line(replay_line);
+        if replay_parts.len() != 3 || replay_parts[0] != "replay" {
+            return Err(AuditReplayArchiveFormatError::new("invalid replay line"));
+        }
+        let replay = ReplayMetadata {
+            session: session.clone(),
+            event_count: parse_usize_field(replay_parts[1], "replay event count")?,
+            last_event_id: parse_optional_event_id(replay_parts[2])?,
+        };
+
+        if replay.event_count != events.len() {
+            return Err(AuditReplayArchiveFormatError::new(
+                "replay event count does not match archive events",
+            ));
+        }
+        let actual_last_event_id = events.last().map(|event| event.id);
+        if replay.last_event_id != actual_last_event_id {
+            return Err(AuditReplayArchiveFormatError::new(
+                "replay last event id does not match archive events",
+            ));
+        }
+        for (index, event) in events.iter().enumerate() {
+            if event.id != AuditEventId(index as u64) {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "archive event ids must be monotonic from zero",
+                ));
+            }
+        }
+
+        if lines.any(|line| !line.trim().is_empty()) {
+            return Err(AuditReplayArchiveFormatError::new(
+                "unexpected trailing archive lines",
+            ));
+        }
+
+        Ok(Self {
+            format_version,
+            session,
+            events,
+            replay,
+        })
+    }
+}
+
+impl AuditReplayArchiveFormatError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl core::fmt::Display for AuditReplayArchiveFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "audit replay archive format error: {}", self.message)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for AuditReplayArchiveFormatError {}
+
+fn encode_event_kind(out: &mut String, kind: &AuditEventKind) {
+    match kind {
+        AuditEventKind::SessionStarted { entry } => {
+            out.push_str("\tsession-started\t");
+            out.push_str(&escape_archive_field(entry));
+        }
+        AuditEventKind::SessionFinished => {
+            out.push_str("\tsession-finished");
+        }
+        AuditEventKind::RuleActivated { rule_id, salience } => {
+            out.push_str("\trule-activated\t");
+            out.push_str(&escape_archive_field(rule_id));
+            out.push('\t');
+            out.push_str(&salience.to_string());
+        }
+        AuditEventKind::StateTransition {
+            key,
+            from_epoch,
+            to_epoch,
+        } => {
+            out.push_str("\tstate-transition\t");
+            out.push_str(&escape_archive_field(key));
+            out.push('\t');
+            out.push_str(&from_epoch.to_string());
+            out.push('\t');
+            out.push_str(&to_epoch.to_string());
+        }
+        AuditEventKind::CapabilityDenied { capability, call } => {
+            out.push_str("\tcapability-denied\t");
+            out.push_str(display_capability_kind(*capability));
+            out.push('\t');
+            match call {
+                Some(call) => out.push_str(&escape_archive_field(call)),
+                None => out.push_str("none"),
+            }
+        }
+        AuditEventKind::GateRead { device_id, port } => {
+            out.push_str("\tgate-read\t");
+            out.push_str(&device_id.to_string());
+            out.push('\t');
+            out.push_str(&port.to_string());
+        }
+        AuditEventKind::GateWrite { device_id, port } => {
+            out.push_str("\tgate-write\t");
+            out.push_str(&device_id.to_string());
+            out.push('\t');
+            out.push_str(&port.to_string());
+        }
+        AuditEventKind::PulseEmit { signal } => {
+            out.push_str("\tpulse-emit\t");
+            out.push_str(&escape_archive_field(signal));
+        }
+        AuditEventKind::Note { message } => {
+            out.push_str("\tnote\t");
+            out.push_str(&escape_archive_field(message));
+        }
+    }
+}
+
+fn decode_event_kind(parts: &[&str]) -> Result<AuditEventKind, AuditReplayArchiveFormatError> {
+    if parts.is_empty() {
+        return Err(AuditReplayArchiveFormatError::new(
+            "missing event kind payload",
+        ));
+    }
+    match parts[0] {
+        "session-started" => {
+            if parts.len() != 2 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid session-started payload",
+                ));
+            }
+            Ok(AuditEventKind::SessionStarted {
+                entry: unescape_archive_field(parts[1])?,
+            })
+        }
+        "session-finished" => {
+            if parts.len() != 1 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid session-finished payload",
+                ));
+            }
+            Ok(AuditEventKind::SessionFinished)
+        }
+        "rule-activated" => {
+            if parts.len() != 3 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid rule-activated payload",
+                ));
+            }
+            Ok(AuditEventKind::RuleActivated {
+                rule_id: unescape_archive_field(parts[1])?,
+                salience: parse_i32_field(parts[2], "rule salience")?,
+            })
+        }
+        "state-transition" => {
+            if parts.len() != 4 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid state-transition payload",
+                ));
+            }
+            Ok(AuditEventKind::StateTransition {
+                key: unescape_archive_field(parts[1])?,
+                from_epoch: parse_u64_field(parts[2], "transition from epoch")?,
+                to_epoch: parse_u64_field(parts[3], "transition to epoch")?,
+            })
+        }
+        "capability-denied" => {
+            if parts.len() != 3 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid capability-denied payload",
+                ));
+            }
+            Ok(AuditEventKind::CapabilityDenied {
+                capability: parse_capability_kind(parts[1])?,
+                call: parse_optional_string(parts[2])?,
+            })
+        }
+        "gate-read" => {
+            if parts.len() != 3 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid gate-read payload",
+                ));
+            }
+            Ok(AuditEventKind::GateRead {
+                device_id: parse_u16_field(parts[1], "gate-read device id")?,
+                port: parse_u16_field(parts[2], "gate-read port")?,
+            })
+        }
+        "gate-write" => {
+            if parts.len() != 3 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid gate-write payload",
+                ));
+            }
+            Ok(AuditEventKind::GateWrite {
+                device_id: parse_u16_field(parts[1], "gate-write device id")?,
+                port: parse_u16_field(parts[2], "gate-write port")?,
+            })
+        }
+        "pulse-emit" => {
+            if parts.len() != 2 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid pulse-emit payload",
+                ));
+            }
+            Ok(AuditEventKind::PulseEmit {
+                signal: unescape_archive_field(parts[1])?,
+            })
+        }
+        "note" => {
+            if parts.len() != 2 {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "invalid note payload",
+                ));
+            }
+            Ok(AuditEventKind::Note {
+                message: unescape_archive_field(parts[1])?,
+            })
+        }
+        _ => Err(AuditReplayArchiveFormatError::new(
+            "unknown audit event kind in archive",
+        )),
+    }
+}
+
+fn display_execution_context(context: ExecutionContext) -> &'static str {
+    match context {
+        ExecutionContext::PureCompute => "pure-compute",
+        ExecutionContext::VerifiedLocal => "verified-local",
+        ExecutionContext::RuleExecution => "rule-execution",
+        ExecutionContext::KernelBound => "kernel-bound",
+    }
+}
+
+fn parse_execution_context(
+    raw: &str,
+) -> Result<ExecutionContext, AuditReplayArchiveFormatError> {
+    match raw {
+        "pure-compute" => Ok(ExecutionContext::PureCompute),
+        "verified-local" => Ok(ExecutionContext::VerifiedLocal),
+        "rule-execution" => Ok(ExecutionContext::RuleExecution),
+        "kernel-bound" => Ok(ExecutionContext::KernelBound),
+        _ => Err(AuditReplayArchiveFormatError::new(
+            "unknown execution context in archive",
+        )),
+    }
+}
+
+fn display_manifest_version(version: CapabilityManifestVersion) -> &'static str {
+    match version {
+        CapabilityManifestVersion::V1 => "v1",
+    }
+}
+
+fn parse_manifest_version(
+    raw: &str,
+) -> Result<CapabilityManifestVersion, AuditReplayArchiveFormatError> {
+    match raw {
+        "v1" => Ok(CapabilityManifestVersion::V1),
+        _ => Err(AuditReplayArchiveFormatError::new(
+            "unknown capability manifest version in archive",
+        )),
+    }
+}
+
+fn display_capability_kind(kind: CapabilityKind) -> &'static str {
+    match kind {
+        CapabilityKind::GateRead => "GateRead",
+        CapabilityKind::GateWrite => "GateWrite",
+        CapabilityKind::PulseEmit => "PulseEmit",
+        CapabilityKind::StateQuery => "StateQuery",
+        CapabilityKind::StateUpdate => "StateUpdate",
+        CapabilityKind::EventPost => "EventPost",
+        CapabilityKind::ClockRead => "ClockRead",
+    }
+}
+
+fn parse_capability_kind(
+    raw: &str,
+) -> Result<CapabilityKind, AuditReplayArchiveFormatError> {
+    match raw {
+        "GateRead" => Ok(CapabilityKind::GateRead),
+        "GateWrite" => Ok(CapabilityKind::GateWrite),
+        "PulseEmit" => Ok(CapabilityKind::PulseEmit),
+        "StateQuery" => Ok(CapabilityKind::StateQuery),
+        "StateUpdate" => Ok(CapabilityKind::StateUpdate),
+        "EventPost" => Ok(CapabilityKind::EventPost),
+        "ClockRead" => Ok(CapabilityKind::ClockRead),
+        _ => Err(AuditReplayArchiveFormatError::new(
+            "unknown capability kind in archive",
+        )),
+    }
+}
+
+fn parse_bool_field(
+    raw: &str,
+    label: &str,
+) -> Result<bool, AuditReplayArchiveFormatError> {
+    match raw {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(AuditReplayArchiveFormatError::new(format!("invalid {}", label))),
+    }
+}
+
+fn parse_u16_field(
+    raw: &str,
+    label: &str,
+) -> Result<u16, AuditReplayArchiveFormatError> {
+    raw.parse::<u16>()
+        .map_err(|_| AuditReplayArchiveFormatError::new(format!("invalid {}", label)))
+}
+
+fn parse_u32_field(
+    raw: &str,
+    label: &str,
+) -> Result<u32, AuditReplayArchiveFormatError> {
+    raw.parse::<u32>()
+        .map_err(|_| AuditReplayArchiveFormatError::new(format!("invalid {}", label)))
+}
+
+fn parse_u64_field(
+    raw: &str,
+    label: &str,
+) -> Result<u64, AuditReplayArchiveFormatError> {
+    raw.parse::<u64>()
+        .map_err(|_| AuditReplayArchiveFormatError::new(format!("invalid {}", label)))
+}
+
+fn parse_i32_field(
+    raw: &str,
+    label: &str,
+) -> Result<i32, AuditReplayArchiveFormatError> {
+    raw.parse::<i32>()
+        .map_err(|_| AuditReplayArchiveFormatError::new(format!("invalid {}", label)))
+}
+
+fn parse_usize_field(
+    raw: &str,
+    label: &str,
+) -> Result<usize, AuditReplayArchiveFormatError> {
+    raw.parse::<usize>()
+        .map_err(|_| AuditReplayArchiveFormatError::new(format!("invalid {}", label)))
+}
+
+fn parse_optional_event_id(
+    raw: &str,
+) -> Result<Option<AuditEventId>, AuditReplayArchiveFormatError> {
+    if raw == "none" {
+        return Ok(None);
+    }
+    Ok(Some(AuditEventId(parse_u64_field(raw, "replay last event id")?)))
+}
+
+fn parse_optional_string(
+    raw: &str,
+) -> Result<Option<String>, AuditReplayArchiveFormatError> {
+    if raw == "none" {
+        return Ok(None);
+    }
+    Ok(Some(unescape_archive_field(raw)?))
+}
+
+fn split_archive_line(line: &str) -> Vec<&str> {
+    line.split('\t').collect()
+}
+
+fn escape_archive_field(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            ':' => escaped.push_str("\\:"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn unescape_archive_field(
+    value: &str,
+) -> Result<String, AuditReplayArchiveFormatError> {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let escaped = chars
+            .next()
+            .ok_or_else(|| AuditReplayArchiveFormatError::new("unterminated archive escape"))?;
+        match escaped {
+            '\\' => out.push('\\'),
+            't' => out.push('\t'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            ':' => out.push(':'),
+            _ => {
+                return Err(AuditReplayArchiveFormatError::new(
+                    "unsupported archive escape sequence",
+                ))
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -229,5 +760,61 @@ mod tests {
         assert_eq!(archive.events, trail.events());
         assert_eq!(archive.replay.event_count, 2);
         assert_eq!(archive.replay.last_event_id, Some(AuditEventId(1)));
+    }
+
+    #[test]
+    fn replay_archive_roundtrips_through_canonical_text() {
+        let mut trail = AuditTrail::new(sample_session());
+        trail.record(AuditEventKind::SessionStarted {
+            entry: "main\tentry".to_string(),
+        });
+        trail.record(AuditEventKind::CapabilityDenied {
+            capability: CapabilityKind::StateUpdate,
+            call: Some("StateUpdate".to_string()),
+        });
+        trail.record(AuditEventKind::StateTransition {
+            key: "fact.alpha".to_string(),
+            from_epoch: 2,
+            to_epoch: 3,
+        });
+        trail.record(AuditEventKind::Note {
+            message: "note:done".to_string(),
+        });
+
+        let archive = trail.replay_archive();
+        let text = archive.to_canonical_text();
+        let parsed = AuditReplayArchive::from_canonical_text(&text).expect("parse");
+
+        assert_eq!(parsed, archive);
+        let lines = text.lines().collect::<Vec<_>>();
+        assert!(lines[3].contains("event\t0\tsession-started"));
+        assert!(lines[6].contains("event\t3\tnote"));
+    }
+
+    #[test]
+    fn replay_archive_rejects_event_count_mismatch() {
+        let text = "\
+semantic_audit_replay_archive\t1\n\
+session\tkernel-bound\tprom.cap.manifest\tv1\ttrue\n\
+events\t1\n\
+replay\t0\tnone\n";
+
+        let err = AuditReplayArchive::from_canonical_text(text).expect_err("must reject");
+
+        assert!(err.message.contains("event count"));
+    }
+
+    #[test]
+    fn replay_archive_rejects_non_monotonic_event_ids() {
+        let text = "\
+semantic_audit_replay_archive\t1\n\
+session\tkernel-bound\tprom.cap.manifest\tv1\ttrue\n\
+events\t1\n\
+event\t9\tsession-finished\n\
+replay\t1\t9\n";
+
+        let err = AuditReplayArchive::from_canonical_text(text).expect_err("must reject");
+
+        assert!(err.message.contains("monotonic"));
     }
 }

@@ -25,6 +25,9 @@ pub session: AuditSessionMetadata,
 pub events: Vec<AuditEvent>,
 pub replay: ReplayMetadata,
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditReplayArchiveFormatError {
+pub message: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditTrail {
 pub fn new(session: AuditSessionMetadata) -> Self {
 pub fn session(&self) -> &AuditSessionMetadata {
@@ -33,3 +36,6 @@ pub fn record(&mut self, kind: AuditEventKind) -> AuditEventId {
 pub fn replay_metadata(&self) -> ReplayMetadata {
 pub fn replay_archive(&self) -> AuditReplayArchive {
 pub fn new(
+pub fn to_canonical_text(&self) -> String {
+pub fn from_canonical_text(src: &str) -> Result<Self, AuditReplayArchiveFormatError> {
+pub fn new(message: impl Into<String>) -> Self {

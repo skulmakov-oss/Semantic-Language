@@ -76,3 +76,4 @@ This track is done only when:
 2. persisted backend artifact ownership and canonical envelope types in
    `prom-state` / `prom-audit`
 3. snapshot archive materialization/loading in `prom-state`
+4. audit replay archive materialization/loading in `prom-audit`
