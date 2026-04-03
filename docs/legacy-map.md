@@ -55,6 +55,9 @@ Remaining compatibility perimeter:
 - `crates/ton618-core`
   - retained as a compatibility-named low-level primitive crate
   - not a second owner for `sm-*` platform contracts
+- `ton618_legacy/`
+  - retained as a historical source archive for the pre-`sm-*` naming era
+  - not a canonical owner and not an active workspace surface
 
 Perimeter governance note:
 

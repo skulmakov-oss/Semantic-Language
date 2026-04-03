@@ -19,6 +19,8 @@ compatibility path:
 - `src/bin/ton618_core.rs` remains only as a retained legacy CLI shim
 - `crates/ton618-core` remains only as a retained compatibility-named primitive
   crate
+- `ton618_legacy/` remains only as a retained historical source archive for the
+  pre-`sm-*` naming era
 - canonical public ownership for CLI, frontend, IR, SemCode, VM, and profile
   contracts already lives in the `sm-*` owners
 
@@ -59,3 +61,8 @@ This track is done only when:
 - guard tests hold the allowed perimeter mechanically
 - architecture and legacy docs all agree that TON618 names are non-owning shims
 - no part of the track widens stable CLI or runtime behavior
+
+## Slice History
+
+1. docs/governance checkpoint
+2. exact path/content inventory freeze for the remaining TON618-named perimeter
