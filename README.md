@@ -65,7 +65,7 @@ fn main: code=25 bytes, strings=2
 ## CLI reference
 - Canonical public CLI owner: `smc-cli`.
 - Current repository note: root `src/bin/smc.rs` and `src/bin/svm.rs` remain process entrypoints that delegate into the canonical `smc-cli` owner.
-- `ton618_core` remains only as a legacy compatibility CLI shim for pre-v1 workflows.
+- `ton618_core` remains only as part of the retained non-owning TON618 compatibility perimeter for pre-v1 workflows.
 - `smc compile <input.sm> -o <out.smc>`
   - Parses, type-checks, lowers, validates IR, emits SemCode file.
 - `smc features`
@@ -144,8 +144,8 @@ Optional:
 - `crates/sm-vm` - verified-only VM execution.
 - `crates/smc-cli` - canonical public CLI owner.
 - `src/bin/smc.rs` and `src/bin/svm.rs` - root process entrypoints.
-- `src/bin/ton618_core.rs` - legacy compatibility CLI perimeter.
-- `crates/ton618-core` - retained compatibility-named low-level primitive crate.
+- `src/bin/ton618_core.rs` - retained non-owning TON618 compatibility CLI shim.
+- `crates/ton618-core` - retained non-owning TON618 compatibility primitive crate.
 - `tests/golden/*` and `tests/golden_snapshots/**` - format and runtime golden baselines.
 
 ## Roadmap

@@ -47,16 +47,16 @@ Compatibility re-exports remain in `src/lib.rs` as inline modules:
 
 No external shim files are used.
 
-Remaining compatibility perimeter:
+Retained non-owning TON618 compatibility perimeter:
 
 - `src/bin/ton618_core.rs`
-  - retained as a legacy CLI shim for pre-v1 `ton618_core` workflows
+  - retained as part of the non-owning compatibility perimeter for pre-v1 `ton618_core` workflows
   - not a canonical public CLI owner
 - `crates/ton618-core`
-  - retained as a compatibility-named low-level primitive crate
+  - retained as a non-owning compatibility-named low-level primitive crate
   - not a second owner for `sm-*` platform contracts
 - `ton618_legacy/`
-  - retained as a historical source archive for the pre-`sm-*` naming era
+  - retained as a non-owning historical source archive for the pre-`sm-*` naming era
   - not a canonical owner and not an active workspace surface
 
 Perimeter governance note:

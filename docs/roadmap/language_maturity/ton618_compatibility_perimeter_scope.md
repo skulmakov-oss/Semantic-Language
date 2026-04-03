@@ -27,6 +27,18 @@ compatibility path:
 The remaining work is therefore not to expand TON618 behavior. It is to freeze
 the perimeter so the retained names cannot silently become second owners later.
 
+## Canonical Wording
+
+Across docs and retained code comments, use one term consistently:
+
+- `retained non-owning TON618 compatibility perimeter`
+
+That perimeter currently means exactly:
+
+- `src/bin/ton618_core.rs`
+- `crates/ton618-core`
+- `ton618_legacy/`
+
 ## Included In This Track
 
 - inventory of all remaining `ton618_core` / `ton618-core` compatibility entry
@@ -66,3 +78,4 @@ This track is done only when:
 
 1. docs/governance checkpoint
 2. exact path/content inventory freeze for the remaining TON618-named perimeter
+3. narrow wording cleanup around the retained non-owning compatibility perimeter

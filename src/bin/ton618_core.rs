@@ -1,7 +1,8 @@
-//! Legacy compatibility CLI shim.
+//! Retained non-owning TON618 compatibility CLI shim.
 //!
 //! Canonical public CLI ownership lives in `smc-cli`.
-//! This binary remains only to preserve pre-v1 `ton618_core` workflows.
+//! This binary remains only as part of the retained compatibility perimeter for
+//! pre-v1 `ton618_core` workflows.
 
 pub use semantic_language::{LSB_MASK, MSB_MASK, QuadroReg, F, N, S, T};
 use serde::Deserialize;
@@ -484,7 +485,7 @@ fn lang_run_machine_usage() -> String {
 }
 
 mod parser {
-//! Legacy compatibility parser/profile helpers for `ton618_core` only.
+//! Compatibility-only parser/profile helpers for the retained TON618 CLI shim.
 
 #![allow(dead_code)]
 
@@ -1186,7 +1187,7 @@ mod tests {
 }
 
 mod language {
-//! Legacy compatibility language helpers for `ton618_core` only.
+//! Compatibility-only language helpers for the retained TON618 CLI shim.
 
 use super::parser::{parse_assignment, BinaryOp as PBinaryOp, Expr, UnaryOp};
 use super::{QuadroReg, F, N, S, T};
