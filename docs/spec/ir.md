@@ -93,6 +93,12 @@ Contract rule:
 - optimizer ownership is not split across a second crate in the current baseline
 - structural cleanup and fold logic must live in `sm-ir::passes`
 - default pipeline must stay discoverable without hidden lowering-only behavior
+- `CrystalFold v1` keeps a frozen narrow contract:
+  - local instruction-stream constant / identity rewrites only
+  - linear deterministic rewrite order
+  - barrier clears at labels, jumps, asserts, calls, returns, and other
+    explicit control/effect instructions
+  - no warning ownership and no source-span ownership
 
 ## Boundary Rule
 

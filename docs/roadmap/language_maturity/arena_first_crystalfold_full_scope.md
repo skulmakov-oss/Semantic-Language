@@ -93,3 +93,4 @@ frozen as an internal stage contract".
 2. frontend arena-perimeter guards for raw `Expr` / `Stmt` ownership
 3. move-only cleanup-pass ownership for the current structural IR cleanup stage
 4. explicit arena invariants freeze for parser handoff and shared lowering access
+5. `CrystalFold` pass-contract and deterministic rewrite freeze for the current `v1` optimizer surface

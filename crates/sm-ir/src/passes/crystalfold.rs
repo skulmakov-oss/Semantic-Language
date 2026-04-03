@@ -545,6 +545,13 @@ mod tests {
     use crate::legacy_lowering::{IrFunction, IrInstr};
 
     #[test]
+    fn crystalfold_surface_stays_frozen_at_v1() {
+        let pass = CrystalFoldPass;
+        assert_eq!(pass.name(), "CrystalFold");
+        assert_eq!(pass.version(), 1);
+    }
+
+    #[test]
     fn crystalfold_idempotent() {
         let pass = CrystalFoldPass;
         let base = IrFunction {
@@ -578,6 +585,113 @@ mod tests {
         let r2 = pass.run(&mut m2);
         assert!(!r2.changed);
         assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn crystalfold_clears_constant_state_across_barriers() {
+        let pass = CrystalFoldPass;
+        let base = IrFunction {
+            name: "main".to_string(),
+            instrs: vec![
+                IrInstr::LoadBool { dst: 0, val: true },
+                IrInstr::Call {
+                    dst: None,
+                    name: "side".to_string(),
+                    args: vec![],
+                },
+                IrInstr::BoolNot { dst: 1, src: 0 },
+                IrInstr::LoadBool { dst: 2, val: false },
+                IrInstr::Label {
+                    name: "after".to_string(),
+                },
+                IrInstr::BoolNot { dst: 3, src: 2 },
+                IrInstr::Ret { src: Some(3) },
+            ],
+        };
+
+        let mut module = IrModule {
+            functions: vec![base.clone()],
+        };
+        let report = pass.run(&mut module);
+
+        assert!(
+            !report.changed,
+            "CrystalFold must not propagate constants across call/label barriers"
+        );
+        assert_eq!(module.functions[0], base);
+    }
+
+    #[test]
+    fn crystalfold_rewrite_order_and_report_are_deterministic() {
+        let pass = CrystalFoldPass;
+        let mut module = IrModule {
+            functions: vec![IrFunction {
+                name: "main".to_string(),
+                instrs: vec![
+                    IrInstr::LoadBool { dst: 0, val: true },
+                    IrInstr::LoadBool { dst: 1, val: false },
+                    IrInstr::BoolOr {
+                        dst: 2,
+                        lhs: 0,
+                        rhs: 1,
+                    },
+                    IrInstr::LoadF64 { dst: 3, val: 2.0 },
+                    IrInstr::LoadF64 { dst: 4, val: 3.0 },
+                    IrInstr::AddF64 {
+                        dst: 5,
+                        lhs: 3,
+                        rhs: 4,
+                    },
+                    IrInstr::Label {
+                        name: "after".to_string(),
+                    },
+                    IrInstr::LoadI32 { dst: 6, val: 1 },
+                    IrInstr::LoadI32 { dst: 7, val: 2 },
+                    IrInstr::AddI32 {
+                        dst: 8,
+                        lhs: 6,
+                        rhs: 7,
+                    },
+                    IrInstr::Ret { src: Some(8) },
+                ],
+            }],
+        };
+
+        let report = pass.run(&mut module);
+        assert_eq!(
+            report,
+            OptReport {
+                changed: true,
+                num_rewrites: 3,
+            }
+        );
+        assert_eq!(
+            module.functions[0].instrs,
+            vec![
+                IrInstr::LoadBool { dst: 0, val: true },
+                IrInstr::LoadBool { dst: 1, val: false },
+                IrInstr::LoadBool { dst: 2, val: true },
+                IrInstr::LoadF64 { dst: 3, val: 2.0 },
+                IrInstr::LoadF64 { dst: 4, val: 3.0 },
+                IrInstr::LoadF64 { dst: 5, val: 5.0 },
+                IrInstr::Label {
+                    name: "after".to_string(),
+                },
+                IrInstr::LoadI32 { dst: 6, val: 1 },
+                IrInstr::LoadI32 { dst: 7, val: 2 },
+                IrInstr::LoadI32 { dst: 8, val: 3 },
+                IrInstr::Ret { src: Some(8) },
+            ]
+        );
+
+        let report_again = pass.run(&mut module);
+        assert_eq!(
+            report_again,
+            OptReport {
+                changed: false,
+                num_rewrites: 0,
+            }
+        );
     }
 }
 
