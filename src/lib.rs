@@ -87,7 +87,8 @@ pub mod prom_runtime {
 pub mod prom_state {
     pub use prom_state::{
         ContextWindow, FactResolution, FactValue, SemanticStateStore, StateEpoch, StateRecord,
-        StateRollbackArtifact, StateRollbackCheckpoint, StateSnapshot,
+        StateRollbackAdvance, StateRollbackArtifact, StateRollbackCheckpoint, StateRollbackCode,
+        StateRollbackError, StateSnapshot,
         StateSnapshotArchive, StateSnapshotArchiveFormatError, StateTransitionMetadata,
         StateUpdate, StateValidationCode, StateValidationError,
         STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION, STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION,

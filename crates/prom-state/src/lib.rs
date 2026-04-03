@@ -112,6 +112,33 @@ pub struct StateSnapshotArchiveFormatError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StateRollbackCode {
+    UnsupportedFormatVersion,
+    StoreHistoryMismatch,
+    HeadEpochMismatch,
+    MissingCheckpoint,
+    NonMonotonicCheckpointOrdinal,
+    NonMonotonicTransitionCount,
+    SnapshotEpochMismatch,
+    TransitionCountOutOfRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackError {
+    pub code: StateRollbackCode,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackAdvance {
+    pub checkpoint_ordinal: u32,
+    pub from_epoch: StateEpoch,
+    pub to_epoch: StateEpoch,
+    pub retained_transition_count: usize,
+    pub dropped_transition_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateValidationCode {
     EmptyKey,
     EmptyContext,
@@ -136,6 +163,15 @@ impl StateValidationError {
     }
 }
 
+impl StateRollbackError {
+    pub fn new(code: StateRollbackCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
 impl core::fmt::Display for StateValidationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?}: {}", self.code, self.message)
@@ -144,6 +180,15 @@ impl core::fmt::Display for StateValidationError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for StateValidationError {}
+
+impl core::fmt::Display for StateRollbackError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for StateRollbackError {}
 
 impl StateSnapshotArchiveFormatError {
     pub fn new(message: impl Into<String>) -> Self {
@@ -222,6 +267,122 @@ impl SemanticStateStore {
     pub fn restore(&mut self, snapshot: StateSnapshot) {
         self.epoch = snapshot.epoch;
         self.records = snapshot.records;
+    }
+
+    pub fn apply_rollback(
+        &mut self,
+        artifact: &StateRollbackArtifact,
+        checkpoint_ordinal: u32,
+    ) -> Result<StateRollbackAdvance, StateRollbackError> {
+        if artifact.format_version != STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION {
+            return Err(StateRollbackError::new(
+                StateRollbackCode::UnsupportedFormatVersion,
+                format!(
+                    "unsupported rollback artifact format version {}; expected {}",
+                    artifact.format_version, STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION
+                ),
+            ));
+        }
+
+        let current_transition_count = self.transitions.len();
+        if self.epoch.0 != current_transition_count as u64 {
+            return Err(StateRollbackError::new(
+                StateRollbackCode::StoreHistoryMismatch,
+                format!(
+                    "store epoch {} does not match transition count {}",
+                    self.epoch.0, current_transition_count
+                ),
+            ));
+        }
+        if artifact.head_epoch != self.epoch {
+            return Err(StateRollbackError::new(
+                StateRollbackCode::HeadEpochMismatch,
+                format!(
+                    "rollback artifact head epoch {} does not match store epoch {}",
+                    artifact.head_epoch.0, self.epoch.0
+                ),
+            ));
+        }
+
+        let mut previous_ordinal = None;
+        let mut previous_transition_count = None;
+        let mut selected_checkpoint = None;
+
+        for checkpoint in &artifact.checkpoints {
+            if let Some(prev) = previous_ordinal {
+                if checkpoint.checkpoint_ordinal <= prev {
+                    return Err(StateRollbackError::new(
+                        StateRollbackCode::NonMonotonicCheckpointOrdinal,
+                        "rollback checkpoints must be strictly ordered by checkpoint ordinal",
+                    ));
+                }
+            }
+            if let Some(prev) = previous_transition_count {
+                if checkpoint.applied_transition_count <= prev {
+                    return Err(StateRollbackError::new(
+                        StateRollbackCode::NonMonotonicTransitionCount,
+                        "rollback checkpoints must be strictly ordered by applied transition count",
+                    ));
+                }
+            }
+
+            let expected_epoch = StateEpoch(checkpoint.applied_transition_count as u64);
+            if checkpoint.snapshot.snapshot.epoch != expected_epoch {
+                return Err(StateRollbackError::new(
+                    StateRollbackCode::SnapshotEpochMismatch,
+                    format!(
+                        "rollback checkpoint {} carries snapshot epoch {} but transition count {}",
+                        checkpoint.checkpoint_ordinal,
+                        checkpoint.snapshot.snapshot.epoch.0,
+                        checkpoint.applied_transition_count
+                    ),
+                ));
+            }
+            if checkpoint.applied_transition_count > current_transition_count {
+                return Err(StateRollbackError::new(
+                    StateRollbackCode::TransitionCountOutOfRange,
+                    format!(
+                        "rollback checkpoint {} references transition count {} beyond current store history {}",
+                        checkpoint.checkpoint_ordinal,
+                        checkpoint.applied_transition_count,
+                        current_transition_count
+                    ),
+                ));
+            }
+            if checkpoint.checkpoint_ordinal == checkpoint_ordinal {
+                selected_checkpoint = Some(checkpoint.clone());
+            }
+
+            previous_ordinal = Some(checkpoint.checkpoint_ordinal);
+            previous_transition_count = Some(checkpoint.applied_transition_count);
+        }
+
+        let checkpoint = selected_checkpoint.ok_or_else(|| {
+            StateRollbackError::new(
+                StateRollbackCode::MissingCheckpoint,
+                format!(
+                    "rollback artifact does not contain checkpoint ordinal {}",
+                    checkpoint_ordinal
+                ),
+            )
+        })?;
+
+        let from_epoch = self.epoch;
+        let to_epoch = checkpoint.snapshot.snapshot.epoch;
+        let retained_transition_count = checkpoint.applied_transition_count;
+        let dropped_transition_count = current_transition_count - retained_transition_count;
+
+        self.records = checkpoint.snapshot.snapshot.records;
+        self.epoch = to_epoch;
+        self.transitions.truncate(retained_transition_count);
+
+        Ok(StateRollbackAdvance {
+            checkpoint_ordinal,
+            from_epoch,
+            to_epoch,
+            retained_transition_count,
+            dropped_transition_count,
+        })
     }
 }
 
@@ -820,5 +981,122 @@ records\t0\n";
         assert_eq!(artifact.checkpoints[0].snapshot.snapshot.epoch, StateEpoch(1));
         assert_eq!(artifact.checkpoints[1].checkpoint_ordinal, 1);
         assert_eq!(artifact.checkpoints[1].snapshot.snapshot.epoch, StateEpoch(2));
+    }
+
+    #[test]
+    fn state_store_apply_rollback_restores_checkpoint_snapshot_and_truncates_history() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("apply");
+        let checkpoint0 = StateRollbackCheckpoint::new(0, store.snapshot().archive(), 1);
+
+        store
+            .apply(StateUpdate::new(
+                "fact.beta",
+                FactResolution::Certain(FactValue::Bool(false)),
+                ContextWindow::new("window.beta"),
+                "seed beta",
+            ))
+            .expect("apply");
+        let checkpoint1 = StateRollbackCheckpoint::new(1, store.snapshot().archive(), 2);
+        let artifact =
+            StateRollbackArtifact::new(store.epoch(), vec![checkpoint0.clone(), checkpoint1]);
+
+        let advance = store.apply_rollback(&artifact, 0).expect("rollback");
+
+        assert_eq!(advance.checkpoint_ordinal, 0);
+        assert_eq!(advance.from_epoch, StateEpoch(2));
+        assert_eq!(advance.to_epoch, StateEpoch(1));
+        assert_eq!(advance.retained_transition_count, 1);
+        assert_eq!(advance.dropped_transition_count, 1);
+        assert_eq!(store.epoch(), StateEpoch(1));
+        assert!(store.get("fact.alpha").is_some());
+        assert!(store.get("fact.beta").is_none());
+        assert_eq!(store.transitions().len(), 1);
+        assert_eq!(checkpoint0.snapshot.snapshot, store.snapshot());
+    }
+
+    #[test]
+    fn state_store_apply_rollback_rejects_head_epoch_mismatch() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("apply");
+        let checkpoint = StateRollbackCheckpoint::new(0, store.snapshot().archive(), 1);
+        let artifact = StateRollbackArtifact::new(StateEpoch(99), vec![checkpoint]);
+
+        let err = store.apply_rollback(&artifact, 0).expect_err("must reject");
+
+        assert_eq!(err.code, StateRollbackCode::HeadEpochMismatch);
+    }
+
+    #[test]
+    fn state_store_apply_rollback_rejects_checkpoint_epoch_transition_mismatch() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("apply");
+        let mut archive = store.snapshot().archive();
+        archive.snapshot.epoch = StateEpoch(7);
+        let checkpoint = StateRollbackCheckpoint::new(0, archive, 1);
+        let artifact = StateRollbackArtifact::new(store.epoch(), vec![checkpoint]);
+
+        let err = store.apply_rollback(&artifact, 0).expect_err("must reject");
+
+        assert_eq!(err.code, StateRollbackCode::SnapshotEpochMismatch);
+    }
+
+    #[test]
+    fn state_store_apply_rollback_rejects_store_history_mismatch_after_manual_restore() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("apply");
+        let checkpoint0 = StateRollbackCheckpoint::new(0, store.snapshot().archive(), 1);
+
+        store
+            .apply(StateUpdate::new(
+                "fact.beta",
+                FactResolution::Certain(FactValue::Bool(false)),
+                ContextWindow::new("window.beta"),
+                "seed beta",
+            ))
+            .expect("apply");
+        let artifact = StateRollbackArtifact::new(store.epoch(), vec![checkpoint0]);
+
+        store.restore(StateSnapshot {
+            epoch: StateEpoch(1),
+            records: store
+                .snapshot()
+                .records
+                .into_iter()
+                .filter(|(key, _)| key == "fact.alpha")
+                .collect(),
+        });
+
+        let err = store.apply_rollback(&artifact, 0).expect_err("must reject");
+
+        assert_eq!(err.code, StateRollbackCode::StoreHistoryMismatch);
     }
 }

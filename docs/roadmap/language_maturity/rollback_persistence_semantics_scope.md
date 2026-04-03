@@ -59,9 +59,16 @@ widened post-stable contract.
 
 - `f9e92f7` documented this track as a post-stable persistence/runtime
   expansion checkpoint
-- current first code slice adds explicit `prom-state` ownership for ordered
+- `596fdf4` adds explicit `prom-state` ownership for ordered
   `StateRollbackCheckpoint` and `StateRollbackArtifact` metadata, without yet
   admitting rollback apply/restore semantics
+- current second code slice admits deterministic rollback apply/restore for the
+  narrow first-wave path:
+  - linear store history only
+  - ordered checkpoint metadata only
+  - explicit restore-to-checkpoint plus transition truncation
+  - still no rollback artifact text format, crash-resume, or inter-session
+    repair semantics
 
 ## Acceptance Reading
 

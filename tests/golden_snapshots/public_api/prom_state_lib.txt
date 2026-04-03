@@ -53,12 +53,26 @@ pub checkpoints: Vec<StateRollbackCheckpoint>,
 pub struct StateSnapshotArchiveFormatError {
 pub message: String,
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StateRollbackCode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackError {
+pub code: StateRollbackCode,
+pub message: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackAdvance {
+pub checkpoint_ordinal: u32,
+pub from_epoch: StateEpoch,
+pub to_epoch: StateEpoch,
+pub retained_transition_count: usize,
+pub dropped_transition_count: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateValidationCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateValidationError {
 pub code: StateValidationCode,
 pub message: String,
 pub fn new(code: StateValidationCode, message: impl Into<String>) -> Self {
+pub fn new(code: StateRollbackCode, message: impl Into<String>) -> Self {
 pub fn new(message: impl Into<String>) -> Self {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SemanticStateStore {
@@ -70,6 +84,7 @@ pub fn transitions(&self) -> &[TransitionMetadata] {
 pub fn snapshot(&self) -> StateSnapshot {
 pub fn apply(&mut self, update: StateUpdate) -> Result<TransitionMetadata, StateValidationError> {
 pub fn restore(&mut self, snapshot: StateSnapshot) {
+pub fn apply_rollback(
 pub fn archive(&self) -> StateSnapshotArchive {
 pub fn new(snapshot: StateSnapshot) -> Self {
 pub fn to_canonical_text(&self) -> String {

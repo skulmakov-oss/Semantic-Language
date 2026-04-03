@@ -17,7 +17,10 @@ Current canonical state types:
 - `StateUpdate`
 - `StateSnapshot`
 - `StateSnapshotArchive`
+- `StateRollbackAdvance`
 - `StateRollbackCheckpoint`
+- `StateRollbackCode`
+- `StateRollbackError`
 - `StateRollbackArtifact`
 - `StateTransitionMetadata`
 - `SemanticStateStore`
@@ -74,12 +77,20 @@ Current persisted state rule:
 Current post-stable owner-layer widening on `main`:
 
 - `prom-state` now also owns explicit rollback artifact metadata:
+  - `StateRollbackAdvance`
   - `StateRollbackCheckpoint`
+  - `StateRollbackCode`
+  - `StateRollbackError`
   - `StateRollbackArtifact`
-- this first slice establishes deterministic checkpoint ordering and head-epoch
-  metadata only
-- rollback apply/restore semantics and canonical text materialization remain a
-  later slice and are not implied by owner-layer metadata alone
+- current first admitted rollback path is still narrow:
+  - artifacts must target a linear store history where epoch matches transition
+    count
+  - checkpoint snapshots must carry epochs that match
+    `applied_transition_count`
+  - rollback restores one explicit checkpoint snapshot and truncates transition
+    history to the retained prefix
+- canonical text materialization for rollback artifacts remains a later slice
+  and is not implied by apply/restore admission alone
 
 ## Boundary Rule
 
