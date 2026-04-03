@@ -56,13 +56,14 @@ Current runtime baselines intentionally cover:
 - canonical persisted archive materialization/loading for:
   - `StateSnapshotArchive`
   - `AuditReplayArchive`
+- canonical multi-session replay archive materialization/loading for:
+  - `MultiSessionReplayArchive`
 - canonical declared-order rule-side effect execution for:
   - `RuleEffect::StateWrite`
   - `RuleEffect::AuditNote`
 
 Current runtime baselines do not yet cover:
 
-- multi-session replay archives
 - inter-session state migration
 - mixed-family generic rule-effect executors
 - rollback, retry, or compensation semantics for rule effects

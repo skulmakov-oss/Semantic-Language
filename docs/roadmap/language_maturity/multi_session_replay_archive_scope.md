@@ -1,6 +1,6 @@
 # Multi-Session Replay Archive Scope
 
-Status: proposed post-stable expansion track
+Status: completed post-stable first-wave track on `main`
 Related backlog item: `multi-session replay archives`
 
 ## Goal
@@ -26,8 +26,10 @@ The current stable line already freezes these facts:
 - runtime validation still treats multi-session replay archives as outside the
   admitted baseline
 
-That reading remains the source of truth until this track explicitly lands a
-widened post-stable contract.
+That reading remains the source of truth for the published `v1.1.1` tag.
+Current `main` now carries a widened first-wave contract for deterministic
+multi-session replay archive ownership and canonical materialization/loading
+only.
 
 ## Included In This Track
 
@@ -59,9 +61,24 @@ widened post-stable contract.
   expansion checkpoint
 - `87a009b` added explicit `prom-audit` ownership for ordered
   `MultiSessionReplayArchiveSession` and `MultiSessionReplayArchive` types
-- current second code slice admits canonical deterministic text
+- `b963f85` admitted canonical deterministic text
   materialization/loading for ordered multi-session replay bundles, while still
   excluding rollback/recovery semantics
+
+## Completed First-Wave Reading
+
+Current `main` now treats this track as completed for the narrow first-wave
+contract:
+
+- explicit owner-layer multi-session replay bundle types are canonical in
+  `prom-audit`
+- canonical deterministic text materialization/loading exists for ordered
+  `MultiSessionReplayArchive` bundles
+- embedded session archives remain ordered by monotonic `session_ordinal`
+- published `v1.1.1` remains narrower and does not retroactively claim this
+  widened persisted replay surface
+- rollback, migration, recovery, and runtime replay engines remain outside this
+  first-wave contract
 
 ## Acceptance Reading
 
@@ -74,3 +91,5 @@ This track is done only when:
   post-stable widened replay contract
 - no part of the work quietly widens rollback, migration, or recovery
   semantics
+
+That acceptance boundary is now met on current `main`.

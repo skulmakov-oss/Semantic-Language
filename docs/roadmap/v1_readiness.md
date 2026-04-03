@@ -89,8 +89,13 @@ The following limits remain explicit and should be treated as release-facing hon
 - the published `v1.1.1` line intentionally excludes post-stable persisted
   archive materialization/loading, even though current `main` now admits narrow
   `StateSnapshotArchive` and `AuditReplayArchive` ownership/materialization
+- the published `v1.1.1` line intentionally excludes multi-session replay
+  archives, even though current `main` now admits narrow
+  `MultiSessionReplayArchive` ownership/materialization
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
+- current `main` still does not claim rollback, migration, recovery, or
+  runtime replay engine semantics for persisted archives
 - rollback persistence semantics are not yet formalized beyond current orchestration notes
 - final stable packaging and tag policy remain narrower than the long-term distribution plan
 

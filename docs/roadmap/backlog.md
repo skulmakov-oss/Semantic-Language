@@ -34,11 +34,12 @@ Current post-`v1` wave:
 - the first-wave rule-side effect execution track is completed and now lives as
   frozen baseline history in
   `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
+- the first-wave multi-session replay archive track is completed and now lives
+  as frozen baseline history in
+  `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- multi-session replay archives:
-  `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
 
 Foundational work already in place:
 
