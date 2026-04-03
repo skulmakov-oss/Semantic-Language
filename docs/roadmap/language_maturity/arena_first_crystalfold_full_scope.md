@@ -92,3 +92,4 @@ frozen as an internal stage contract".
 1. scope checkpoint and done-boundary freeze
 2. frontend arena-perimeter guards for raw `Expr` / `Stmt` ownership
 3. move-only cleanup-pass ownership for the current structural IR cleanup stage
+4. explicit arena invariants freeze for parser handoff and shared lowering access
