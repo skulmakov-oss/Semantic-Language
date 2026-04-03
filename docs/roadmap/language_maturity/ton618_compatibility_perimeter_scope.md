@@ -1,6 +1,6 @@
 # TON618 Compatibility Perimeter Scope
 
-Status: proposed post-stable closure track
+Status: completed post-stable closure track
 Related backlog item: `keep the explicit ton618_core / ton618-core compatibility perimeter narrow and documented`
 
 ## Goal
@@ -79,3 +79,10 @@ This track is done only when:
 1. docs/governance checkpoint
 2. exact path/content inventory freeze for the remaining TON618-named perimeter
 3. narrow wording cleanup around the retained non-owning compatibility perimeter
+4. docs-only close-out
+
+## Close-Out Reading
+
+The retained non-owning TON618 compatibility perimeter is now frozen as part of
+the post-stable baseline. Any future change to its behavior or ownership would
+require a new explicitly scoped follow-up track rather than incremental drift.

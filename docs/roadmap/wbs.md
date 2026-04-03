@@ -25,7 +25,7 @@ Current remaining critical path:
 
 Current non-blocking follow-up work:
 
-- keep the explicit legacy compatibility perimeter narrow and non-owning
-  - current checkpoint:
-    `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
+- the retained non-owning TON618 compatibility perimeter is frozen as completed
+  post-stable baseline history in
+  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
 - deepen runtime semantics only after `v1` scope is frozen

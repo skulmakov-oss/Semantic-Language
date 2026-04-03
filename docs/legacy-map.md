@@ -61,7 +61,7 @@ Retained non-owning TON618 compatibility perimeter:
 
 Perimeter governance note:
 
-- future cleanup/narrowing for these retained names is tracked in
+- perimeter freeze and close-out history for these retained names is tracked in
   `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
 
 ## Guards
