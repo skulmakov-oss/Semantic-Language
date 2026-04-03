@@ -28,7 +28,8 @@ Current post-`v1` wave:
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- wider PROMETHEUS host-call families beyond the narrow `v1` boundary
+- wider PROMETHEUS host-call families beyond the narrow `v1` boundary:
+  `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
 - persistence and replay backends
 - richer rule-side effect execution semantics
 

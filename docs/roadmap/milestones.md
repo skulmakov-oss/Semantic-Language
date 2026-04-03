@@ -46,6 +46,8 @@
   - gates
   - current state: narrow working boundary exists and is fixed as the official `v1` scope
   - wider planned ABI scope remains post-`v1` work rather than a release blocker
+  - current post-stable expansion checkpoint:
+    `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
   - `docs/spec/abi.md`
   - `docs/spec/capabilities.md`
   - `docs/spec/gates.md`
