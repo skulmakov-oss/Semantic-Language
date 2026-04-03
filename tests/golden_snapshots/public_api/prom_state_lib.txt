@@ -39,12 +39,16 @@ pub struct StateSnapshotArchive {
 pub format_version: u32,
 pub snapshot: StateSnapshot,
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSnapshotArchiveFormatError {
+pub message: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateValidationCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateValidationError {
 pub code: StateValidationCode,
 pub message: String,
 pub fn new(code: StateValidationCode, message: impl Into<String>) -> Self {
+pub fn new(message: impl Into<String>) -> Self {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SemanticStateStore {
 pub fn new() -> Self {
@@ -57,3 +61,5 @@ pub fn apply(&mut self, update: StateUpdate) -> Result<TransitionMetadata, State
 pub fn restore(&mut self, snapshot: StateSnapshot) {
 pub fn archive(&self) -> StateSnapshotArchive {
 pub fn new(snapshot: StateSnapshot) -> Self {
+pub fn to_canonical_text(&self) -> String {
+pub fn from_canonical_text(src: &str) -> Result<Self, StateSnapshotArchiveFormatError> {

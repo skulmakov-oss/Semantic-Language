@@ -64,6 +64,7 @@ Current persisted state rule:
 
 - `StateSnapshotArchive` wraps one canonical `StateSnapshot`
 - archive metadata is explicit through `format_version`
+- archive materialization/loading uses one canonical deterministic text envelope
 - persisted archive ownership does not widen store validation or runtime
   recovery semantics by implication
 

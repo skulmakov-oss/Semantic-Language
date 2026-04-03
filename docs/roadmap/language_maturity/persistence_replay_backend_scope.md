@@ -75,3 +75,4 @@ This track is done only when:
 1. docs/governance checkpoint
 2. persisted backend artifact ownership and canonical envelope types in
    `prom-state` / `prom-audit`
+3. snapshot archive materialization/loading in `prom-state`
