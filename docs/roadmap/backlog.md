@@ -43,9 +43,11 @@ Current post-`v1` wave:
 - the first-wave rollback persistence semantics track is completed and now
   lives as frozen baseline history in
   `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
-
-- richer `fx` arithmetic beyond the current value path:
+- the first-wave `fx` arithmetic expansion track is completed and now lives as
+  frozen baseline history in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+
+No additional post-`v1` feature track is currently active.
 
 Foundational work already in place:
 

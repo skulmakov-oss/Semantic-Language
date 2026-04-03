@@ -175,9 +175,9 @@ Current honest limits:
   long-term contract
 - unary `+` and unary `-` on `fx` are admitted only for literal formation in
   the published stable `v1.1.1` contract; the widened post-stable path is
-  tracked separately
-- post-stable widening for general-purpose `fx` arithmetic is tracked
-  separately in
+  described separately
+- completed first-wave post-stable widening for general-purpose `fx`
+  arithmetic is documented in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 
 ## Units Of Measure

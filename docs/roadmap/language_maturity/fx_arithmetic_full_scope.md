@@ -1,6 +1,6 @@
 # FX Arithmetic Full Scope
 
-Status: proposed post-stable expansion track
+Status: completed post-stable first-wave track
 Related backlog item: `richer fx arithmetic beyond the current value path`
 Related stable baseline note:
 `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
@@ -27,8 +27,10 @@ The current stable line already freezes these facts:
 - binary `+`, `-`, `*`, and `/` on `fx` are not part of the published stable
   contract
 
-That stable reading remains the source of truth until this track explicitly
-lands new behavior.
+That stable reading remains the source of truth for the published stable line.
+Current `main` now carries the widened first-wave `fx` arithmetic contract
+described below; it does not retroactively change the published `v1.1.1`
+boundary.
 
 ## Included In This Track
 
@@ -70,8 +72,29 @@ This track is done only when:
 
 ## Slice History
 
-1. docs/governance checkpoint
-2. plain `fx` unary/binary arithmetic admitted by source typing
-3. canonical lowering/verified execution for the same plain `fx` arithmetic
-   surface under a promoted SemCode header line
-4. docs/spec/test freeze for the widened post-stable contract
+- docs/governance checkpoint opened this post-stable track
+- plain `fx` unary/binary arithmetic was admitted by source typing
+- canonical lowering/verified execution landed for the same plain `fx`
+  arithmetic surface under a promoted `SEMCODE3` line
+- docs/spec/test freeze landed for the widened post-stable contract
+
+## Close-Out Reading
+
+This first-wave `fx` arithmetic track is now complete on `main`.
+
+Completed first-wave surface:
+
+- deterministic plain unary `+` / `-` on already-typed `fx` expressions
+- deterministic plain binary `+`, `-`, `*`, `/` between already-typed `fx`
+  operands
+- matching source typing, lowering, verifier, VM, and SemCode header behavior
+- release-facing docs that distinguish published `v1.1.1` from widened `main`
+
+Still intentionally outside this first wave:
+
+- implicit coercion from non-`fx` numeric expressions into `fx`
+- unit-carrying `fx[unit]` arithmetic
+- generic numeric overloading or operator traits
+- any widening of host ABI, `prom-*`, or runtime integration boundaries
+- any claim that `v1.1.1` already shipped full `fx` arithmetic parity with
+  `f64`

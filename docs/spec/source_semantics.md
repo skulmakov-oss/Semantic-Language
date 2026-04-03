@@ -715,8 +715,9 @@ Current honest limit:
 - current `main` now admits plain `fx` unary/binary arithmetic at source typing
   level, and canonical lowering/verified execution now admit that widened
   surface under a promoted `SEMCODE3` line
-- any widening of general-purpose `fx` arithmetic is post-stable work tracked
-  in `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- completed first-wave post-stable widening for general-purpose `fx`
+  arithmetic is documented in
+  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 
 ## Builtin Call Meaning
 

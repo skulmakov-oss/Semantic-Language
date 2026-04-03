@@ -72,6 +72,8 @@ Current compatibility rule:
 Current `v1` scope commitment:
 
 - compatibility commitments for `prom-*` apply only to the narrow ABI/capability/gate surface already implemented in the repository
+- the published `v1.1.1` line keeps `fx` narrower than the widened first-wave
+  plain `fx` arithmetic now admitted on current `main`
 - post-stable admitted calls such as `StateQuery`, `StateUpdate`, `EventPost`,
   and `ClockRead` remain outside the current `v1.1.1` compatibility envelope
 - support for those wider calls on current `main` is a forward-only repo-main
@@ -90,8 +92,8 @@ Current `v1` scope commitment:
 
 The repository does not yet claim final compatibility guarantees for:
 
-- richer `fx` arithmetic semantics beyond the current stable value-transport and
-  equality contract
+- `fx` arithmetic semantics beyond the current admitted first-wave plain
+  unary/binary contract on `main`
 - any wider PROMETHEUS host-call families beyond the currently admitted
   first-wave post-stable pack
 - replay archive semantics beyond the current admitted first-wave

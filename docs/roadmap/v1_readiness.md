@@ -78,8 +78,10 @@ Currently ready or substantially stabilized surfaces:
 
 The following limits remain explicit and should be treated as release-facing honesty requirements:
 
-- the canonical `fx` value path is end-to-end, but `fx` remains a narrow
-  value-transport/equality family rather than a full arithmetic peer of `f64`
+- the published `v1.1.1` line intentionally excludes first-wave plain `fx`
+  unary/binary arithmetic, even though current `main` now admits deterministic
+  plain `fx` arithmetic with canonical lowering/verified execution under
+  `SEMCODE3`
 - the published `v1.1.1` line intentionally excludes post-stable PROMETHEUS
   calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead`,
   even though current `main` now admits them as a forward-only widened boundary
@@ -100,6 +102,8 @@ The following limits remain explicit and should be treated as release-facing hon
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or
   runtime replay engine semantics for persisted archives
+- current `main` still does not claim implicit coercion into `fx`, `fx[unit]`
+  arithmetic, or full arithmetic parity between `fx` and `f64`
 - current `main` still does not claim rollback artifact text materialization,
   crash-resume, inter-session repair, or generic transaction semantics
 - final stable packaging and tag policy remain narrower than the long-term distribution plan

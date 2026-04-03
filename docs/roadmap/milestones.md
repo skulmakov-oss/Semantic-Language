@@ -20,7 +20,7 @@
   - type completeness matrix
   - optimizer review checklist
   - current stable-note checkpoint: `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
-  - current post-stable expansion checkpoint:
+  - current completed post-stable expansion checkpoint:
     `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 - `M3 Platform Formalization`
   - spec bundle
