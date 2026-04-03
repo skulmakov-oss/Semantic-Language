@@ -12,6 +12,9 @@ These notes summarize the published stable release surface after `v0.1`,
 ## Published Stable Tag
 
 - `v1.1.1`
+- forward-only stable tag discipline remains frozen in:
+  - `docs/roadmap/stable_release_policy.md`
+  - `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
 
 ## Ready Surfaces
 

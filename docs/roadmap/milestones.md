@@ -71,5 +71,8 @@
   - `docs/roadmap/v1_readiness.md`
   - `docs/roadmap/release_bundle_checklist.md`
   - `docs/roadmap/compatibility_statement.md`
-  - current state: validation artifacts and CI-enforced release gates exist on the active beta line
-  - current follow-up gap: keep release-facing docs and packaged beta assets aligned with the actual `main` branch state
+  - current state: validation artifacts, CI-enforced release gates, and the
+    published stable `v1.1.1` governance baseline all exist on `main`
+  - current stable-note checkpoints:
+    - `docs/roadmap/language_maturity/release_version_cut_decision.md`
+    - `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
