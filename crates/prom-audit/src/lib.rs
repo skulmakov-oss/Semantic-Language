@@ -53,6 +53,7 @@ pub struct ReplayMetadata {
 }
 
 pub const AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION: u32 = 1;
+pub const MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditReplayArchive {
@@ -60,6 +61,18 @@ pub struct AuditReplayArchive {
     pub session: AuditSessionMetadata,
     pub events: Vec<AuditEvent>,
     pub replay: ReplayMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiSessionReplayArchiveSession {
+    pub session_ordinal: u32,
+    pub archive: AuditReplayArchive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiSessionReplayArchive {
+    pub format_version: u32,
+    pub sessions: Vec<MultiSessionReplayArchiveSession>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,6 +295,24 @@ impl AuditReplayArchive {
             events,
             replay,
         })
+    }
+}
+
+impl MultiSessionReplayArchiveSession {
+    pub fn new(session_ordinal: u32, archive: AuditReplayArchive) -> Self {
+        Self {
+            session_ordinal,
+            archive,
+        }
+    }
+}
+
+impl MultiSessionReplayArchive {
+    pub fn new(sessions: Vec<MultiSessionReplayArchiveSession>) -> Self {
+        Self {
+            format_version: MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION,
+            sessions,
+        }
     }
 }
 
@@ -816,5 +847,32 @@ replay\t1\t9\n";
         let err = AuditReplayArchive::from_canonical_text(text).expect_err("must reject");
 
         assert!(err.message.contains("monotonic"));
+    }
+
+    #[test]
+    fn multi_session_replay_archive_uses_explicit_format_version() {
+        let mut first = AuditTrail::new(sample_session());
+        first.record(AuditEventKind::SessionStarted {
+            entry: "alpha".to_string(),
+        });
+
+        let mut second = AuditTrail::new(sample_session());
+        second.record(AuditEventKind::SessionStarted {
+            entry: "beta".to_string(),
+        });
+        second.record(AuditEventKind::SessionFinished);
+
+        let archive = MultiSessionReplayArchive::new(vec![
+            MultiSessionReplayArchiveSession::new(0, first.replay_archive()),
+            MultiSessionReplayArchiveSession::new(1, second.replay_archive()),
+        ]);
+
+        assert_eq!(
+            archive.format_version,
+            MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION
+        );
+        assert_eq!(archive.sessions.len(), 2);
+        assert_eq!(archive.sessions[0].session_ordinal, 0);
+        assert_eq!(archive.sessions[1].session_ordinal, 1);
     }
 }

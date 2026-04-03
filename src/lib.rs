@@ -104,8 +104,9 @@ pub mod prom_rules {
 pub mod prom_audit {
     pub use prom_audit::{
         AuditEvent, AuditEventId, AuditEventKind, AuditReplayArchive,
-        AuditReplayArchiveFormatError, AuditSessionMetadata, AuditTrail, ReplayMetadata,
-        AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION,
+        AuditReplayArchiveFormatError, AuditSessionMetadata, AuditTrail,
+        MultiSessionReplayArchive, MultiSessionReplayArchiveSession, ReplayMetadata,
+        AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION, MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION,
     };
 }
 #[cfg(feature = "std")]

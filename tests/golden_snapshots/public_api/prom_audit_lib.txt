@@ -18,12 +18,21 @@ pub session: AuditSessionMetadata,
 pub event_count: usize,
 pub last_event_id: Option<AuditEventId>,
 pub const AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION: u32 = 1;
+pub const MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditReplayArchive {
 pub format_version: u32,
 pub session: AuditSessionMetadata,
 pub events: Vec<AuditEvent>,
 pub replay: ReplayMetadata,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiSessionReplayArchiveSession {
+pub session_ordinal: u32,
+pub archive: AuditReplayArchive,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiSessionReplayArchive {
+pub format_version: u32,
+pub sessions: Vec<MultiSessionReplayArchiveSession>,
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditReplayArchiveFormatError {
 pub message: String,
@@ -38,4 +47,6 @@ pub fn replay_archive(&self) -> AuditReplayArchive {
 pub fn new(
 pub fn to_canonical_text(&self) -> String {
 pub fn from_canonical_text(src: &str) -> Result<Self, AuditReplayArchiveFormatError> {
+pub fn new(session_ordinal: u32, archive: AuditReplayArchive) -> Self {
+pub fn new(sessions: Vec<MultiSessionReplayArchiveSession>) -> Self {
 pub fn new(message: impl Into<String>) -> Self {

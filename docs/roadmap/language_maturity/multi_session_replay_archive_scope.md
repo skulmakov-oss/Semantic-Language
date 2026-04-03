@@ -53,6 +53,14 @@ widened post-stable contract.
 3. canonical materialize/load path for ordered session bundles
 4. runtime/spec/validation freeze for the widened replay contract
 
+## Slice History
+
+- `f98ca1d` documented this track as a post-stable persistence/runtime
+  expansion checkpoint
+- current first code slice adds explicit `prom-audit` ownership for ordered
+  `MultiSessionReplayArchiveSession` and `MultiSessionReplayArchive` types,
+  without yet admitting canonical text materialization/loading
+
 ## Acceptance Reading
 
 This track is done only when:
@@ -64,4 +72,3 @@ This track is done only when:
   post-stable widened replay contract
 - no part of the work quietly widens rollback, migration, or recovery
   semantics
-

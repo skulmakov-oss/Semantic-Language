@@ -16,6 +16,8 @@ Current canonical audit types:
 - `AuditTrail`
 - `ReplayMetadata`
 - `AuditReplayArchive`
+- `MultiSessionReplayArchiveSession`
+- `MultiSessionReplayArchive`
 
 ## Ownership Rule
 
@@ -68,6 +70,15 @@ Current persisted replay rule:
 - archive materialization/loading uses one canonical deterministic text envelope
 - persisted replay ownership does not widen orchestration or runtime recovery
   semantics by implication
+
+Current post-stable owner-layer widening on `main`:
+
+- `prom-audit` now also owns explicit multi-session replay bundle types:
+  - `MultiSessionReplayArchiveSession`
+  - `MultiSessionReplayArchive`
+- this first slice establishes ordered session-bundle ownership only
+- canonical text materialization/loading for multi-session replay remains a
+  later slice and is not implied by the owner-layer alone
 
 ## Boundary Rule
 
