@@ -58,6 +58,9 @@ explicit:
 - `AstArena` already exists and has direct append-only ID stability tests.
 - `CrystalFold` already exists as an IR pass and is already documented as
   deterministic and idempotent.
+- raw frontend `Expr` / `Stmt` storage is already confined to `AstArena`; this
+  track should freeze and guard that perimeter before attempting deeper
+  ownership cleanup.
 - `NEXT-4` is therefore not about inventing arena-first ownership or introducing
   CrystalFold from scratch.
 
@@ -67,10 +70,11 @@ frozen as an internal stage contract".
 ## Intended Slice Order
 
 1. docs/governance checkpoint
-2. remaining non-arena ownership inventory and narrow cleanup slices
-3. explicit arena invariants test freeze
-4. `CrystalFold` stage-placement/interface freeze and determinism pack
-5. docs-only close-out for the full stage contract
+2. ownership guard freeze for the current arena perimeter
+3. remaining non-arena ownership inventory and narrow cleanup slices
+4. explicit arena invariants test freeze
+5. `CrystalFold` stage-placement/interface freeze and determinism pack
+6. docs-only close-out for the full stage contract
 
 ## Acceptance Reading
 
