@@ -37,6 +37,8 @@ Current post-`v1` wave:
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- multi-session replay archives:
+  `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
 
 Foundational work already in place:
 

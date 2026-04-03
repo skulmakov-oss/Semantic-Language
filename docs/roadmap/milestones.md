@@ -68,6 +68,8 @@
     `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
   - current completed post-stable rule execution checkpoint:
     `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
+  - current post-stable replay expansion checkpoint:
+    `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
 - `M6 v1 Lockdown`
   - freezes
   - golden baselines
