@@ -167,6 +167,9 @@ Current honest limits:
   long-term contract
 - unary `+` and unary `-` on `fx` are admitted only for literal formation in
   the canonical Rust-like path and are not general-purpose `fx` operators
+- post-stable widening for general-purpose `fx` arithmetic is tracked
+  separately in
+  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 
 ## Units Of Measure
 

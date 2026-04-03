@@ -26,7 +26,8 @@ Current post-`v1` wave:
   lives as frozen baseline history in
   `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
 
-- richer `fx` arithmetic beyond the current value path
+- richer `fx` arithmetic beyond the current value path:
+  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 - wider PROMETHEUS host-call families beyond the narrow `v1` boundary
 - persistence and replay backends
 - richer rule-side effect execution semantics

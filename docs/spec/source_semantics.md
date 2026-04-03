@@ -712,6 +712,8 @@ Current honest limit:
 
 - `fx` value flow is supported, but `fx` arithmetic is intentionally narrower
   than `f64` arithmetic in the Rust-like source surface
+- any widening of general-purpose `fx` arithmetic is post-stable work tracked
+  in `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 
 ## Builtin Call Meaning
 
