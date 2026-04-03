@@ -63,6 +63,8 @@ lands a widened post-stable contract.
   `StateWrite` and `AuditNote`
 - current second code slice admits only deterministic `StateWrite` execution in
   `prom-runtime`, with explicit rejection for `AuditNote`
+- current third code slice admits only deterministic `AuditNote` execution in
+  `prom-runtime`, without widening it into a mixed-family generic executor
 
 ## Acceptance Reading
 

@@ -78,9 +78,9 @@ pub mod prom_gates {
 #[cfg(feature = "std")]
 pub mod prom_runtime {
     pub use prom_runtime::{
-        ActivationSelection, ExecutionSession, GateExecutionSession, RuleEffectExecutionCode,
-        RuleEffectExecutionError, RuleStateWriteAdvance, RuntimeIntegrationSnapshot,
-        RuntimeSessionDescriptor, RuntimeStateAdvance,
+        ActivationSelection, ExecutionSession, GateExecutionSession, RuleAuditNoteAdvance,
+        RuleEffectExecutionCode, RuleEffectExecutionError, RuleStateWriteAdvance,
+        RuntimeIntegrationSnapshot, RuntimeSessionDescriptor, RuntimeStateAdvance,
     };
 }
 #[cfg(feature = "std")]

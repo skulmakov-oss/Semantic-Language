@@ -15,6 +15,7 @@ Current canonical orchestration types:
 - `ActivationSelection`
 - `RuntimeStateAdvance`
 - `RuleStateWriteAdvance`
+- `RuleAuditNoteAdvance`
 - `RuleEffectExecutionError`
 
 ## Ownership Rule
@@ -64,10 +65,13 @@ Current narrow orchestration helpers:
 - state update application through `SemanticStateStore::apply` followed by agenda refresh
 - first-wave admitted rule-side effect execution for ordered `RuleEffect::StateWrite`
   plans only
+- second admitted audit-facing rule-side effect execution for ordered
+  `RuleEffect::AuditNote` plans only
 - canonical audit emission helpers for:
   - session start and finish
   - rule activation
   - state transition metadata
+  - rule audit notes
 - persisted archive creation remains delegated to owner crates:
   - `prom-state` for `StateSnapshotArchive`
   - `prom-audit` for `AuditReplayArchive`
@@ -88,8 +92,15 @@ Current first-wave admitted execution family:
   - refreshes agenda after every applied transition
   - emits only canonical `AuditEventKind::StateTransition` entries
 
-Current first-wave explicitly does not admit:
+Current second admitted execution family:
 
 - `RuleEffect::AuditNote`
+  - executes in declared order
+  - emits canonical `AuditEventKind::Note` entries only
+  - does not mutate state
+  - does not refresh agenda
+
+Current admitted slices explicitly still do not provide:
+
 - implicit retries, rollback, or compensation semantics
 - mixed-family effect execution through a generic rule-effect engine

@@ -50,6 +50,13 @@ pub struct RuleStateWriteAdvance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleAuditNoteAdvance {
+    pub rule_id: RuleId,
+    pub effect_ordinal: usize,
+    pub event_id: AuditEventId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuleEffectExecutionCode {
     UnsupportedEffectFamily,
     StateValidationFailed,
@@ -183,6 +190,38 @@ fn apply_rule_state_write_effects(
     Ok(advances)
 }
 
+fn apply_rule_audit_note_effects(
+    trail: &mut AuditTrail,
+    rule: &RuleDefinition,
+) -> Result<Vec<RuleAuditNoteAdvance>, RuleEffectExecutionError> {
+    let mut advances = Vec::new();
+
+    for (effect_ordinal, effect) in rule.effect_plan().effects().iter().enumerate() {
+        let RuleEffect::AuditNote(effect) = effect else {
+            return Err(RuleEffectExecutionError::new(
+                RuleEffectExecutionCode::UnsupportedEffectFamily,
+                rule.id.clone(),
+                effect_ordinal,
+                format!(
+                    "rule '{}' effect {} is not admitted by the current audit-note execution slice",
+                    rule.id.0, effect_ordinal
+                ),
+            ));
+        };
+
+        let event_id = trail.record(AuditEventKind::Note {
+            message: effect.message.clone(),
+        });
+        advances.push(RuleAuditNoteAdvance {
+            rule_id: rule.id.clone(),
+            effect_ordinal,
+            event_id,
+        });
+    }
+
+    Ok(advances)
+}
+
 pub struct ExecutionSession<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
     host: &'a mut H,
     capabilities: &'a C,
@@ -300,6 +339,14 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> ExecutionSession<'a, H, C> 
         trail: &mut AuditTrail,
     ) -> Result<Vec<RuleStateWriteAdvance>, RuleEffectExecutionError> {
         apply_rule_state_write_effects(&self.descriptor, state, rule, rules, trail)
+    }
+
+    pub fn apply_rule_audit_note_effects(
+        &self,
+        trail: &mut AuditTrail,
+        rule: &RuleDefinition,
+    ) -> Result<Vec<RuleAuditNoteAdvance>, RuleEffectExecutionError> {
+        apply_rule_audit_note_effects(trail, rule)
     }
 
     pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
@@ -443,6 +490,14 @@ impl<'a, B: GateBinding, C: CapabilityChecker> GateExecutionSession<'a, B, C> {
         trail: &mut AuditTrail,
     ) -> Result<Vec<RuleStateWriteAdvance>, RuleEffectExecutionError> {
         apply_rule_state_write_effects(&self.descriptor, state, rule, rules, trail)
+    }
+
+    pub fn apply_rule_audit_note_effects(
+        &self,
+        trail: &mut AuditTrail,
+        rule: &RuleDefinition,
+    ) -> Result<Vec<RuleAuditNoteAdvance>, RuleEffectExecutionError> {
+        apply_rule_audit_note_effects(trail, rule)
     }
 
     pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
@@ -721,5 +776,75 @@ mod tests {
         assert!(audit.events().is_empty());
         assert!(state.get("fact.alpha").is_some());
         assert!(state.get("fact.beta").is_none());
+    }
+
+    #[test]
+    fn execution_session_applies_rule_audit_note_effects_in_declared_order() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut host = RecordingHostAbi::default();
+        let session = ExecutionSession::kernel_bound(&mut host, &manifest, metadata);
+
+        let rule = RuleDefinition::new(
+            "rule.alpha",
+            5,
+            vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+        )
+        .with_effects(vec![
+            RuleEffect::audit_note("rule.alpha note one"),
+            RuleEffect::audit_note("rule.alpha note two"),
+        ]);
+
+        let mut audit = session.begin_audit_trail();
+        let advances = session
+            .apply_rule_audit_note_effects(&mut audit, &rule)
+            .expect("apply rule audit-note effects");
+
+        assert_eq!(advances.len(), 2);
+        assert_eq!(advances[0].effect_ordinal, 0);
+        assert_eq!(advances[0].event_id, AuditEventId(0));
+        assert_eq!(advances[1].effect_ordinal, 1);
+        assert_eq!(advances[1].event_id, AuditEventId(1));
+        assert!(matches!(
+            &audit.events()[0].kind,
+            AuditEventKind::Note { message } if message == "rule.alpha note one"
+        ));
+        assert!(matches!(
+            &audit.events()[1].kind,
+            AuditEventKind::Note { message } if message == "rule.alpha note two"
+        ));
+    }
+
+    #[test]
+    fn execution_session_rejects_non_audit_note_effect_families_in_audit_slice() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut host = RecordingHostAbi::default();
+        let session = ExecutionSession::kernel_bound(&mut host, &manifest, metadata);
+
+        let rule = RuleDefinition::new(
+            "rule.alpha",
+            5,
+            vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+        )
+        .with_effects(vec![RuleEffect::state_write(
+            "fact.beta",
+            FactValue::I32(2),
+            "window.beta",
+            "derive beta",
+        )]);
+
+        let mut audit = session.begin_audit_trail();
+        let err = session
+            .apply_rule_audit_note_effects(&mut audit, &rule)
+            .expect_err("state-write execution is not admitted in audit-note slice");
+
+        assert_eq!(
+            err.code,
+            RuleEffectExecutionCode::UnsupportedEffectFamily
+        );
+        assert_eq!(err.rule_id.0, "rule.alpha");
+        assert_eq!(err.effect_ordinal, 0);
+        assert!(audit.events().is_empty());
     }
 }
