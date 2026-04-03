@@ -18,6 +18,7 @@ Current canonical audit types:
 - `AuditReplayArchive`
 - `MultiSessionReplayArchiveSession`
 - `MultiSessionReplayArchive`
+- `MultiSessionReplayArchiveFormatError`
 
 ## Ownership Rule
 
@@ -76,9 +77,12 @@ Current post-stable owner-layer widening on `main`:
 - `prom-audit` now also owns explicit multi-session replay bundle types:
   - `MultiSessionReplayArchiveSession`
   - `MultiSessionReplayArchive`
-- this first slice establishes ordered session-bundle ownership only
-- canonical text materialization/loading for multi-session replay remains a
-  later slice and is not implied by the owner-layer alone
+- canonical text materialization/loading for multi-session replay is now
+  admitted through one explicit deterministic envelope
+- session bundles remain ordered by `session_ordinal`, which must be monotonic
+  from zero
+- this widening still does not imply rollback, recovery, or runtime replay
+  orchestration
 
 ## Boundary Rule
 

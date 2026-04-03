@@ -8,6 +8,7 @@ use prom_cap::{CapabilityKind, CapabilityManifestMetadata, CapabilityManifestVer
 use sm_runtime_core::ExecutionContext;
 
 const AUDIT_REPLAY_ARCHIVE_MAGIC: &str = "semantic_audit_replay_archive";
+const MULTI_SESSION_REPLAY_ARCHIVE_MAGIC: &str = "semantic_multi_session_replay_archive";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AuditEventId(pub u64);
@@ -77,6 +78,11 @@ pub struct MultiSessionReplayArchive {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditReplayArchiveFormatError {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiSessionReplayArchiveFormatError {
     pub message: String,
 }
 
@@ -314,6 +320,152 @@ impl MultiSessionReplayArchive {
             sessions,
         }
     }
+
+    pub fn to_canonical_text(&self) -> String {
+        let mut out = String::new();
+        out.push_str(MULTI_SESSION_REPLAY_ARCHIVE_MAGIC);
+        out.push('\t');
+        out.push_str(&self.format_version.to_string());
+        out.push('\n');
+        out.push_str("sessions\t");
+        out.push_str(&self.sessions.len().to_string());
+        out.push('\n');
+
+        for session in &self.sessions {
+            let archive_text = session.archive.to_canonical_text();
+            let archive_lines = archive_text.lines().collect::<Vec<_>>();
+            out.push_str("session\t");
+            out.push_str(&session.session_ordinal.to_string());
+            out.push('\t');
+            out.push_str(&archive_lines.len().to_string());
+            out.push('\n');
+            for line in archive_lines {
+                out.push_str("archive\t");
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+
+        out
+    }
+
+    pub fn from_canonical_text(
+        src: &str,
+    ) -> Result<Self, MultiSessionReplayArchiveFormatError> {
+        let mut lines = src.lines();
+        let header = lines.next().ok_or_else(|| {
+            MultiSessionReplayArchiveFormatError::new("missing multi-session archive header")
+        })?;
+        let header_parts = split_archive_line(header);
+        if header_parts.len() != 2 || header_parts[0] != MULTI_SESSION_REPLAY_ARCHIVE_MAGIC {
+            return Err(MultiSessionReplayArchiveFormatError::new(
+                "invalid multi-session archive header",
+            ));
+        }
+        let format_version =
+            parse_u32_field(header_parts[1], "multi-session archive format version")
+                .map_err(|err| MultiSessionReplayArchiveFormatError::new(err.message))?;
+        if format_version != MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION {
+            return Err(MultiSessionReplayArchiveFormatError::new(format!(
+                "unsupported multi-session archive format version {}; expected {}",
+                format_version, MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION
+            )));
+        }
+
+        let session_count_line = lines.next().ok_or_else(|| {
+            MultiSessionReplayArchiveFormatError::new(
+                "missing multi-session archive session-count line",
+            )
+        })?;
+        let session_count_parts = split_archive_line(session_count_line);
+        if session_count_parts.len() != 2 || session_count_parts[0] != "sessions" {
+            return Err(MultiSessionReplayArchiveFormatError::new(
+                "invalid multi-session archive session-count line",
+            ));
+        }
+        let expected_session_count =
+            parse_usize_field(session_count_parts[1], "multi-session archive session count")
+                .map_err(|err| MultiSessionReplayArchiveFormatError::new(err.message))?;
+
+        let mut sessions = Vec::with_capacity(expected_session_count);
+        while let Some(line) = lines.next() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let session_parts = split_archive_line(line);
+            if session_parts.len() != 3 || session_parts[0] != "session" {
+                return Err(MultiSessionReplayArchiveFormatError::new(
+                    "invalid multi-session archive session line",
+                ));
+            }
+            let session_ordinal =
+                parse_u32_field(session_parts[1], "multi-session session ordinal")
+                    .map_err(|err| MultiSessionReplayArchiveFormatError::new(err.message))?;
+            let expected_archive_line_count = parse_usize_field(
+                session_parts[2],
+                "multi-session embedded archive line count",
+            )
+            .map_err(|err| MultiSessionReplayArchiveFormatError::new(err.message))?;
+            if expected_archive_line_count == 0 {
+                return Err(MultiSessionReplayArchiveFormatError::new(
+                    "embedded audit archive line count must not be zero",
+                ));
+            }
+
+            let mut archive_text = String::new();
+            for index in 0..expected_archive_line_count {
+                let archive_line = lines.next().ok_or_else(|| {
+                    MultiSessionReplayArchiveFormatError::new(
+                        "missing embedded audit archive line",
+                    )
+                })?;
+                let archive_parts = split_archive_line(archive_line);
+                if archive_parts.is_empty() || archive_parts[0] != "archive" {
+                    return Err(MultiSessionReplayArchiveFormatError::new(
+                        "invalid embedded audit archive line",
+                    ));
+                }
+                let embedded_line = archive_line
+                    .strip_prefix("archive\t")
+                    .ok_or_else(|| {
+                        MultiSessionReplayArchiveFormatError::new(
+                            "embedded audit archive line missing prefix payload",
+                        )
+                    })?;
+                archive_text.push_str(embedded_line);
+                if index + 1 != expected_archive_line_count {
+                    archive_text.push('\n');
+                }
+            }
+
+            let archive = AuditReplayArchive::from_canonical_text(&archive_text)
+                .map_err(|err| MultiSessionReplayArchiveFormatError::new(err.message))?;
+            sessions.push(MultiSessionReplayArchiveSession {
+                session_ordinal,
+                archive,
+            });
+        }
+
+        if sessions.len() != expected_session_count {
+            return Err(MultiSessionReplayArchiveFormatError::new(format!(
+                "session count mismatch: header says {}, parsed {}",
+                expected_session_count,
+                sessions.len()
+            )));
+        }
+        for (index, session) in sessions.iter().enumerate() {
+            if session.session_ordinal != index as u32 {
+                return Err(MultiSessionReplayArchiveFormatError::new(
+                    "multi-session replay session ordinals must be monotonic from zero",
+                ));
+            }
+        }
+
+        Ok(Self {
+            format_version,
+            sessions,
+        })
+    }
 }
 
 impl AuditReplayArchiveFormatError {
@@ -332,6 +484,27 @@ impl core::fmt::Display for AuditReplayArchiveFormatError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for AuditReplayArchiveFormatError {}
+
+impl MultiSessionReplayArchiveFormatError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl core::fmt::Display for MultiSessionReplayArchiveFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "multi-session replay archive format error: {}",
+            self.message
+        )
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for MultiSessionReplayArchiveFormatError {}
 
 fn encode_event_kind(out: &mut String, kind: &AuditEventKind) {
     match kind {
@@ -874,5 +1047,75 @@ replay\t1\t9\n";
         assert_eq!(archive.sessions.len(), 2);
         assert_eq!(archive.sessions[0].session_ordinal, 0);
         assert_eq!(archive.sessions[1].session_ordinal, 1);
+    }
+
+    #[test]
+    fn multi_session_replay_archive_roundtrips_through_canonical_text() {
+        let mut first = AuditTrail::new(sample_session());
+        first.record(AuditEventKind::SessionStarted {
+            entry: "alpha".to_string(),
+        });
+        first.record(AuditEventKind::Note {
+            message: "first:done".to_string(),
+        });
+
+        let mut second = AuditTrail::new(sample_session());
+        second.record(AuditEventKind::SessionStarted {
+            entry: "beta".to_string(),
+        });
+        second.record(AuditEventKind::StateTransition {
+            key: "fact.beta".to_string(),
+            from_epoch: 2,
+            to_epoch: 3,
+        });
+
+        let archive = MultiSessionReplayArchive::new(vec![
+            MultiSessionReplayArchiveSession::new(0, first.replay_archive()),
+            MultiSessionReplayArchiveSession::new(1, second.replay_archive()),
+        ]);
+
+        let text = archive.to_canonical_text();
+        let parsed = MultiSessionReplayArchive::from_canonical_text(&text).expect("parse");
+
+        assert_eq!(parsed, archive);
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "semantic_multi_session_replay_archive\t1");
+        assert_eq!(lines[1], "sessions\t2");
+        assert!(lines[2].starts_with("session\t0\t"));
+        assert!(lines[3].starts_with("archive\tsemantic_audit_replay_archive\t1"));
+    }
+
+    #[test]
+    fn multi_session_replay_archive_rejects_session_count_mismatch() {
+        let text = "\
+semantic_multi_session_replay_archive\t1\n\
+sessions\t2\n\
+session\t0\t4\n\
+archive\tsemantic_audit_replay_archive\t1\n\
+archive\tsession\tkernel-bound\tprom.cap.manifest\tv1\ttrue\n\
+archive\tevents\t0\n\
+archive\treplay\t0\tnone\n";
+
+        let err =
+            MultiSessionReplayArchive::from_canonical_text(text).expect_err("must reject");
+
+        assert!(err.message.contains("session count mismatch"));
+    }
+
+    #[test]
+    fn multi_session_replay_archive_rejects_non_monotonic_session_ordinals() {
+        let text = "\
+semantic_multi_session_replay_archive\t1\n\
+sessions\t1\n\
+session\t9\t4\n\
+archive\tsemantic_audit_replay_archive\t1\n\
+archive\tsession\tkernel-bound\tprom.cap.manifest\tv1\ttrue\n\
+archive\tevents\t0\n\
+archive\treplay\t0\tnone\n";
+
+        let err =
+            MultiSessionReplayArchive::from_canonical_text(text).expect_err("must reject");
+
+        assert!(err.message.contains("monotonic"));
     }
 }

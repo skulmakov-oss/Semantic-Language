@@ -57,9 +57,11 @@ widened post-stable contract.
 
 - `f98ca1d` documented this track as a post-stable persistence/runtime
   expansion checkpoint
-- current first code slice adds explicit `prom-audit` ownership for ordered
-  `MultiSessionReplayArchiveSession` and `MultiSessionReplayArchive` types,
-  without yet admitting canonical text materialization/loading
+- `87a009b` added explicit `prom-audit` ownership for ordered
+  `MultiSessionReplayArchiveSession` and `MultiSessionReplayArchive` types
+- current second code slice admits canonical deterministic text
+  materialization/loading for ordered multi-session replay bundles, while still
+  excluding rollback/recovery semantics
 
 ## Acceptance Reading
 

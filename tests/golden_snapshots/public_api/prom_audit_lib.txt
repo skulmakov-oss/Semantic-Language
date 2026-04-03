@@ -37,6 +37,9 @@ pub sessions: Vec<MultiSessionReplayArchiveSession>,
 pub struct AuditReplayArchiveFormatError {
 pub message: String,
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiSessionReplayArchiveFormatError {
+pub message: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditTrail {
 pub fn new(session: AuditSessionMetadata) -> Self {
 pub fn session(&self) -> &AuditSessionMetadata {
@@ -49,4 +52,7 @@ pub fn to_canonical_text(&self) -> String {
 pub fn from_canonical_text(src: &str) -> Result<Self, AuditReplayArchiveFormatError> {
 pub fn new(session_ordinal: u32, archive: AuditReplayArchive) -> Self {
 pub fn new(sessions: Vec<MultiSessionReplayArchiveSession>) -> Self {
+pub fn to_canonical_text(&self) -> String {
+pub fn from_canonical_text(
+pub fn new(message: impl Into<String>) -> Self {
 pub fn new(message: impl Into<String>) -> Self {
