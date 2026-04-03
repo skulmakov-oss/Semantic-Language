@@ -13,6 +13,11 @@ Current pending ownership notes:
 - public CLI contract is owned by `smc-cli` in the current `v1` baseline; root `smc` is a thin entrypoint wrapper over that owner
 - `ton618_core` and `ton618-core` remain allowlisted compatibility shims only and must not grow into second owners
 
+Compatibility checkpoint:
+
+- the remaining TON618-named perimeter is tracked in
+  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
+
 Allowed flow:
 
 `Construction -> Execution -> Integration`

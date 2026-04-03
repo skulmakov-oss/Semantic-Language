@@ -27,7 +27,9 @@ Current post-`v1` wave:
 - wider PROMETHEUS host-call families beyond the narrow `v1` boundary
 - persistence and replay backends
 - richer rule-side effect execution semantics
-- keep the explicit `ton618_core` / `ton618-core` compatibility perimeter narrow and documented
+- keep the explicit `ton618_core` / `ton618-core` compatibility perimeter narrow
+  and documented:
+  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
 
 Foundational work already in place:
 

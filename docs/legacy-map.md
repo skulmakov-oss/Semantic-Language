@@ -56,6 +56,11 @@ Remaining compatibility perimeter:
   - retained as a compatibility-named low-level primitive crate
   - not a second owner for `sm-*` platform contracts
 
+Perimeter governance note:
+
+- future cleanup/narrowing for these retained names is tracked in
+  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
+
 ## Guards
 
 `tests/legacy_guards.rs` enforces:
