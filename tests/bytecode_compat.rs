@@ -1,12 +1,16 @@
 use semantic_language::frontend::{
-    compile_program_to_semcode, compile_program_to_semcode_with_options_debug, CompileProfile,
-    OptLevel,
+    compile_program_to_semcode, compile_program_to_semcode_with_options_debug, emit_ir_to_semcode,
+    CompileProfile, IrFunction, IrInstr, OptLevel,
 };
+use semantic_language::prom_abi::{AbiValue, RecordingHostAbi};
+use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
 use semantic_language::semcode_format::{
-    header_spec_from_magic, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, MAGIC0,
-    MAGIC1, MAGIC2, MAGIC3,
+    header_spec_from_magic, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
+    CAP_STATE_QUERY, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4,
 };
-use semantic_language::semcode_vm::{disasm_semcode, run_semcode, RuntimeError};
+use semantic_language::semcode_vm::{
+    disasm_semcode, run_semcode, run_verified_semcode_with_host_and_capabilities, RuntimeError,
+};
 use sm_vm::run_verified_semcode;
 
 fn first_function_code_offset(bytes: &[u8]) -> usize {
@@ -127,6 +131,44 @@ fn compat_v3_header_and_run() {
 }
 
 #[test]
+fn compat_v4_header_and_state_query_run() {
+    let bytes = emit_ir_to_semcode(
+        &[IrFunction {
+            name: "main".to_string(),
+            instrs: vec![
+                IrInstr::StateQuery {
+                    dst: 0,
+                    key: "decision.mode".to_string(),
+                },
+                IrInstr::LoadI32 { dst: 1, val: 123 },
+                IrInstr::CmpEq {
+                    dst: 2,
+                    lhs: 0,
+                    rhs: 1,
+                },
+                IrInstr::Assert { cond: 2 },
+                IrInstr::Ret { src: None },
+            ],
+        }],
+        false,
+    )
+    .expect("emit");
+    assert_eq!(&bytes[0..8], &MAGIC4);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 5);
+    assert_ne!(spec.capabilities & CAP_STATE_QUERY, 0);
+    let mut manifest = CapabilityManifest::new();
+    manifest.allow(CapabilityKind::StateQuery);
+    let mut host = RecordingHostAbi::with_state_query_value(AbiValue::I32(123));
+    run_verified_semcode_with_host_and_capabilities(&bytes, &mut host, &manifest)
+        .expect("verified run");
+    assert_eq!(host.state_queries, vec!["decision.mode".to_string()]);
+}
+
+#[test]
 fn compat_cli_o0_v1_f64_arithmetic_runs_on_verified_path() {
     let src = r#"
         fn main() {
@@ -229,6 +271,7 @@ fn compat_unsupported_version_has_migration_hint() {
             assert!(supported.contains("SEMCODE1"));
             assert!(supported.contains("SEMCODE2"));
             assert!(supported.contains("SEMCODE3"));
+            assert!(supported.contains("SEMCODE4"));
         }
         other => panic!("unexpected error: {other:?}"),
     }

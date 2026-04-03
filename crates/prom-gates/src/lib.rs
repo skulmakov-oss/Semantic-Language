@@ -189,6 +189,14 @@ impl<'a, B: GateBinding> PrometheusHostAbi for GateHostAdapter<'a, B> {
             format!("pulse emission '{}' is not bound by gate adapter", signal),
         ))
     }
+
+    fn state_query(&mut self, key: &str) -> Result<AbiValue, AbiError> {
+        Err(AbiError::new(
+            HostCallId::StateQuery,
+            AbiFailureKind::Unavailable,
+            format!("state query '{}' is not bound by gate adapter", key),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

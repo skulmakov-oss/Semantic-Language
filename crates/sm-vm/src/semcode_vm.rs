@@ -565,6 +565,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
             Opcode::PulseEmit => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::StateQuery => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::Ret => {
                 let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
                 if has_src {
@@ -609,6 +613,7 @@ trait VmHostBridge {
     fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError>;
     fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError>;
     fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError>;
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError>;
 }
 
 struct LegacyVmHost;
@@ -629,6 +634,10 @@ impl VmHostBridge for LegacyVmHost {
 
     fn pulse_emit(&mut self, _signal: &str) -> Result<(), RuntimeError> {
         Ok(())
+    }
+
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
+        Ok(Value::I32(stable_state_query_fallback(key)))
     }
 }
 
@@ -662,6 +671,16 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
             .require_call(HostCallId::PulseEmit)
             .map_err(RuntimeError::CapabilityDenied)?;
         self.host.pulse_emit(signal).map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateQuery)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_query(key)
+            .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
     }
 }
 
@@ -1099,6 +1118,15 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 host.pulse_emit(signal)?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::StateQuery => {
+                bump_effect_calls(vm)?;
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let key = lookup_str(&f, sid)?;
+                let value = host.state_query(key)?;
+                set_reg(vm, frame_idx, dst, value)?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::Ret => {
                 let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
                 let ret_val = if has_src {
@@ -1154,6 +1182,12 @@ fn value_from_abi(value: AbiValue) -> Value {
         AbiValue::Fx(v) => Value::Fx(v),
         AbiValue::Unit => Value::Unit,
     }
+}
+
+fn stable_state_query_fallback(key: &str) -> i32 {
+    key.bytes().fold(0i32, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(i32::from(byte))
+    })
 }
 
 fn push_frame(
@@ -1671,6 +1705,11 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
         Opcode::PulseEmit => {
             let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("PULSE_EMIT s{}", sid)
+        }
+        Opcode::StateQuery => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("STATE_QUERY r{}, s{}", d, sid)
         }
         Opcode::Ret => {
             let has = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
@@ -2456,6 +2495,7 @@ mod tests {
                 assert!(supported.contains("SEMCODE1"));
                 assert!(supported.contains("SEMCODE2"));
                 assert!(supported.contains("SEMCODE3"));
+                assert!(supported.contains("SEMCODE4"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }

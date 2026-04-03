@@ -13,9 +13,12 @@ Current canonical host calls:
 - `GateWrite`
 - `PulseEmit`
 
-Current owned planned post-stable call identities:
+Current admitted post-stable host-call expansion:
 
 - `StateQuery`
+
+Current owned planned post-stable call identities:
+
 - `StateUpdate`
 - `EventPost`
 - `ClockRead`
@@ -62,5 +65,7 @@ Current consumer:
 Current rule:
 
 - host-effect opcodes in the VM must cross the `prom-abi` trait boundary rather than embedding ad hoc host logic
-- declaring planned call identities in `prom-abi` does not by itself widen the
-  current host trait or VM admission surface
+- `StateQuery` is the first admitted post-stable widening of that trait boundary
+- declaring the remaining planned call identities in `prom-abi` does not by
+  itself widen the current VM admission surface for `StateUpdate`, `EventPost`,
+  or `ClockRead`

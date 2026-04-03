@@ -13,9 +13,12 @@ Current canonical capability kinds:
 - `GateWrite`
 - `PulseEmit`
 
-Current owned planned post-stable capability kinds:
+Current admitted post-stable capability kind:
 
 - `StateQuery`
+
+Current owned planned post-stable capability kinds:
+
 - `StateUpdate`
 - `EventPost`
 - `ClockRead`
@@ -37,12 +40,14 @@ Current canonical mapping:
 - `GateRead` call -> `GateRead` capability
 - `GateWrite` call -> `GateWrite` capability
 - `PulseEmit` call -> `PulseEmit` capability
+- `StateQuery` call -> `StateQuery` capability
 
 Non-`v1` note:
 
-- capability mapping for `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` is intentionally out of scope for the current `v1`
-- owning those capability ids in `prom-cap` does not by itself widen the
-  current manifest baseline or runtime admission surface
+- capability mapping for `StateQuery` is admitted post-stable without changing
+  the narrow `v1` manifest baseline
+- capability mapping for `StateUpdate`, `EventPost`, and `ClockRead` remains
+  planned and does not by itself widen runtime admission
 
 ## Enforcement Rule
 

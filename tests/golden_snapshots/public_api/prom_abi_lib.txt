@@ -31,5 +31,8 @@ pub struct RecordingHostAbi {
 pub reads: alloc::vec::Vec<(u16, u16)>,
 pub writes: alloc::vec::Vec<(u16, u16, AbiValue)>,
 pub pulses: alloc::vec::Vec<String>,
+pub state_queries: alloc::vec::Vec<String>,
 pub next_read: AbiValue,
+pub next_state_query: AbiValue,
 pub fn with_read_value(next_read: AbiValue) -> Self {
+pub fn with_state_query_value(next_state_query: AbiValue) -> Self {

@@ -7,7 +7,7 @@ extern crate std;
 use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_MATH,
-    CAP_FX_VALUES, CAP_GATE_SURFACE,
+    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -749,6 +749,16 @@ fn decode_operands(
             refs.string_refs
                 .push((offset, sid as usize, "pulse signal"));
         }
+        Opcode::StateQuery => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated state-query dst register"))?;
+            mark_reg(dst);
+            refs.required_capabilities |= CAP_STATE_QUERY;
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated state query key id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "state query key"));
+        }
         Opcode::Ret => {
             let has_src = read_u8(code, cursor).map_err(|_| invalid("truncated return flag"))?;
             if has_src != 0 {
@@ -824,6 +834,7 @@ mod tests {
         compile_program_to_semcode, compile_program_to_semcode_with_options_debug, CompileProfile,
         OptLevel,
     };
+    use sm_ir::{emit_ir_to_semcode, IrFunction, IrInstr};
 
     #[test]
     fn verifier_accepts_valid_semcode() {
@@ -895,6 +906,27 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_state_query_semcode() {
+        let bytes = emit_ir_to_semcode(
+            &[IrFunction {
+                name: "main".to_string(),
+                instrs: vec![
+                    IrInstr::StateQuery {
+                        dst: 0,
+                        key: "decision.mode".to_string(),
+                    },
+                    IrInstr::Ret { src: None },
+                ],
+            }],
+            false,
+        )
+        .expect("emit");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 5);
         assert_eq!(verified.functions.len(), 1);
     }
 
@@ -1247,6 +1279,30 @@ mod tests {
         "#;
         let mut bytes = compile_program_to_semcode(src).expect("compile");
         bytes[7] = b'0';
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::CapabilityViolation
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_state_query_under_v3_capabilities() {
+        let mut bytes = emit_ir_to_semcode(
+            &[IrFunction {
+                name: "main".to_string(),
+                instrs: vec![
+                    IrInstr::StateQuery {
+                        dst: 0,
+                        key: "decision.mode".to_string(),
+                    },
+                    IrInstr::Ret { src: None },
+                ],
+            }],
+            false,
+        )
+        .expect("emit");
+        bytes[7] = b'3';
         let report = verify_semcode(&bytes).expect_err("must reject");
         assert_eq!(
             report.diagnostics[0].code,

@@ -76,3 +76,4 @@ The track does not imply that all four must land in one slice.
 
 1. docs/governance checkpoint
 2. ABI/capability declaration ownership for planned host-call families
+3. `StateQuery` verifier/VM/runtime admission via generic host path

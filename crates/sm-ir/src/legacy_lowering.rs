@@ -1,6 +1,7 @@
 use super::*;
 use crate::semcode_format::{
-    write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2, MAGIC3,
+    write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
+    MAGIC3, MAGIC4,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
@@ -209,6 +210,10 @@ pub enum IrInstr {
     },
     PulseEmit {
         signal: String,
+    },
+    StateQuery {
+        dst: u16,
+        key: String,
     },
     Ret {
         src: Option<u16>,
@@ -720,7 +725,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v3_fx_math_instr(funcs) {
+    if has_v4_state_query_instr(funcs) {
+        out.extend_from_slice(&MAGIC4);
+    } else if has_v3_fx_math_instr(funcs) {
         out.extend_from_slice(&MAGIC3);
     } else if has_v2_fx_instr(funcs) {
         out.extend_from_slice(&MAGIC2);
@@ -784,6 +791,9 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             }
             IrInstr::PulseEmit { signal } => {
                 let _ = interner.id(signal)?;
+            }
+            IrInstr::StateQuery { key, .. } => {
+                let _ = interner.id(key)?;
             }
             _ => {}
         }
@@ -895,6 +905,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::GateRead { .. } => 1 + 2 + 2 + 2,
         IrInstr::GateWrite { .. } => 1 + 2 + 2 + 2,
         IrInstr::PulseEmit { .. } => 1 + 2,
+        IrInstr::StateQuery { .. } => 1 + 2 + 2,
         IrInstr::Ret { src: Some(_) } => 1 + 1 + 2,
         IrInstr::Ret { src: None } => 1 + 1,
     };
@@ -1125,6 +1136,11 @@ fn emit_instr(
             out.push(Opcode::PulseEmit.byte());
             write_u16_le(out, interner.lookup(signal)?);
         }
+        IrInstr::StateQuery { dst, key } => {
+            out.push(Opcode::StateQuery.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, interner.lookup(key)?);
+        }
         IrInstr::Ret { src } => {
             out.push(Opcode::Ret.byte());
             match src {
@@ -1187,6 +1203,12 @@ fn has_v3_fx_math_instr(funcs: &[IrFunction]) -> bool {
             )
         })
     })
+}
+
+fn has_v4_state_query_instr(funcs: &[IrFunction]) -> bool {
+    funcs
+        .iter()
+        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::StateQuery { .. })))
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
