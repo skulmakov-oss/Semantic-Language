@@ -18,10 +18,10 @@ Current admitted post-stable host-call expansion:
 - `StateQuery`
 - `StateUpdate`
 - `EventPost`
+- `ClockRead`
 
 Current owned planned post-stable call identities:
-
-- `ClockRead`
+- none in the current first-wave admission pack
 
 Current `v1` scope decision:
 
@@ -67,5 +67,5 @@ Current rule:
 - host-effect opcodes in the VM must cross the `prom-abi` trait boundary rather than embedding ad hoc host logic
 - `StateQuery`, `StateUpdate`, and `EventPost` are the currently admitted post-stable widenings
   of that trait boundary
-- declaring the remaining planned call identities in `prom-abi` does not by
-  itself widen the current VM admission surface for `ClockRead`
+- `ClockRead` is now also admitted post-stable as a narrow query-side `u32`
+  return family without widening the current stable `v1` gate surface

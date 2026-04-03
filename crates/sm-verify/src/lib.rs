@@ -6,9 +6,9 @@ extern crate std;
 #[cfg(feature = "std")]
 use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
-    Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_EVENT_POST,
-    CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY,
-    CAP_STATE_UPDATE,
+    Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS,
+    CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
+    CAP_STATE_QUERY, CAP_STATE_UPDATE,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -777,6 +777,12 @@ fn decode_operands(
             refs.string_refs
                 .push((offset, sid as usize, "event post signal"));
         }
+        Opcode::ClockRead => {
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated clock-read dst register"))?;
+            mark_reg(dst);
+            refs.required_capabilities |= CAP_CLOCK_READ;
+        }
         Opcode::Ret => {
             let has_src = read_u8(code, cursor).map_err(|_| invalid("truncated return flag"))?;
             if has_src != 0 {
@@ -987,6 +993,21 @@ mod tests {
         .expect("emit");
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.header.rev, 7);
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_clock_read_semcode() {
+        let bytes = emit_ir_to_semcode(
+            &[IrFunction {
+                name: "main".to_string(),
+                instrs: vec![IrInstr::ClockRead { dst: 0 }, IrInstr::Ret { src: None }],
+            }],
+            false,
+        )
+        .expect("emit");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 8);
         assert_eq!(verified.functions.len(), 1);
     }
 
@@ -1411,6 +1432,24 @@ mod tests {
         )
         .expect("emit");
         bytes[7] = b'5';
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::CapabilityViolation
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_clock_read_under_v6_capabilities() {
+        let mut bytes = emit_ir_to_semcode(
+            &[IrFunction {
+                name: "main".to_string(),
+                instrs: vec![IrInstr::ClockRead { dst: 0 }, IrInstr::Ret { src: None }],
+            }],
+            false,
+        )
+        .expect("emit");
+        bytes[7] = b'6';
         let report = verify_semcode(&bytes).expect_err("must reject");
         assert_eq!(
             report.diagnostics[0].code,

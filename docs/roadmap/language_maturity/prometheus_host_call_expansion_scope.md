@@ -68,10 +68,10 @@ Currently admitted post-stable families:
 - `StateQuery`
 - `StateUpdate`
 - `EventPost`
+- `ClockRead`
 
 Remaining planned families:
-
-- `ClockRead`
+- none in the current first-wave host-call expansion pack
 
 The track does not imply that all planned families must land in one slice.
 
@@ -82,3 +82,4 @@ The track does not imply that all planned families must land in one slice.
 3. `StateQuery` verifier/VM/runtime admission via generic host path
 4. `StateUpdate` verifier/VM/runtime admission via generic host path
 5. `EventPost` verifier/VM/runtime admission via generic host path
+6. `ClockRead` verifier/VM/runtime admission via generic host path

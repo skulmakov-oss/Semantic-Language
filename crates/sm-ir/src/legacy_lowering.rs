@@ -1,7 +1,7 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
@@ -221,6 +221,9 @@ pub enum IrInstr {
     },
     EventPost {
         signal: String,
+    },
+    ClockRead {
+        dst: u16,
     },
     Ret {
         src: Option<u16>,
@@ -732,7 +735,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v6_event_post_instr(funcs) {
+    if has_v7_clock_read_instr(funcs) {
+        out.extend_from_slice(&MAGIC7);
+    } else if has_v6_event_post_instr(funcs) {
         out.extend_from_slice(&MAGIC6);
     } else if has_v5_state_update_instr(funcs) {
         out.extend_from_slice(&MAGIC5);
@@ -812,6 +817,7 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             IrInstr::EventPost { signal } => {
                 let _ = interner.id(signal)?;
             }
+            IrInstr::ClockRead { .. } => {}
             _ => {}
         }
     }
@@ -925,6 +931,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::StateQuery { .. } => 1 + 2 + 2,
         IrInstr::StateUpdate { .. } => 1 + 2 + 2,
         IrInstr::EventPost { .. } => 1 + 2,
+        IrInstr::ClockRead { .. } => 1 + 2,
         IrInstr::Ret { src: Some(_) } => 1 + 1 + 2,
         IrInstr::Ret { src: None } => 1 + 1,
     };
@@ -1169,6 +1176,10 @@ fn emit_instr(
             out.push(Opcode::EventPost.byte());
             write_u16_le(out, interner.lookup(signal)?);
         }
+        IrInstr::ClockRead { dst } => {
+            out.push(Opcode::ClockRead.byte());
+            write_u16_le(out, *dst);
+        }
         IrInstr::Ret { src } => {
             out.push(Opcode::Ret.byte());
             match src {
@@ -1249,6 +1260,12 @@ fn has_v6_event_post_instr(funcs: &[IrFunction]) -> bool {
     funcs
         .iter()
         .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::EventPost { .. })))
+}
+
+fn has_v7_clock_read_instr(funcs: &[IrFunction]) -> bool {
+    funcs
+        .iter()
+        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::ClockRead { .. })))
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {

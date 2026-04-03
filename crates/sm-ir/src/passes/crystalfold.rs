@@ -98,6 +98,10 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
             }
             IrInstr::StateUpdate { key, src } => out.push(IrInstr::StateUpdate { key, src }),
             IrInstr::EventPost { signal } => out.push(IrInstr::EventPost { signal }),
+            IrInstr::ClockRead { dst } => {
+                cst.remove(&dst);
+                out.push(IrInstr::ClockRead { dst });
+            }
             IrInstr::Ret { src } => {
                 cst.clear();
                 out.push(IrInstr::Ret { src });

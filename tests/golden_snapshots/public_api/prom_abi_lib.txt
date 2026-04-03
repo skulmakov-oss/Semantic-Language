@@ -34,7 +34,10 @@ pub pulses: alloc::vec::Vec<String>,
 pub state_queries: alloc::vec::Vec<String>,
 pub state_updates: alloc::vec::Vec<(String, AbiValue)>,
 pub event_posts: alloc::vec::Vec<String>,
+pub clock_reads: usize,
 pub next_read: AbiValue,
 pub next_state_query: AbiValue,
+pub next_clock_read: u32,
 pub fn with_read_value(next_read: AbiValue) -> Self {
 pub fn with_state_query_value(next_state_query: AbiValue) -> Self {
+pub fn with_clock_read_value(next_clock_read: u32) -> Self {

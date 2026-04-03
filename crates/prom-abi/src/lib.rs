@@ -148,6 +148,7 @@ pub trait PrometheusHostAbi {
     fn state_query(&mut self, key: &str) -> Result<AbiValue, AbiError>;
     fn state_update(&mut self, key: &str, value: AbiValue) -> Result<(), AbiError>;
     fn event_post(&mut self, signal: &str) -> Result<(), AbiError>;
+    fn clock_read(&mut self) -> Result<u32, AbiError>;
 }
 
 #[derive(Debug, Default)]
@@ -158,8 +159,10 @@ pub struct RecordingHostAbi {
     pub state_queries: alloc::vec::Vec<String>,
     pub state_updates: alloc::vec::Vec<(String, AbiValue)>,
     pub event_posts: alloc::vec::Vec<String>,
+    pub clock_reads: usize,
     pub next_read: AbiValue,
     pub next_state_query: AbiValue,
+    pub next_clock_read: u32,
 }
 
 impl RecordingHostAbi {
@@ -173,6 +176,13 @@ impl RecordingHostAbi {
     pub fn with_state_query_value(next_state_query: AbiValue) -> Self {
         Self {
             next_state_query,
+            ..Self::default()
+        }
+    }
+
+    pub fn with_clock_read_value(next_clock_read: u32) -> Self {
+        Self {
+            next_clock_read,
             ..Self::default()
         }
     }
@@ -207,6 +217,11 @@ impl PrometheusHostAbi for RecordingHostAbi {
     fn event_post(&mut self, signal: &str) -> Result<(), AbiError> {
         self.event_posts.push(signal.to_string());
         Ok(())
+    }
+
+    fn clock_read(&mut self) -> Result<u32, AbiError> {
+        self.clock_reads += 1;
+        Ok(self.next_clock_read)
     }
 }
 
@@ -265,5 +280,13 @@ mod tests {
         let mut host = RecordingHostAbi::default();
         host.event_post("alert.raised").expect("event post");
         assert_eq!(host.event_posts, alloc::vec!["alert.raised".to_string()]);
+    }
+
+    #[test]
+    fn recording_host_captures_clock_read_calls() {
+        let mut host = RecordingHostAbi::with_clock_read_value(42);
+        let result = host.clock_read().expect("clock read");
+        assert_eq!(result, 42);
+        assert_eq!(host.clock_reads, 1);
     }
 }

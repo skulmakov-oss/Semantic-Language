@@ -213,6 +213,14 @@ impl<'a, B: GateBinding> PrometheusHostAbi for GateHostAdapter<'a, B> {
             format!("event post '{}' is not bound by gate adapter", signal),
         ))
     }
+
+    fn clock_read(&mut self) -> Result<u32, AbiError> {
+        Err(AbiError::new(
+            HostCallId::ClockRead,
+            AbiFailureKind::Unavailable,
+            "clock read is not bound by gate adapter",
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

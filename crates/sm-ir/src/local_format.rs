@@ -5,6 +5,7 @@ pub const MAGIC3: [u8; 8] = *b"SEMCODE3";
 pub const MAGIC4: [u8; 8] = *b"SEMCODE4";
 pub const MAGIC5: [u8; 8] = *b"SEMCODE5";
 pub const MAGIC6: [u8; 8] = *b"SEMCODE6";
+pub const MAGIC7: [u8; 8] = *b"SEMCODE7";
 
 pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
 pub const CAP_F64_MATH: u32 = 1 << 1;
@@ -14,6 +15,7 @@ pub const CAP_FX_MATH: u32 = 1 << 4;
 pub const CAP_STATE_QUERY: u32 = 1 << 5;
 pub const CAP_STATE_UPDATE: u32 = 1 << 6;
 pub const CAP_EVENT_POST: u32 = 1 << 7;
+pub const CAP_CLOCK_READ: u32 = 1 << 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SemcodeHeaderSpec {
@@ -90,8 +92,25 @@ pub const HEADER_V6: SemcodeHeaderSpec = SemcodeHeaderSpec {
         | CAP_EVENT_POST,
 };
 
+pub const HEADER_V7: SemcodeHeaderSpec = SemcodeHeaderSpec {
+    magic: MAGIC7,
+    epoch: 0,
+    rev: 8,
+    capabilities: CAP_DEBUG_SYMBOLS
+        | CAP_F64_MATH
+        | CAP_GATE_SURFACE
+        | CAP_FX_VALUES
+        | CAP_FX_MATH
+        | CAP_STATE_QUERY
+        | CAP_STATE_UPDATE
+        | CAP_EVENT_POST
+        | CAP_CLOCK_READ,
+};
+
 pub fn supported_headers() -> &'static [SemcodeHeaderSpec] {
-    &[HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6]
+    &[
+        HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7,
+    ]
 }
 
 pub fn header_spec_from_magic(magic: &[u8; 8]) -> Option<SemcodeHeaderSpec> {
@@ -150,6 +169,7 @@ pub enum Opcode {
     StateQuery = 0x63,
     StateUpdate = 0x64,
     EventPost = 0x65,
+    ClockRead = 0x66,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +244,7 @@ impl Opcode {
             x if x == Self::StateQuery as u8 => Ok(Self::StateQuery),
             x if x == Self::StateUpdate as u8 => Ok(Self::StateUpdate),
             x if x == Self::EventPost as u8 => Ok(Self::EventPost),
+            x if x == Self::ClockRead as u8 => Ok(Self::ClockRead),
             _ => Err(SemcodeFormatError::UnknownOpcode(v)),
         }
     }

@@ -35,6 +35,7 @@ Current supported header family:
 - `SEMCODE4`
 - `SEMCODE5`
 - `SEMCODE6`
+- `SEMCODE7`
 
 Observed runtime support in the current toolchain:
 
@@ -45,6 +46,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE4`: epoch `0`, revision `5`
 - `SEMCODE5`: epoch `0`, revision `6`
 - `SEMCODE6`: epoch `0`, revision `7`
+- `SEMCODE7`: epoch `0`, revision `8`
 
 Header responsibilities:
 
@@ -109,6 +111,13 @@ Compatibility rules:
 - keeps `SEMCODE0..5` fixed for older artifacts that do not use the widened
   event-side host-call family
 
+`SEMCODE7`
+
+- promoted contract used when emitted program usage requires admitted
+  post-stable `ClockRead` host calls
+- keeps `SEMCODE0..6` fixed for older artifacts that do not use the widened
+  clock-query host-call family
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -134,6 +143,7 @@ Current canonical capability families:
 - `CAP_STATE_QUERY`
 - `CAP_STATE_UPDATE`
 - `CAP_EVENT_POST`
+- `CAP_CLOCK_READ`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:
