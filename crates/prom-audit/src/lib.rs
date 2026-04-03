@@ -50,6 +50,16 @@ pub struct ReplayMetadata {
     pub last_event_id: Option<AuditEventId>,
 }
 
+pub const AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditReplayArchive {
+    pub format_version: u32,
+    pub session: AuditSessionMetadata,
+    pub events: Vec<AuditEvent>,
+    pub replay: ReplayMetadata,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditTrail {
     session: AuditSessionMetadata,
@@ -86,6 +96,29 @@ impl AuditTrail {
             session: self.session.clone(),
             event_count: self.events.len(),
             last_event_id: self.events.last().map(|event| event.id),
+        }
+    }
+
+    pub fn replay_archive(&self) -> AuditReplayArchive {
+        AuditReplayArchive::new(
+            self.session.clone(),
+            self.events.clone(),
+            self.replay_metadata(),
+        )
+    }
+}
+
+impl AuditReplayArchive {
+    pub fn new(
+        session: AuditSessionMetadata,
+        events: Vec<AuditEvent>,
+        replay: ReplayMetadata,
+    ) -> Self {
+        Self {
+            format_version: AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION,
+            session,
+            events,
+            replay,
         }
     }
 }
@@ -176,5 +209,25 @@ mod tests {
                 to_epoch
             } if key == "fact.alpha" && *from_epoch == 1 && *to_epoch == 2
         ));
+    }
+
+    #[test]
+    fn replay_archive_uses_canonical_format_and_copies_trail_state() {
+        let mut trail = AuditTrail::new(sample_session());
+        trail.record(AuditEventKind::SessionStarted {
+            entry: "main".to_string(),
+        });
+        trail.record(AuditEventKind::SessionFinished);
+
+        let archive = trail.replay_archive();
+
+        assert_eq!(
+            archive.format_version,
+            AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION
+        );
+        assert_eq!(archive.session, trail.session().clone());
+        assert_eq!(archive.events, trail.events());
+        assert_eq!(archive.replay.event_count, 2);
+        assert_eq!(archive.replay.last_event_id, Some(AuditEventId(1)));
     }
 }

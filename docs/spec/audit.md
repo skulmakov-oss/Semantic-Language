@@ -15,6 +15,7 @@ Current canonical audit types:
 - `AuditEvent`
 - `AuditTrail`
 - `ReplayMetadata`
+- `AuditReplayArchive`
 
 ## Ownership Rule
 
@@ -23,6 +24,7 @@ Current canonical audit types:
 - audit event schema
 - centralized audit trail structure
 - replay metadata schema
+- replay archive envelope shape
 - capability denial and host-effect event representation
 
 `prom-audit` does not own:
@@ -57,6 +59,14 @@ Current replay metadata must include:
 - whether a gate registry was bound
 - event count
 - last event id
+
+Current persisted replay rule:
+
+- `AuditReplayArchive` wraps session metadata, recorded events, and replay
+  metadata under one explicit archive envelope
+- archive metadata is explicit through `format_version`
+- persisted replay ownership does not widen orchestration or runtime recovery
+  semantics by implication
 
 ## Boundary Rule
 

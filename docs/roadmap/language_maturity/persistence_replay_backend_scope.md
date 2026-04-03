@@ -69,3 +69,9 @@ This track is done only when:
   post-stable persisted backend contract
 - no part of the work quietly widens runtime recovery, host behavior, or rule
   execution semantics
+
+## Slice History
+
+1. docs/governance checkpoint
+2. persisted backend artifact ownership and canonical envelope types in
+   `prom-state` / `prom-audit`

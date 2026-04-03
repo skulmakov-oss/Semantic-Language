@@ -16,6 +16,7 @@ Current canonical state types:
 - `StateRecord`
 - `StateUpdate`
 - `StateSnapshot`
+- `StateSnapshotArchive`
 - `StateTransitionMetadata`
 - `SemanticStateStore`
 
@@ -28,6 +29,7 @@ Current canonical state types:
 - context window attachment
 - epoch/version model for state evolution
 - snapshot and restore surface
+- persisted snapshot archive envelope shape
 - state validation invariants
 
 `prom-state` does not own:
@@ -55,6 +57,15 @@ Current store behavior:
 - every accepted update produces explicit transition metadata
 - snapshots capture the full visible state at a specific epoch
 - restore replaces visible state with the selected snapshot state
+
+## Persistence Rule
+
+Current persisted state rule:
+
+- `StateSnapshotArchive` wraps one canonical `StateSnapshot`
+- archive metadata is explicit through `format_version`
+- persisted archive ownership does not widen store validation or runtime
+  recovery semantics by implication
 
 ## Boundary Rule
 

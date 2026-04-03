@@ -1,0 +1,59 @@
+source: crates/prom-state/src/lib.rs
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FactValue {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactResolution {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextWindow {
+pub name: String,
+pub fn new(name: impl Into<String>) -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StateEpoch(pub u64);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransitionMetadata {
+pub key: String,
+pub from_epoch: StateEpoch,
+pub to_epoch: StateEpoch,
+pub reason: String,
+pub type StateTransitionMetadata = TransitionMetadata;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRecord {
+pub key: String,
+pub resolution: FactResolution,
+pub context: ContextWindow,
+pub epoch: StateEpoch,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateUpdate {
+pub key: String,
+pub resolution: FactResolution,
+pub context: ContextWindow,
+pub reason: String,
+pub fn new(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSnapshot {
+pub epoch: StateEpoch,
+pub records: BTreeMap<String, StateRecord>,
+pub const STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION: u32 = 1;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSnapshotArchive {
+pub format_version: u32,
+pub snapshot: StateSnapshot,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StateValidationCode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateValidationError {
+pub code: StateValidationCode,
+pub message: String,
+pub fn new(code: StateValidationCode, message: impl Into<String>) -> Self {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SemanticStateStore {
+pub fn new() -> Self {
+pub fn epoch(&self) -> StateEpoch {
+pub fn get(&self, key: &str) -> Option<&StateRecord> {
+pub fn records(&self) -> &BTreeMap<String, StateRecord> {
+pub fn transitions(&self) -> &[TransitionMetadata] {
+pub fn snapshot(&self) -> StateSnapshot {
+pub fn apply(&mut self, update: StateUpdate) -> Result<TransitionMetadata, StateValidationError> {
+pub fn restore(&mut self, snapshot: StateSnapshot) {
+pub fn archive(&self) -> StateSnapshotArchive {
+pub fn new(snapshot: StateSnapshot) -> Self {

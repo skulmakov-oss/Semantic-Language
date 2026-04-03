@@ -82,6 +82,14 @@ pub struct StateSnapshot {
     pub records: BTreeMap<String, StateRecord>,
 }
 
+pub const STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSnapshotArchive {
+    pub format_version: u32,
+    pub snapshot: StateSnapshot,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateValidationCode {
     EmptyKey,
@@ -232,6 +240,21 @@ impl Default for StateEpoch {
     }
 }
 
+impl StateSnapshot {
+    pub fn archive(&self) -> StateSnapshotArchive {
+        StateSnapshotArchive::new(self.clone())
+    }
+}
+
+impl StateSnapshotArchive {
+    pub fn new(snapshot: StateSnapshot) -> Self {
+        Self {
+            format_version: STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION,
+            snapshot,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +337,27 @@ mod tests {
         assert_eq!(store.epoch(), StateEpoch(1));
         assert!(store.get("fact.alpha").is_some());
         assert!(store.get("fact.beta").is_none());
+    }
+
+    #[test]
+    fn state_snapshot_archive_uses_canonical_format_and_carries_snapshot() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed snapshot",
+            ))
+            .expect("apply");
+
+        let archive = store.snapshot().archive();
+
+        assert_eq!(
+            archive.format_version,
+            STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION
+        );
+        assert_eq!(archive.snapshot.epoch, StateEpoch(1));
+        assert!(archive.snapshot.records.contains_key("fact.alpha"));
     }
 }
