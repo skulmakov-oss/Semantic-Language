@@ -1,6 +1,6 @@
 # Arena-first + CrystalFold Full Scope
 
-Status: proposed post-stable closure track
+Status: completed post-stable closure track
 Related track: `NEXT-4`
 
 ## Goal
@@ -86,6 +86,17 @@ frozen as an internal stage contract".
 - correctness, warning behavior, and deterministic output are covered by a
   dedicated test pack
 - no part of the track widens runtime, CLI, or language surface boundaries
+
+Current close-out reading:
+
+- the remaining non-arena ownership tail in the structural cleanup pass is now
+  removed for the current `v1` optimizer surface
+- arena handoff and shared-lowering invariants are test-backed in
+  `tests/arena_stage_guards.rs`
+- `CrystalFold v1` now has a frozen pass contract in `docs/opts.md` and
+  `docs/spec/ir.md`
+- `NEXT-4` should now be treated as completed history, not an active feature
+  backlog
 
 ## Slice History
 

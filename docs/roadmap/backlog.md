@@ -18,6 +18,9 @@ Current remaining `v1` wave:
 
 Current post-`v1` wave:
 
+- `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
+  frozen baseline history in `docs/roadmap_next.md`
+
 - richer `fx` arithmetic beyond the current value path
 - wider PROMETHEUS host-call families beyond the narrow `v1` boundary
 - persistence and replay backends
