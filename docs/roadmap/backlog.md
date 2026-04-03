@@ -31,7 +31,8 @@ Current post-`v1` wave:
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- persistence and replay backends
+- persistence and replay backends:
+  `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
 - richer rule-side effect execution semantics
 
 Foundational work already in place:

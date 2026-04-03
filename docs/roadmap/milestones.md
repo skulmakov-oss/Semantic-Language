@@ -64,6 +64,8 @@
   - `docs/spec/audit.md`
   - current state: owner-split runtime baseline exists
   - richer runtime semantics remain non-blocking for the current narrow `v1`
+  - current post-stable persistence/replay checkpoint:
+    `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
 - `M6 v1 Lockdown`
   - freezes
   - golden baselines
