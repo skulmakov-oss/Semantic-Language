@@ -80,7 +80,9 @@ The following limits remain explicit and should be treated as release-facing hon
 
 - the canonical `fx` value path is end-to-end, but `fx` remains a narrow
   value-transport/equality family rather than a full arithmetic peer of `f64`
-- wider planned PROMETHEUS calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` are intentionally excluded from the current `v1`
+- the published `v1.1.1` line intentionally excludes post-stable PROMETHEUS
+  calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead`,
+  even though current `main` now admits them as a forward-only widened boundary
 - semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
 - persistence backends are not part of the current runtime/audit contract
 - rollback persistence semantics are not yet formalized beyond current orchestration notes

@@ -1,6 +1,6 @@
 # PROMETHEUS Host-Call Expansion Scope
 
-Status: proposed post-stable expansion track
+Status: completed post-stable first-wave expansion track
 Related backlog item:
 `wider PROMETHEUS host-call families beyond the narrow v1 boundary`
 
@@ -60,6 +60,32 @@ This track is done only when:
 - diagnostics and runtime-matrix coverage make the widened contract inspectable
 - stable-facing docs continue to distinguish the published `v1.1.1` boundary
   from the post-stable widened contract
+
+## Close-Out Reading
+
+This track is now complete for the first-wave host-call family pack.
+
+What is now admitted on `main`:
+
+- `StateQuery`
+- `StateUpdate`
+- `EventPost`
+- `ClockRead`
+
+What remains unchanged:
+
+- the published `v1.1.1` line still keeps the narrow `GateRead` / `GateWrite` /
+  `PulseEmit` boundary as its official stable commitment
+- `CapabilityManifest::gate_surface()` remains narrow `v1`-only
+- no transport, persistence, replay, or richer runtime-effect expansion is
+  implied by this completed track
+
+The correct reading is therefore:
+
+- first-wave post-stable host-call expansion is complete on `main`
+- the published stable baseline is still narrower than current `main`
+- any future widening beyond this pack is a new post-stable track, not a tail
+  of the current one
 
 ## Planned First-Wave Families
 

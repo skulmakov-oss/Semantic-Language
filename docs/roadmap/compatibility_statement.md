@@ -7,12 +7,19 @@ repository state published on the active Semantic stable line.
 
 ## SemCode Compatibility
 
-Current compatible SemCode families:
+Current published-stable compatible SemCode families:
 
 - `SEMCODE0`
 - `SEMCODE1`
 - `SEMCODE2`
 - `SEMCODE3`
+
+Current post-stable admitted families on `main`:
+
+- `SEMCODE4`
+- `SEMCODE5`
+- `SEMCODE6`
+- `SEMCODE7`
 
 Current compatibility rule:
 
@@ -65,7 +72,10 @@ Current compatibility rule:
 Current `v1` scope commitment:
 
 - compatibility commitments for `prom-*` apply only to the narrow ABI/capability/gate surface already implemented in the repository
-- wider planned calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` are explicitly outside the current `v1` compatibility envelope
+- post-stable admitted calls such as `StateQuery`, `StateUpdate`, `EventPost`,
+  and `ClockRead` remain outside the current `v1.1.1` compatibility envelope
+- support for those wider calls on current `main` is a forward-only repo-main
+  contract, not a retroactive widening of the published stable tag
 
 ## Explicit Non-Commitments
 
@@ -73,7 +83,8 @@ The repository does not yet claim final compatibility guarantees for:
 
 - richer `fx` arithmetic semantics beyond the current stable value-transport and
   equality contract
-- wider planned PROMETHEUS host-call families beyond `GateRead`, `GateWrite`, and `PulseEmit`
+- any wider PROMETHEUS host-call families beyond the currently admitted
+  first-wave post-stable pack
 - persistence backends
 - multi-session replay archives
 - rule-side effect execution semantics beyond the current narrow orchestration contract

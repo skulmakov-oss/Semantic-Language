@@ -14,18 +14,18 @@ Milestones:
 - `1.6` semantic runtime
 - `1.7` v1 lockdown
 
-Current remaining critical path:
+Current post-stable focus:
 
-- stabilize repository history and reviewable change control
-- resolve pending ownership decisions for optimizer, SemCode, and CLI surfaces
-- tighten remaining `fx` numeric contract notes after landing the canonical end-to-end value path
-- choose formal `M4` boundary scope for `v1`
-- align code layout with ownership decisions
-- raise CI and release enforcement to planned `M6` strength
+- keep the published `v1.1.1` boundary honest while current `main` moves forward
+- treat post-stable widening as explicit tracked streams rather than silent drift
+- keep roadmap/spec/release-facing docs aligned with actual owner layers on `main`
 
 Current non-blocking follow-up work:
 
 - the retained non-owning TON618 compatibility perimeter is frozen as completed
   post-stable baseline history in
   `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
+- the first-wave PROMETHEUS host-call expansion is frozen as completed
+  post-stable baseline history in
+  `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
 - deepen runtime semantics only after `v1` scope is frozen

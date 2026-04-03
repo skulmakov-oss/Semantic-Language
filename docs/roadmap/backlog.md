@@ -25,11 +25,12 @@ Current post-`v1` wave:
 - the retained non-owning TON618 compatibility perimeter is completed and now
   lives as frozen baseline history in
   `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
+- the first-wave PROMETHEUS host-call expansion track is completed and now
+  lives as frozen baseline history in
+  `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- wider PROMETHEUS host-call families beyond the narrow `v1` boundary:
-  `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
 - persistence and replay backends
 - richer rule-side effect execution semantics
 
