@@ -19,9 +19,14 @@ pub struct AuditSessionMetadata {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditEventKind {
-    SessionStarted { entry: String },
+    SessionStarted {
+        entry: String,
+    },
     SessionFinished,
-    RuleActivated { rule_id: String, salience: i32 },
+    RuleActivated {
+        rule_id: String,
+        salience: i32,
+    },
     StateTransition {
         key: String,
         from_epoch: u64,
@@ -31,10 +36,20 @@ pub enum AuditEventKind {
         capability: CapabilityKind,
         call: Option<String>,
     },
-    GateRead { device_id: u16, port: u16 },
-    GateWrite { device_id: u16, port: u16 },
-    PulseEmit { signal: String },
-    Note { message: String },
+    GateRead {
+        device_id: u16,
+        port: u16,
+    },
+    GateWrite {
+        device_id: u16,
+        port: u16,
+    },
+    PulseEmit {
+        signal: String,
+    },
+    Note {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

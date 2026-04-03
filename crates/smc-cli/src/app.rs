@@ -1,16 +1,13 @@
-use ton618_core::diagnostics::diagnostic_catalog;
 use crate::incremental::{
     emit_trace, module_graph_fingerprint, module_graph_module_count, read_graph_hash,
     update_cache_index, CacheEvent, CacheReason, ModuleGraphSnapshot,
 };
 use crate::{format_path, FormatterMode};
 use sm_emit::{
-    compile_program_to_semcode, compile_program_to_semcode_with_options_debug,
-    CompileProfile, OptLevel,
+    compile_program_to_semcode, compile_program_to_semcode_with_options_debug, CompileProfile,
+    OptLevel,
 };
-use sm_front::{
-    lex, parse_logos_program_with_profile, parse_program_with_profile, ParserProfile,
-};
+use sm_front::{lex, parse_logos_program_with_profile, parse_program_with_profile, ParserProfile};
 use sm_ir::{compile_program_to_ir_with_options_and_profile, lower_logos_laws_to_ir};
 use sm_sema::{check_file_with_provider_and_profile, check_source_with_profile, ModuleProvider};
 use sm_verify::verify_semcode;
@@ -23,6 +20,7 @@ use std::process::Command;
 use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration, Instant};
+use ton618_core::diagnostics::diagnostic_catalog;
 
 struct CliFsModuleProvider;
 
@@ -135,7 +133,9 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     let t_write = Instant::now();
     println!("compiled '{}' -> '{}' ({} bytes)", input, out, bytes.len());
     if debug_symbols {
-        println!("note: --debug-symbols requested (debug section emission reserved for next revision)");
+        println!(
+            "note: --debug-symbols requested (debug section emission reserved for next revision)"
+        );
     }
     if metrics {
         let token_count = lex(&src).map(|t| t.len()).unwrap_or(0);
@@ -151,12 +151,9 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
         }
         let mut ir_func_count = 0usize;
         let mut ir_instr_count = 0usize;
-        if let Ok(ir) = compile_program_to_ir_with_options_and_profile(
-            &src,
-            profile,
-            opt,
-            &parser_profile,
-        ) {
+        if let Ok(ir) =
+            compile_program_to_ir_with_options_and_profile(&src, profile, opt, &parser_profile)
+        {
             ir_func_count = ir.len();
             ir_instr_count = ir.iter().map(|f| f.instrs.len()).sum();
         }
@@ -217,9 +214,18 @@ fn color_wrap(enabled: bool, s: &str, code: &str) -> String {
 
 fn print_diag_colored(enabled: bool, text: &str) {
     let mut out = text.to_string();
-    out = out.replace("Error [", &format!("{}[", color_wrap(enabled, "Error", "31;1")));
-    out = out.replace("Warning [", &format!("{}[", color_wrap(enabled, "Warning", "33;1")));
-    out = out.replace("help:", &format!("{}:", color_wrap(enabled, "help", "36;1")));
+    out = out.replace(
+        "Error [",
+        &format!("{}[", color_wrap(enabled, "Error", "31;1")),
+    );
+    out = out.replace(
+        "Warning [",
+        &format!("{}[", color_wrap(enabled, "Warning", "33;1")),
+    );
+    out = out.replace(
+        "help:",
+        &format!("{}:", color_wrap(enabled, "help", "36;1")),
+    );
     eprintln!("{}", out.trim_end());
 }
 
@@ -370,13 +376,7 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
             };
             let _ = save_cache_entry(&cache_path, &entry);
             let mc = module_graph_module_count(&root).unwrap_or(1);
-            let _ = update_cache_index(
-                Path::new(CACHE_INDEX_FILE),
-                &root,
-                fp,
-                graph_hash_now,
-                mc,
-            );
+            let _ = update_cache_index(Path::new(CACHE_INDEX_FILE), &root, fp, graph_hash_now, mc);
             if trace_cache_enabled {
                 if prev_graph_hash != graph_hash_now {
                     trace_cache(
@@ -421,7 +421,9 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
 
 fn cmd_watch(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
-        return Err("usage: smc watch <input.sm> [--metrics] [--color auto|always|never]".to_string());
+        return Err(
+            "usage: smc watch <input.sm> [--metrics] [--color auto|always|never]".to_string(),
+        );
     }
     let root = PathBuf::from(&args[0]);
     let mut metrics = false;
@@ -479,9 +481,9 @@ fn cmd_watch(args: &[String]) -> Result<(), String> {
                                 .map_err(|e| e.to_string())
                         })
                         .or_else(|_| {
-                            check_source_with_profile(&src, &parser_profile).map_err(|e| e.to_string())
-                        })
-                    {
+                            check_source_with_profile(&src, &parser_profile)
+                                .map_err(|e| e.to_string())
+                        }) {
                         Ok(report) => {
                             let mut out = String::new();
                             for w in &report.warnings {
@@ -873,8 +875,8 @@ fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
     }
     let rendered = match profile {
         CompileProfile::Logos => {
-            let logos =
-                parse_logos_program_with_profile(&src, &parser_profile).map_err(|e| e.to_string())?;
+            let logos = parse_logos_program_with_profile(&src, &parser_profile)
+                .map_err(|e| e.to_string())?;
             format!("{:#?}", lower_logos_laws_to_ir(&logos))
         }
         CompileProfile::RustLike => format!(
@@ -885,7 +887,7 @@ fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
                 opt,
                 &parser_profile,
             )
-                .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?
         ),
         CompileProfile::Auto => {
             if let Ok(logos) = parse_logos_program_with_profile(&src, &parser_profile) {
@@ -899,7 +901,7 @@ fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
                         opt,
                         &parser_profile,
                     )
-                        .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?
                 )
             }
         }
@@ -951,8 +953,9 @@ fn cmd_dump_bytecode(args: &[String]) -> Result<(), String> {
     let bytes = if let Some(cached) = load_blob_pack(&exb_pack, PACK_KIND_SMC)? {
         cached
     } else {
-        let built = compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
-            .map_err(|e| e.to_string())?;
+        let built =
+            compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
+                .map_err(|e| e.to_string())?;
         let _ = save_blob_pack(&exb_pack, PACK_KIND_SMC, &built);
         built
     };
@@ -1122,14 +1125,21 @@ fn downstream_pack_fingerprint(path: &Path, source: &str) -> Result<u64, String>
         .or_else(|_| Ok(root_source_fingerprint(source)))
 }
 
-fn ir_pack_key(path: &Path, source: &str, profile: CompileProfile, opt: OptLevel) -> Result<u64, String> {
+fn ir_pack_key(
+    path: &Path,
+    source: &str,
+    profile: CompileProfile,
+    opt: OptLevel,
+) -> Result<u64, String> {
     let canonical = path
         .canonicalize()
         .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
     let mut blob = Vec::new();
     blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
     blob.push(0);
-    blob.extend_from_slice(format!("{:016x}", downstream_pack_fingerprint(path, source)?).as_bytes());
+    blob.extend_from_slice(
+        format!("{:016x}", downstream_pack_fingerprint(path, source)?).as_bytes(),
+    );
     blob.push(0);
     blob.extend_from_slice(format!("profile={:?};opt={:?};lowering=v1", profile, opt).as_bytes());
     Ok(fnv1a64(&blob))
@@ -1148,7 +1158,9 @@ fn smc_pack_key(
     let mut blob = Vec::new();
     blob.extend_from_slice(canonical.to_string_lossy().as_bytes());
     blob.push(0);
-    blob.extend_from_slice(format!("{:016x}", downstream_pack_fingerprint(path, source)?).as_bytes());
+    blob.extend_from_slice(
+        format!("{:016x}", downstream_pack_fingerprint(path, source)?).as_bytes(),
+    );
     blob.push(0);
     blob.extend_from_slice(
         format!(
@@ -1315,7 +1327,8 @@ fn load_text_pack(path: &Path, expected_kind: [u8; 4]) -> Result<Option<String>,
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
     let (header, header_len) = match decode_pack_header(&bytes) {
         Some(v) => v,
         None => return Ok(None),
@@ -1374,7 +1387,8 @@ fn load_blob_pack_ex(path: &Path, expected_kind: [u8; 4]) -> Result<BlobPackLook
     if !path.exists() {
         return Ok(BlobPackLookup::Miss(CacheReason::NotFound));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
     let (header, header_len) = match decode_pack_header(&bytes) {
         Some(v) => v,
         None => return Ok(BlobPackLookup::Miss(CacheReason::HeaderInvalid)),
@@ -1458,7 +1472,8 @@ fn load_cache_entry_ex(path: &Path, expected_fp: u64) -> Result<CacheLookup, Str
     if !path.exists() {
         return Ok(CacheLookup::Miss(CacheReason::NotFound));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("read pack '{}': {}", path.display(), e))?;
     let (header, header_len) = match decode_pack_header(&bytes) {
         Some(v) => v,
         None => return Ok(CacheLookup::Miss(CacheReason::HeaderInvalid)),
@@ -1624,7 +1639,7 @@ fn cmd_hash_ir(args: &[String]) -> Result<(), String> {
                     opt,
                     &parser_profile,
                 )
-                    .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?
             ),
             CompileProfile::Auto => {
                 if let Ok(logos) = parse_logos_program_with_profile(&src, &parser_profile) {
@@ -1638,7 +1653,7 @@ fn cmd_hash_ir(args: &[String]) -> Result<(), String> {
                             opt,
                             &parser_profile,
                         )
-                            .map_err(|e| e.to_string())?
+                        .map_err(|e| e.to_string())?
                     )
                 }
             }
@@ -1689,7 +1704,8 @@ fn cmd_hash_smc(args: &[String]) -> Result<(), String> {
     let src =
         std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
     let prev_graph_hash = read_graph_hash(Path::new(CACHE_GRAPH_FILE));
-    let graph_hash_now = if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(Path::new(input)) {
+    let graph_hash_now = if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(Path::new(input))
+    {
         let hash = snapshot.hash(CACHE_SCHEMA_VERSION);
         let _ = snapshot.write_to(Path::new(CACHE_GRAPH_FILE), CACHE_SCHEMA_VERSION);
         Some(hash)
@@ -1729,8 +1745,9 @@ fn cmd_hash_smc(args: &[String]) -> Result<(), String> {
                 "SMCP",
                 &format!("{:016x}", exb_key),
             );
-            let built = compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
-                .map_err(|e| e.to_string())?;
+            let built =
+                compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
+                    .map_err(|e| e.to_string())?;
             let _ = save_blob_pack(&exb_pack, PACK_KIND_SMC, &built);
             built
         }
@@ -1925,9 +1942,18 @@ Law "Child2" [priority 2]:
         )
         .expect("smc after");
 
-        assert_eq!(ast_before, ast_after, "AST pack key should stay root-scoped");
-        assert_ne!(ir_before, ir_after, "IR pack key should track dependency changes");
-        assert_ne!(smc_before, smc_after, "SMC pack key should track dependency changes");
+        assert_eq!(
+            ast_before, ast_after,
+            "AST pack key should stay root-scoped"
+        );
+        assert_ne!(
+            ir_before, ir_after,
+            "IR pack key should track dependency changes"
+        );
+        assert_ne!(
+            smc_before, smc_after,
+            "SMC pack key should track dependency changes"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -1958,7 +1984,10 @@ fn cmd_snapshots(args: &[String]) -> Result<(), String> {
     }
     let update = args.first().map(|s| s.as_str()) == Some("--update");
     let mut cmd = Command::new("cargo");
-    cmd.arg("test").arg("--test").arg("golden_snapshots").arg("-q");
+    cmd.arg("test")
+        .arg("--test")
+        .arg("golden_snapshots")
+        .arg("-q");
     if update {
         cmd.env("SM_UPDATE_SNAPSHOTS", "1");
     }

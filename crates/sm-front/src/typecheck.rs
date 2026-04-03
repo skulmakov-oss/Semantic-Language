@@ -1,5 +1,7 @@
+use crate::types::{
+    AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget,
+};
 use crate::*;
-use crate::types::{AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -15,7 +17,9 @@ fn fx_measured_arithmetic_gap_message() -> &'static str {
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
-        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_numeric_literal_like_expr(*inner, arena),
+        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => {
+            is_numeric_literal_like_expr(*inner, arena)
+        }
         _ => false,
     }
 }
@@ -71,7 +75,9 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
             params: func
                 .params
                 .iter()
-                .map(|(_, t)| canonicalize_declared_type(t, &record_table, &adt_table, &program.arena))
+                .map(|(_, t)| {
+                    canonicalize_declared_type(t, &record_table, &adt_table, &program.arena)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
             param_names: Some(func.params.iter().map(|(name, _)| *name).collect()),
             param_defaults: Some(func.param_defaults.clone()),
@@ -119,12 +125,20 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
     Ok(())
 }
 
-pub fn derive_validation_plan_table(program: &Program) -> Result<ValidationPlanTable, FrontendError> {
+pub fn derive_validation_plan_table(
+    program: &Program,
+) -> Result<ValidationPlanTable, FrontendError> {
     let record_table = build_record_table(program)?;
     let adt_table = build_adt_table(program)?;
     let schema_table = build_schema_table(program)?;
     let fn_table = build_fn_table(program)?;
-    validate_top_level_name_collisions(program, &fn_table, &record_table, &adt_table, &schema_table)?;
+    validate_top_level_name_collisions(
+        program,
+        &fn_table,
+        &record_table,
+        &adt_table,
+        &schema_table,
+    )?;
     validate_record_declarations(program, &record_table, &adt_table)?;
     validate_adt_declarations(program, &record_table, &adt_table)?;
     validate_schema_declarations(program, &schema_table, &record_table, &adt_table)?;
@@ -143,14 +157,14 @@ pub fn derive_validation_plan_table(program: &Program) -> Result<ValidationPlanT
             SchemaShape::Record(fields) => ValidationShapePlan::Record(
                 derive_validation_field_plans(fields, &record_table, &adt_table, &program.arena)?,
             ),
-            SchemaShape::TaggedUnion(variants) => ValidationShapePlan::TaggedUnion(
-                derive_validation_variant_plans(
+            SchemaShape::TaggedUnion(variants) => {
+                ValidationShapePlan::TaggedUnion(derive_validation_variant_plans(
                     variants,
                     &record_table,
                     &adt_table,
                     &program.arena,
-                )?,
-            ),
+                )?)
+            }
         };
         let checks = match &shape {
             ValidationShapePlan::Record(fields) => derive_record_validation_checks(fields),
@@ -226,28 +240,33 @@ fn type_check_function_with_tables(
         record_table,
         adt_table,
         arena,
-        format!("return type of '{}'", resolve_symbol_name(arena, func.name)?),
+        format!(
+            "return type of '{}'",
+            resolve_symbol_name(arena, func.name)?
+        ),
     )?;
     ensure_executable_type_supported(
         &canonical_ret,
         arena,
-        format!("return type of '{}'", resolve_symbol_name(arena, func.name)?),
+        format!(
+            "return type of '{}'",
+            resolve_symbol_name(arena, func.name)?
+        ),
     )?;
     let empty_env = ScopeEnv::new();
     let mut default_loop_stack = Vec::new();
     for ((name, ty), default_expr) in canonical_params.iter().zip(func.param_defaults.iter()) {
         if let Some(default_expr) = default_expr {
-            let default_ty =
-                infer_expr_type(
-                    *default_expr,
-                    arena,
-                    &empty_env,
-                    table,
-                    record_table,
-                    adt_table,
-                    Type::Unit,
-                    &mut default_loop_stack,
-                )?;
+            let default_ty = infer_expr_type(
+                *default_expr,
+                arena,
+                &empty_env,
+                table,
+                record_table,
+                adt_table,
+                Type::Unit,
+                &mut default_loop_stack,
+            )?;
             if let Err(err) = ensure_const_initializer_safe(*default_expr, arena, &empty_env) {
                 return Err(FrontendError {
                     pos: err.pos,
@@ -470,10 +489,7 @@ fn ensure_contract_result_name_available(
     Ok(())
 }
 
-fn ensure_invariant_result_usage(
-    func: &Function,
-    arena: &AstArena,
-) -> Result<(), FrontendError> {
+fn ensure_invariant_result_usage(func: &Function, arena: &AstArena) -> Result<(), FrontendError> {
     if func.ret != Type::Unit {
         return Ok(());
     }
@@ -524,8 +540,7 @@ fn check_stmt(
             }
             ensure_const_initializer_safe(*value, arena, env)?;
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -577,8 +592,7 @@ fn check_stmt(
                 )?;
             }
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -630,8 +644,7 @@ fn check_stmt(
                 )?;
             }
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -720,16 +733,18 @@ fn check_stmt(
                 });
             }
             for item in items {
-                let field = record.fields.iter().find(|field| field.name == item.field).ok_or(
-                    FrontendError {
+                let field = record
+                    .fields
+                    .iter()
+                    .find(|field| field.name == item.field)
+                    .ok_or(FrontendError {
                         pos: 0,
                         message: format!(
                             "record type '{}' has no field named '{}' in destructuring bind",
                             resolve_symbol_name(arena, *record_name)?,
                             resolve_symbol_name(arena, item.field)?
                         ),
-                    },
-                )?;
+                    })?;
                 match item.target {
                     RecordPatternTarget::Bind(target) => {
                         env.insert(
@@ -795,16 +810,18 @@ fn check_stmt(
             )?;
             let mut saw_refutable_item = false;
             for item in items {
-                let field = record.fields.iter().find(|field| field.name == item.field).ok_or(
-                    FrontendError {
+                let field = record
+                    .fields
+                    .iter()
+                    .find(|field| field.name == item.field)
+                    .ok_or(FrontendError {
                         pos: 0,
                         message: format!(
                             "record type '{}' has no field named '{}' in let-else",
                             resolve_symbol_name(arena, *record_name)?,
                             resolve_symbol_name(arena, item.field)?
                         ),
-                    },
-                )?;
+                    })?;
                 match item.target {
                     RecordPatternTarget::Bind(target) => {
                         env.insert(
@@ -815,12 +832,19 @@ fn check_stmt(
                     RecordPatternTarget::Discard => {}
                     RecordPatternTarget::QuadLiteral(_) => {
                         saw_refutable_item = true;
-                        if canonicalize_declared_type(&field.ty, record_table, adt_table, arena)? != Type::Quad {
+                        if canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?
+                            != Type::Quad
+                        {
                             return Err(FrontendError {
                                 pos: 0,
                                 message: format!(
                                     "record let-else literal pattern requires quad field, got {:?}",
-                                    canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?
+                                    canonicalize_declared_type(
+                                        &field.ty,
+                                        record_table,
+                                        adt_table,
+                                        arena
+                                    )?
                                 ),
                             });
                         }
@@ -868,8 +892,7 @@ fn check_stmt(
                 loop_stack,
             )?;
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
                     vt,
@@ -928,7 +951,13 @@ fn check_stmt(
         }
         Stmt::Discard { ty, value } => {
             if let Some(ann) = ty {
-                ensure_type_resolved(ann, record_table, adt_table, arena, "discard binding".to_string())?;
+                ensure_type_resolved(
+                    ann,
+                    record_table,
+                    adt_table,
+                    arena,
+                    "discard binding".to_string(),
+                )?;
                 ensure_storage_type_supported(
                     &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     arena,
@@ -936,8 +965,7 @@ fn check_stmt(
                 )?;
             }
             if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -1091,17 +1119,16 @@ fn check_stmt(
             Ok(())
         }
         Stmt::Break(value) => {
-            let break_ty =
-                infer_expr_type(
-                    *value,
-                    arena,
-                    env,
-                    table,
-                    record_table,
-                    adt_table,
-                    ret_ty,
-                    loop_stack,
-                )?;
+            let break_ty = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+            )?;
             let frame = loop_stack.last_mut().ok_or(FrontendError {
                 pos: 0,
                 message: "break with value is allowed only inside loop expression".to_string(),
@@ -1225,7 +1252,10 @@ fn check_stmt(
                 ret_ty.clone(),
                 loop_stack,
             )?;
-            if !matches!(st, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+            if !matches!(
+                st,
+                Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
@@ -1237,13 +1267,8 @@ fn check_stmt(
             for arm in arms {
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(
-                    &arm.pat,
-                    &st,
-                    arena,
-                    record_table,
-                    adt_table,
-                )? {
+                for (name, ty) in bind_match_pattern(&arm.pat, &st, arena, record_table, adt_table)?
+                {
                     arm_env.insert(name, ty);
                 }
                 check_match_guard(
@@ -1278,8 +1303,9 @@ fn check_stmt(
                     arena,
                     adt_table,
                 )? {
-                    Some((family_label, missing)) if !missing.is_empty() =>
-                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
+                    Some((family_label, missing)) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?)
+                    }
                     Some(_) => {}
                     None => {
                         return Err(FrontendError {
@@ -1467,18 +1493,16 @@ fn infer_expr_type(
             pos: 0,
             message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
         }),
-        Expr::Block(block) => {
-            infer_value_block_type(
-                block,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )
-        }
+        Expr::Block(block) => infer_value_block_type(
+            block,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::If(if_expr) => {
             let cond_ty = infer_expr_type(
                 if_expr.condition,
@@ -1498,28 +1522,26 @@ fn infer_expr_type(
                             .to_string(),
                 });
             }
-            let then_ty =
-                infer_value_block_type(
-                    &if_expr.then_block,
-                    arena,
-                    env,
-                    table,
-                    record_table,
-                    adt_table,
-                    ret_ty.clone(),
-                    loop_stack,
-                )?;
-            let else_ty =
-                infer_value_block_type(
-                    &if_expr.else_block,
-                    arena,
-                    env,
-                    table,
-                    record_table,
-                    adt_table,
-                    ret_ty.clone(),
-                    loop_stack,
-                )?;
+            let then_ty = infer_value_block_type(
+                &if_expr.then_block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+            )?;
+            let else_ty = infer_value_block_type(
+                &if_expr.else_block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+            )?;
             if then_ty != else_ty {
                 return Err(FrontendError {
                     pos: 0,
@@ -1531,30 +1553,26 @@ fn infer_expr_type(
             }
             Ok(then_ty)
         }
-        Expr::Match(match_expr) => {
-            infer_match_expr_type(
-                match_expr,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )
-        }
-        Expr::Loop(loop_expr) => {
-            infer_loop_expr_type(
-                loop_expr,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )
-        }
+        Expr::Match(match_expr) => infer_match_expr_type(
+            match_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        ),
+        Expr::Loop(loop_expr) => infer_loop_expr_type(
+            loop_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
                 return Err(FrontendError {
@@ -1691,9 +1709,8 @@ fn infer_expr_type(
                     if lt == Type::RangeI32 && rt == Type::RangeI32 {
                         return Err(FrontendError {
                             pos: 0,
-                            message:
-                                    "range equality is not part of the stable v0 range surface"
-                                    .to_string(),
+                            message: "range equality is not part of the stable v0 range surface"
+                                .to_string(),
                         });
                     }
                     if !supports_stable_equality_type(&lt, record_table, adt_table)? {
@@ -1742,7 +1759,9 @@ fn infer_expr_type(
                     }
                 }
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                    if measured_numeric_parts(&lt).is_some() || measured_numeric_parts(&rt).is_some() {
+                    if measured_numeric_parts(&lt).is_some()
+                        || measured_numeric_parts(&rt).is_some()
+                    {
                         if lt != rt {
                             return Err(FrontendError {
                                 pos: 0,
@@ -1802,7 +1821,9 @@ mod tests {
         type_check_program(&program)
     }
 
-    fn derive_validation_plans_from_source(src: &str) -> Result<(Program, ValidationPlanTable), FrontendError> {
+    fn derive_validation_plans_from_source(
+        src: &str,
+    ) -> Result<(Program, ValidationPlanTable), FrontendError> {
         let program = parse_program(src)?;
         let plans = derive_validation_plan_table(&program)?;
         Ok((program, plans))
@@ -1890,7 +1911,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("u32 range bounds must reject");
-        assert!(err.message.contains("range literal currently requires i32 bounds"));
+        assert!(err
+            .message
+            .contains("range literal currently requires i32 bounds"));
     }
 
     #[test]
@@ -1905,7 +1928,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("range equality must reject");
-        assert!(err.message.contains("range equality is not part of the stable v0 range surface"));
+        assert!(err
+            .message
+            .contains("range equality is not part of the stable v0 range surface"));
     }
 
     #[test]
@@ -1918,7 +1943,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("range tuple nesting must reject");
-        assert!(err.message.contains("range literal is not yet part of the stable tuple/user-data surface"));
+        assert!(err
+            .message
+            .contains("range literal is not yet part of the stable tuple/user-data surface"));
     }
 
     #[test]
@@ -1950,7 +1977,8 @@ mod tests {
             }
         "#;
 
-        typecheck_source(src).expect("plain fx arithmetic should typecheck in the first post-stable slice");
+        typecheck_source(src)
+            .expect("plain fx arithmetic should typecheck in the first post-stable slice");
     }
 
     #[test]
@@ -1964,7 +1992,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("measured fx arithmetic must stay outside the first slice");
+        let err = typecheck_source(src)
+            .expect_err("measured fx arithmetic must stay outside the first slice");
         assert!(err
             .message
             .contains("unit-carrying fx arithmetic is not part of the first post-stable fx arithmetic slice yet"));
@@ -2110,7 +2139,8 @@ mod tests {
             }
         "#;
 
-        typecheck_source(src).expect("exhaustive ADT match expression without default should typecheck");
+        typecheck_source(src)
+            .expect("exhaustive ADT match expression without default should typecheck");
     }
 
     #[test]
@@ -2382,9 +2412,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("duplicate named arguments must reject");
-        assert!(err
-            .message
-            .contains("duplicate named argument 'x'"));
+        assert!(err.message.contains("duplicate named argument 'x'"));
     }
 
     #[test]
@@ -2432,9 +2460,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("non-const-safe default parameter must reject");
-        assert!(err
-            .message
-            .contains("default parameter 'factor'"));
+        assert!(err.message.contains("default parameter 'factor'"));
     }
 
     #[test]
@@ -2517,7 +2543,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("assignment to const must reject");
-        assert!(err.message.contains("cannot assign to const binding 'total'"));
+        assert!(err
+            .message
+            .contains("cannot assign to const binding 'total'"));
     }
 
     #[test]
@@ -2803,9 +2831,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("ensures clause should reject call surface");
-        assert!(err
-            .message
-            .contains("ensures clause currently allows only parameter references, optional result binding"));
+        assert!(err.message.contains(
+            "ensures clause currently allows only parameter references, optional result binding"
+        ));
     }
 
     #[test]
@@ -2879,9 +2907,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("invariant clause should reject call surface");
-        assert!(err
-            .message
-            .contains("invariant clause currently allows only parameter references, optional result binding"));
+        assert!(err.message.contains(
+            "invariant clause currently allows only parameter references, optional result binding"
+        ));
     }
 
     #[test]
@@ -2894,8 +2922,8 @@ mod tests {
             fn main() { return; }
         "#;
 
-        let err = typecheck_source(src)
-            .expect_err("invariant clause must reserve synthetic result name");
+        let err =
+            typecheck_source(src).expect_err("invariant clause must reserve synthetic result name");
         assert!(err
             .message
             .contains("parameter name 'result' is reserved while invariant clauses are present"));
@@ -2989,8 +3017,7 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("non-quad let-else literal pattern must reject");
+        let err = typecheck_source(src).expect_err("non-quad let-else literal pattern must reject");
         assert!(err
             .message
             .contains("let-else tuple literal pattern requires quad element"));
@@ -3007,8 +3034,7 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("let-else return type mismatch must reject");
+        let err = typecheck_source(src).expect_err("let-else return type mismatch must reject");
         assert!(err.message.contains("return type mismatch"));
     }
 
@@ -3022,7 +3048,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("non-tuple destructuring must reject");
-        assert!(err.message.contains("tuple destructuring bind requires tuple value"));
+        assert!(err
+            .message
+            .contains("tuple destructuring bind requires tuple value"));
     }
 
     #[test]
@@ -3104,9 +3132,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("for-range binding must be const");
-        assert!(err
-            .message
-            .contains("cannot assign to const binding 'i'"));
+        assert!(err.message.contains("cannot assign to const binding 'i'"));
     }
 
     #[test]
@@ -3122,8 +3148,7 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("for-range in loop expression body must reject");
+        let err = typecheck_source(src).expect_err("for-range in loop expression body must reject");
         assert!(err
             .message
             .contains("loop expression body currently does not allow for-range"));
@@ -3412,7 +3437,10 @@ mod tests {
             panic!("expected measured u32 field in validation plan");
         };
         assert_eq!(**base, Type::U32);
-        assert_eq!(resolve_symbol_name(&program.arena, *unit).expect("unit symbol"), "ms");
+        assert_eq!(
+            resolve_symbol_name(&program.arena, *unit).expect("unit symbol"),
+            "ms"
+        );
         assert_eq!(
             plan.checks,
             vec![
@@ -3473,7 +3501,10 @@ mod tests {
         assert_eq!(variants.len(), 2);
         assert_eq!(variants[0].fields.len(), 0);
         assert_eq!(variants[1].fields.len(), 2);
-        assert_eq!(variants[1].fields[0].ty, Type::Record(program.records[0].name));
+        assert_eq!(
+            variants[1].fields[0].ty,
+            Type::Record(program.records[0].name)
+        );
         assert_eq!(
             variants[1].fields[1].ty,
             Type::Result(Box::new(Type::Quad), Box::new(Type::Bool))
@@ -3605,9 +3636,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("schema/record collision must reject");
-        assert!(err.message.contains(
-            "top-level name 'PointPayload' cannot be used for both record and schema"
-        ));
+        assert!(err
+            .message
+            .contains("top-level name 'PointPayload' cannot be used for both record and schema"));
     }
 
     #[test]
@@ -3689,7 +3720,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("missing record field must reject");
-        assert!(err.message.contains("record literal 'DecisionContext' is missing field 'quality'"));
+        assert!(err
+            .message
+            .contains("record literal 'DecisionContext' is missing field 'quality'"));
     }
 
     #[test]
@@ -3707,7 +3740,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("unknown record field must reject");
-        assert!(err.message.contains("record literal 'DecisionContext' has no field named 'badge'"));
+        assert!(err
+            .message
+            .contains("record literal 'DecisionContext' has no field named 'badge'"));
     }
 
     #[test]
@@ -3745,7 +3780,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record equality subset must reject unsupported fields");
+        let err = typecheck_source(src)
+            .expect_err("record equality subset must reject unsupported fields");
         assert!(err
             .message
             .contains("record equality is allowed only when every field type already supports stable equality"));
@@ -3785,7 +3821,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("unknown record field must reject");
-        assert!(err.message.contains("record type 'DecisionContext' has no field named 'badge'"));
+        assert!(err
+            .message
+            .contains("record type 'DecisionContext' has no field named 'badge'"));
     }
 
     #[test]
@@ -3979,9 +4017,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("unknown record field must reject");
-        assert!(err
-            .message
-            .contains("record type 'DecisionContext' has no field named 'badge' in destructuring bind"));
+        assert!(err.message.contains(
+            "record type 'DecisionContext' has no field named 'badge' in destructuring bind"
+        ));
     }
 
     #[test]
@@ -4042,10 +4080,11 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record let-else without refutable field must reject");
-        assert!(err
-            .message
-            .contains("record let-else requires at least one refutable quad literal field pattern"));
+        let err =
+            typecheck_source(src).expect_err("record let-else without refutable field must reject");
+        assert!(err.message.contains(
+            "record let-else requires at least one refutable quad literal field pattern"
+        ));
     }
 
     #[test]
@@ -4063,7 +4102,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record let-else quad literal on non-quad field must reject");
+        let err = typecheck_source(src)
+            .expect_err("record let-else quad literal on non-quad field must reject");
         assert!(err
             .message
             .contains("record let-else literal pattern requires quad field"));
@@ -4250,8 +4290,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src)
-            .expect_err("mismatched standard-form match family must reject");
+        let err =
+            typecheck_source(src).expect_err("mismatched standard-form match family must reject");
         assert!(err
             .message
             .contains("match arm pattern type 'Option' does not match scrutinee Result(T, E)"));
@@ -4448,17 +4488,16 @@ fn infer_match_expr_type(
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
-    let scrutinee_ty =
-        infer_expr_type(
-            match_expr.scrutinee,
-            arena,
-            env,
-            table,
-            record_table,
-            adt_table,
-            ret_ty.clone(),
-            loop_stack,
-        )?;
+    let scrutinee_ty = infer_expr_type(
+        match_expr.scrutinee,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        ret_ty.clone(),
+        loop_stack,
+    )?;
     if !matches!(
         scrutinee_ty,
         Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
@@ -4475,13 +4514,9 @@ fn infer_match_expr_type(
     for arm in &match_expr.arms {
         let mut arm_env = env.clone();
         arm_env.push_scope();
-        for (name, ty) in bind_match_pattern(
-            &arm.pat,
-            &scrutinee_ty,
-            arena,
-            record_table,
-            adt_table,
-        )? {
+        for (name, ty) in
+            bind_match_pattern(&arm.pat, &scrutinee_ty, arena, record_table, adt_table)?
+        {
             arm_env.insert(name, ty);
         }
         check_match_guard(
@@ -4551,10 +4586,13 @@ fn infer_match_expr_type(
             arena,
             adt_table,
         )? {
-            Some((family_label, missing)) if !missing.is_empty() =>
-                Err(non_exhaustive_match_error(&family_label, &missing, true)?),
-            Some(_) => Ok(result_ty
-                .expect("exhaustive enum match expression should have at least one arm")),
+            Some((family_label, missing)) if !missing.is_empty() => {
+                Err(non_exhaustive_match_error(&family_label, &missing, true)?)
+            }
+            Some(_) => {
+                Ok(result_ty
+                    .expect("exhaustive enum match expression should have at least one arm"))
+            }
             None => Err(FrontendError {
                 pos: 0,
                 message: "match expression requires default arm '_'".to_string(),
@@ -4691,7 +4729,10 @@ fn check_loop_expr_stmt(
                 ret_ty.clone(),
                 loop_stack,
             )?;
-            if !matches!(st, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+            if !matches!(
+                st,
+                Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
@@ -4709,13 +4750,8 @@ fn check_loop_expr_stmt(
             for arm in arms {
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(
-                    &arm.pat,
-                    &st,
-                    arena,
-                    record_table,
-                    adt_table,
-                )? {
+                for (name, ty) in bind_match_pattern(&arm.pat, &st, arena, record_table, adt_table)?
+                {
                     arm_env.insert(name, ty);
                 }
                 check_match_guard(
@@ -4760,7 +4796,16 @@ fn check_loop_expr_stmt(
             def_env.pop_scope();
             Ok(())
         }
-        _ => check_stmt(stmt_id, arena, env, ret_ty, table, record_table, adt_table, loop_stack),
+        _ => check_stmt(
+            stmt_id,
+            arena,
+            env,
+            ret_ty,
+            table,
+            record_table,
+            adt_table,
+            loop_stack,
+        ),
     }
 }
 
@@ -5249,7 +5294,14 @@ fn validate_adt_acyclic(
     })?;
     for variant in &adt.variants {
         for item_ty in &variant.payload {
-            validate_nominal_type_acyclic(item_ty, record_table, adt_table, arena, active, visited)?;
+            validate_nominal_type_acyclic(
+                item_ty,
+                record_table,
+                adt_table,
+                arena,
+                active,
+                visited,
+            )?;
         }
     }
     active.remove(&adt_name);
@@ -5268,7 +5320,14 @@ fn validate_nominal_type_acyclic(
     match ty {
         Type::Tuple(items) => {
             for item in items {
-                validate_nominal_type_acyclic(item, record_table, adt_table, arena, active, visited)?;
+                validate_nominal_type_acyclic(
+                    item,
+                    record_table,
+                    adt_table,
+                    arena,
+                    active,
+                    visited,
+                )?;
             }
             Ok(())
         }
@@ -5279,7 +5338,9 @@ fn validate_nominal_type_acyclic(
                 validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited)
             }
         }
-        Type::Adt(name) => validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited),
+        Type::Adt(name) => {
+            validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited)
+        }
         _ => Ok(()),
     }
 }
@@ -5340,9 +5401,7 @@ fn ensure_type_resolved(
                 })
             }
         }
-        Type::Option(item) => {
-            ensure_type_resolved(item, record_table, adt_table, arena, context)
-        }
+        Type::Option(item) => ensure_type_resolved(item, record_table, adt_table, arena, context),
         Type::Result(ok_ty, err_ty) => {
             ensure_type_resolved(ok_ty, record_table, adt_table, arena, context.clone())?;
             ensure_type_resolved(err_ty, record_table, adt_table, arena, context)
@@ -5423,12 +5482,7 @@ fn supports_stable_equality_type(
 }
 
 fn ensure_requires_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
-    ensure_contract_expr_supported(
-        expr_id,
-        arena,
-        "requires",
-        "parameter references",
-    )
+    ensure_contract_expr_supported(expr_id, arena, "requires", "parameter references")
 }
 
 fn ensure_ensures_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
@@ -5440,10 +5494,7 @@ fn ensure_ensures_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<()
     )
 }
 
-fn ensure_invariant_expr_supported(
-    expr_id: ExprId,
-    arena: &AstArena,
-) -> Result<(), FrontendError> {
+fn ensure_invariant_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
     ensure_contract_expr_supported(
         expr_id,
         arena,
@@ -5535,13 +5586,9 @@ fn supports_stable_equality_type_inner(
     active: &mut BTreeSet<SymbolId>,
 ) -> Result<bool, FrontendError> {
     match ty {
-        Type::Quad
-        | Type::Bool
-        | Type::I32
-        | Type::U32
-        | Type::Fx
-        | Type::F64
-        | Type::Unit => Ok(true),
+        Type::Quad | Type::Bool | Type::I32 | Type::U32 | Type::Fx | Type::F64 | Type::Unit => {
+            Ok(true)
+        }
         Type::Measured(base, _) => {
             supports_stable_equality_type_inner(base, record_table, adt_table, active)
         }
@@ -5573,7 +5620,8 @@ fn supports_stable_equality_type_inner(
                 message: "record equality subset references unknown record type".to_string(),
             })?;
             for field in &record.fields {
-                if !supports_stable_equality_type_inner(&field.ty, record_table, adt_table, active)? {
+                if !supports_stable_equality_type_inner(&field.ty, record_table, adt_table, active)?
+                {
                     active.remove(name);
                     return Ok(false);
                 }
@@ -5595,13 +5643,15 @@ fn infer_record_literal_type(
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
 ) -> Result<Type, FrontendError> {
-    let record = record_table.get(&record_literal.name).ok_or(FrontendError {
-        pos: 0,
-        message: format!(
-            "unknown record type '{}' in record literal",
-            resolve_symbol_name(arena, record_literal.name)?
-        ),
-    })?;
+    let record = record_table
+        .get(&record_literal.name)
+        .ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "unknown record type '{}' in record literal",
+                resolve_symbol_name(arena, record_literal.name)?
+            ),
+        })?;
     let record_name = resolve_symbol_name(arena, record_literal.name)?;
     let mut field_types = BTreeMap::new();
     for field in &record.fields {
@@ -5983,8 +6033,10 @@ fn infer_expr_type_with_expected(
                 ret_ty,
                 loop_stack,
             )?;
-            Ok(lift_literal_to_expected_type(expected.as_ref(), &actual, expr_id, arena)
-                .unwrap_or(actual))
+            Ok(
+                lift_literal_to_expected_type(expected.as_ref(), &actual, expr_id, arena)
+                    .unwrap_or(actual),
+            )
         }
     }
 }
@@ -6060,9 +6112,8 @@ fn infer_std_form_ctor_type(
                     }
                     _ => Err(FrontendError {
                         pos: 0,
-                        message:
-                            "Option::None currently requires contextual Option(T) type in v0"
-                                .to_string(),
+                        message: "Option::None currently requires contextual Option(T) type in v0"
+                            .to_string(),
                     }),
                 }
             }
@@ -6279,11 +6330,8 @@ fn bind_match_pattern(
 
             let mut seen = BTreeSet::new();
             let mut bindings = Vec::new();
-            for (index, (item, declared_ty)) in adt_pat
-                .items
-                .iter()
-                .zip(variant.payload.iter())
-                .enumerate()
+            for (index, (item, declared_ty)) in
+                adt_pat.items.iter().zip(variant.payload.iter()).enumerate()
             {
                 let payload_ty =
                     canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
@@ -6324,8 +6372,7 @@ fn missing_exhaustive_sum_variants<'a>(
             continue;
         }
         if let MatchPattern::Adt(adt_pat) = pat {
-            if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name
-            {
+            if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
                 covered.insert(resolve_symbol_name(arena, adt_pat.variant_name)?.to_string());
             }
         }
@@ -6511,8 +6558,9 @@ fn ensure_const_initializer_safe(
         }
         _ => Err(FrontendError {
             pos: 0,
-            message: "const initializer currently supports only pure literal/const expression forms"
-                .to_string(),
+            message:
+                "const initializer currently supports only pure literal/const expression forms"
+                    .to_string(),
         }),
     }
 }

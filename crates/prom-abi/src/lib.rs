@@ -92,7 +92,11 @@ impl AbiError {
 
 impl core::fmt::Display for AbiError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "ABI {:?} failure [{:?}]: {}", self.call, self.kind, self.message)
+        write!(
+            f,
+            "ABI {:?} failure [{:?}]: {}",
+            self.call, self.kind, self.message
+        )
     }
 }
 

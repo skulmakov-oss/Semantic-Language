@@ -1,6 +1,6 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::BTreeSet;
 
 fn collect_rs_files(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(root) else { return };
@@ -79,10 +79,7 @@ fn root_src_contains_only_lib_and_bin_dir() {
         top.insert(e.file_name().to_string_lossy().to_string());
     }
     let expected: BTreeSet<String> = ["lib.rs", "bin"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(
-        top, expected,
-        "root/src must contain only lib.rs and bin/"
-    );
+    assert_eq!(top, expected, "root/src must contain only lib.rs and bin/");
 }
 
 #[test]
@@ -163,10 +160,7 @@ fn root_smc_is_thin_wrapper_over_smc_cli() {
 
 #[test]
 fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
-    let explicit_shims = [
-        "src/bin/ton618_core.rs",
-        "crates/ton618-core/src/lib.rs",
-    ];
+    let explicit_shims = ["src/bin/ton618_core.rs", "crates/ton618-core/src/lib.rs"];
 
     for path in explicit_shims {
         let txt = fs::read_to_string(path).expect("read compatibility shim");
@@ -286,11 +280,7 @@ fn ton618_named_path_inventory_is_explicit() {
 #[test]
 fn ton618_content_inventory_is_explicit() {
     let mut files = Vec::new();
-    collect_files_with_extensions(
-        Path::new("."),
-        &["rs", "md", "toml", "lock"],
-        &mut files,
-    );
+    collect_files_with_extensions(Path::new("."), &["rs", "md", "toml", "lock"], &mut files);
 
     let mut matches = BTreeSet::new();
     for file in files {

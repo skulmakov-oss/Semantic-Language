@@ -1,14 +1,12 @@
+use semantic_language::prom_abi::AbiValue;
 use semantic_language::prom_audit::AuditEventKind;
 use semantic_language::prom_cap::CapabilityManifest;
-use semantic_language::prom_gates::{
-    DeterministicGateMock, GateDescriptor, GateId, GateRegistry,
-};
+use semantic_language::prom_gates::{DeterministicGateMock, GateDescriptor, GateId, GateRegistry};
 use semantic_language::prom_rules::{RuleCondition, RuleDefinition, RuleEngine};
 use semantic_language::prom_runtime::GateExecutionSession;
 use semantic_language::prom_state::{
     ContextWindow, FactResolution, FactValue, SemanticStateStore, StateUpdate,
 };
-use semantic_language::prom_abi::AbiValue;
 use semantic_language::runtime_core::ExecutionContext;
 
 #[test]
@@ -47,9 +45,7 @@ fn runtime_composes_state_rules_and_audit_without_taking_ownership() {
 
     let agenda = session.derive_agenda(&state, &rules);
     assert_eq!(agenda.entries().len(), 1);
-    let activation = session
-        .select_next_activation(&agenda)
-        .expect("activation");
+    let activation = session.select_next_activation(&agenda).expect("activation");
     assert_eq!(activation.entry.rule_id.0, "rule.alpha");
     assert_eq!(activation.remaining_rules, 0);
 

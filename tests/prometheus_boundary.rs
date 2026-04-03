@@ -1,6 +1,6 @@
 use semantic_language::frontend::{emit_ir_to_semcode, IrFunction, IrInstr};
-use semantic_language::prom_abi::{AbiValue, RecordingHostAbi};
 use semantic_language::prom_abi::HostCallId;
+use semantic_language::prom_abi::{AbiValue, RecordingHostAbi};
 use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
 use semantic_language::semcode_vm::{
     run_verified_semcode_with_host_and_capabilities, RuntimeError,

@@ -105,10 +105,11 @@ pub trait CapabilityChecker {
     fn require(&self, capability: CapabilityKind) -> Result<(), CapabilityDenied>;
 
     fn require_call(&self, call: HostCallId) -> Result<(), CapabilityDenied> {
-        self.require(required_capability_for_call(call)).map_err(|mut denied| {
-            denied.call = Some(call);
-            denied
-        })
+        self.require(required_capability_for_call(call))
+            .map_err(|mut denied| {
+                denied.call = Some(call);
+                denied
+            })
     }
 }
 
@@ -152,10 +153,7 @@ impl CapabilityManifest {
         }
     }
 
-    pub fn with_contract(
-        schema: impl Into<String>,
-        version: CapabilityManifestVersion,
-    ) -> Self {
+    pub fn with_contract(schema: impl Into<String>, version: CapabilityManifestVersion) -> Self {
         Self {
             schema: schema.into(),
             version,
@@ -279,8 +277,11 @@ mod tests {
 
     #[test]
     fn manifest_validate_rejects_unknown_schema() {
-        let manifest = CapabilityManifest::with_contract("prom.cap.legacy", CapabilityManifestVersion::V1);
-        let report = manifest.validate().expect_err("schema mismatch must reject");
+        let manifest =
+            CapabilityManifest::with_contract("prom.cap.legacy", CapabilityManifestVersion::V1);
+        let report = manifest
+            .validate()
+            .expect_err("schema mismatch must reject");
         assert_eq!(report.code, ManifestValidationCode::UnsupportedSchema);
     }
 

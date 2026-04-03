@@ -1,9 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "std")]
-mod app;
-#[cfg(feature = "std")]
 mod api_contract;
+#[cfg(feature = "std")]
+mod app;
 #[cfg(feature = "std")]
 mod config;
 #[cfg(feature = "std")]
@@ -16,33 +16,53 @@ mod schema_versioning;
 mod wire_contract;
 
 #[cfg(feature = "std")]
-use ton618_core::diagnostics::diagnostic_catalog;
-#[cfg(feature = "std")]
 use sm_emit::compile_program_to_semcode_with_options_debug;
 #[cfg(feature = "std")]
-use sm_ir::{
-    compile_program_to_ir_with_options, CompileProfile, OptLevel,
-};
+use sm_ir::{compile_program_to_ir_with_options, CompileProfile, OptLevel};
 #[cfg(feature = "std")]
 use sm_sema::{check_file_with_provider, check_source, ModuleProvider, SemanticReport};
 #[cfg(feature = "std")]
 use std::path::Path;
+#[cfg(feature = "std")]
+use ton618_core::diagnostics::diagnostic_catalog;
 
 #[cfg(feature = "std")]
 pub struct CliPipeline;
 
 #[cfg(feature = "std")]
+pub use api_contract::{
+    build_generated_api_contract, format_generated_api_contract, GeneratedApiContractArtifact,
+    GeneratedApiContractBuildError, GeneratedApiField, GeneratedApiSchema, GeneratedApiSchemaRole,
+    GeneratedApiSchemaShape, GeneratedApiVariant, GENERATED_API_CONTRACT_FORMAT_VERSION,
+    GENERATED_API_CONTRACT_GENERATOR, GENERATED_API_CONTRACT_GENERATOR_VERSION,
+};
+#[cfg(feature = "std")]
 pub use app::{main_entry, run};
 #[cfg(feature = "std")]
-pub use api_contract::{build_generated_api_contract, format_generated_api_contract, GeneratedApiContractArtifact, GeneratedApiContractBuildError, GeneratedApiField, GeneratedApiSchema, GeneratedApiSchemaRole, GeneratedApiSchemaShape, GeneratedApiVariant, GENERATED_API_CONTRACT_FORMAT_VERSION, GENERATED_API_CONTRACT_GENERATOR, GENERATED_API_CONTRACT_GENERATOR_VERSION};
-#[cfg(feature = "std")]
-pub use config::{build_config_contract, parse_config_document, validate_config_document, ConfigContract, ConfigContractBuildError, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind, ConfigParseError, ConfigValidationDiagnostic, ConfigValidationError, ConfigValue};
+pub use config::{
+    build_config_contract, parse_config_document, validate_config_document, ConfigContract,
+    ConfigContractBuildError, ConfigDocument, ConfigEntry, ConfigNumber, ConfigNumberKind,
+    ConfigParseError, ConfigValidationDiagnostic, ConfigValidationError, ConfigValue,
+};
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 #[cfg(feature = "std")]
-pub use schema_versioning::{build_schema_migration_metadata, classify_record_schema_compatibility, classify_tagged_union_schema_compatibility, format_schema_migration_metadata, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind, SchemaMigrationChangeSet, SchemaMigrationMetadataArtifact, SchemaMigrationReviewKind, SchemaMigrationShapeKind, SchemaVariantChangeKind, TaggedUnionSchemaCompatibilityReport, TaggedUnionSchemaVariantChange};
+pub use schema_versioning::{
+    build_schema_migration_metadata, classify_record_schema_compatibility,
+    classify_tagged_union_schema_compatibility, format_schema_migration_metadata,
+    RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind,
+    SchemaFieldChange, SchemaFieldChangeKind, SchemaMigrationChangeSet,
+    SchemaMigrationMetadataArtifact, SchemaMigrationReviewKind, SchemaMigrationShapeKind,
+    SchemaVariantChangeKind, TaggedUnionSchemaCompatibilityReport, TaggedUnionSchemaVariantChange,
+};
 #[cfg(feature = "std")]
-pub use wire_contract::{build_generated_wire_contract, format_generated_wire_contract, GeneratedWireContractArtifact, GeneratedWireContractBuildError, TaggedWireUnionContract, TaggedWireUnionField, TaggedWireUnionVariant, WirePatchField, WirePatchTypeContract, GENERATED_WIRE_CONTRACT_FORMAT_VERSION, GENERATED_WIRE_CONTRACT_GENERATOR, GENERATED_WIRE_CONTRACT_GENERATOR_VERSION};
+pub use wire_contract::{
+    build_generated_wire_contract, format_generated_wire_contract, GeneratedWireContractArtifact,
+    GeneratedWireContractBuildError, TaggedWireUnionContract, TaggedWireUnionField,
+    TaggedWireUnionVariant, WirePatchField, WirePatchTypeContract,
+    GENERATED_WIRE_CONTRACT_FORMAT_VERSION, GENERATED_WIRE_CONTRACT_GENERATOR,
+    GENERATED_WIRE_CONTRACT_GENERATOR_VERSION,
+};
 
 #[cfg(feature = "std")]
 struct CliFsProvider;

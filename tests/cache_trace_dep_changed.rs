@@ -84,4 +84,3 @@ Law "Dep2" [priority 2]:
 
     let _ = std::fs::remove_dir_all(&base);
 }
-

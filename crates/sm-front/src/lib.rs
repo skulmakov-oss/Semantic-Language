@@ -15,6 +15,8 @@ use alloc::vec::Vec;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub mod types;
 #[cfg(any(feature = "alloc", feature = "std"))]
+pub use sm_profile::{CompatibilityMode, ParserProfile};
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
     AdtCtorExpr, AdtDecl, AdtVariant, AstArena, BinaryOp, BlockExpr, CallArg, Expr, ExprId,
     FrontendError, FrontendErrorKind, Function, IfExpr, LogosEntity, LogosEntityField,
@@ -22,12 +24,9 @@ pub use types::{
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
     SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, Token, TokenKind,
-    TuplePatternItem, Type,
-    UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
-    ValidationVariantPlan,
+    TuplePatternItem, Type, UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan,
+    ValidationShapePlan, ValidationVariantPlan,
 };
-#[cfg(any(feature = "alloc", feature = "std"))]
-pub use sm_profile::{CompatibilityMode, ParserProfile};
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub mod lexer;
@@ -129,7 +128,9 @@ impl ScopeEnv {
     }
 
     pub fn is_const(&self, name: SymbolId) -> bool {
-        self.binding(name).map(|binding| binding.is_const).unwrap_or(false)
+        self.binding(name)
+            .map(|binding| binding.is_const)
+            .unwrap_or(false)
     }
 
     fn binding(&self, name: SymbolId) -> Option<&ScopeBinding> {
@@ -170,7 +171,9 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
                 params: f
                     .params
                     .iter()
-                    .map(|(_, t)| canonicalize_declared_type(t, &record_table, &adt_table, &program.arena))
+                    .map(|(_, t)| {
+                        canonicalize_declared_type(t, &record_table, &adt_table, &program.arena)
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
                 param_names: Some(f.params.iter().map(|(name, _)| *name).collect()),
                 param_defaults: Some(f.param_defaults.clone()),
@@ -310,10 +313,7 @@ pub fn canonicalize_declared_type(
             } else {
                 Err(FrontendError {
                     pos: 0,
-                    message: format!(
-                        "unknown enum type '{}'",
-                        resolve_symbol_name(arena, *name)?
-                    ),
+                    message: format!("unknown enum type '{}'", resolve_symbol_name(arena, *name)?),
                 })
             }
         }
@@ -476,7 +476,10 @@ fn finalize_ordered_call_args(
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
-pub fn resolve_symbol_name<'a>(arena: &'a AstArena, id: SymbolId) -> Result<&'a str, FrontendError> {
+pub fn resolve_symbol_name<'a>(
+    arena: &'a AstArena,
+    id: SymbolId,
+) -> Result<&'a str, FrontendError> {
     arena.try_symbol_name(id).ok_or(FrontendError {
         pos: 0,
         message: format!("invalid symbol id {}", id.0),

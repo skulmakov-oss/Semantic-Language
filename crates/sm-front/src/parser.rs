@@ -5,9 +5,9 @@ use crate::types::{
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField,
-    SchemaRole, SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, Token,
-    TokenKind, TuplePatternItem, Type, UnaryOp,
+    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
+    SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, Token, TokenKind,
+    TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -307,7 +307,10 @@ impl<'a> Parser<'a> {
         }
         let marker = self.advance();
         debug_assert_eq!(marker.text, "version");
-        self.expect(TokenKind::LParen, "expected '(' after schema version marker")?;
+        self.expect(
+            TokenKind::LParen,
+            "expected '(' after schema version marker",
+        )?;
         if !self.check(TokenKind::Num) {
             return Err(FrontendError {
                 pos: self.pos(),
@@ -316,11 +319,15 @@ impl<'a> Parser<'a> {
             });
         }
         let number = self.advance();
-        let value = parse_schema_version_literal(&number.text).map_err(|message| FrontendError {
-            pos: number.pos,
-            message,
-        })?;
-        self.expect(TokenKind::RParen, "expected ')' after schema version marker")?;
+        let value =
+            parse_schema_version_literal(&number.text).map_err(|message| FrontendError {
+                pos: number.pos,
+                message,
+            })?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after schema version marker",
+        )?;
         Ok(Some(SchemaVersion { value }))
     }
 
@@ -385,7 +392,10 @@ impl<'a> Parser<'a> {
                 }
                 break;
             }
-            self.expect(TokenKind::RBrace, "expected '}' after schema variant payload")?;
+            self.expect(
+                TokenKind::RBrace,
+                "expected '}' after schema variant payload",
+            )?;
             variants.push(SchemaVariant {
                 name: variant_name,
                 fields,
@@ -697,7 +707,9 @@ impl<'a> Parser<'a> {
         self.tokens.get(i).map(|t| t.kind) == Some(TokenKind::Assign)
     }
 
-    fn parse_tuple_pattern_items_after_lparen(&mut self) -> Result<Vec<TuplePatternItem>, FrontendError> {
+    fn parse_tuple_pattern_items_after_lparen(
+        &mut self,
+    ) -> Result<Vec<TuplePatternItem>, FrontendError> {
         let mut items = Vec::new();
         loop {
             if self.check(TokenKind::LParen) {
@@ -743,7 +755,10 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after tuple destructuring pattern")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after tuple destructuring pattern",
+        )?;
         if items.len() < 2 {
             return Err(FrontendError {
                 pos: self.pos(),
@@ -928,7 +943,9 @@ impl<'a> Parser<'a> {
             return Ok(tail);
         }
         let statements = self.parse_where_bindings()?;
-        Ok(self.arena.alloc_expr(Expr::Block(BlockExpr { statements, tail })))
+        Ok(self
+            .arena
+            .alloc_expr(Expr::Block(BlockExpr { statements, tail })))
     }
 
     fn parse_pipe(&mut self) -> Result<ExprId, FrontendError> {
@@ -1119,12 +1136,14 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.eat(TokenKind::KwWith) {
-                self.expect(TokenKind::LBrace, "expected '{' after 'with' in record copy-with")?;
+                self.expect(
+                    TokenKind::LBrace,
+                    "expected '{' after 'with' in record copy-with",
+                )?;
                 let fields = self.parse_record_init_fields_after_lbrace()?;
-                expr = self.arena.alloc_expr(Expr::RecordUpdate(RecordUpdateExpr {
-                    base: expr,
-                    fields,
-                }));
+                expr = self
+                    .arena
+                    .alloc_expr(Expr::RecordUpdate(RecordUpdateExpr { base: expr, fields }));
                 continue;
             }
             break;
@@ -1194,7 +1213,10 @@ impl<'a> Parser<'a> {
                 return Ok(self.arena.alloc_expr(Expr::Call(name, args)));
             }
             if self.starts_record_literal_head() {
-                self.expect(TokenKind::LBrace, "expected '{' after record literal type name")?;
+                self.expect(
+                    TokenKind::LBrace,
+                    "expected '{' after record literal type name",
+                )?;
                 return self.parse_record_literal_after_name(name);
             }
             return Ok(self.arena.alloc_expr(Expr::Var(name)));
@@ -1223,7 +1245,10 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after enum constructor payload")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after enum constructor payload",
+        )?;
         Ok(payload)
     }
 
@@ -1253,10 +1278,9 @@ impl<'a> Parser<'a> {
 
     fn parse_record_literal_after_name(&mut self, name: SymbolId) -> Result<ExprId, FrontendError> {
         let fields = self.parse_record_init_fields_after_lbrace()?;
-        Ok(self.arena.alloc_expr(Expr::RecordLiteral(RecordLiteralExpr {
-            name,
-            fields,
-        })))
+        Ok(self
+            .arena
+            .alloc_expr(Expr::RecordLiteral(RecordLiteralExpr { name, fields })))
     }
 
     fn parse_record_init_fields_after_lbrace(
@@ -1389,7 +1413,10 @@ impl<'a> Parser<'a> {
         }
 
         let param = self.expect_symbol()?;
-        self.expect(TokenKind::FatArrow, "expected '=>' after short lambda parameter")?;
+        self.expect(
+            TokenKind::FatArrow,
+            "expected '=>' after short lambda parameter",
+        )?;
         let body = self.parse_expr()?;
         self.expect(TokenKind::RParen, "expected ')' after short lambda body")?;
         self.ensure_short_lambda_capture_free(body, param)?;
@@ -1424,7 +1451,10 @@ impl<'a> Parser<'a> {
                 message: "short lambda v0 currently supports exactly one argument".to_string(),
             });
         }
-        self.expect(TokenKind::RParen, "expected ')' after short lambda argument")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after short lambda argument",
+        )?;
         Ok(arg)
     }
 
@@ -1517,9 +1547,7 @@ impl<'a> Parser<'a> {
                 self.ensure_short_lambda_expr_capture_free(*lhs, scopes)?;
                 self.ensure_short_lambda_expr_capture_free(*rhs, scopes)
             }
-            Expr::Block(block) => {
-                self.ensure_short_lambda_block_capture_free(block, scopes)
-            }
+            Expr::Block(block) => self.ensure_short_lambda_block_capture_free(block, scopes),
             Expr::If(if_expr) => {
                 self.ensure_short_lambda_expr_capture_free(if_expr.condition, scopes)?;
                 self.ensure_short_lambda_block_capture_free(&if_expr.then_block, scopes)?;
@@ -1604,12 +1632,15 @@ impl<'a> Parser<'a> {
                 }
                 Ok(())
             }
-            Stmt::Discard { value, .. } => self.ensure_short_lambda_expr_capture_free(*value, scopes),
+            Stmt::Discard { value, .. } => {
+                self.ensure_short_lambda_expr_capture_free(*value, scopes)
+            }
             Stmt::Expr(expr_id) => self.ensure_short_lambda_expr_capture_free(*expr_id, scopes),
             _ => Err(FrontendError {
                 pos: self.pos(),
-                message: "short lambda body currently supports only expression-compatible block forms"
-                    .to_string(),
+                message:
+                    "short lambda body currently supports only expression-compatible block forms"
+                        .to_string(),
             }),
         }
     }
@@ -1768,7 +1799,8 @@ impl<'a> Parser<'a> {
             } else {
                 return Err(FrontendError {
                     pos: self.pos(),
-                    message: "enum match payload patterns currently support only flat name/_ items".to_string(),
+                    message: "enum match payload patterns currently support only flat name/_ items"
+                        .to_string(),
                 });
             }
             if self.eat(TokenKind::Comma) {
@@ -1779,7 +1811,10 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after enum match pattern payload")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after enum match pattern payload",
+        )?;
         Ok(items)
     }
 
@@ -1885,9 +1920,15 @@ impl<'a> Parser<'a> {
                     let _ = self.advance();
                     self.expect(TokenKind::LParen, "expected '(' after Result type name")?;
                     let ok_ty = self.parse_type()?;
-                    self.expect(TokenKind::Comma, "expected ',' between Result type arguments")?;
+                    self.expect(
+                        TokenKind::Comma,
+                        "expected ',' between Result type arguments",
+                    )?;
                     let err_ty = self.parse_type()?;
-                    self.expect(TokenKind::RParen, "expected ')' after Result type arguments")?;
+                    self.expect(
+                        TokenKind::RParen,
+                        "expected ')' after Result type arguments",
+                    )?;
                     Type::Result(Box::new(ok_ty), Box::new(err_ty))
                 } else {
                     let record_name = self.expect_symbol()?;
@@ -1926,8 +1967,8 @@ impl<'a> Parser<'a> {
         if !base.is_core_numeric_scalar() {
             return Err(FrontendError {
                 pos: self.pos(),
-                message:
-                    "unit annotation is allowed only on i32, u32, f64, or fx in v0".to_string(),
+                message: "unit annotation is allowed only on i32, u32, f64, or fx in v0"
+                    .to_string(),
             });
         }
         let unit = self.expect_symbol()?;
@@ -2238,7 +2279,9 @@ impl<'a> Parser<'a> {
         if !self.check_raw(TokenKind::Ident) {
             return Err(self.error_at_current("expected unit symbol", "E0234"));
         }
-        let unit = self.arena.intern_symbol(&self.tokens[self.idx].text.clone());
+        let unit = self
+            .arena
+            .intern_symbol(&self.tokens[self.idx].text.clone());
         self.idx += 1;
         self.expect_raw(TokenKind::RBracket, "expected ']'", "E0234")?;
         Ok(Type::Measured(Box::new(base), unit))
@@ -2566,7 +2609,9 @@ fn parse_decimal_f64_literal(text: &str, kind: &str) -> Result<f64, FrontendErro
 fn parse_schema_version_literal(text: &str) -> Result<u32, String> {
     let (core, suffix) = split_numeric_suffix(text);
     if suffix.is_some() || core.contains('.') || core.starts_with("0x") || core.starts_with("0X") {
-        return Err("schema version marker currently requires unsuffixed decimal integer".to_string());
+        return Err(
+            "schema version marker currently requires unsuffixed decimal integer".to_string(),
+        );
     }
     let digits = strip_digit_separators(core);
     let value = digits
@@ -2626,8 +2671,8 @@ fn decide(ctx: DecisionContext) -> quad requires(ctx.camera == T) {
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let decide = &program.functions[0];
         assert_eq!(program.arena.symbol_name(decide.name), "decide");
         assert_eq!(decide.requires.len(), 1);
@@ -2644,8 +2689,8 @@ fn idq(q: quad) -> quad requires(q == T) = q;
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let idq = &program.functions[0];
         assert_eq!(idq.requires.len(), 1);
         assert!(matches!(
@@ -2669,8 +2714,8 @@ fn decide(ctx: DecisionContext) -> quad ensures(result == ctx.camera) {
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let decide = &program.functions[0];
         assert_eq!(program.arena.symbol_name(decide.name), "decide");
         assert_eq!(decide.ensures.len(), 1);
@@ -2687,8 +2732,8 @@ fn idq(q: quad) -> quad ensures(result == q) = q;
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let idq = &program.functions[0];
         assert_eq!(idq.ensures.len(), 1);
         assert!(matches!(
@@ -2712,8 +2757,8 @@ fn decide(ctx: DecisionContext) -> quad invariant(ctx.quality == 0.75) {
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let decide = &program.functions[0];
         assert_eq!(program.arena.symbol_name(decide.name), "decide");
         assert_eq!(decide.invariants.len(), 1);
@@ -2730,8 +2775,8 @@ fn idq(q: quad) -> quad invariant(result == q) = q;
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let idq = &program.functions[0];
         assert_eq!(idq.invariants.len(), 1);
         assert!(matches!(
@@ -2798,7 +2843,10 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*name), "total");
         assert_eq!(*ty, Some(Type::F64));
-        assert!(matches!(program.arena.expr(*value), Expr::Binary(_, BinaryOp::Add, _)));
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::Binary(_, BinaryOp::Add, _)
+        ));
     }
 
     #[test]
@@ -2876,7 +2924,9 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("hex f64 literal must reject");
-        assert!(err.message.contains("f64 literal currently requires decimal form"));
+        assert!(err
+            .message
+            .contains("f64 literal currently requires decimal form"));
     }
 
     #[test]
@@ -3024,7 +3074,10 @@ fn main() {
             program.arena.expr(*value),
             Expr::NumericLiteral(NumericLiteral::F64(_))
         ));
-        assert!(matches!(program.arena.expr(block.tail), Expr::Binary(_, BinaryOp::Add, _)));
+        assert!(matches!(
+            program.arena.expr(block.tail),
+            Expr::Binary(_, BinaryOp::Add, _)
+        ));
     }
 
     #[test]
@@ -3514,7 +3567,10 @@ fn main() {
             panic!("expected tuple destructuring statement");
         };
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].map(|name| program.arena.symbol_name(name)), Some("count"));
+        assert_eq!(
+            items[0].map(|name| program.arena.symbol_name(name)),
+            Some("count")
+        );
         assert!(items[1].is_none());
         assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Bool])));
         let Expr::Call(name, args) = program.arena.expr(*value) else {
@@ -3549,7 +3605,10 @@ fn main() {
         };
         assert_eq!(items.len(), 2);
         assert!(matches!(items[0], TuplePatternItem::Bind(_)));
-        assert!(matches!(items[1], TuplePatternItem::QuadLiteral(QuadVal::T)));
+        assert!(matches!(
+            items[1],
+            TuplePatternItem::QuadLiteral(QuadVal::T)
+        ));
         assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Quad])));
         assert!(else_return.is_none());
         let Expr::Call(name, args) = program.arena.expr(*value) else {
@@ -3613,8 +3672,14 @@ fn main() {
             panic!("expected tuple destructuring assignment");
         };
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].map(|name| program.arena.symbol_name(name)), Some("count"));
-        assert_eq!(items[1].map(|name| program.arena.symbol_name(name)), Some("ready"));
+        assert_eq!(
+            items[0].map(|name| program.arena.symbol_name(name)),
+            Some("count")
+        );
+        assert_eq!(
+            items[1].map(|name| program.arena.symbol_name(name)),
+            Some("ready")
+        );
         let Expr::Call(name, args) = program.arena.expr(*value) else {
             panic!("expected call expression");
         };
@@ -3765,7 +3830,9 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("zero schema version must reject");
-        assert!(err.message.contains("schema version marker must be positive"));
+        assert!(err
+            .message
+            .contains("schema version marker must be positive"));
     }
 
     #[test]
@@ -3884,7 +3951,11 @@ fn main() {
         assert_eq!(wrap.ret, Type::Option(Box::new(Type::Bool)));
         assert_eq!(wrap.params[0].1, Type::Bool);
         match program.arena.stmt(wrap.body[0]) {
-            Stmt::Let { ty: Some(ty), value, .. } => {
+            Stmt::Let {
+                ty: Some(ty),
+                value,
+                ..
+            } => {
                 assert_eq!(*ty, Type::Option(Box::new(Type::Bool)));
                 let Expr::AdtCtor(ctor) = program.arena.expr(*value) else {
                     panic!("expected Option constructor expression");
@@ -3895,7 +3966,11 @@ fn main() {
             other => panic!("expected typed let binding, got {:?}", other),
         }
         match program.arena.stmt(wrap.body[2]) {
-            Stmt::Let { ty: Some(ty), value, .. } => {
+            Stmt::Let {
+                ty: Some(ty),
+                value,
+                ..
+            } => {
                 assert_eq!(
                     *ty,
                     Type::Result(Box::new(Type::Bool), Box::new(Type::Quad))
@@ -3946,7 +4021,10 @@ fn main() {
         }
         match program.arena.stmt(unwrap.body[1]) {
             Stmt::Match { arms, default, .. } => {
-                assert!(default.is_empty(), "exhaustive Result match should omit default");
+                assert!(
+                    default.is_empty(),
+                    "exhaustive Result match should omit default"
+                );
                 let MatchPattern::Adt(pat) = &arms[1].pat else {
                     panic!("expected Result match pattern");
                 };
@@ -4075,8 +4153,12 @@ fn main() {
             .expect("record type name in signature should parse");
         let func = &program.functions[0];
         assert_eq!(program.arena.symbol_name(func.name), "describe");
-        assert!(matches!(func.params[0].1, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext"));
-        assert!(matches!(func.ret, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext"));
+        assert!(
+            matches!(func.params[0].1, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext")
+        );
+        assert!(
+            matches!(func.ret, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext")
+        );
     }
 
     #[test]
@@ -4183,7 +4265,10 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*base), "ctx");
         assert_eq!(update_expr.fields.len(), 1);
-        assert_eq!(program.arena.symbol_name(update_expr.fields[0].name), "quality");
+        assert_eq!(
+            program.arena.symbol_name(update_expr.fields[0].name),
+            "quality"
+        );
     }
 
     #[test]
@@ -4215,7 +4300,9 @@ fn main() {
         assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
         assert_eq!(items.len(), 2);
         assert_eq!(program.arena.symbol_name(items[0].field), "camera");
-        assert!(matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "seen_camera"));
+        assert!(
+            matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "seen_camera")
+        );
         assert_eq!(program.arena.symbol_name(items[1].field), "quality");
         assert!(matches!(items[1].target, RecordPatternTarget::Discard));
         assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
@@ -4247,8 +4334,12 @@ fn main() {
         let Expr::RecordLiteral(record) = program.arena.expr(*value) else {
             panic!("expected record literal expression");
         };
-        assert!(matches!(program.arena.expr(record.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "camera"));
-        assert!(matches!(program.arena.expr(record.fields[1].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality"));
+        assert!(
+            matches!(program.arena.expr(record.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "camera")
+        );
+        assert!(
+            matches!(program.arena.expr(record.fields[1].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality")
+        );
 
         let Stmt::Let { value, .. } = program.arena.stmt(main.body[3]) else {
             panic!("expected record copy-with let");
@@ -4257,7 +4348,9 @@ fn main() {
             panic!("expected record copy-with expression");
         };
         assert_eq!(update.fields.len(), 1);
-        assert!(matches!(program.arena.expr(update.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality"));
+        assert!(
+            matches!(program.arena.expr(update.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality")
+        );
     }
 
     #[test]
@@ -4283,14 +4376,21 @@ fn main() {
         let Stmt::LetRecord { items, .. } = program.arena.stmt(main.body[0]) else {
             panic!("expected record destructuring bind");
         };
-        assert!(matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "camera"));
+        assert!(
+            matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "camera")
+        );
         assert!(matches!(items[1].target, RecordPatternTarget::Discard));
 
         let Stmt::LetElseRecord { items, .. } = program.arena.stmt(main.body[1]) else {
             panic!("expected record let-else");
         };
-        assert!(matches!(items[0].target, RecordPatternTarget::QuadLiteral(QuadVal::T)));
-        assert!(matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "quality"));
+        assert!(matches!(
+            items[0].target,
+            RecordPatternTarget::QuadLiteral(QuadVal::T)
+        ));
+        assert!(
+            matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "quality")
+        );
     }
 
     #[test]
@@ -4387,8 +4487,13 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
         assert_eq!(items.len(), 2);
-        assert!(matches!(items[0].target, RecordPatternTarget::QuadLiteral(QuadVal::T)));
-        assert!(matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "score"));
+        assert!(matches!(
+            items[0].target,
+            RecordPatternTarget::QuadLiteral(QuadVal::T)
+        ));
+        assert!(
+            matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "score")
+        );
         assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
         assert!(else_return.is_none());
     }

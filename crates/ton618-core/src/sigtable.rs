@@ -1,6 +1,6 @@
+use crate::SymbolId;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use crate::SymbolId;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SigTable {

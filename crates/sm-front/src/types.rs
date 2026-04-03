@@ -386,11 +386,25 @@ pub struct ValidationVariantPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationCheck {
-    RequiredField { field: SymbolId },
-    FieldType { field: SymbolId, ty: Type },
-    TaggedUnionBranch { variant: SymbolId },
-    TaggedUnionBranchRequiredField { variant: SymbolId, field: SymbolId },
-    TaggedUnionBranchFieldType { variant: SymbolId, field: SymbolId, ty: Type },
+    RequiredField {
+        field: SymbolId,
+    },
+    FieldType {
+        field: SymbolId,
+        ty: Type,
+    },
+    TaggedUnionBranch {
+        variant: SymbolId,
+    },
+    TaggedUnionBranchRequiredField {
+        variant: SymbolId,
+        field: SymbolId,
+    },
+    TaggedUnionBranchFieldType {
+        variant: SymbolId,
+        field: SymbolId,
+        ty: Type,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

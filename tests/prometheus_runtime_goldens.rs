@@ -1,10 +1,8 @@
 use semantic_language::frontend::{emit_ir_to_semcode, IrFunction, IrInstr};
-use semantic_language::prom_audit::AuditEventKind;
 use semantic_language::prom_abi::AbiValue;
+use semantic_language::prom_audit::AuditEventKind;
 use semantic_language::prom_cap::CapabilityManifest;
-use semantic_language::prom_gates::{
-    DeterministicGateMock, GateDescriptor, GateId, GateRegistry,
-};
+use semantic_language::prom_gates::{DeterministicGateMock, GateDescriptor, GateId, GateRegistry};
 use semantic_language::prom_rules::{RuleCondition, RuleDefinition, RuleEngine};
 use semantic_language::prom_runtime::GateExecutionSession;
 use semantic_language::prom_state::{
@@ -160,10 +158,7 @@ fn render_runtime_baseline() -> String {
     }
     out.push_str("writes:\n");
     for (gate, value) in binding.writes() {
-        out.push_str(&format!(
-            "  {}:{}={:?}\n",
-            gate.device_id, gate.port, value
-        ));
+        out.push_str(&format!("  {}:{}={:?}\n", gate.device_id, gate.port, value));
     }
     out
 }

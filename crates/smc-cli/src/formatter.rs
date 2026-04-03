@@ -101,7 +101,10 @@ fn is_semantic_source(path: &Path) -> bool {
 }
 
 fn should_skip_dir(path: &Path) -> bool {
-    let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     matches!(
         name,
         ".git" | "target" | "node_modules" | "dist" | ".semantic-cache"

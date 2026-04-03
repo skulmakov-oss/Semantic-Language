@@ -1,18 +1,11 @@
+use crate::types::{FrontendError, Token, TokenKind};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use crate::types::{FrontendError, Token, TokenKind};
 use ton618_core::SourceMark;
 
-fn push_tok(
-    out: &mut Vec<Token>,
-    kind: TokenKind,
-    text: &str,
-    pos: usize,
-    line: u32,
-    col: u32,
-) {
+fn push_tok(out: &mut Vec<Token>, kind: TokenKind, text: &str, pos: usize, line: u32, col: u32) {
     out.push(Token {
         kind,
         text: text.to_string(),

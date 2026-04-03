@@ -48,4 +48,3 @@ pub fn integration_snapshot(
 pub fn apply_state_update_and_refresh_agenda(
 pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_entry(
-

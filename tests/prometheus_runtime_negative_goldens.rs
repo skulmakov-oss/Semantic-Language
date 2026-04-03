@@ -1,15 +1,15 @@
 use semantic_language::frontend::{emit_ir_to_semcode, IrFunction, IrInstr};
 use semantic_language::prom_abi::{AbiValue, HostCallId, RecordingHostAbi};
 use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
-use semantic_language::prom_gates::{
-    DeterministicGateMock, GateDescriptor, GateId, GateRegistry,
-};
+use semantic_language::prom_gates::{DeterministicGateMock, GateDescriptor, GateId, GateRegistry};
 use semantic_language::prom_rules::{RuleCondition, RuleDefinition, RuleEngine};
 use semantic_language::prom_runtime::GateExecutionSession;
 use semantic_language::prom_state::{
     ContextWindow, FactResolution, FactValue, SemanticStateStore, StateUpdate,
 };
-use semantic_language::semcode_vm::{run_verified_semcode_with_host_and_capabilities, RuntimeError};
+use semantic_language::semcode_vm::{
+    run_verified_semcode_with_host_and_capabilities, RuntimeError,
+};
 
 fn read_text(path: &str) -> String {
     let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read '{}': {}", path, e));
@@ -122,8 +122,12 @@ fn render_gate_write_denial_baseline() -> String {
     let manifest = CapabilityManifest::gate_surface();
 
     let err = {
-        let mut session =
-            GateExecutionSession::kernel_bound(&registry, &mut binding, &manifest, manifest.metadata());
+        let mut session = GateExecutionSession::kernel_bound(
+            &registry,
+            &mut binding,
+            &manifest,
+            manifest.metadata(),
+        );
         session
             .run_verified_semcode(&bytes)
             .expect_err("read-only gate write must fail")
@@ -132,7 +136,10 @@ fn render_gate_write_denial_baseline() -> String {
     match err {
         RuntimeError::HostAbi(err) => format!(
             "error=HostAbi\ncall={:?}\nkind={:?}\nmessage={}\nwrites={:?}\n",
-            err.call, err.kind, err.message, binding.writes()
+            err.call,
+            err.kind,
+            err.message,
+            binding.writes()
         ),
         other => panic!("expected host abi error, got {other:?}"),
     }
@@ -189,19 +196,13 @@ fn render_state_validation_rejection_baseline() -> String {
 #[test]
 fn golden_capability_denial_runtime_snapshot() {
     let got = render_capability_denial_baseline();
-    assert_snapshot(
-        "tests/golden_snapshots/runtime/capability_denial.txt",
-        &got,
-    );
+    assert_snapshot("tests/golden_snapshots/runtime/capability_denial.txt", &got);
 }
 
 #[test]
 fn golden_gate_write_denial_runtime_snapshot() {
     let got = render_gate_write_denial_baseline();
-    assert_snapshot(
-        "tests/golden_snapshots/runtime/gate_write_denial.txt",
-        &got,
-    );
+    assert_snapshot("tests/golden_snapshots/runtime/gate_write_denial.txt", &got);
 }
 
 #[test]
