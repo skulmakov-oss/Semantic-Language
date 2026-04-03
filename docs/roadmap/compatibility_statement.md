@@ -82,6 +82,9 @@ Current `v1` scope commitment:
   archive ownership/materialization for `MultiSessionReplayArchive`
 - the same forward-only reading also applies to first-wave rule-side effect
   execution for declared `StateWrite` and `AuditNote`
+- the same forward-only reading also applies to first-wave rollback persistence
+  semantics for `StateRollbackArtifact` ownership and deterministic
+  `SemanticStateStore::apply_rollback(...)`
 
 ## Explicit Non-Commitments
 
@@ -93,6 +96,8 @@ The repository does not yet claim final compatibility guarantees for:
   first-wave post-stable pack
 - replay archive semantics beyond the current admitted first-wave
   `MultiSessionReplayArchive` ownership/materialization contract
+- rollback persistence semantics beyond the current admitted first-wave
+  artifact ownership and deterministic apply/restore contract
 - rule-side effect execution semantics beyond the current admitted first-wave
   declared `StateWrite` / `AuditNote` contract
 - broader packaged release layout beyond the current stable assets

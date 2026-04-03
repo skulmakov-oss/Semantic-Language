@@ -92,11 +92,16 @@ The following limits remain explicit and should be treated as release-facing hon
 - the published `v1.1.1` line intentionally excludes multi-session replay
   archives, even though current `main` now admits narrow
   `MultiSessionReplayArchive` ownership/materialization
+- the published `v1.1.1` line intentionally excludes rollback persistence
+  semantics, even though current `main` now admits narrow
+  `StateRollbackArtifact` ownership and deterministic
+  `SemanticStateStore::apply_rollback(...)`
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or
   runtime replay engine semantics for persisted archives
-- rollback persistence semantics are not yet formalized beyond current orchestration notes
+- current `main` still does not claim rollback artifact text materialization,
+  crash-resume, inter-session repair, or generic transaction semantics
 - final stable packaging and tag policy remain narrower than the long-term distribution plan
 
 ## Current Release Gate

@@ -61,13 +61,17 @@ Current runtime baselines intentionally cover:
 - canonical declared-order rule-side effect execution for:
   - `RuleEffect::StateWrite`
   - `RuleEffect::AuditNote`
+- canonical rollback artifact ownership and deterministic apply/restore for:
+  - `StateRollbackArtifact`
+  - `SemanticStateStore::apply_rollback(...)`
 
 Current runtime baselines do not yet cover:
 
 - inter-session state migration
 - mixed-family generic rule-effect executors
 - rollback, retry, or compensation semantics for rule effects
-- rollback persistence semantics
+- rollback artifact canonical text materialization/loading
+- crash-resume, recovery, or repair semantics around rollback persistence
 
 ## Merge Gate
 

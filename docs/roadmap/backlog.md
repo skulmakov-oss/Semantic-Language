@@ -37,11 +37,12 @@ Current post-`v1` wave:
 - the first-wave multi-session replay archive track is completed and now lives
   as frozen baseline history in
   `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
+- the first-wave rollback persistence semantics track is completed and now
+  lives as frozen baseline history in
+  `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- rollback persistence semantics:
-  `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
 
 Foundational work already in place:
 

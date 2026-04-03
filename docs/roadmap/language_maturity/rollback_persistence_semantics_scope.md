@@ -1,6 +1,6 @@
 # Rollback Persistence Semantics Scope
 
-Status: proposed post-stable expansion track
+Status: completed post-stable first-wave track
 Related backlog item: `rollback persistence semantics`
 
 ## Goal
@@ -27,8 +27,9 @@ The current stable line already freezes these facts:
 - runtime validation still treats rollback persistence as outside the admitted
   baseline
 
-That reading remains the source of truth until this track explicitly lands a
-widened post-stable contract.
+That reading remains the source of truth for the published stable line.
+Current `main` now carries the widened first-wave rollback contract described
+below; it does not retroactively change the published `v1.1.1` boundary.
 
 ## Included In This Track
 
@@ -62,13 +63,32 @@ widened post-stable contract.
 - `596fdf4` adds explicit `prom-state` ownership for ordered
   `StateRollbackCheckpoint` and `StateRollbackArtifact` metadata, without yet
   admitting rollback apply/restore semantics
-- current second code slice admits deterministic rollback apply/restore for the
+- `d9f0b84` admits deterministic rollback apply/restore for the
   narrow first-wave path:
   - linear store history only
   - ordered checkpoint metadata only
   - explicit restore-to-checkpoint plus transition truncation
   - still no rollback artifact text format, crash-resume, or inter-session
     repair semantics
+
+## Close-Out Reading
+
+This first-wave rollback track is now complete on `main`.
+
+Completed first-wave surface:
+
+- explicit owner-layer rollback artifact metadata in `prom-state`
+- deterministic rollback checkpoint ordering and head-epoch ownership
+- deterministic rollback apply/restore for the admitted linear-history path
+- release-facing docs that distinguish published `v1.1.1` from widened `main`
+
+Still intentionally outside this first wave:
+
+- rollback artifact canonical text materialization/loading
+- crash-resume or automatic recovery orchestration
+- inter-session migration or repair semantics
+- distributed persistence backends
+- generic transaction or compensation engines
 
 ## Acceptance Reading
 
