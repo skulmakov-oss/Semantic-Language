@@ -83,10 +83,14 @@ The following limits remain explicit and should be treated as release-facing hon
 - the published `v1.1.1` line intentionally excludes post-stable PROMETHEUS
   calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead`,
   even though current `main` now admits them as a forward-only widened boundary
-- semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
+- the published `v1.1.1` line intentionally excludes first-wave rule-side
+  effect execution, even though current `main` now admits narrow declared
+  `StateWrite` and `AuditNote` execution
 - the published `v1.1.1` line intentionally excludes post-stable persisted
   archive materialization/loading, even though current `main` now admits narrow
   `StateSnapshotArchive` and `AuditReplayArchive` ownership/materialization
+- current `main` still does not claim rollback, retry/compensation, or generic
+  mixed-family rule-effect execution semantics
 - rollback persistence semantics are not yet formalized beyond current orchestration notes
 - final stable packaging and tag policy remain narrower than the long-term distribution plan
 

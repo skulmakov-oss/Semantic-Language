@@ -31,11 +31,12 @@ Current post-`v1` wave:
 - the first-wave persistence/replay backend track is completed and now lives as
   frozen baseline history in
   `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
+- the first-wave rule-side effect execution track is completed and now lives as
+  frozen baseline history in
+  `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- richer rule-side effect execution semantics:
-  `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
 
 Foundational work already in place:
 

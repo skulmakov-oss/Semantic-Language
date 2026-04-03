@@ -1,6 +1,6 @@
 # Rule Side-Effect Execution Scope
 
-Status: proposed post-stable expansion track
+Status: completed post-stable first-wave track on `main`
 Related backlog item: `richer rule-side effect execution semantics`
 
 ## Goal
@@ -25,8 +25,9 @@ The current stable line already freezes these facts:
 - the published `v1.1.1` line does not claim full rule-side effect execution
   semantics as part of its stable commitment
 
-That stable reading remains the source of truth until this track explicitly
-lands a widened post-stable contract.
+That stable reading remains the source of truth for the published `v1.1.1`
+tag. Current `main` now carries a widened first-wave contract for explicit
+declared `StateWrite` and `AuditNote` execution only.
 
 ## Included In This Track
 
@@ -58,13 +59,28 @@ lands a widened post-stable contract.
 ## Slice History
 
 - `6810250` documented this track as a post-stable runtime expansion checkpoint
-- current first code slice adds explicit `prom-rules` ownership for ordered
+- `84312a7` added explicit `prom-rules` ownership for ordered
   `RuleEffectPlan` declarations with two inert first-wave families:
   `StateWrite` and `AuditNote`
-- current second code slice admits only deterministic `StateWrite` execution in
+- `3a4739d` admitted only deterministic `StateWrite` execution in
   `prom-runtime`, with explicit rejection for `AuditNote`
-- current third code slice admits only deterministic `AuditNote` execution in
+- `1d00596` admitted only deterministic `AuditNote` execution in
   `prom-runtime`, without widening it into a mixed-family generic executor
+
+## Completed First-Wave Reading
+
+Current `main` now treats this track as completed for the narrow first-wave
+contract:
+
+- explicit owner-layer rule effect declarations are canonical in `prom-rules`
+- deterministic declared-order `StateWrite` execution is canonical in
+  `prom-runtime`
+- deterministic declared-order `AuditNote` execution is canonical in
+  `prom-runtime`
+- published `v1.1.1` remains narrower and does not retroactively claim this
+  widened rule-effect execution surface
+- rollback, retry/compensation, mixed-family generic executors, and distributed
+  rule workers remain outside this first-wave contract
 
 ## Acceptance Reading
 
@@ -77,3 +93,5 @@ This track is done only when:
   post-stable widened contract
 - no part of the work quietly widens host behavior, persistence/replay, or
   recovery semantics
+
+That acceptance boundary is now met on current `main`.

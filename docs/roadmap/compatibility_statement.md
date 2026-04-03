@@ -78,6 +78,8 @@ Current `v1` scope commitment:
   contract, not a retroactive widening of the published stable tag
 - the same forward-only reading also applies to persisted archive
   materialization/loading for `StateSnapshotArchive` and `AuditReplayArchive`
+- the same forward-only reading also applies to first-wave rule-side effect
+  execution for declared `StateWrite` and `AuditNote`
 
 ## Explicit Non-Commitments
 
@@ -88,7 +90,8 @@ The repository does not yet claim final compatibility guarantees for:
 - any wider PROMETHEUS host-call families beyond the currently admitted
   first-wave post-stable pack
 - multi-session replay archives
-- rule-side effect execution semantics beyond the current narrow orchestration contract
+- rule-side effect execution semantics beyond the current admitted first-wave
+  declared `StateWrite` / `AuditNote` contract
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule

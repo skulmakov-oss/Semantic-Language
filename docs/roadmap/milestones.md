@@ -66,7 +66,7 @@
   - richer runtime semantics remain non-blocking for the current narrow `v1`
   - current completed post-stable persistence/replay checkpoint:
     `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
-  - current post-stable rule execution checkpoint:
+  - current completed post-stable rule execution checkpoint:
     `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
 - `M6 v1 Lockdown`
   - freezes
