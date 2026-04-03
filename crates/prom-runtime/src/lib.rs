@@ -5,9 +5,10 @@ use prom_audit::{AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail}
 use prom_abi::PrometheusHostAbi;
 use prom_cap::{CapabilityChecker, CapabilityManifestMetadata};
 use prom_gates::{GateBinding, GateHostAdapter, GateRegistry};
-use prom_rules::{Agenda, AgendaEntry, RuleEngine};
+use prom_rules::{Agenda, AgendaEntry, RuleDefinition, RuleEffect, RuleEngine, RuleId};
 use prom_state::{
-    SemanticStateStore, StateEpoch, StateTransitionMetadata, StateUpdate, StateValidationError,
+    ContextWindow, FactResolution, SemanticStateStore, StateEpoch, StateTransitionMetadata,
+    StateUpdate, StateValidationError,
 };
 use sm_runtime_core::{ExecutionConfig, ExecutionContext};
 use sm_vm::{
@@ -40,6 +41,52 @@ pub struct RuntimeStateAdvance {
     pub agenda: Agenda,
     pub snapshot: RuntimeIntegrationSnapshot,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStateWriteAdvance {
+    pub rule_id: RuleId,
+    pub effect_ordinal: usize,
+    pub advance: RuntimeStateAdvance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleEffectExecutionCode {
+    UnsupportedEffectFamily,
+    StateValidationFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleEffectExecutionError {
+    pub code: RuleEffectExecutionCode,
+    pub rule_id: RuleId,
+    pub effect_ordinal: usize,
+    pub message: String,
+}
+
+impl RuleEffectExecutionError {
+    pub fn new(
+        code: RuleEffectExecutionCode,
+        rule_id: RuleId,
+        effect_ordinal: usize,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code,
+            rule_id,
+            effect_ordinal,
+            message: message.into(),
+        }
+    }
+}
+
+impl core::fmt::Display for RuleEffectExecutionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}: {}", self.code, self.message)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for RuleEffectExecutionError {}
 
 fn build_audit_session(descriptor: &RuntimeSessionDescriptor) -> AuditSessionMetadata {
     AuditSessionMetadata {
@@ -81,6 +128,59 @@ fn apply_update_refresh_agenda(
         agenda,
         snapshot,
     })
+}
+
+fn apply_rule_state_write_effects(
+    descriptor: &RuntimeSessionDescriptor,
+    state: &mut SemanticStateStore,
+    rule: &RuleDefinition,
+    rules: &RuleEngine,
+    trail: &mut AuditTrail,
+) -> Result<Vec<RuleStateWriteAdvance>, RuleEffectExecutionError> {
+    let mut advances = Vec::new();
+
+    for (effect_ordinal, effect) in rule.effect_plan().effects().iter().enumerate() {
+        let RuleEffect::StateWrite(effect) = effect else {
+            return Err(RuleEffectExecutionError::new(
+                RuleEffectExecutionCode::UnsupportedEffectFamily,
+                rule.id.clone(),
+                effect_ordinal,
+                format!(
+                    "rule '{}' effect {} is not admitted by the current state-write execution slice",
+                    rule.id.0, effect_ordinal
+                ),
+            ));
+        };
+
+        let advance = apply_update_refresh_agenda(
+            descriptor,
+            state,
+            StateUpdate::new(
+                effect.key.clone(),
+                FactResolution::Certain(effect.value.clone()),
+                ContextWindow::new(effect.context.clone()),
+                effect.reason.clone(),
+            ),
+            rules,
+            trail,
+        )
+        .map_err(|err| {
+            RuleEffectExecutionError::new(
+                RuleEffectExecutionCode::StateValidationFailed,
+                rule.id.clone(),
+                effect_ordinal,
+                err.to_string(),
+            )
+        })?;
+
+        advances.push(RuleStateWriteAdvance {
+            rule_id: rule.id.clone(),
+            effect_ordinal,
+            advance,
+        });
+    }
+
+    Ok(advances)
 }
 
 pub struct ExecutionSession<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
@@ -190,6 +290,16 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> ExecutionSession<'a, H, C> 
         trail: &mut AuditTrail,
     ) -> Result<RuntimeStateAdvance, StateValidationError> {
         apply_update_refresh_agenda(&self.descriptor, state, update, rules, trail)
+    }
+
+    pub fn apply_rule_state_write_effects(
+        &self,
+        state: &mut SemanticStateStore,
+        rule: &RuleDefinition,
+        rules: &RuleEngine,
+        trail: &mut AuditTrail,
+    ) -> Result<Vec<RuleStateWriteAdvance>, RuleEffectExecutionError> {
+        apply_rule_state_write_effects(&self.descriptor, state, rule, rules, trail)
     }
 
     pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
@@ -325,6 +435,16 @@ impl<'a, B: GateBinding, C: CapabilityChecker> GateExecutionSession<'a, B, C> {
         apply_update_refresh_agenda(&self.descriptor, state, update, rules, trail)
     }
 
+    pub fn apply_rule_state_write_effects(
+        &self,
+        state: &mut SemanticStateStore,
+        rule: &RuleDefinition,
+        rules: &RuleEngine,
+        trail: &mut AuditTrail,
+    ) -> Result<Vec<RuleStateWriteAdvance>, RuleEffectExecutionError> {
+        apply_rule_state_write_effects(&self.descriptor, state, rule, rules, trail)
+    }
+
     pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
         self.run_verified_semcode_entry(bytes, "main")
     }
@@ -351,7 +471,7 @@ mod tests {
     use prom_abi::{AbiValue, RecordingHostAbi};
     use prom_cap::CapabilityManifest;
     use prom_gates::{DeterministicGateMock, GateDescriptor, GateId};
-    use prom_rules::{RuleCondition, RuleDefinition, RuleEngine};
+    use prom_rules::{RuleCondition, RuleDefinition, RuleEffect, RuleEngine};
     use prom_state::{ContextWindow, FactResolution, FactValue, StateUpdate};
 
     #[test]
@@ -484,5 +604,122 @@ mod tests {
                 to_epoch
             } if key == "fact.alpha" && *from_epoch == 0 && *to_epoch == 1
         ));
+    }
+
+    #[test]
+    fn execution_session_applies_rule_state_write_effects_in_declared_order() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut host = RecordingHostAbi::default();
+        let session = ExecutionSession::kernel_bound(&mut host, &manifest, metadata);
+
+        let mut state = SemanticStateStore::new();
+        state
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("seed");
+
+        let mut rules = RuleEngine::new();
+        let rule = RuleDefinition::new(
+            "rule.alpha",
+            5,
+            vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+        )
+        .with_effects(vec![
+            RuleEffect::state_write(
+                "fact.beta",
+                FactValue::I32(2),
+                "window.beta",
+                "derive beta",
+            ),
+            RuleEffect::state_write(
+                "fact.gamma",
+                FactValue::Text("ready".to_string()),
+                "window.gamma",
+                "derive gamma",
+            ),
+        ]);
+        rules.register(rule.clone()).expect("register rule");
+
+        let mut audit = session.begin_audit_trail();
+        let advances = session
+            .apply_rule_state_write_effects(&mut state, &rule, &rules, &mut audit)
+            .expect("apply rule state-write effects");
+
+        assert_eq!(advances.len(), 2);
+        assert_eq!(advances[0].effect_ordinal, 0);
+        assert_eq!(advances[0].advance.transition.key, "fact.beta");
+        assert_eq!(advances[1].effect_ordinal, 1);
+        assert_eq!(advances[1].advance.transition.key, "fact.gamma");
+        assert!(matches!(
+            state.get("fact.beta").expect("fact.beta").resolution,
+            FactResolution::Certain(FactValue::I32(2))
+        ));
+        assert!(matches!(
+            state.get("fact.gamma").expect("fact.gamma").resolution,
+            FactResolution::Certain(FactValue::Text(ref text)) if text == "ready"
+        ));
+        assert!(matches!(
+            &audit.events()[0].kind,
+            AuditEventKind::StateTransition {
+                key,
+                from_epoch,
+                to_epoch
+            } if key == "fact.beta" && *from_epoch == 1 && *to_epoch == 2
+        ));
+        assert!(matches!(
+            &audit.events()[1].kind,
+            AuditEventKind::StateTransition {
+                key,
+                from_epoch,
+                to_epoch
+            } if key == "fact.gamma" && *from_epoch == 2 && *to_epoch == 3
+        ));
+    }
+
+    #[test]
+    fn execution_session_rejects_non_state_write_effect_families_in_first_wave() {
+        let manifest = CapabilityManifest::gate_surface();
+        let metadata = manifest.metadata();
+        let mut host = RecordingHostAbi::default();
+        let session = ExecutionSession::kernel_bound(&mut host, &manifest, metadata);
+
+        let mut state = SemanticStateStore::new();
+        state
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("seed");
+
+        let mut rules = RuleEngine::new();
+        let rule = RuleDefinition::new(
+            "rule.alpha",
+            5,
+            vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+        )
+        .with_effects(vec![RuleEffect::audit_note("not yet admitted")]);
+        rules.register(rule.clone()).expect("register rule");
+
+        let mut audit = session.begin_audit_trail();
+        let err = session
+            .apply_rule_state_write_effects(&mut state, &rule, &rules, &mut audit)
+            .expect_err("audit-note execution is not admitted in first wave");
+
+        assert_eq!(
+            err.code,
+            RuleEffectExecutionCode::UnsupportedEffectFamily
+        );
+        assert_eq!(err.rule_id.0, "rule.alpha");
+        assert_eq!(err.effect_ordinal, 0);
+        assert!(audit.events().is_empty());
+        assert!(state.get("fact.alpha").is_some());
+        assert!(state.get("fact.beta").is_none());
     }
 }

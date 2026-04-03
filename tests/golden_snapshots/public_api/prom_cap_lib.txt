@@ -35,7 +35,7 @@ pub struct CapabilityManifest {
 pub const CURRENT_SCHEMA: &'static str = "prom.cap.manifest";
 pub const CURRENT_VERSION: CapabilityManifestVersion = CapabilityManifestVersion::V1;
 pub fn new() -> Self {
-pub fn with_contract(schema: impl Into<String>, version: CapabilityManifestVersion) -> Self {
+pub fn with_contract(
 pub fn allow(&mut self, capability: CapabilityKind) {
 pub fn allows(&self, capability: CapabilityKind) -> bool {
 pub fn metadata(&self) -> CapabilityManifestMetadata {

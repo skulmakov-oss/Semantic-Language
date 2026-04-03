@@ -61,6 +61,8 @@ lands a widened post-stable contract.
 - current first code slice adds explicit `prom-rules` ownership for ordered
   `RuleEffectPlan` declarations with two inert first-wave families:
   `StateWrite` and `AuditNote`
+- current second code slice admits only deterministic `StateWrite` execution in
+  `prom-runtime`, with explicit rejection for `AuditNote`
 
 ## Acceptance Reading
 

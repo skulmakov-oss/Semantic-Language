@@ -18,6 +18,20 @@ pub struct RuntimeStateAdvance {
 pub transition: StateTransitionMetadata,
 pub agenda: Agenda,
 pub snapshot: RuntimeIntegrationSnapshot,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStateWriteAdvance {
+pub rule_id: RuleId,
+pub effect_ordinal: usize,
+pub advance: RuntimeStateAdvance,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleEffectExecutionCode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleEffectExecutionError {
+pub code: RuleEffectExecutionCode,
+pub rule_id: RuleId,
+pub effect_ordinal: usize,
+pub message: String,
+pub fn new(
 pub struct ExecutionSession<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
 pub fn new(
 pub fn kernel_bound(
@@ -31,6 +45,7 @@ pub fn record_rule_activation(
 pub fn record_state_transition(
 pub fn integration_snapshot(
 pub fn apply_state_update_and_refresh_agenda(
+pub fn apply_rule_state_write_effects(
 pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_entry(
 pub struct GateExecutionSession<'a, B: GateBinding, C: CapabilityChecker> {
@@ -46,6 +61,6 @@ pub fn record_rule_activation(
 pub fn record_state_transition(
 pub fn integration_snapshot(
 pub fn apply_state_update_and_refresh_agenda(
+pub fn apply_rule_state_write_effects(
 pub fn run_verified_semcode(&mut self, bytes: &[u8]) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_entry(
-

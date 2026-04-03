@@ -14,6 +14,8 @@ Current canonical orchestration types:
 - `GateExecutionSession`
 - `ActivationSelection`
 - `RuntimeStateAdvance`
+- `RuleStateWriteAdvance`
+- `RuleEffectExecutionError`
 
 ## Ownership Rule
 
@@ -60,6 +62,8 @@ Current narrow orchestration helpers:
 - state to agenda derivation through `RuleEngine::evaluate`
 - deterministic next-activation selection through `ActivationSelection`
 - state update application through `SemanticStateStore::apply` followed by agenda refresh
+- first-wave admitted rule-side effect execution for ordered `RuleEffect::StateWrite`
+  plans only
 - canonical audit emission helpers for:
   - session start and finish
   - rule activation
@@ -73,3 +77,19 @@ These helpers are orchestration glue only. They must not redefine:
 - state validation rules
 - agenda ordering rules
 - audit event schema ownership
+
+## Current Rule Effect Execution Boundary
+
+Current first-wave admitted execution family:
+
+- `RuleEffect::StateWrite`
+  - executes in declared order
+  - materializes into canonical `StateUpdate`
+  - refreshes agenda after every applied transition
+  - emits only canonical `AuditEventKind::StateTransition` entries
+
+Current first-wave explicitly does not admit:
+
+- `RuleEffect::AuditNote`
+- implicit retries, rollback, or compensation semantics
+- mixed-family effect execution through a generic rule-effect engine
