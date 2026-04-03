@@ -86,3 +86,9 @@ frozen as an internal stage contract".
 - correctness, warning behavior, and deterministic output are covered by a
   dedicated test pack
 - no part of the track widens runtime, CLI, or language surface boundaries
+
+## Slice History
+
+1. scope checkpoint and done-boundary freeze
+2. frontend arena-perimeter guards for raw `Expr` / `Stmt` ownership
+3. move-only cleanup-pass ownership for the current structural IR cleanup stage

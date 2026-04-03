@@ -105,3 +105,12 @@ fn crystalfold_stage_order_stays_cleanup_then_fold() {
         "docs/opts.md must keep the frozen CrystalFold pipeline contract"
     );
 }
+
+#[test]
+fn structural_cleanup_pass_remains_move_only_over_instruction_streams() {
+    let cleanup = fs::read_to_string("crates/sm-ir/src/passes/cleanup.rs").expect("read cleanup");
+    assert!(
+        !cleanup.contains("instrs[i].clone()"),
+        "StructuralCleanup must not fall back to per-instruction cloning"
+    );
+}

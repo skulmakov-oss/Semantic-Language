@@ -77,20 +77,19 @@ fn remove_unreachable_until_label(instrs: &mut Vec<IrInstr>) -> u32 {
 fn remove_noop_jumps(instrs: &mut Vec<IrInstr>) -> u32 {
     let before = instrs.len();
     let mut out = Vec::with_capacity(instrs.len());
-    let mut i = 0usize;
-    while i < instrs.len() {
-        let skip = if let IrInstr::Jmp { label } = &instrs[i] {
+    let mut input = core::mem::take(instrs).into_iter().peekable();
+    while let Some(instr) = input.next() {
+        let skip = if let IrInstr::Jmp { label } = &instr {
             matches!(
-                instrs.get(i + 1),
+                input.peek(),
                 Some(IrInstr::Label { name }) if name == label
             )
         } else {
             false
         };
         if !skip {
-            out.push(instrs[i].clone());
+            out.push(instr);
         }
-        i += 1;
     }
     let removed = before.saturating_sub(out.len()) as u32;
     *instrs = out;
@@ -119,20 +118,19 @@ fn load_dst_and_payload(instr: &IrInstr) -> Option<(u16, u64)> {
 fn remove_redundant_consecutive_loads(instrs: &mut Vec<IrInstr>) -> u32 {
     let before = instrs.len();
     let mut out = Vec::with_capacity(instrs.len());
-    let mut i = 0usize;
-    while i < instrs.len() {
+    let mut input = core::mem::take(instrs).into_iter().peekable();
+    while let Some(instr) = input.next() {
         let drop_curr = if let (Some(a), Some(b)) = (
-            load_dst_and_payload(&instrs[i]),
-            instrs.get(i + 1).and_then(load_dst_and_payload),
+            load_dst_and_payload(&instr),
+            input.peek().and_then(|next| load_dst_and_payload(next)),
         ) {
             a.0 == b.0
         } else {
             false
         };
         if !drop_curr {
-            out.push(instrs[i].clone());
+            out.push(instr);
         }
-        i += 1;
     }
     let removed = before.saturating_sub(out.len()) as u32;
     *instrs = out;
