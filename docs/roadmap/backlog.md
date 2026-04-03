@@ -4,6 +4,9 @@ Current release-control wave:
 
 - keep the active stable release line stable on `main`
 - keep new feature work paused while release-facing docs, asset smoke checks, and packaging stay aligned
+- keep active engineering work anchored to the canonical `main` source of truth
+  in
+  `docs/roadmap/language_maturity/mainline_source_of_truth_policy.md`
 
 Current release-maintenance wave:
 
