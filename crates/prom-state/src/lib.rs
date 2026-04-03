@@ -83,12 +83,27 @@ pub struct StateSnapshot {
 }
 
 pub const STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION: u32 = 1;
+pub const STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION: u32 = 1;
 const STATE_SNAPSHOT_ARCHIVE_MAGIC: &str = "semantic_state_snapshot_archive";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSnapshotArchive {
     pub format_version: u32,
     pub snapshot: StateSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackCheckpoint {
+    pub checkpoint_ordinal: u32,
+    pub snapshot: StateSnapshotArchive,
+    pub applied_transition_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackArtifact {
+    pub format_version: u32,
+    pub head_epoch: StateEpoch,
+    pub checkpoints: Vec<StateRollbackCheckpoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -390,6 +405,30 @@ impl StateSnapshotArchive {
             format_version,
             snapshot: StateSnapshot { epoch, records },
         })
+    }
+}
+
+impl StateRollbackCheckpoint {
+    pub fn new(
+        checkpoint_ordinal: u32,
+        snapshot: StateSnapshotArchive,
+        applied_transition_count: usize,
+    ) -> Self {
+        Self {
+            checkpoint_ordinal,
+            snapshot,
+            applied_transition_count,
+        }
+    }
+}
+
+impl StateRollbackArtifact {
+    pub fn new(head_epoch: StateEpoch, checkpoints: Vec<StateRollbackCheckpoint>) -> Self {
+        Self {
+            format_version: STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION,
+            head_epoch,
+            checkpoints,
+        }
     }
 }
 
@@ -725,5 +764,61 @@ records\t0\n";
         let err = StateSnapshotArchive::from_canonical_text(text).expect_err("must reject");
 
         assert!(err.message.contains("unsupported archive format version"));
+    }
+
+    #[test]
+    fn state_rollback_artifact_uses_explicit_format_version_and_head_epoch() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("apply");
+        let checkpoint = StateRollbackCheckpoint::new(0, store.snapshot().archive(), 1);
+        let artifact = StateRollbackArtifact::new(store.epoch(), vec![checkpoint.clone()]);
+
+        assert_eq!(
+            artifact.format_version,
+            STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION
+        );
+        assert_eq!(artifact.head_epoch, StateEpoch(1));
+        assert_eq!(artifact.checkpoints, vec![checkpoint]);
+    }
+
+    #[test]
+    fn state_rollback_artifact_preserves_declared_checkpoint_order() {
+        let mut store = SemanticStateStore::new();
+        store
+            .apply(StateUpdate::new(
+                "fact.alpha",
+                FactResolution::Certain(FactValue::Bool(true)),
+                ContextWindow::new("root"),
+                "seed alpha",
+            ))
+            .expect("apply");
+        let checkpoint0 = StateRollbackCheckpoint::new(0, store.snapshot().archive(), 1);
+
+        store
+            .apply(StateUpdate::new(
+                "fact.beta",
+                FactResolution::Certain(FactValue::Bool(false)),
+                ContextWindow::new("window.beta"),
+                "seed beta",
+            ))
+            .expect("apply");
+        let checkpoint1 = StateRollbackCheckpoint::new(1, store.snapshot().archive(), 2);
+
+        let artifact = StateRollbackArtifact::new(
+            store.epoch(),
+            vec![checkpoint0.clone(), checkpoint1.clone()],
+        );
+
+        assert_eq!(artifact.checkpoints[0].checkpoint_ordinal, 0);
+        assert_eq!(artifact.checkpoints[0].snapshot.snapshot.epoch, StateEpoch(1));
+        assert_eq!(artifact.checkpoints[1].checkpoint_ordinal, 1);
+        assert_eq!(artifact.checkpoints[1].snapshot.snapshot.epoch, StateEpoch(2));
     }
 }

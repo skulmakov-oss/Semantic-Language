@@ -87,9 +87,10 @@ pub mod prom_runtime {
 pub mod prom_state {
     pub use prom_state::{
         ContextWindow, FactResolution, FactValue, SemanticStateStore, StateEpoch, StateRecord,
-        StateSnapshot, StateSnapshotArchive, StateSnapshotArchiveFormatError,
-        StateTransitionMetadata, StateUpdate, StateValidationCode, StateValidationError,
-        STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION,
+        StateRollbackArtifact, StateRollbackCheckpoint, StateSnapshot,
+        StateSnapshotArchive, StateSnapshotArchiveFormatError, StateTransitionMetadata,
+        StateUpdate, StateValidationCode, StateValidationError,
+        STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION, STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION,
     };
 }
 #[cfg(feature = "std")]

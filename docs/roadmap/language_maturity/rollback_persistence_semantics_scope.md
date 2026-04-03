@@ -55,6 +55,14 @@ widened post-stable contract.
 3. deterministic rollback apply/restore path for the admitted first-wave
 4. runtime/spec/validation freeze for the widened rollback contract
 
+## Slice History
+
+- `f9e92f7` documented this track as a post-stable persistence/runtime
+  expansion checkpoint
+- current first code slice adds explicit `prom-state` ownership for ordered
+  `StateRollbackCheckpoint` and `StateRollbackArtifact` metadata, without yet
+  admitting rollback apply/restore semantics
+
 ## Acceptance Reading
 
 This track is done only when:
@@ -66,4 +74,3 @@ This track is done only when:
   post-stable widened rollback contract
 - no part of the work quietly widens recovery, migration, or generic
   transaction semantics
-

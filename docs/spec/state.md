@@ -17,6 +17,8 @@ Current canonical state types:
 - `StateUpdate`
 - `StateSnapshot`
 - `StateSnapshotArchive`
+- `StateRollbackCheckpoint`
+- `StateRollbackArtifact`
 - `StateTransitionMetadata`
 - `SemanticStateStore`
 
@@ -30,6 +32,7 @@ Current canonical state types:
 - epoch/version model for state evolution
 - snapshot and restore surface
 - persisted snapshot archive envelope shape
+- rollback artifact envelope shape
 - state validation invariants
 
 `prom-state` does not own:
@@ -67,6 +70,16 @@ Current persisted state rule:
 - archive materialization/loading uses one canonical deterministic text envelope
 - persisted archive ownership does not widen store validation or runtime
   recovery semantics by implication
+
+Current post-stable owner-layer widening on `main`:
+
+- `prom-state` now also owns explicit rollback artifact metadata:
+  - `StateRollbackCheckpoint`
+  - `StateRollbackArtifact`
+- this first slice establishes deterministic checkpoint ordering and head-epoch
+  metadata only
+- rollback apply/restore semantics and canonical text materialization remain a
+  later slice and are not implied by owner-layer metadata alone
 
 ## Boundary Rule
 

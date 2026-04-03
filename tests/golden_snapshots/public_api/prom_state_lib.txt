@@ -34,10 +34,21 @@ pub struct StateSnapshot {
 pub epoch: StateEpoch,
 pub records: BTreeMap<String, StateRecord>,
 pub const STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION: u32 = 1;
+pub const STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSnapshotArchive {
 pub format_version: u32,
 pub snapshot: StateSnapshot,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackCheckpoint {
+pub checkpoint_ordinal: u32,
+pub snapshot: StateSnapshotArchive,
+pub applied_transition_count: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateRollbackArtifact {
+pub format_version: u32,
+pub head_epoch: StateEpoch,
+pub checkpoints: Vec<StateRollbackCheckpoint>,
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSnapshotArchiveFormatError {
 pub message: String,
@@ -63,3 +74,5 @@ pub fn archive(&self) -> StateSnapshotArchive {
 pub fn new(snapshot: StateSnapshot) -> Self {
 pub fn to_canonical_text(&self) -> String {
 pub fn from_canonical_text(src: &str) -> Result<Self, StateSnapshotArchiveFormatError> {
+pub fn new(
+pub fn new(head_epoch: StateEpoch, checkpoints: Vec<StateRollbackCheckpoint>) -> Self {
