@@ -1,6 +1,6 @@
 # Persistence And Replay Backend Scope
 
-Status: proposed post-stable expansion track
+Status: completed post-stable first-wave expansion track
 Related backlog item: `persistence and replay backends`
 
 ## Goal
@@ -70,6 +70,34 @@ This track is done only when:
 - no part of the work quietly widens runtime recovery, host behavior, or rule
   execution semantics
 
+## Close-Out Reading
+
+This track is now complete for the first-wave persisted artifact contract on
+`main`.
+
+What is now admitted on `main`:
+
+- explicit persisted archive owner types in `prom-state` and `prom-audit`
+- deterministic canonical text materialization/loading for
+  `StateSnapshotArchive`
+- deterministic canonical text materialization/loading for
+  `AuditReplayArchive`
+- public API/spec coverage for the same persisted archive surface
+
+What remains intentionally out of scope:
+
+- the published `v1.1.1` line still does not claim persistence/replay backends
+  as part of its stable commitment
+- no runtime recovery or crash-resume engine is implied
+- no multi-session replay archives are implied
+- no inter-session migration or rollback backend semantics are implied
+
+The correct reading is therefore:
+
+- first-wave persisted archive ownership/materialization is complete on `main`
+- the published stable baseline is still narrower than current `main`
+- any broader persistence/replay widening is a new post-stable track
+
 ## Slice History
 
 1. docs/governance checkpoint
@@ -77,3 +105,4 @@ This track is done only when:
    `prom-state` / `prom-audit`
 3. snapshot archive materialization/loading in `prom-state`
 4. audit replay archive materialization/loading in `prom-audit`
+5. docs/spec/runtime-validation freeze for the widened persisted contract

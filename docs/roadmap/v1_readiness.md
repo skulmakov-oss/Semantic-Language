@@ -84,7 +84,9 @@ The following limits remain explicit and should be treated as release-facing hon
   calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead`,
   even though current `main` now admits them as a forward-only widened boundary
 - semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
-- persistence backends are not part of the current runtime/audit contract
+- the published `v1.1.1` line intentionally excludes post-stable persisted
+  archive materialization/loading, even though current `main` now admits narrow
+  `StateSnapshotArchive` and `AuditReplayArchive` ownership/materialization
 - rollback persistence semantics are not yet formalized beyond current orchestration notes
 - final stable packaging and tag policy remain narrower than the long-term distribution plan
 

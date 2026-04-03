@@ -53,11 +53,13 @@ Current runtime baselines intentionally cover:
 - read-only gate write denial
 - state validation rejection before orchestration progress
 - canonical session descriptor exposure
+- canonical persisted archive materialization/loading for:
+  - `StateSnapshotArchive`
+  - `AuditReplayArchive`
 
 Current runtime baselines do not yet cover:
 
 - multi-session replay archives
-- persistence backends
 - inter-session state migration
 - rule execution side-effects beyond agenda activation
 - rollback persistence semantics

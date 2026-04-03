@@ -28,11 +28,12 @@ Current post-`v1` wave:
 - the first-wave PROMETHEUS host-call expansion track is completed and now
   lives as frozen baseline history in
   `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
+- the first-wave persistence/replay backend track is completed and now lives as
+  frozen baseline history in
+  `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- persistence and replay backends:
-  `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
 - richer rule-side effect execution semantics
 
 Foundational work already in place:

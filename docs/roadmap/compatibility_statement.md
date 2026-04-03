@@ -76,6 +76,8 @@ Current `v1` scope commitment:
   and `ClockRead` remain outside the current `v1.1.1` compatibility envelope
 - support for those wider calls on current `main` is a forward-only repo-main
   contract, not a retroactive widening of the published stable tag
+- the same forward-only reading also applies to persisted archive
+  materialization/loading for `StateSnapshotArchive` and `AuditReplayArchive`
 
 ## Explicit Non-Commitments
 
@@ -85,7 +87,6 @@ The repository does not yet claim final compatibility guarantees for:
   equality contract
 - any wider PROMETHEUS host-call families beyond the currently admitted
   first-wave post-stable pack
-- persistence backends
 - multi-session replay archives
 - rule-side effect execution semantics beyond the current narrow orchestration contract
 - broader packaged release layout beyond the current stable assets

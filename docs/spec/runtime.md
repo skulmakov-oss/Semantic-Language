@@ -64,6 +64,9 @@ Current narrow orchestration helpers:
   - session start and finish
   - rule activation
   - state transition metadata
+- persisted archive creation remains delegated to owner crates:
+  - `prom-state` for `StateSnapshotArchive`
+  - `prom-audit` for `AuditReplayArchive`
 
 These helpers are orchestration glue only. They must not redefine:
 
