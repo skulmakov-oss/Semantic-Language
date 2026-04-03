@@ -55,6 +55,13 @@ lands a widened post-stable contract.
 4. deterministic execution for one narrow audit-facing effect family
 5. docs/spec/runtime-validation freeze for the widened rule execution contract
 
+## Slice History
+
+- `6810250` documented this track as a post-stable runtime expansion checkpoint
+- current first code slice adds explicit `prom-rules` ownership for ordered
+  `RuleEffectPlan` declarations with two inert first-wave families:
+  `StateWrite` and `AuditNote`
+
 ## Acceptance Reading
 
 This track is done only when:

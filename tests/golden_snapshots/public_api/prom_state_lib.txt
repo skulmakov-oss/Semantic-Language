@@ -57,7 +57,7 @@ pub fn get(&self, key: &str) -> Option<&StateRecord> {
 pub fn records(&self) -> &BTreeMap<String, StateRecord> {
 pub fn transitions(&self) -> &[TransitionMetadata] {
 pub fn snapshot(&self) -> StateSnapshot {
-pub fn apply(&mut self, update: StateUpdate) -> Result<TransitionMetadata, StateValidationError> {
+pub fn apply(
 pub fn restore(&mut self, snapshot: StateSnapshot) {
 pub fn archive(&self) -> StateSnapshotArchive {
 pub fn new(snapshot: StateSnapshot) -> Self {

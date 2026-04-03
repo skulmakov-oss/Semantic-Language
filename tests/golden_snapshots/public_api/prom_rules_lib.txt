@@ -1,0 +1,63 @@
+source: crates/prom-rules/src/lib.rs
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RuleId(pub String);
+pub fn new(id: impl Into<String>) -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Salience(pub i32);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleCondition {
+pub key: String,
+pub expected: FactValue,
+pub fn equals(key: impl Into<String>, expected: FactValue) -> Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStateWriteEffect {
+pub key: String,
+pub value: FactValue,
+pub context: String,
+pub reason: String,
+pub fn new(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleAuditNoteEffect {
+pub message: String,
+pub fn new(message: impl Into<String>) -> Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleEffect {
+pub fn state_write(
+pub fn audit_note(message: impl Into<String>) -> Self {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuleEffectPlan {
+pub fn new() -> Self {
+pub fn from_effects(effects: Vec<RuleEffect>) -> Self {
+pub fn effects(&self) -> &[RuleEffect] {
+pub fn is_empty(&self) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleDefinition {
+pub id: RuleId,
+pub salience: Salience,
+pub conditions: Vec<RuleCondition>,
+pub effect_plan: RuleEffectPlan,
+pub fn new(id: impl Into<String>, salience: i32, conditions: Vec<RuleCondition>) -> Self {
+pub fn with_effects(mut self, effects: Vec<RuleEffect>) -> Self {
+pub fn effect_plan(&self) -> &RuleEffectPlan {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgendaEntry {
+pub rule_id: RuleId,
+pub salience: Salience,
+pub ordinal: usize,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Agenda {
+pub fn entries(&self) -> &[AgendaEntry] {
+pub fn pop_next(&mut self) -> Option<AgendaEntry> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleValidationCode {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleValidationError {
+pub code: RuleValidationCode,
+pub message: String,
+pub fn new(code: RuleValidationCode, message: impl Into<String>) -> Self {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuleEngine {
+pub fn new() -> Self {
+pub fn rules(&self) -> &[RuleDefinition] {
+pub fn register(&mut self, rule: RuleDefinition) -> Result<(), RuleValidationError> {
+pub fn evaluate(&self, state: &SemanticStateStore) -> Agenda {
