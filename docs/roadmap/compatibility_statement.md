@@ -70,7 +70,8 @@ Current `v1` scope commitment:
 
 The repository does not yet claim final compatibility guarantees for:
 
-- richer `fx` arithmetic semantics beyond the current canonical value path
+- richer `fx` arithmetic semantics beyond the current stable value-transport and
+  equality contract
 - wider planned PROMETHEUS host-call families beyond `GateRead`, `GateWrite`, and `PulseEmit`
 - persistence backends
 - multi-session replay archives

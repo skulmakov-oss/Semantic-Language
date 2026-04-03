@@ -19,7 +19,7 @@
   - `sm-profile`
   - type completeness matrix
   - optimizer review checklist
-  - current follow-up gap: tighten remaining `fx` numeric contract notes honestly
+  - current stable-note checkpoint: `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
 - `M3 Platform Formalization`
   - spec bundle
   - stable CLI

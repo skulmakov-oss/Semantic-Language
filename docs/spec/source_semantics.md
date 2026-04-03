@@ -291,6 +291,10 @@ Current first-wave units-of-measure semantics:
   `Result(T, E)` when those positions contain supported numeric families
 - lowering erases units after semantic validation and reuses the existing
   numeric lowering path
+- `fx` should be read as a stable value-transport and equality family inside the
+  current line; binary arithmetic on `fx` remains outside the current contract
+- unary `+` / unary `-` for `fx` remain limited to literal formation, not
+  general `fx` expression rewriting
 
 Current v0 limits:
 

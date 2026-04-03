@@ -78,7 +78,8 @@ Currently ready or substantially stabilized surfaces:
 
 The following limits remain explicit and should be treated as release-facing honesty requirements:
 
-- richer `fx` arithmetic is not yet aligned with the broader `f64` numeric surface, even though the canonical `fx` value path is now end-to-end
+- the canonical `fx` value path is end-to-end, but `fx` remains a narrow
+  value-transport/equality family rather than a full arithmetic peer of `f64`
 - wider planned PROMETHEUS calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` are intentionally excluded from the current `v1`
 - semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
 - persistence backends are not part of the current runtime/audit contract

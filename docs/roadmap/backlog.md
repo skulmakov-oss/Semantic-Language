@@ -13,7 +13,8 @@ Current release-maintenance wave:
 
 Current remaining `v1` wave:
 
-- tighten remaining `fx` numeric contract notes now that the canonical value path is end-to-end
+- `fx` numeric contract notes are frozen for the current stable line in
+  `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
 - keep forward stable release/tag policy explicit without rewriting history
 
 Current post-`v1` wave:

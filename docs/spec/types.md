@@ -153,16 +153,20 @@ Current rules:
 
 - the canonical `fx` value path is end-to-end
 - explicit `fx` annotations are supported
-- `fx` currently accepts literals and existing `fx`-typed values in the public
-  Rust-like path
+- `fx` currently accepts explicit literals and existing `fx`-typed values in
+  the public Rust-like path
+- contextual literal admission into `fx` is supported only where the expected
+  type is already `fx`
+- stable `fx` behavior in the current line is value transport plus equality, not
+  full arithmetic parity with `f64`
 
 Current honest limits:
 
 - richer `fx` arithmetic remains narrower than the `f64` surface
 - coercion from non-literal non-`fx` expressions is not yet the full intended
   long-term contract
-- unary `+` and unary `-` on `fx` are still intentionally limited in the
-  canonical Rust-like path
+- unary `+` and unary `-` on `fx` are admitted only for literal formation in
+  the canonical Rust-like path and are not general-purpose `fx` operators
 
 ## Units Of Measure
 
