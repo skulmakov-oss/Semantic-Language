@@ -11,6 +11,10 @@ pub enum CapabilityKind {
     GateRead,
     GateWrite,
     PulseEmit,
+    StateQuery,
+    StateUpdate,
+    EventPost,
+    ClockRead,
 }
 
 pub const fn required_capability_for_call(call: HostCallId) -> CapabilityKind {
@@ -18,6 +22,28 @@ pub const fn required_capability_for_call(call: HostCallId) -> CapabilityKind {
         HostCallId::GateRead => CapabilityKind::GateRead,
         HostCallId::GateWrite => CapabilityKind::GateWrite,
         HostCallId::PulseEmit => CapabilityKind::PulseEmit,
+        HostCallId::StateQuery => CapabilityKind::StateQuery,
+        HostCallId::StateUpdate => CapabilityKind::StateUpdate,
+        HostCallId::EventPost => CapabilityKind::EventPost,
+        HostCallId::ClockRead => CapabilityKind::ClockRead,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilitySurfaceClass {
+    StableV1,
+    PlannedPostStable,
+}
+
+pub const fn capability_surface_class(kind: CapabilityKind) -> CapabilitySurfaceClass {
+    match kind {
+        CapabilityKind::GateRead => CapabilitySurfaceClass::StableV1,
+        CapabilityKind::GateWrite => CapabilitySurfaceClass::StableV1,
+        CapabilityKind::PulseEmit => CapabilitySurfaceClass::StableV1,
+        CapabilityKind::StateQuery => CapabilitySurfaceClass::PlannedPostStable,
+        CapabilityKind::StateUpdate => CapabilitySurfaceClass::PlannedPostStable,
+        CapabilityKind::EventPost => CapabilitySurfaceClass::PlannedPostStable,
+        CapabilityKind::ClockRead => CapabilitySurfaceClass::PlannedPostStable,
     }
 }
 
@@ -256,6 +282,30 @@ mod tests {
             required_capability_for_call(HostCallId::PulseEmit),
             CapabilityKind::PulseEmit
         );
+        assert_eq!(
+            required_capability_for_call(HostCallId::StateUpdate),
+            CapabilityKind::StateUpdate
+        );
+    }
+
+    #[test]
+    fn capability_surface_class_keeps_planned_calls_outside_v1() {
+        assert_eq!(
+            capability_surface_class(CapabilityKind::GateRead),
+            CapabilitySurfaceClass::StableV1
+        );
+        assert_eq!(
+            capability_surface_class(CapabilityKind::ClockRead),
+            CapabilitySurfaceClass::PlannedPostStable
+        );
+    }
+
+    #[test]
+    fn gate_surface_remains_narrow_v1_only() {
+        let manifest = CapabilityManifest::gate_surface();
+        assert!(manifest.allows(CapabilityKind::GateRead));
+        assert!(!manifest.allows(CapabilityKind::StateQuery));
+        assert!(!manifest.allows(CapabilityKind::ClockRead));
     }
 
     #[test]

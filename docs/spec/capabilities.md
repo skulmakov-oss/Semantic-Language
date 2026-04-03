@@ -13,6 +13,13 @@ Current canonical capability kinds:
 - `GateWrite`
 - `PulseEmit`
 
+Current owned planned post-stable capability kinds:
+
+- `StateQuery`
+- `StateUpdate`
+- `EventPost`
+- `ClockRead`
+
 Current `v1` scope rule:
 
 - capability policy is frozen to the narrow host-call family used by the current `v1` ABI
@@ -34,6 +41,8 @@ Current canonical mapping:
 Non-`v1` note:
 
 - capability mapping for `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` is intentionally out of scope for the current `v1`
+- owning those capability ids in `prom-cap` does not by itself widen the
+  current manifest baseline or runtime admission surface
 
 ## Enforcement Rule
 

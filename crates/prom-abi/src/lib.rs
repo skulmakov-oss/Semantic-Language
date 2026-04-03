@@ -9,6 +9,10 @@ pub enum HostCallId {
     GateRead,
     GateWrite,
     PulseEmit,
+    StateQuery,
+    StateUpdate,
+    EventPost,
+    ClockRead,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,11 +29,18 @@ pub enum DeterminismClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostCallStability {
+    StableV1,
+    PlannedPostStable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostCallDescriptor {
     pub id: HostCallId,
     pub effect: EffectClass,
     pub determinism: DeterminismClass,
     pub returns_value: bool,
+    pub stability: HostCallStability,
 }
 
 pub const fn descriptor_for_call(id: HostCallId) -> HostCallDescriptor {
@@ -39,18 +50,49 @@ pub const fn descriptor_for_call(id: HostCallId) -> HostCallDescriptor {
             effect: EffectClass::HostQuery,
             determinism: DeterminismClass::HostBound,
             returns_value: true,
+            stability: HostCallStability::StableV1,
         },
         HostCallId::GateWrite => HostCallDescriptor {
             id,
             effect: EffectClass::HostWrite,
             determinism: DeterminismClass::HostBound,
             returns_value: false,
+            stability: HostCallStability::StableV1,
         },
         HostCallId::PulseEmit => HostCallDescriptor {
             id,
             effect: EffectClass::EventEmit,
             determinism: DeterminismClass::HostBound,
             returns_value: false,
+            stability: HostCallStability::StableV1,
+        },
+        HostCallId::StateQuery => HostCallDescriptor {
+            id,
+            effect: EffectClass::HostQuery,
+            determinism: DeterminismClass::HostBound,
+            returns_value: true,
+            stability: HostCallStability::PlannedPostStable,
+        },
+        HostCallId::StateUpdate => HostCallDescriptor {
+            id,
+            effect: EffectClass::HostWrite,
+            determinism: DeterminismClass::HostBound,
+            returns_value: false,
+            stability: HostCallStability::PlannedPostStable,
+        },
+        HostCallId::EventPost => HostCallDescriptor {
+            id,
+            effect: EffectClass::EventEmit,
+            determinism: DeterminismClass::HostBound,
+            returns_value: false,
+            stability: HostCallStability::PlannedPostStable,
+        },
+        HostCallId::ClockRead => HostCallDescriptor {
+            id,
+            effect: EffectClass::HostQuery,
+            determinism: DeterminismClass::HostBound,
+            returns_value: true,
+            stability: HostCallStability::PlannedPostStable,
         },
     }
 }
@@ -159,6 +201,14 @@ mod tests {
         assert_eq!(
             descriptor_for_call(HostCallId::PulseEmit).determinism,
             DeterminismClass::HostBound
+        );
+        assert_eq!(
+            descriptor_for_call(HostCallId::StateQuery).stability,
+            HostCallStability::PlannedPostStable
+        );
+        assert_eq!(
+            descriptor_for_call(HostCallId::ClockRead).returns_value,
+            true
         );
     }
 }

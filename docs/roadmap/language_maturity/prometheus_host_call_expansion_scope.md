@@ -71,3 +71,8 @@ The current non-`v1` candidate family remains:
 - `ClockRead`
 
 The track does not imply that all four must land in one slice.
+
+## Slice History
+
+1. docs/governance checkpoint
+2. ABI/capability declaration ownership for planned host-call families

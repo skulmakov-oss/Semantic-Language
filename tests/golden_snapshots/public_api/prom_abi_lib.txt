@@ -6,11 +6,14 @@ pub enum EffectClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeterminismClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostCallStability {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostCallDescriptor {
 pub id: HostCallId,
 pub effect: EffectClass,
 pub determinism: DeterminismClass,
 pub returns_value: bool,
+pub stability: HostCallStability,
 pub const fn descriptor_for_call(id: HostCallId) -> HostCallDescriptor {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AbiValue {
@@ -30,4 +33,3 @@ pub writes: alloc::vec::Vec<(u16, u16, AbiValue)>,
 pub pulses: alloc::vec::Vec<String>,
 pub next_read: AbiValue,
 pub fn with_read_value(next_read: AbiValue) -> Self {
-
