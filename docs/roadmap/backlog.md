@@ -34,7 +34,8 @@ Current post-`v1` wave:
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- richer rule-side effect execution semantics
+- richer rule-side effect execution semantics:
+  `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
 
 Foundational work already in place:
 
