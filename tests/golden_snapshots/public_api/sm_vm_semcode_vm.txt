@@ -35,10 +35,9 @@ pub fn run_verified_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
 pub fn run_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
 pub fn run_semcode_with_config(bytes: &[u8], config: ExecutionConfig) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_with_config(
-pub fn run_verified_semcode_with_entry(
+pub fn run_verified_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_with_entry_and_config(
 pub fn run_verified_semcode_with_host_and_capabilities<
 pub fn run_verified_semcode_with_host_and_capabilities_and_config<
 pub fn run_semcode_with_entry_and_config(
 pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
-

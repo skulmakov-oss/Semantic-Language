@@ -1,11 +1,12 @@
-use semantic_language::semcode_format::{
-    header_spec_from_magic, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, MAGIC0, MAGIC1, MAGIC2,
-};
-use semantic_language::semcode_vm::{disasm_semcode, run_semcode, RuntimeError};
 use semantic_language::frontend::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug, CompileProfile,
     OptLevel,
 };
+use semantic_language::semcode_format::{
+    header_spec_from_magic, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, MAGIC0,
+    MAGIC1, MAGIC2, MAGIC3,
+};
+use semantic_language::semcode_vm::{disasm_semcode, run_semcode, RuntimeError};
 use sm_vm::run_verified_semcode;
 
 fn first_function_code_offset(bytes: &[u8]) -> usize {
@@ -98,6 +99,30 @@ fn compat_v2_header_and_run() {
     assert_eq!(spec.epoch, 0);
     assert_eq!(spec.rev, 3);
     assert_ne!(spec.capabilities & CAP_FX_VALUES, 0);
+    run_verified_semcode(&bytes).expect("verified run");
+}
+
+#[test]
+fn compat_v3_header_and_run() {
+    let src = r#"
+        fn main() {
+            let a: fx = 2.5;
+            let b: fx = 1.5;
+            let c: fx = a + b;
+            let expected: fx = 4.0;
+            assert(c == expected);
+            return;
+        }
+    "#;
+    let bytes = compile_program_to_semcode(src).expect("compile");
+    assert_eq!(&bytes[0..8], &MAGIC3);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 4);
+    assert_ne!(spec.capabilities & CAP_FX_VALUES, 0);
+    assert_ne!(spec.capabilities & CAP_FX_MATH, 0);
     run_verified_semcode(&bytes).expect("verified run");
 }
 
@@ -203,6 +228,7 @@ fn compat_unsupported_version_has_migration_hint() {
             assert!(supported.contains("SEMCODE0"));
             assert!(supported.contains("SEMCODE1"));
             assert!(supported.contains("SEMCODE2"));
+            assert!(supported.contains("SEMCODE3"));
         }
         other => panic!("unexpected error: {other:?}"),
     }

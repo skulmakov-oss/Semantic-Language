@@ -3,6 +3,8 @@ use crate::frontend::QuadVal;
 use crate::legacy_lowering::IrInstr;
 use std::collections::HashMap;
 
+const FX_SCALE: i32 = 1_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CrystalFoldPass;
 
@@ -266,10 +268,14 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                         cst.insert(dst, ConstVal::Quad(v));
                         out.push(IrInstr::LoadQ { dst, val: v });
                     }
-                    _ if dst == lhs && matches!(cst.get(&rhs), Some(ConstVal::Quad(QuadVal::S))) => {
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::Quad(QuadVal::S))) =>
+                    {
                         rewrites = rewrites.saturating_add(1);
                     }
-                    _ if dst == rhs && matches!(cst.get(&lhs), Some(ConstVal::Quad(QuadVal::S))) => {
+                    _ if dst == rhs
+                        && matches!(cst.get(&lhs), Some(ConstVal::Quad(QuadVal::S))) =>
+                    {
                         rewrites = rewrites.saturating_add(1);
                     }
                     _ if matches!(cst.get(&lhs), Some(ConstVal::Quad(QuadVal::N)))
@@ -296,10 +302,14 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                         cst.insert(dst, ConstVal::Quad(v));
                         out.push(IrInstr::LoadQ { dst, val: v });
                     }
-                    _ if dst == lhs && matches!(cst.get(&rhs), Some(ConstVal::Quad(QuadVal::N))) => {
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::Quad(QuadVal::N))) =>
+                    {
                         rewrites = rewrites.saturating_add(1);
                     }
-                    _ if dst == rhs && matches!(cst.get(&lhs), Some(ConstVal::Quad(QuadVal::N))) => {
+                    _ if dst == rhs
+                        && matches!(cst.get(&lhs), Some(ConstVal::Quad(QuadVal::N))) =>
+                    {
                         rewrites = rewrites.saturating_add(1);
                     }
                     _ if matches!(cst.get(&lhs), Some(ConstVal::Quad(QuadVal::S)))
@@ -396,10 +406,14 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                             val: a.wrapping_add(b),
                         });
                     }
-                    _ if dst == lhs && matches!(cst.get(&rhs), Some(ConstVal::I32(v)) if *v == 0) => {
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::I32(v)) if *v == 0) =>
+                    {
                         rewrites = rewrites.saturating_add(1);
                     }
-                    _ if dst == rhs && matches!(cst.get(&lhs), Some(ConstVal::I32(v)) if *v == 0) => {
+                    _ if dst == rhs
+                        && matches!(cst.get(&lhs), Some(ConstVal::I32(v)) if *v == 0) =>
+                    {
                         rewrites = rewrites.saturating_add(1);
                     }
                     _ => {
@@ -490,10 +504,125 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                     }
                 }
             }
+            IrInstr::AddFx { dst, lhs, rhs } => {
+                match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
+                    (Some(ConstVal::Fx(a)), Some(ConstVal::Fx(b))) => {
+                        if let Some(sum) = fx_add_raw(a, b) {
+                            rewrites = rewrites.saturating_add(1);
+                            cst.insert(dst, ConstVal::Fx(sum));
+                            out.push(IrInstr::LoadFx { dst, val: sum });
+                        } else {
+                            cst.remove(&dst);
+                            out.push(IrInstr::AddFx { dst, lhs, rhs });
+                        }
+                    }
+                    _ if dst == lhs && matches!(cst.get(&rhs), Some(ConstVal::Fx(v)) if *v == 0) => {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ if dst == rhs && matches!(cst.get(&lhs), Some(ConstVal::Fx(v)) if *v == 0) => {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ => {
+                        cst.remove(&dst);
+                        out.push(IrInstr::AddFx { dst, lhs, rhs });
+                    }
+                }
+            }
+            IrInstr::SubFx { dst, lhs, rhs } => {
+                match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
+                    (Some(ConstVal::Fx(a)), Some(ConstVal::Fx(b))) => {
+                        if let Some(diff) = fx_sub_raw(a, b) {
+                            rewrites = rewrites.saturating_add(1);
+                            cst.insert(dst, ConstVal::Fx(diff));
+                            out.push(IrInstr::LoadFx { dst, val: diff });
+                        } else {
+                            cst.remove(&dst);
+                            out.push(IrInstr::SubFx { dst, lhs, rhs });
+                        }
+                    }
+                    _ if dst == lhs && matches!(cst.get(&rhs), Some(ConstVal::Fx(v)) if *v == 0) => {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ => {
+                        cst.remove(&dst);
+                        out.push(IrInstr::SubFx { dst, lhs, rhs });
+                    }
+                }
+            }
+            IrInstr::MulFx { dst, lhs, rhs } => {
+                match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
+                    (Some(ConstVal::Fx(a)), Some(ConstVal::Fx(b))) => {
+                        if let Some(prod) = fx_mul_raw(a, b) {
+                            rewrites = rewrites.saturating_add(1);
+                            cst.insert(dst, ConstVal::Fx(prod));
+                            out.push(IrInstr::LoadFx { dst, val: prod });
+                        } else {
+                            cst.remove(&dst);
+                            out.push(IrInstr::MulFx { dst, lhs, rhs });
+                        }
+                    }
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::Fx(v)) if *v == FX_SCALE) =>
+                    {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ if dst == rhs
+                        && matches!(cst.get(&lhs), Some(ConstVal::Fx(v)) if *v == FX_SCALE) =>
+                    {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ => {
+                        cst.remove(&dst);
+                        out.push(IrInstr::MulFx { dst, lhs, rhs });
+                    }
+                }
+            }
+            IrInstr::DivFx { dst, lhs, rhs } => {
+                match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
+                    (Some(ConstVal::Fx(a)), Some(ConstVal::Fx(b))) if b != 0 => {
+                        if let Some(quo) = fx_div_raw(a, b) {
+                            rewrites = rewrites.saturating_add(1);
+                            cst.insert(dst, ConstVal::Fx(quo));
+                            out.push(IrInstr::LoadFx { dst, val: quo });
+                        } else {
+                            cst.remove(&dst);
+                            out.push(IrInstr::DivFx { dst, lhs, rhs });
+                        }
+                    }
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::Fx(v)) if *v == FX_SCALE) =>
+                    {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ => {
+                        cst.remove(&dst);
+                        out.push(IrInstr::DivFx { dst, lhs, rhs });
+                    }
+                }
+            }
         }
     }
     *instrs = out;
     rewrites
+}
+
+fn fx_add_raw(lhs: i32, rhs: i32) -> Option<i32> {
+    i32::try_from(i64::from(lhs) + i64::from(rhs)).ok()
+}
+
+fn fx_sub_raw(lhs: i32, rhs: i32) -> Option<i32> {
+    i32::try_from(i64::from(lhs) - i64::from(rhs)).ok()
+}
+
+fn fx_mul_raw(lhs: i32, rhs: i32) -> Option<i32> {
+    i32::try_from((i64::from(lhs) * i64::from(rhs)) / i64::from(FX_SCALE)).ok()
+}
+
+fn fx_div_raw(lhs: i32, rhs: i32) -> Option<i32> {
+    if rhs == 0 {
+        return None;
+    }
+    i32::try_from((i64::from(lhs) * i64::from(FX_SCALE)) / i64::from(rhs)).ok()
 }
 
 fn quad_to_u8_const(q: QuadVal) -> u8 {
@@ -694,4 +823,3 @@ mod tests {
         );
     }
 }
-

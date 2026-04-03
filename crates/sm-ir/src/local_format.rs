@@ -1,11 +1,13 @@
 pub const MAGIC0: [u8; 8] = *b"SEMCODE0";
 pub const MAGIC1: [u8; 8] = *b"SEMCODE1";
 pub const MAGIC2: [u8; 8] = *b"SEMCODE2";
+pub const MAGIC3: [u8; 8] = *b"SEMCODE3";
 
 pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
 pub const CAP_F64_MATH: u32 = 1 << 1;
 pub const CAP_GATE_SURFACE: u32 = 1 << 2;
 pub const CAP_FX_VALUES: u32 = 1 << 3;
+pub const CAP_FX_MATH: u32 = 1 << 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SemcodeHeaderSpec {
@@ -36,12 +38,22 @@ pub const HEADER_V2: SemcodeHeaderSpec = SemcodeHeaderSpec {
     capabilities: CAP_DEBUG_SYMBOLS | CAP_F64_MATH | CAP_GATE_SURFACE | CAP_FX_VALUES,
 };
 
+pub const HEADER_V3: SemcodeHeaderSpec = SemcodeHeaderSpec {
+    magic: MAGIC3,
+    epoch: 0,
+    rev: 4,
+    capabilities: CAP_DEBUG_SYMBOLS | CAP_F64_MATH | CAP_GATE_SURFACE | CAP_FX_VALUES | CAP_FX_MATH,
+};
+
 pub fn supported_headers() -> &'static [SemcodeHeaderSpec] {
-    &[HEADER_V0, HEADER_V1, HEADER_V2]
+    &[HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3]
 }
 
 pub fn header_spec_from_magic(magic: &[u8; 8]) -> Option<SemcodeHeaderSpec> {
-    supported_headers().iter().copied().find(|h| &h.magic == magic)
+    supported_headers()
+        .iter()
+        .copied()
+        .find(|h| &h.magic == magic)
 }
 
 #[repr(u8)]
@@ -83,6 +95,10 @@ pub enum Opcode {
     MulF64 = 0x53,
     DivF64 = 0x54,
     LoadFx = 0x55,
+    AddFx = 0x56,
+    SubFx = 0x57,
+    MulFx = 0x58,
+    DivFx = 0x59,
     GateRead = 0x60,
     GateWrite = 0x61,
     PulseEmit = 0x62,
@@ -150,6 +166,10 @@ impl Opcode {
             x if x == Self::MulF64 as u8 => Ok(Self::MulF64),
             x if x == Self::DivF64 as u8 => Ok(Self::DivF64),
             x if x == Self::LoadFx as u8 => Ok(Self::LoadFx),
+            x if x == Self::AddFx as u8 => Ok(Self::AddFx),
+            x if x == Self::SubFx as u8 => Ok(Self::SubFx),
+            x if x == Self::MulFx as u8 => Ok(Self::MulFx),
+            x if x == Self::DivFx as u8 => Ok(Self::DivFx),
             x if x == Self::GateRead as u8 => Ok(Self::GateRead),
             x if x == Self::GateWrite as u8 => Ok(Self::GateWrite),
             x if x == Self::PulseEmit as u8 => Ok(Self::PulseEmit),

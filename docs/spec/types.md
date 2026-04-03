@@ -168,7 +168,9 @@ Current honest limits:
 - the published stable `v1.1.1` line still remains narrower than the `f64`
   arithmetic surface
 - canonical lowering/verified execution for the widened plain `fx` arithmetic
-  surface has not landed yet and currently reports an explicit compile-time gap
+  surface has now landed on current `main`
+- emitted plain `fx` arithmetic programs use a promoted `SEMCODE3` header line
+  instead of widening the older `SEMCODE2` artifact contract in place
 - coercion from non-literal non-`fx` expressions is not yet the full intended
   long-term contract
 - unary `+` and unary `-` on `fx` are admitted only for literal formation in

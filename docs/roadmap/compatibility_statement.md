@@ -12,6 +12,7 @@ Current compatible SemCode families:
 - `SEMCODE0`
 - `SEMCODE1`
 - `SEMCODE2`
+- `SEMCODE3`
 
 Current compatibility rule:
 

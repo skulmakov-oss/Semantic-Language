@@ -1,12 +1,12 @@
 use super::*;
 use crate::semcode_format::{
-    write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
+    write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2, MAGIC3,
 };
-use sm_front::{LoopExpr, TuplePatternItem};
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
     RecordPatternTarget,
 };
+use sm_front::{LoopExpr, TuplePatternItem};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +37,26 @@ pub enum IrInstr {
     LoadFx {
         dst: u16,
         val: i32,
+    },
+    AddFx {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
+    SubFx {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
+    MulFx {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
+    DivFx {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
     },
     MakeTuple {
         dst: u16,
@@ -225,10 +245,6 @@ pub struct LogosIrLaw {
 
 const FX_SCALE: i32 = 1_000;
 
-fn fx_arithmetic_lowering_gap_message() -> &'static str {
-    "plain fx arithmetic lowering is not implemented in the canonical path yet"
-}
-
 fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
     let scaled = value * FX_SCALE as f64;
     if !scaled.is_finite() {
@@ -276,7 +292,9 @@ fn try_encode_fx_literal_expr(
                     })
                     .map(Some)
             }
-            NumericLiteral::F64(value) | NumericLiteral::Fx(value) => encode_fx_literal(*value).map(Some),
+            NumericLiteral::F64(value) | NumericLiteral::Fx(value) => {
+                encode_fx_literal(*value).map(Some)
+            }
         },
         Expr::Unary(UnaryOp::Pos, inner) => try_encode_fx_literal_expr(*inner, arena),
         Expr::Unary(UnaryOp::Neg, inner) => {
@@ -702,7 +720,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v2_fx_instr(funcs) {
+    if has_v3_fx_math_instr(funcs) {
+        out.extend_from_slice(&MAGIC3);
+    } else if has_v2_fx_instr(funcs) {
         out.extend_from_slice(&MAGIC2);
     } else if has_v1_math_instr(funcs) {
         out.extend_from_slice(&MAGIC1);
@@ -862,7 +882,11 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         | IrInstr::AddF64 { .. }
         | IrInstr::SubF64 { .. }
         | IrInstr::MulF64 { .. }
-        | IrInstr::DivF64 { .. } => 1 + 2 + 2 + 2,
+        | IrInstr::DivF64 { .. }
+        | IrInstr::AddFx { .. }
+        | IrInstr::SubFx { .. }
+        | IrInstr::MulFx { .. }
+        | IrInstr::DivFx { .. } => 1 + 2 + 2 + 2,
         IrInstr::QNot { .. } | IrInstr::BoolNot { .. } => 1 + 2 + 2,
         IrInstr::Jmp { .. } => 1 + 4,
         IrInstr::JmpIf { .. } => 1 + 2 + 4,
@@ -1028,6 +1052,10 @@ fn emit_instr(
         IrInstr::SubF64 { dst, lhs, rhs } => emit_3reg(Opcode::SubF64, *dst, *lhs, *rhs, out),
         IrInstr::MulF64 { dst, lhs, rhs } => emit_3reg(Opcode::MulF64, *dst, *lhs, *rhs, out),
         IrInstr::DivF64 { dst, lhs, rhs } => emit_3reg(Opcode::DivF64, *dst, *lhs, *rhs, out),
+        IrInstr::AddFx { dst, lhs, rhs } => emit_3reg(Opcode::AddFx, *dst, *lhs, *rhs, out),
+        IrInstr::SubFx { dst, lhs, rhs } => emit_3reg(Opcode::SubFx, *dst, *lhs, *rhs, out),
+        IrInstr::MulFx { dst, lhs, rhs } => emit_3reg(Opcode::MulFx, *dst, *lhs, *rhs, out),
+        IrInstr::DivFx { dst, lhs, rhs } => emit_3reg(Opcode::DivFx, *dst, *lhs, *rhs, out),
         IrInstr::Jmp { label } => {
             out.push(Opcode::Jmp.byte());
             let addr = *label_pc.get(label).ok_or(FrontendError {
@@ -1147,10 +1175,26 @@ fn has_v2_fx_instr(funcs: &[IrFunction]) -> bool {
         .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::LoadFx { .. })))
 }
 
+fn has_v3_fx_math_instr(funcs: &[IrFunction]) -> bool {
+    funcs.iter().any(|f| {
+        f.instrs.iter().any(|i| {
+            matches!(
+                i,
+                IrInstr::AddFx { .. }
+                    | IrInstr::SubFx { .. }
+                    | IrInstr::MulFx { .. }
+                    | IrInstr::DivFx { .. }
+            )
+        })
+    })
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
-        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_numeric_literal_like_expr(*inner, arena),
+        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => {
+            is_numeric_literal_like_expr(*inner, arena)
+        }
         _ => false,
     }
 }
@@ -1159,7 +1203,12 @@ fn erased_expected(expected: Option<&Type>) -> Option<Type> {
     expected.map(Type::erase_units)
 }
 
-fn lift_lowered_type(expected: Option<&Type>, actual: &Type, expr_id: ExprId, arena: &AstArena) -> Type {
+fn lift_lowered_type(
+    expected: Option<&Type>,
+    actual: &Type,
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Type {
     match expected {
         Some(expected_ty)
             if matches!(expected_ty.measured_parts(), Some((base, _)) if base == actual)
@@ -1375,13 +1424,15 @@ fn lower_expr_with_expected(
             Ok((dst, Type::Tuple(tys)))
         }
         Expr::RecordLiteral(record_literal) => {
-            let record = record_table.get(&record_literal.name).ok_or(FrontendError {
-                pos: 0,
-                message: format!(
-                    "unknown record type '{}' in record literal lowering",
-                    resolve_symbol_name(arena, record_literal.name)?
-                ),
-            })?;
+            let record = record_table
+                .get(&record_literal.name)
+                .ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown record type '{}' in record literal lowering",
+                        resolve_symbol_name(arena, record_literal.name)?
+                    ),
+                })?;
             let mut lowered_fields = HashMap::new();
             for field in &record_literal.fields {
                 let expected_field_ty = record
@@ -1414,14 +1465,17 @@ fn lower_expr_with_expected(
             }
             let mut ordered_regs = Vec::with_capacity(record.fields.len());
             for decl_field in &record.fields {
-                let reg = lowered_fields.get(&decl_field.name).copied().ok_or(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "record literal '{}' is missing field '{}' during lowering",
-                        resolve_symbol_name(arena, record_literal.name)?,
-                        resolve_symbol_name(arena, decl_field.name)?
-                    ),
-                })?;
+                let reg = lowered_fields
+                    .get(&decl_field.name)
+                    .copied()
+                    .ok_or(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "record literal '{}' is missing field '{}' during lowering",
+                            resolve_symbol_name(arena, record_literal.name)?,
+                            resolve_symbol_name(arena, decl_field.name)?
+                        ),
+                    })?;
                 ordered_regs.push(reg);
             }
             let dst = alloc(next);
@@ -1519,7 +1573,8 @@ fn lower_expr_with_expected(
             if update_expr.fields.is_empty() {
                 return Err(FrontendError {
                     pos: 0,
-                    message: "record copy-with requires at least one explicit override field".to_string(),
+                    message: "record copy-with requires at least one explicit override field"
+                        .to_string(),
                 });
             }
             let mut lowered_overrides = HashMap::new();
@@ -1609,14 +1664,20 @@ fn lower_expr_with_expected(
                     message: "expected fx literal".to_string(),
                 })?;
                 out.push(IrInstr::LoadFx { dst: r, val });
-                Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
+                Ok((
+                    r,
+                    lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena),
+                ))
             } else {
                 let val = i32::try_from(*n).map_err(|_| FrontendError {
                     pos: 0,
                     message: format!("numeric literal {} does not fit in i32", n),
                 })?;
                 out.push(IrInstr::LoadI32 { dst: r, val });
-                Ok((r, lift_lowered_type(expected.as_ref(), &Type::I32, expr_id, arena)))
+                Ok((
+                    r,
+                    lift_lowered_type(expected.as_ref(), &Type::I32, expr_id, arena),
+                ))
             }
         }
         Expr::NumericLiteral(NumericLiteral::U32(n)) => {
@@ -1628,10 +1689,16 @@ fn lower_expr_with_expected(
                     message: "expected fx literal".to_string(),
                 })?;
                 out.push(IrInstr::LoadFx { dst: r, val });
-                Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
+                Ok((
+                    r,
+                    lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena),
+                ))
             } else {
                 out.push(IrInstr::LoadU32 { dst: r, val: *n });
-                Ok((r, lift_lowered_type(expected.as_ref(), &Type::U32, expr_id, arena)))
+                Ok((
+                    r,
+                    lift_lowered_type(expected.as_ref(), &Type::U32, expr_id, arena),
+                ))
             }
         }
         Expr::NumericLiteral(NumericLiteral::F64(n)) => {
@@ -1642,10 +1709,16 @@ fn lower_expr_with_expected(
                     dst: r,
                     val: encode_fx_literal(*n)?,
                 });
-                Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
+                Ok((
+                    r,
+                    lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena),
+                ))
             } else {
                 out.push(IrInstr::LoadF64 { dst: r, val: *n });
-                Ok((r, lift_lowered_type(expected.as_ref(), &Type::F64, expr_id, arena)))
+                Ok((
+                    r,
+                    lift_lowered_type(expected.as_ref(), &Type::F64, expr_id, arena),
+                ))
             }
         }
         Expr::NumericLiteral(NumericLiteral::Fx(n)) => {
@@ -1654,7 +1727,10 @@ fn lower_expr_with_expected(
                 dst: r,
                 val: encode_fx_literal(*n)?,
             });
-            Ok((r, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)))
+            Ok((
+                r,
+                lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena),
+            ))
         }
         Expr::Var(name) => {
             let ty = env.get(*name).ok_or(FrontendError {
@@ -1668,21 +1744,19 @@ fn lower_expr_with_expected(
             });
             Ok((r, ty))
         }
-        Expr::Block(block) => {
-            lower_value_block_expr(
-                block,
-                arena,
-                next,
-                out,
-                env,
-                loop_stack,
-                fn_table,
-                record_table,
-                adt_table,
-                expected,
-                ret_ty,
-            )
-        }
+        Expr::Block(block) => lower_value_block_expr(
+            block,
+            arena,
+            next,
+            out,
+            env,
+            loop_stack,
+            fn_table,
+            record_table,
+            adt_table,
+            expected,
+            ret_ty,
+        ),
         Expr::If(if_expr) => {
             let (cond_reg, cond_ty) = lower_expr(
                 if_expr.condition,
@@ -1877,7 +1951,10 @@ fn lower_expr_with_expected(
                 if let Some(value) = try_encode_fx_literal_expr(expr_id, arena)? {
                     let dst = alloc(next);
                     out.push(IrInstr::LoadFx { dst, val: value });
-                    return Ok((dst, lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena)));
+                    return Ok((
+                        dst,
+                        lift_lowered_type(expected.as_ref(), &Type::Fx, expr_id, arena),
+                    ));
                 }
             }
             let (src, ty) = lower_expr_with_expected(
@@ -1912,10 +1989,7 @@ fn lower_expr_with_expected(
                     if ty == Type::F64 {
                         Ok((src, Type::F64))
                     } else if ty == Type::Fx {
-                        Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_lowering_gap_message().to_string(),
-                        })
+                        Ok((src, Type::Fx))
                     } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
                         Ok((src, ty))
                     } else {
@@ -1927,10 +2001,7 @@ fn lower_expr_with_expected(
                 }
                 UnaryOp::Neg => {
                     let result_ty = if ty == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_lowering_gap_message().to_string(),
-                        });
+                        Type::Fx
                     } else if ty == Type::F64 {
                         Type::F64
                     } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
@@ -1942,16 +2013,28 @@ fn lower_expr_with_expected(
                         });
                     };
                     let zero = alloc(next);
-                    out.push(IrInstr::LoadF64 {
-                        dst: zero,
-                        val: 0.0,
-                    });
+                    if ty == Type::Fx {
+                        out.push(IrInstr::LoadFx { dst: zero, val: 0 });
+                    } else {
+                        out.push(IrInstr::LoadF64 {
+                            dst: zero,
+                            val: 0.0,
+                        });
+                    }
                     let dst = alloc(next);
-                    out.push(IrInstr::SubF64 {
-                        dst,
-                        lhs: zero,
-                        rhs: src,
-                    });
+                    if ty == Type::Fx {
+                        out.push(IrInstr::SubFx {
+                            dst,
+                            lhs: zero,
+                            rhs: src,
+                        });
+                    } else {
+                        out.push(IrInstr::SubF64 {
+                            dst,
+                            lhs: zero,
+                            rhs: src,
+                        });
+                    }
                     Ok((dst, result_ty))
                 }
             }
@@ -2060,10 +2143,12 @@ fn lower_expr_with_expected(
                 }
                 BinaryOp::Add => {
                     if lt == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        out.push(IrInstr::AddFx {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
                         });
+                        return Ok((dst, Type::Fx));
                     }
                     if matches!(lt.measured_parts(), Some((_, _))) && erased_lt != Type::F64 {
                         return Err(FrontendError {
@@ -2086,10 +2171,12 @@ fn lower_expr_with_expected(
                 }
                 BinaryOp::Sub => {
                     if lt == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        out.push(IrInstr::SubFx {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
                         });
+                        return Ok((dst, Type::Fx));
                     }
                     if matches!(lt.measured_parts(), Some((_, _))) && erased_lt != Type::F64 {
                         return Err(FrontendError {
@@ -2112,10 +2199,12 @@ fn lower_expr_with_expected(
                 }
                 BinaryOp::Mul => {
                     if lt == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        out.push(IrInstr::MulFx {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
                         });
+                        return Ok((dst, Type::Fx));
                     }
                     if lt.measured_parts().is_some() {
                         return Err(FrontendError {
@@ -2140,10 +2229,12 @@ fn lower_expr_with_expected(
                 }
                 BinaryOp::Div => {
                     if lt == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_lowering_gap_message().to_string(),
+                        out.push(IrInstr::DivFx {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
                         });
+                        return Ok((dst, Type::Fx));
                     }
                     if lt.measured_parts().is_some() {
                         return Err(FrontendError {
@@ -2418,9 +2509,8 @@ fn bind_let_else_record_items(
     if !saw_refutable_item {
         return Err(FrontendError {
             pos: 0,
-            message:
-                "record let-else requires at least one refutable quad literal field pattern"
-                    .to_string(),
+            message: "record let-else requires at least one refutable quad literal field pattern"
+                .to_string(),
         });
     }
     for (name, reg, item_ty) in deferred_binds {
@@ -2757,8 +2847,7 @@ fn bind_let_else_tuple_items(
                     lhs: reg,
                     rhs: lit_reg,
                 });
-                let continue_label =
-                    format!("let_else_tuple_{}_item_{}_ok", pattern_id, index);
+                let continue_label = format!("let_else_tuple_{}_item_{}_ok", pattern_id, index);
                 out.push(IrInstr::JmpIf {
                     cond: cmp_reg,
                     label: continue_label.clone(),
@@ -3063,20 +3152,18 @@ fn lower_stmt(
                 env,
             )
         }
-        Stmt::ForRange { name, range, body } => {
-            lower_for_range_stmt(
-                *name,
-                *range,
-                body,
-                arena,
-                ctx,
-                env,
-                ret_ty,
-                fn_table,
-                record_table,
-                adt_table,
-            )
-        }
+        Stmt::ForRange { name, range, body } => lower_for_range_stmt(
+            *name,
+            *range,
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        ),
         Stmt::Break(value) => {
             let (expected_break, end_label, result_name, prior_result_ty) = {
                 let frame = ctx.loop_stack.last().ok_or(FrontendError {
@@ -3304,12 +3391,14 @@ fn lower_stmt(
                 adt_table,
                 ret_ty.clone(),
             )?;
-            if !matches!(scr_ty, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+            if !matches!(
+                scr_ty,
+                Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            ) {
                 return Err(FrontendError {
                     pos: 0,
-                    message:
-                        "match scrutinee must be quad, enum, Option(T), or Result(T, E)"
-                            .to_string(),
+                    message: "match scrutinee must be quad, enum, Option(T), or Result(T, E)"
+                        .to_string(),
                 });
             }
             let exhaustive_without_default = if default.is_empty() {
@@ -3319,8 +3408,9 @@ fn lower_stmt(
                     arena,
                     adt_table,
                 )? {
-                    Some((family_label, missing)) if !missing.is_empty() =>
-                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
+                    Some((family_label, missing)) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?)
+                    }
                     Some(_) => true,
                     None => {
                         return Err(FrontendError {
@@ -3682,7 +3772,15 @@ fn lower_value_block_expr(
                     ret_ty.clone(),
                 )?;
                 let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
-                bind_tuple_items(items, tuple_reg, &final_ty, arena, next, out, &mut block_env)?;
+                bind_tuple_items(
+                    items,
+                    tuple_reg,
+                    &final_ty,
+                    arena,
+                    next,
+                    out,
+                    &mut block_env,
+                )?;
             }
             Stmt::LetRecord {
                 record_name,
@@ -3718,9 +3816,8 @@ fn lower_value_block_expr(
             Stmt::LetElseRecord { .. } => {
                 return Err(FrontendError {
                     pos: 0,
-                    message:
-                        "block expression body currently does not allow record let-else"
-                            .to_string(),
+                    message: "block expression body currently does not allow record let-else"
+                        .to_string(),
                 });
             }
             Stmt::Discard { ty, value } => {
@@ -3906,9 +4003,8 @@ fn lower_std_form_ctor_expr(
                 if ctor_expr.payload.len() != 1 {
                     return Err(FrontendError {
                         pos: 0,
-                        message:
-                            "Option::Some expects exactly one payload item in lowering"
-                                .to_string(),
+                        message: "Option::Some expects exactly one payload item in lowering"
+                            .to_string(),
                     });
                 }
                 let item_expected = match expected.as_ref() {
@@ -4176,8 +4272,7 @@ fn resolve_sum_match_pattern_for_lowering(
     let Some(family) = resolve_match_family_for_lowering(scrutinee_ty, arena, adt_table)? else {
         return Err(FrontendError {
             pos: 0,
-            message:
-                "match scrutinee must be quad, enum, Option(T), or Result(T, E)".to_string(),
+            message: "match scrutinee must be quad, enum, Option(T), or Result(T, E)".to_string(),
         });
     };
     let pattern_family = resolve_symbol_name(arena, adt_pat.adt_name)?.to_string();
@@ -4218,8 +4313,7 @@ fn resolve_sum_match_pattern_for_lowering(
     let mut bindings = Vec::new();
     for (index, (item, declared_ty)) in adt_pat.items.iter().zip(variant.payload.iter()).enumerate()
     {
-        let payload_ty =
-            canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
+        let payload_ty = canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
         if let AdtPatternItem::Bind(name) = item {
             bindings.push(LoweredAdtMatchBinding {
                 name: *name,
@@ -4313,11 +4407,7 @@ fn non_exhaustive_match_error(
     })
 }
 
-fn lower_impossible_match_trap(
-    label: String,
-    next: &mut u16,
-    out: &mut Vec<IrInstr>,
-) {
+fn lower_impossible_match_trap(label: String, next: &mut u16, out: &mut Vec<IrInstr>) {
     out.push(IrInstr::Label { name: label });
     let cond = alloc(next);
     out.push(IrInstr::LoadBool {
@@ -4647,19 +4737,17 @@ fn lower_loop_expr(
             *stmt,
             arena,
             next,
-        out,
-        &mut body_env,
-        loop_stack,
-        fn_table,
-        record_table,
-        adt_table,
-        ret_ty.clone(),
-    )?;
+            out,
+            &mut body_env,
+            loop_stack,
+            fn_table,
+            record_table,
+            adt_table,
+            ret_ty.clone(),
+        )?;
     }
     body_env.pop_scope();
-    out.push(IrInstr::Jmp {
-        label: start_label,
-    });
+    out.push(IrInstr::Jmp { label: start_label });
     out.push(IrInstr::Label { name: end_label });
 
     let frame = loop_stack.pop().expect("loop frame must exist");
@@ -4813,12 +4901,14 @@ fn lower_loop_expr_stmt(
                 adt_table,
                 ret_ty.clone(),
             )?;
-            if !matches!(scr_ty, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+            if !matches!(
+                scr_ty,
+                Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            ) {
                 return Err(FrontendError {
                     pos: 0,
-                    message:
-                        "match scrutinee must be quad, enum, Option(T), or Result(T, E)"
-                            .to_string(),
+                    message: "match scrutinee must be quad, enum, Option(T), or Result(T, E)"
+                        .to_string(),
                 });
             }
             let exhaustive_without_default = if default.is_empty() {
@@ -4828,8 +4918,9 @@ fn lower_loop_expr_stmt(
                     arena,
                     adt_table,
                 )? {
-                    Some((family_label, missing)) if !missing.is_empty() =>
-                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
+                    Some((family_label, missing)) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?)
+                    }
                     Some(_) => true,
                     None => {
                         return Err(FrontendError {
@@ -5129,12 +5220,14 @@ fn lower_match_expr(
         adt_table,
         ret_ty.clone(),
     )?;
-    if !matches!(scr_ty, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+    if !matches!(
+        scr_ty,
+        Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+    ) {
         return Err(FrontendError {
             pos: 0,
-            message:
-                "match expression scrutinee must be quad, enum, Option(T), or Result(T, E)"
-                    .to_string(),
+            message: "match expression scrutinee must be quad, enum, Option(T), or Result(T, E)"
+                .to_string(),
         });
     }
     let exhaustive_without_default = if match_expr.default.is_none() {
@@ -5144,8 +5237,9 @@ fn lower_match_expr(
             arena,
             adt_table,
         )? {
-            Some((family_label, missing)) if !missing.is_empty() =>
-                return Err(non_exhaustive_match_error(&family_label, &missing, true)?),
+            Some((family_label, missing)) if !missing.is_empty() => {
+                return Err(non_exhaustive_match_error(&family_label, &missing, true)?)
+            }
             Some(_) => true,
             None => {
                 return Err(FrontendError {
@@ -5205,20 +5299,18 @@ fn lower_match_expr(
                 });
                 let mut arm_env = env.clone();
                 arm_env.push_scope();
-                if let Some(guard_reg) =
-                    lower_match_guard(
-                        arm.guard,
-                        arena,
-                        next,
-                        out,
-                        &arm_env,
-                        loop_stack,
-                        fn_table,
-                        record_table,
-                        adt_table,
-                        ret_ty.clone(),
-                    )?
-                {
+                if let Some(guard_reg) = lower_match_guard(
+                    arm.guard,
+                    arena,
+                    next,
+                    out,
+                    &arm_env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    ret_ty.clone(),
+                )? {
                     let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
                     out.push(IrInstr::JmpIf {
                         cond: guard_reg,
@@ -5332,20 +5424,18 @@ fn lower_match_expr(
                     &mut arm_env,
                     arena,
                 )?;
-                if let Some(guard_reg) =
-                    lower_match_guard(
-                        arm.guard,
-                        arena,
-                        next,
-                        out,
-                        &arm_env,
-                        loop_stack,
-                        fn_table,
-                        record_table,
-                        adt_table,
-                        ret_ty.clone(),
-                    )?
-                {
+                if let Some(guard_reg) = lower_match_guard(
+                    arm.guard,
+                    arena,
+                    next,
+                    out,
+                    &arm_env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    ret_ty.clone(),
+                )? {
                     let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
                     out.push(IrInstr::JmpIf {
                         cond: guard_reg,
@@ -6024,9 +6114,7 @@ mod opt_tests {
 
         let err =
             compile_program_to_ir(src).expect_err("non-const-safe default parameter must reject");
-        assert!(err
-            .message
-            .contains("default parameter 'factor'"));
+        assert!(err.message.contains("default parameter 'factor'"));
     }
 
     #[test]
@@ -6111,7 +6199,9 @@ mod opt_tests {
         "#;
 
         let err = compile_program_to_ir(src).expect_err("assignment to const must reject");
-        assert!(err.message.contains("cannot assign to const binding 'total'"));
+        assert!(err
+            .message
+            .contains("cannot assign to const binding 'total'"));
     }
 
     #[test]
@@ -6142,21 +6232,38 @@ mod opt_tests {
     }
 
     #[test]
-    fn plain_fx_arithmetic_reports_explicit_lowering_gap_until_next_slice() {
+    fn plain_fx_arithmetic_lowers_to_fx_ops() {
         let src = r#"
-            fn add(x: fx, y: fx) -> fx {
-                return x + y;
-            }
-
             fn main() {
+                let a: fx = 2.0;
+                let b: fx = 3.0;
+                let sum: fx = a + b;
+                let diff: fx = a - b;
+                let prod: fx = a * b;
+                let quo: fx = a / b;
+                let neg: fx = -a;
                 return;
             }
         "#;
 
-        let err = compile_program_to_ir(src).expect_err("plain fx arithmetic lowering must still reject");
-        assert!(err
-            .message
-            .contains("plain fx arithmetic lowering is not implemented in the canonical path yet"));
+        let ir = compile_program_to_ir(src).expect("plain fx arithmetic should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddFx { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::SubFx { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::MulFx { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::DivFx { .. })));
     }
 
     #[test]
@@ -6377,10 +6484,7 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("tuple literal should lower");
-        let pair_fn = ir
-            .iter()
-            .find(|func| func.name == "pair")
-            .expect("pair fn");
+        let pair_fn = ir.iter().find(|func| func.name == "pair").expect("pair fn");
         assert!(pair_fn
             .instrs
             .iter()
@@ -6400,10 +6504,7 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("tuple destructuring bind should lower");
-        let main = ir
-            .iter()
-            .find(|func| func.name == "main")
-            .expect("main fn");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
         assert!(main
             .instrs
             .iter()
@@ -6428,10 +6529,7 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("tuple destructuring assignment should lower");
-        let main = ir
-            .iter()
-            .find(|func| func.name == "main")
-            .expect("main fn");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
         assert!(main
             .instrs
             .iter()
@@ -6455,10 +6553,7 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("tuple let-else should lower");
-        let main = ir
-            .iter()
-            .find(|func| func.name == "main")
-            .expect("main fn");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
         assert!(main
             .instrs
             .iter()
@@ -6467,10 +6562,13 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::TupleGet { index: 1, .. })));
-        assert!(main
-            .instrs
-            .iter()
-            .any(|instr| matches!(instr, IrInstr::LoadQ { val: QuadVal::T, .. })));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::LoadQ {
+                val: QuadVal::T,
+                ..
+            }
+        )));
         assert!(main
             .instrs
             .iter()
@@ -6479,12 +6577,13 @@ mod opt_tests {
             instr,
             IrInstr::JmpIf { label, .. } if label.starts_with("let_else_tuple_")
         )));
-        assert!(main
-            .instrs
-            .iter()
-            .filter(|instr| matches!(instr, IrInstr::Ret { .. }))
-            .count()
-            >= 2);
+        assert!(
+            main.instrs
+                .iter()
+                .filter(|instr| matches!(instr, IrInstr::Ret { .. }))
+                .count()
+                >= 2
+        );
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "count"
@@ -6571,18 +6670,18 @@ mod opt_tests {
 
         let ir = compile_program_to_ir(src).expect("for-range should lower");
         let main = ir.iter().find(|func| func.name == "main").expect("main fn");
-        assert!(main.instrs.iter().any(|instr| matches!(
-            instr,
-            IrInstr::CmpI32Le { .. }
-        )));
-        assert!(main.instrs.iter().any(|instr| matches!(
-            instr,
-            IrInstr::CmpI32Lt { .. }
-        )));
-        assert!(main.instrs.iter().any(|instr| matches!(
-            instr,
-            IrInstr::AddI32 { .. }
-        )));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpI32Le { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpI32Lt { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddI32 { .. })));
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::StoreVar { name, .. } if name == "i"
@@ -6606,7 +6705,8 @@ mod opt_tests {
             }
         "#;
 
-        let ir = compile_program_to_ir(src).expect("record declaration should not break ordinary lowering");
+        let ir = compile_program_to_ir(src)
+            .expect("record declaration should not break ordinary lowering");
         assert_eq!(ir.len(), 1);
         assert_eq!(ir[0].name, "main");
     }
@@ -6637,10 +6737,10 @@ mod opt_tests {
             instr,
             IrInstr::Call { name, .. } if name == "echo"
         )));
-        assert!(main.instrs.iter().any(|instr| matches!(
-            instr,
-            IrInstr::CmpEq { .. }
-        )));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpEq { .. })));
     }
 
     #[test]
@@ -6693,7 +6793,10 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("enum constructor should lower");
-        let choose = ir.iter().find(|func| func.name == "choose").expect("choose fn");
+        let choose = ir
+            .iter()
+            .find(|func| func.name == "choose")
+            .expect("choose fn");
         assert!(choose.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
@@ -6746,7 +6849,10 @@ mod opt_tests {
             IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
                 if adt_name == "Option" && variant_name == "Some" && *tag == 1 && items.len() == 1
         )));
-        let settle = ir.iter().find(|func| func.name == "settle").expect("settle fn");
+        let settle = ir
+            .iter()
+            .find(|func| func.name == "settle")
+            .expect("settle fn");
         assert!(settle.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::MakeAdt { adt_name, variant_name, tag, items, .. }
@@ -6788,7 +6894,10 @@ mod opt_tests {
         "#;
 
         let ir = compile_program_to_ir(src).expect("Option/Result match ergonomics should lower");
-        let unwrap = ir.iter().find(|func| func.name == "unwrap").expect("unwrap fn");
+        let unwrap = ir
+            .iter()
+            .find(|func| func.name == "unwrap")
+            .expect("unwrap fn");
         assert!(unwrap.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::AdtTag { adt_name, .. } if adt_name == "Option"
@@ -6797,7 +6906,10 @@ mod opt_tests {
             instr,
             IrInstr::AdtGet { adt_name, index, .. } if adt_name == "Option" && *index == 0
         )));
-        let settle = ir.iter().find(|func| func.name == "settle").expect("settle fn");
+        let settle = ir
+            .iter()
+            .find(|func| func.name == "settle")
+            .expect("settle fn");
         assert!(settle.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::AdtTag { adt_name, .. } if adt_name == "Result"
@@ -7024,7 +7136,10 @@ mod opt_tests {
         )));
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
-            IrInstr::LoadQ { val: QuadVal::T, .. }
+            IrInstr::LoadQ {
+                val: QuadVal::T,
+                ..
+            }
         )));
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
@@ -7089,8 +7204,14 @@ mod opt_tests {
 
         let method_ir = compile_program_to_ir(method_src).expect("UFCS method call should lower");
         let plain_ir = compile_program_to_ir(plain_src).expect("plain call should lower");
-        let method_main = method_ir.iter().find(|func| func.name == "main").expect("main fn");
-        let plain_main = plain_ir.iter().find(|func| func.name == "main").expect("main fn");
+        let method_main = method_ir
+            .iter()
+            .find(|func| func.name == "main")
+            .expect("main fn");
+        let plain_main = plain_ir
+            .iter()
+            .find(|func| func.name == "main")
+            .expect("main fn");
         assert_eq!(method_main.instrs, plain_main.instrs);
     }
 

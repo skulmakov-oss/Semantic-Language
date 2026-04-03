@@ -1,16 +1,16 @@
 use crate::semcode_format::{
-    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
-    read_utf8, supported_headers, SemcodeFormatError, SemcodeHeaderSpec, Opcode,
+    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
+    supported_headers, Opcode, SemcodeFormatError, SemcodeHeaderSpec,
 };
 use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
 use prom_cap::{CapabilityChecker, CapabilityDenied};
 use sm_runtime_core::{
-    AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier, RuntimeQuotas,
-    RuntimeTrap, RuntimeSymbolTable, SymbolId,
+    AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier,
+    RuntimeQuotas, RuntimeSymbolTable, RuntimeTrap, SymbolId,
 };
-use sm_verify::RejectReport;
 use sm_verify::verify_semcode;
+use sm_verify::RejectReport;
 use std::collections::{HashMap, HashSet};
 
 const MAX_FUNCTIONS: usize = 4096;
@@ -122,7 +122,10 @@ impl core::fmt::Display for RuntimeError {
 impl std::error::Error for RuntimeError {}
 
 pub fn run_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
-    run_semcode_with_config(bytes, ExecutionConfig::for_context(ExecutionContext::VerifiedLocal))
+    run_semcode_with_config(
+        bytes,
+        ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+    )
 }
 
 pub fn run_verified_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
@@ -151,10 +154,7 @@ pub fn run_verified_semcode_with_config(
     run_verified_semcode_with_entry_and_config(bytes, "main", config)
 }
 
-pub fn run_verified_semcode_with_entry(
-    bytes: &[u8],
-    entry: &str,
-) -> Result<(), RuntimeError> {
+pub fn run_verified_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
     run_verified_semcode_with_entry_and_config(
         bytes,
         entry,
@@ -261,8 +261,14 @@ pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
 
 fn parse_semcode(
     bytes: &[u8],
-) -> Result<(SemcodeHeaderSpec, RuntimeSymbolTable, HashMap<String, FunctionBytecode>), RuntimeError>
-{
+) -> Result<
+    (
+        SemcodeHeaderSpec,
+        RuntimeSymbolTable,
+        HashMap<String, FunctionBytecode>,
+    ),
+    RuntimeError,
+> {
     if bytes.len() < 8 {
         return Err(RuntimeError::BadHeader);
     }
@@ -432,6 +438,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::MakeTuple => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
@@ -596,12 +607,7 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
 
 trait VmHostBridge {
     fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError>;
-    fn gate_write(
-        &mut self,
-        device_id: u16,
-        port: u16,
-        value: Value,
-    ) -> Result<(), RuntimeError>;
+    fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError>;
     fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError>;
 }
 
@@ -642,12 +648,7 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
             .map_err(RuntimeError::HostAbi)
     }
 
-    fn gate_write(
-        &mut self,
-        device_id: u16,
-        port: u16,
-        value: Value,
-    ) -> Result<(), RuntimeError> {
+    fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError> {
         self.capabilities
             .require_call(HostCallId::GateWrite)
             .map_err(RuntimeError::CapabilityDenied)?;
@@ -660,9 +661,7 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
         self.capabilities
             .require_call(HostCallId::PulseEmit)
             .map_err(RuntimeError::CapabilityDenied)?;
-        self.host
-            .pulse_emit(signal)
-            .map_err(RuntimeError::HostAbi)
+        self.host.pulse_emit(signal).map_err(RuntimeError::HostAbi)
     }
 }
 
@@ -970,7 +969,11 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
                 let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
-                let out = if opcode == Opcode::CmpI32Lt { l < r } else { l <= r };
+                let out = if opcode == Opcode::CmpI32Lt {
+                    l < r
+                } else {
+                    l <= r
+                };
                 set_reg(vm, frame_idx, dst, Value::Bool(out))?;
                 next_pc = cur - f.instr_start;
             }
@@ -988,6 +991,22 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     _ => unreachable!(),
                 };
                 set_reg(vm, frame_idx, dst, Value::F64(out))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_fx(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_fx(get_reg(vm, frame_idx, rhs)?)?;
+                let out = match opcode {
+                    Opcode::AddFx => fx_add_raw(l, r)?,
+                    Opcode::SubFx => fx_sub_raw(l, r)?,
+                    Opcode::MulFx => fx_mul_raw(l, r)?,
+                    Opcode::DivFx => fx_div_raw(l, r)?,
+                    _ => unreachable!(),
+                };
+                set_reg(vm, frame_idx, dst, Value::Fx(out))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::Jmp => {
@@ -1214,11 +1233,7 @@ fn write_reg(
     Ok(())
 }
 
-fn enforce_quota(
-    quotas: &RuntimeQuotas,
-    kind: QuotaKind,
-    used: usize,
-) -> Result<(), RuntimeError> {
+fn enforce_quota(quotas: &RuntimeQuotas, kind: QuotaKind, used: usize) -> Result<(), RuntimeError> {
     if let Some(exceeded) = quotas.exceed(kind, used) {
         return Err(RuntimeError::QuotaExceeded(exceeded));
     }
@@ -1270,6 +1285,37 @@ fn as_f64(v: Value) -> Result<f64, RuntimeError> {
             "expected f64".to_string(),
         ))
     }
+}
+
+fn as_fx(v: Value) -> Result<i32, RuntimeError> {
+    if let Value::Fx(x) = v {
+        Ok(x)
+    } else {
+        Err(RuntimeError::TypeMismatchRuntime("expected fx".to_string()))
+    }
+}
+
+fn fx_add_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    i32::try_from(i64::from(lhs) + i64::from(rhs))
+        .map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
+fn fx_sub_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    i32::try_from(i64::from(lhs) - i64::from(rhs))
+        .map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
+fn fx_mul_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    let scaled = (i64::from(lhs) * i64::from(rhs)) / 1_000;
+    i32::try_from(scaled).map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
+fn fx_div_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    if rhs == 0 {
+        return Err(RuntimeError::Trap(RuntimeTrap::DivisionByZero));
+    }
+    let scaled = (i64::from(lhs) * 1_000) / i64::from(rhs);
+    i32::try_from(scaled).map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
 }
 
 fn quad_to_u8(q: QuadVal) -> u8 {
@@ -1436,6 +1482,19 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_FX r{}, raw:{}", d, n)
         }
+        Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let op = match opcode {
+                Opcode::AddFx => "ADD_FX",
+                Opcode::SubFx => "SUB_FX",
+                Opcode::MulFx => "MUL_FX",
+                Opcode::DivFx => "DIV_FX",
+                _ => unreachable!(),
+            };
+            format!("{} r{}, r{}, r{}", op, d, l, r)
+        }
         Opcode::MakeTuple => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
@@ -1483,7 +1542,10 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 .join(", ");
             let name = lookup_str(f, sid)?;
             let variant = lookup_str(f, variant_sid)?;
-            format!("MAKE_ADT r{}, {}::{}, tag={}, [{}]", d, name, variant, tag, regs)
+            format!(
+                "MAKE_ADT r{}, {}::{}, tag={}, [{}]",
+                d, name, variant, tag, regs
+            )
         }
         Opcode::AdtTag => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1552,6 +1614,10 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 Opcode::SubF64 => "SUB_F64",
                 Opcode::MulF64 => "MUL_F64",
                 Opcode::DivF64 => "DIV_F64",
+                Opcode::AddFx => "ADD_FX",
+                Opcode::SubFx => "SUB_FX",
+                Opcode::MulFx => "MUL_FX",
+                Opcode::DivFx => "DIV_FX",
                 Opcode::CmpEq => "CMP_EQ",
                 _ => "CMP_NE",
             };
@@ -1623,7 +1689,9 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
 mod tests {
     use super::*;
     use sm_emit::compile_program_to_semcode;
-    use sm_runtime_core::{ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeTrap};
+    use sm_runtime_core::{
+        ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeTrap,
+    };
 
     #[test]
     fn vm_runs_empty_main() {
@@ -1654,7 +1722,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("assert(false) should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1696,7 +1767,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("requires clause should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1738,7 +1812,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("ensures clause should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1774,7 +1851,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("invariant clause should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1837,6 +1917,58 @@ mod tests {
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("LOAD_FX"));
         run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_plain_fx_arithmetic_path() {
+        let src = r#"
+            fn main() {
+                let a: fx = 2.5;
+                let b: fx = 1.5;
+                let sum: fx = a + b;
+                let diff: fx = a - b;
+                let prod: fx = a * b;
+                let quo: fx = a / b;
+                let neg: fx = -a;
+                let expected_sum: fx = 4.0;
+                let expected_diff: fx = 1.0;
+                let expected_prod: fx = 3.75;
+                let expected_quo: fx = 1.666;
+                let expected_neg: fx = -2.5;
+                assert(sum == expected_sum);
+                assert(diff == expected_diff);
+                assert(prod == expected_prod);
+                assert(quo == expected_quo);
+                assert(neg == expected_neg);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("ADD_FX"));
+        assert!(disasm.contains("SUB_FX"));
+        assert!(disasm.contains("MUL_FX"));
+        assert!(disasm.contains("DIV_FX"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_traps_on_fx_division_by_zero() {
+        let src = r#"
+            fn main() {
+                let a: fx = 1.0;
+                let b: fx = 0.0;
+                let bad: fx = a / b;
+                assert(bad == a);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let err = run_semcode(&bytes).expect_err("fx division by zero should trap");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::DivisionByZero)
+        ));
     }
 
     #[test]
@@ -2323,6 +2455,7 @@ mod tests {
                 assert!(supported.contains("SEMCODE0"));
                 assert!(supported.contains("SEMCODE1"));
                 assert!(supported.contains("SEMCODE2"));
+                assert!(supported.contains("SEMCODE3"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }

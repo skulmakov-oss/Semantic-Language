@@ -5,8 +5,8 @@ extern crate std;
 
 #[cfg(feature = "std")]
 use sm_emit::{
-    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
-    read_utf8, Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH,
+    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
+    Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_MATH,
     CAP_FX_VALUES, CAP_GATE_SURFACE,
 };
 use sm_runtime_core::RuntimeQuotas;
@@ -251,9 +251,14 @@ fn verify_function_code(
     quotas: &RuntimeQuotas,
 ) -> Result<PendingVerifiedFunction, RejectReport> {
     let mut cursor = 0usize;
-    let string_count = read_u16_le(code, &mut cursor)
-        .map_err(|_| reject_one(name, VerificationCode::InvalidStringTable, 0, "missing string table header"))?
-        as usize;
+    let string_count = read_u16_le(code, &mut cursor).map_err(|_| {
+        reject_one(
+            name,
+            VerificationCode::InvalidStringTable,
+            0,
+            "missing string table header",
+        )
+    })? as usize;
     if string_count > quotas.max_symbol_table {
         return Err(reject_one(
             name,
@@ -268,11 +273,22 @@ fn verify_function_code(
 
     let mut strings = Vec::with_capacity(string_count);
     for _ in 0..string_count {
-        let len = read_u16_le(code, &mut cursor)
-            .map_err(|_| reject_one(name, VerificationCode::InvalidStringTable, cursor, "truncated string length"))?
-            as usize;
-        let string = read_utf8(code, &mut cursor, len)
-            .map_err(|_| reject_one(name, VerificationCode::InvalidStringTable, cursor, "invalid function string entry"))?;
+        let len = read_u16_le(code, &mut cursor).map_err(|_| {
+            reject_one(
+                name,
+                VerificationCode::InvalidStringTable,
+                cursor,
+                "truncated string length",
+            )
+        })? as usize;
+        let string = read_utf8(code, &mut cursor, len).map_err(|_| {
+            reject_one(
+                name,
+                VerificationCode::InvalidStringTable,
+                cursor,
+                "invalid function string entry",
+            )
+        })?;
         strings.push(string);
     }
 
@@ -280,9 +296,14 @@ fn verify_function_code(
     let mut debug_pcs = Vec::new();
     if cursor + 4 <= code.len() && &code[cursor..cursor + 4] == b"DBG0" {
         cursor += 4;
-        debug_symbol_count = read_u16_le(code, &mut cursor)
-            .map_err(|_| reject_one(name, VerificationCode::InvalidDebugSection, cursor, "truncated debug section header"))?
-            as usize;
+        debug_symbol_count = read_u16_le(code, &mut cursor).map_err(|_| {
+            reject_one(
+                name,
+                VerificationCode::InvalidDebugSection,
+                cursor,
+                "truncated debug section header",
+            )
+        })? as usize;
         if debug_symbol_count > quotas.max_trace_entries {
             return Err(reject_one(
                 name,
@@ -295,12 +316,30 @@ fn verify_function_code(
             ));
         }
         for _ in 0..debug_symbol_count {
-            let pc = read_u32_le(code, &mut cursor)
-                .map_err(|_| reject_one(name, VerificationCode::InvalidDebugSection, cursor, "truncated debug pc"))?;
-            read_u32_le(code, &mut cursor)
-                .map_err(|_| reject_one(name, VerificationCode::InvalidDebugSection, cursor, "truncated debug line"))?;
-            read_u16_le(code, &mut cursor)
-                .map_err(|_| reject_one(name, VerificationCode::InvalidDebugSection, cursor, "truncated debug column"))?;
+            let pc = read_u32_le(code, &mut cursor).map_err(|_| {
+                reject_one(
+                    name,
+                    VerificationCode::InvalidDebugSection,
+                    cursor,
+                    "truncated debug pc",
+                )
+            })?;
+            read_u32_le(code, &mut cursor).map_err(|_| {
+                reject_one(
+                    name,
+                    VerificationCode::InvalidDebugSection,
+                    cursor,
+                    "truncated debug line",
+                )
+            })?;
+            read_u16_le(code, &mut cursor).map_err(|_| {
+                reject_one(
+                    name,
+                    VerificationCode::InvalidDebugSection,
+                    cursor,
+                    "truncated debug column",
+                )
+            })?;
             debug_pcs.push(pc as usize);
         }
     }
@@ -315,13 +354,27 @@ fn verify_function_code(
     while cursor < code.len() {
         let offset = cursor - instr_start;
         instr_starts.push(offset);
-        let opcode = read_u8(code, &mut cursor)
-            .map_err(|_| reject_one(name, VerificationCode::UnknownOpcode, offset, "missing opcode byte"))?;
+        let opcode = read_u8(code, &mut cursor).map_err(|_| {
+            reject_one(
+                name,
+                VerificationCode::UnknownOpcode,
+                offset,
+                "missing opcode byte",
+            )
+        })?;
         let opcode = Opcode::from_byte(opcode).map_err(|err| match err {
-            SemcodeFormatError::UnknownOpcode(_) => {
-                reject_one(name, VerificationCode::UnknownOpcode, offset, err.to_string())
-            }
-            _ => reject_one(name, VerificationCode::OperandOutOfBounds, offset, err.to_string()),
+            SemcodeFormatError::UnknownOpcode(_) => reject_one(
+                name,
+                VerificationCode::UnknownOpcode,
+                offset,
+                err.to_string(),
+            ),
+            _ => reject_one(
+                name,
+                VerificationCode::OperandOutOfBounds,
+                offset,
+                err.to_string(),
+            ),
         })?;
         let refs = decode_operands(name, code, &mut cursor, offset, opcode)?;
         jump_targets.extend(refs.jump_targets);
@@ -431,7 +484,8 @@ fn decode_operands(
     offset: usize,
     opcode: Opcode,
 ) -> Result<OperandRefs, RejectReport> {
-    let invalid = |msg: &str| reject_one(function, VerificationCode::OperandOutOfBounds, offset, msg);
+    let invalid =
+        |msg: &str| reject_one(function, VerificationCode::OperandOutOfBounds, offset, msg);
     let mut refs = OperandRefs::default();
     let mut mark_reg = |reg: u16| {
         let reg = reg as usize;
@@ -480,14 +534,17 @@ fn decode_operands(
             read_i32_le(code, cursor).map_err(|_| invalid("truncated fx literal"))?;
         }
         Opcode::MakeTuple => {
-            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple dst register"))?;
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple dst register"))?;
             mark_reg(dst);
-            let count = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple arity"))? as usize;
+            let count =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple arity"))? as usize;
             if count < 2 {
                 return Err(invalid("tuple literal arity must be at least 2"));
             }
             for _ in 0..count {
-                let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple item register"))?;
+                let src = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated tuple item register"))?;
                 mark_reg(src);
             }
         }
@@ -499,9 +556,9 @@ fn decode_operands(
                 .map_err(|_| invalid("truncated record type string id"))?;
             refs.string_refs
                 .push((offset, sid as usize, "record type name"));
-            let count =
-                read_u16_le(code, cursor).map_err(|_| invalid("truncated record slot count"))?
-                    as usize;
+            let count = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated record slot count"))?
+                as usize;
             if count == 0 {
                 return Err(invalid("record literal must encode at least one slot"));
             }
@@ -515,17 +572,18 @@ fn decode_operands(
             let dst =
                 read_u16_le(code, cursor).map_err(|_| invalid("truncated enum dst register"))?;
             mark_reg(dst);
-            let sid = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated enum type string id"))?;
-            refs.string_refs.push((offset, sid as usize, "enum type name"));
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated enum type string id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "enum type name"));
             let variant_sid = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated enum variant string id"))?;
             refs.string_refs
                 .push((offset, variant_sid as usize, "enum variant name"));
             read_u16_le(code, cursor).map_err(|_| invalid("truncated enum tag"))?;
-            let count =
-                read_u16_le(code, cursor).map_err(|_| invalid("truncated enum payload count"))?
-                    as usize;
+            let count = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated enum payload count"))?
+                as usize;
             for _ in 0..count {
                 let src = read_u16_le(code, cursor)
                     .map_err(|_| invalid("truncated enum payload register"))?;
@@ -533,27 +591,29 @@ fn decode_operands(
             }
         }
         Opcode::AdtTag => {
-            let dst = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated adt-tag dst register"))?;
-            let src = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated adt-tag src register"))?;
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated adt-tag dst register"))?;
+            let src =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated adt-tag src register"))?;
             let sid = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated adt-tag type string id"))?;
             mark_reg(dst);
             mark_reg(src);
-            refs.string_refs.push((offset, sid as usize, "enum type name"));
+            refs.string_refs
+                .push((offset, sid as usize, "enum type name"));
         }
         Opcode::AdtGet => {
-            let dst = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated adt-get dst register"))?;
-            let src = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated adt-get src register"))?;
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated adt-get dst register"))?;
+            let src =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated adt-get src register"))?;
             let sid = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated adt-get type string id"))?;
             read_u16_le(code, cursor).map_err(|_| invalid("truncated adt-get payload index"))?;
             mark_reg(dst);
             mark_reg(src);
-            refs.string_refs.push((offset, sid as usize, "enum type name"));
+            refs.string_refs
+                .push((offset, sid as usize, "enum type name"));
         }
         Opcode::RecordGet => {
             let dst = read_u16_le(code, cursor)
@@ -569,8 +629,10 @@ fn decode_operands(
                 .push((offset, sid as usize, "record type name"));
         }
         Opcode::TupleGet => {
-            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get dst register"))?;
-            let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get src register"))?;
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated tuple-get dst register"))?;
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated tuple-get src register"))?;
             read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get index"))?;
             mark_reg(dst);
             mark_reg(src);
@@ -578,14 +640,14 @@ fn decode_operands(
         Opcode::LoadVar => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             mark_reg(dst);
-            let sid = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated variable string id"))?;
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated variable string id"))?;
             refs.string_refs
                 .push((offset, sid as usize, "variable reference"));
         }
         Opcode::StoreVar => {
-            let sid = read_u16_le(code, cursor)
-                .map_err(|_| invalid("truncated variable string id"))?;
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated variable string id"))?;
             refs.string_refs
                 .push((offset, sid as usize, "variable reference"));
             let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated src register"))?;
@@ -609,7 +671,11 @@ fn decode_operands(
         | Opcode::AddF64
         | Opcode::SubF64
         | Opcode::MulF64
-        | Opcode::DivF64 => {
+        | Opcode::DivF64
+        | Opcode::AddFx
+        | Opcode::SubFx
+        | Opcode::MulFx
+        | Opcode::DivFx => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             let lhs = read_u16_le(code, cursor).map_err(|_| invalid("truncated lhs register"))?;
             let rhs = read_u16_le(code, cursor).map_err(|_| invalid("truncated rhs register"))?;
@@ -622,26 +688,36 @@ fn decode_operands(
             ) {
                 refs.required_capabilities |= CAP_F64_MATH;
             }
+            if matches!(
+                opcode,
+                Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx
+            ) {
+                refs.required_capabilities |= CAP_FX_MATH;
+            }
         }
         Opcode::Jmp => {
             let target = read_u32_le(code, cursor).map_err(|_| invalid("truncated jump target"))?;
             refs.jump_targets.push(target as usize);
         }
         Opcode::JmpIf => {
-            let cond = read_u16_le(code, cursor).map_err(|_| invalid("truncated condition register"))?;
+            let cond =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated condition register"))?;
             mark_reg(cond);
             let target = read_u32_le(code, cursor).map_err(|_| invalid("truncated jump target"))?;
             refs.jump_targets.push(target as usize);
         }
         Opcode::Call => {
             read_u8(code, cursor).map_err(|_| invalid("truncated call destination flag"))?;
-            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated call dst register"))?;
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated call dst register"))?;
             mark_reg(dst);
-            let sid = read_u16_le(code, cursor).map_err(|_| invalid("truncated callee string id"))?;
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated callee string id"))?;
             refs.string_refs.push((offset, sid as usize, "call target"));
             let argc = read_u16_le(code, cursor).map_err(|_| invalid("truncated argc"))? as usize;
             for _ in 0..argc {
-                let arg = read_u16_le(code, cursor).map_err(|_| invalid("truncated call arg register"))?;
+                let arg = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated call arg register"))?;
                 mark_reg(arg);
             }
         }
@@ -651,7 +727,8 @@ fn decode_operands(
             mark_reg(cond);
         }
         Opcode::GateRead => {
-            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated gate dst register"))?;
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated gate dst register"))?;
             mark_reg(dst);
             refs.required_capabilities |= CAP_GATE_SURFACE;
             read_u16_le(code, cursor).map_err(|_| invalid("truncated gate device id"))?;
@@ -661,18 +738,22 @@ fn decode_operands(
             refs.required_capabilities |= CAP_GATE_SURFACE;
             read_u16_le(code, cursor).map_err(|_| invalid("truncated gate device id"))?;
             read_u16_le(code, cursor).map_err(|_| invalid("truncated gate port"))?;
-            let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated gate src register"))?;
+            let src =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated gate src register"))?;
             mark_reg(src);
         }
         Opcode::PulseEmit => {
             refs.required_capabilities |= CAP_GATE_SURFACE;
-            let sid = read_u16_le(code, cursor).map_err(|_| invalid("truncated signal string id"))?;
-            refs.string_refs.push((offset, sid as usize, "pulse signal"));
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated signal string id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "pulse signal"));
         }
         Opcode::Ret => {
             let has_src = read_u8(code, cursor).map_err(|_| invalid("truncated return flag"))?;
             if has_src != 0 {
-                let src = read_u16_le(code, cursor).map_err(|_| invalid("truncated return src register"))?;
+                let src = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated return src register"))?;
                 mark_reg(src);
             }
         }
@@ -712,7 +793,12 @@ fn reject_one(
     message: impl Into<String>,
 ) -> RejectReport {
     RejectReport {
-        diagnostics: vec![diag(code, Some(function.to_string()), Some(offset), message)],
+        diagnostics: vec![diag(
+            code,
+            Some(function.to_string()),
+            Some(offset),
+            message,
+        )],
     }
 }
 
@@ -1073,7 +1159,10 @@ mod tests {
         let mut bytes = compile_program_to_semcode("fn main() { return; }").expect("compile");
         bytes.truncate(bytes.len() - 1);
         let report = verify_semcode(&bytes).expect_err("must reject");
-        assert_eq!(report.diagnostics[0].code, VerificationCode::TruncatedFunction);
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::TruncatedFunction
+        );
     }
 
     #[test]
@@ -1082,7 +1171,10 @@ mod tests {
         let code_len_pos = 8 + 2 + 4;
         bytes[code_len_pos..code_len_pos + 4].copy_from_slice(&1u32.to_le_bytes());
         let report = verify_semcode(&bytes).expect_err("must reject");
-        assert_eq!(report.diagnostics[0].code, VerificationCode::InvalidStringTable);
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::InvalidStringTable
+        );
     }
 
     #[test]
@@ -1093,15 +1185,17 @@ mod tests {
         let target_pos = opcode_pos + 1 + 2;
         bytes[target_pos..target_pos + 4].copy_from_slice(&999u32.to_le_bytes());
         let report = verify_semcode(&bytes).expect_err("must reject");
-        assert_eq!(report.diagnostics[0].code, VerificationCode::InvalidJumpTarget);
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::InvalidJumpTarget
+        );
     }
 
     #[test]
     fn verifier_rejects_bad_string_reference() {
-        let mut bytes = compile_program_to_semcode(
-            "fn helper() { return; } fn main() { helper(); return; }",
-        )
-        .expect("compile");
+        let mut bytes =
+            compile_program_to_semcode("fn helper() { return; } fn main() { helper(); return; }")
+                .expect("compile");
         let opcode_pos = find_opcode(&bytes, Opcode::Call.byte()).expect("call");
         let sid_pos = opcode_pos + 1 + 1 + 2;
         bytes[sid_pos..sid_pos + 2].copy_from_slice(&99u16.to_le_bytes());
@@ -1114,8 +1208,8 @@ mod tests {
 
     #[test]
     fn verifier_rejects_register_past_verified_local_budget() {
-        let mut bytes =
-            compile_program_to_semcode("fn main() { let a: bool = true; return; }").expect("compile");
+        let mut bytes = compile_program_to_semcode("fn main() { let a: bool = true; return; }")
+            .expect("compile");
         let opcode_pos = find_opcode(&bytes, Opcode::LoadBool.byte()).expect("load bool");
         let dst_pos = opcode_pos + 1;
         bytes[dst_pos..dst_pos + 2].copy_from_slice(&5000u16.to_le_bytes());
@@ -1128,17 +1222,19 @@ mod tests {
 
     #[test]
     fn verifier_rejects_unknown_call_target() {
-        let mut bytes = compile_program_to_semcode(
-            "fn helper() { return; } fn main() { helper(); return; }",
-        )
-        .expect("compile");
+        let mut bytes =
+            compile_program_to_semcode("fn helper() { return; } fn main() { helper(); return; }")
+                .expect("compile");
         let helper_pos = bytes
             .windows(b"helper".len())
             .rposition(|window| window == b"helper")
             .expect("helper string");
         bytes[helper_pos..helper_pos + b"helper".len()].copy_from_slice(b"gh0st!");
         let report = verify_semcode(&bytes).expect_err("must reject");
-        assert_eq!(report.diagnostics[0].code, VerificationCode::UnknownCallTarget);
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::UnknownCallTarget
+        );
     }
 
     #[test]
@@ -1152,7 +1248,10 @@ mod tests {
         let mut bytes = compile_program_to_semcode(src).expect("compile");
         bytes[7] = b'0';
         let report = verify_semcode(&bytes).expect_err("must reject");
-        assert_eq!(report.diagnostics[0].code, VerificationCode::CapabilityViolation);
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::CapabilityViolation
+        );
     }
 
     fn find_opcode(bytes: &[u8], opcode: u8) -> Option<usize> {

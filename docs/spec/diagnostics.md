@@ -216,8 +216,8 @@ Current message families include:
 - unsupported statement forms inside a value-producing block
 - unsupported operator for a type family
 - explicit `fx` coercion gap messages for still-narrow source cases
-- explicit lowering-gap messages for plain `fx` unary/binary arithmetic now
-  admitted by source typing on current `main`
+- runtime trap / diagnostics for plain `fx` division by zero or arithmetic
+  overflow in the widened post-stable execution path
 - explicit gap messages for unit-carrying `fx` arithmetic outside the first
   post-stable `fx` arithmetic slice
 

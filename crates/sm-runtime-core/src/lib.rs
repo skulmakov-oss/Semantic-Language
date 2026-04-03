@@ -75,6 +75,8 @@ pub enum RuntimeTrap {
     TypeMismatch,
     InvalidOpcode,
     InvalidJump,
+    DivisionByZero,
+    ArithmeticOverflow,
     CapabilityDenied,
     AbiViolation,
     VerifierRejected,

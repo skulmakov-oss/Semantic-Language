@@ -6,11 +6,12 @@ use std::collections::HashMap;
 #[cfg(feature = "std")]
 mod frontend {
     pub use sm_front::{
-        build_adt_table, build_fn_table, build_record_table, builtin_sig, canonicalize_declared_type,
-        parse_logos_program_with_profile, parse_program_with_profile, reorder_call_args, resolve_symbol_name,
-        type_check_function_with_table, type_check_program, AstArena, BinaryOp, BlockExpr,
-        CompileProfile, Expr, ExprId, FnTable, FrontendError, Function, LogosProgram, MatchExpr,
-        OptLevel, QuadVal, AdtTable, RecordTable, ScopeEnv, Stmt, StmtId, SymbolId, Type, UnaryOp,
+        build_adt_table, build_fn_table, build_record_table, builtin_sig,
+        canonicalize_declared_type, parse_logos_program_with_profile, parse_program_with_profile,
+        reorder_call_args, resolve_symbol_name, type_check_function_with_table, type_check_program,
+        AdtTable, AstArena, BinaryOp, BlockExpr, CompileProfile, Expr, ExprId, FnTable,
+        FrontendError, Function, LogosProgram, MatchExpr, OptLevel, QuadVal, RecordTable, ScopeEnv,
+        Stmt, StmtId, SymbolId, Type, UnaryOp,
     };
     pub use sm_profile::ParserProfile;
 }
@@ -24,9 +25,9 @@ pub mod semcode_format {
     pub use crate::local_format::{
         header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
         read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
-        CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, Opcode,
-        SemcodeFormatError, SemcodeHeaderSpec, HEADER_V0, HEADER_V1, HEADER_V2, MAGIC0, MAGIC1,
-        MAGIC2,
+        Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH,
+        CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3,
+        MAGIC0, MAGIC1, MAGIC2, MAGIC3,
     };
 }
 

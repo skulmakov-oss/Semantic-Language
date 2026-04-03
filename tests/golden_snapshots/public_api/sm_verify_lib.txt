@@ -27,4 +27,3 @@ pub header: SemcodeHeaderSpec,
 pub functions: Vec<VerifiedFunction>,
 #[cfg(feature = "std")]
 pub fn verify_semcode(bytes: &[u8]) -> Result<VerifiedProgram, RejectReport> {
-

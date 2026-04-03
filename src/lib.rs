@@ -23,23 +23,25 @@ pub mod semcode_format {
     pub use sm_emit::{
         header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
         read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
-        CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, SemcodeFormatError,
-        SemcodeHeaderSpec, Opcode, HEADER_V0, HEADER_V1, HEADER_V2, MAGIC0, MAGIC1, MAGIC2,
+        Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_DEBUG_SYMBOLS, CAP_F64_MATH,
+        CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3,
+        MAGIC0, MAGIC1, MAGIC2, MAGIC3,
     };
 }
 #[cfg(feature = "std")]
 pub mod semcode_vm {
     pub use sm_vm::{
-        disasm_semcode, run_semcode, run_semcode_with_entry, DebugSymbol, Frame, FunctionBytecode,
+        disasm_semcode, run_semcode, run_semcode_with_entry,
         run_verified_semcode_with_host_and_capabilities,
-        run_verified_semcode_with_host_and_capabilities_and_config, RuntimeError, Value, VM,
+        run_verified_semcode_with_host_and_capabilities_and_config, DebugSymbol, Frame,
+        FunctionBytecode, RuntimeError, Value, VM,
     };
 }
 #[cfg(feature = "std")]
 pub mod semcode_verify {
     pub use sm_verify::{
-        verify_semcode, RejectReport, VerifiedFunction, VerifiedProgram, VerificationCode,
-        VerificationDiagnostic,
+        verify_semcode, RejectReport, VerificationCode, VerificationDiagnostic, VerifiedFunction,
+        VerifiedProgram,
     };
 }
 #[cfg(feature = "std")]
@@ -60,8 +62,8 @@ pub mod prom_abi {
 pub mod prom_cap {
     pub use prom_cap::{
         required_capability_for_call, CapabilityChecker, CapabilityDenied, CapabilityDeniedCode,
-        CapabilityKind, CapabilityManifest, CapabilityManifestMetadata,
-        CapabilityManifestVersion, ManifestValidationCode, ManifestValidationReport,
+        CapabilityKind, CapabilityManifest, CapabilityManifestMetadata, CapabilityManifestVersion,
+        ManifestValidationCode, ManifestValidationReport,
     };
 }
 #[cfg(feature = "std")]
@@ -74,8 +76,8 @@ pub mod prom_gates {
 #[cfg(feature = "std")]
 pub mod prom_runtime {
     pub use prom_runtime::{
-        ActivationSelection, ExecutionSession, GateExecutionSession,
-        RuntimeIntegrationSnapshot, RuntimeSessionDescriptor, RuntimeStateAdvance,
+        ActivationSelection, ExecutionSession, GateExecutionSession, RuntimeIntegrationSnapshot,
+        RuntimeSessionDescriptor, RuntimeStateAdvance,
     };
 }
 #[cfg(feature = "std")]
@@ -96,8 +98,7 @@ pub mod prom_rules {
 #[cfg(feature = "std")]
 pub mod prom_audit {
     pub use prom_audit::{
-        AuditEvent, AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail,
-        ReplayMetadata,
+        AuditEvent, AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail, ReplayMetadata,
     };
 }
 #[cfg(feature = "std")]
@@ -118,24 +119,22 @@ pub mod semantics {
 }
 #[cfg(feature = "std")]
 pub mod frontend {
-    pub use ton618_core::SourceMark;
     pub use sm_emit::{
         compile_program_to_semcode, compile_program_to_semcode_with_options,
         compile_program_to_semcode_with_options_debug, emit_ir_to_semcode,
     };
-    pub use sm_profile::ParserProfile;
     pub use sm_front::{
-        build_fn_table, builtin_sig, lex, parse_logos_program, parse_program, parse_rustlike,
-        parse_logos_program_with_profile, parse_logos_with_profile, parse_program_with_profile,
-        parse_rustlike_with_profile, resolve_symbol_name, type_check_function,
-        type_check_function_with_table, type_check_program, derive_validation_plan_table,
-        AstArena, BinaryOp, CompilePolicyView, CompileProfile, Expr, ExprId, FnSig, FnTable,
-        FrontendError, FrontendErrorKind, Function, LogosEntity, LogosEntityField,
+        build_fn_table, builtin_sig, derive_validation_plan_table, lex, parse_logos_program,
+        parse_logos_program_with_profile, parse_logos_with_profile, parse_program,
+        parse_program_with_profile, parse_rustlike, parse_rustlike_with_profile,
+        resolve_symbol_name, type_check_function, type_check_function_with_table,
+        type_check_program, AstArena, BinaryOp, CompilePolicyView, CompileProfile, Expr, ExprId,
+        FnSig, FnTable, FrontendError, FrontendErrorKind, Function, LogosEntity, LogosEntityField,
         LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, OptLevel,
         Program, QuadVal, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
-        SchemaVersion, ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp, ValidationCheck,
-        ValidationFieldPlan, ValidationPlan, ValidationPlanTable, ValidationShapePlan,
-        ValidationVariantPlan,
+        SchemaVersion, ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
+        ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationPlanTable,
+        ValidationShapePlan, ValidationVariantPlan,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
@@ -143,6 +142,8 @@ pub mod frontend {
         compile_program_to_ir_with_profile, lower_expr_to_ir, lower_function_to_ir,
         lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
     };
+    pub use sm_profile::ParserProfile;
+    pub use ton618_core::SourceMark;
 
     pub fn parse_function(input: &str) -> Result<Program, FrontendError> {
         let mut p = parse_program(input)?;
@@ -163,23 +164,23 @@ pub mod frontend {
 
     pub mod core {
         pub use super::{
-            build_fn_table, lex, parse_function, parse_logos_program, parse_program,
-            resolve_symbol_name, type_check_function, type_check_function_with_table,
-            type_check_program, derive_validation_plan_table, AstArena, BinaryOp, Expr, ExprId,
+            build_fn_table, derive_validation_plan_table, lex, parse_function, parse_logos_program,
+            parse_program, resolve_symbol_name, type_check_function,
+            type_check_function_with_table, type_check_program, AstArena, BinaryOp, Expr, ExprId,
             FnSig, FnTable, FrontendError, Function, LogosEntity, LogosLaw, LogosProgram,
-            LogosSystem, LogosWhen, MatchArm, Program, QuadVal, ScopeEnv, SourceMark, Stmt,
-            StmtId, SymbolId, Token, TokenKind, Type, UnaryOp, ValidationCheck,
-            ValidationFieldPlan, ValidationPlan, ValidationPlanTable, ValidationShapePlan,
-            ValidationVariantPlan,
+            LogosSystem, LogosWhen, MatchArm, Program, QuadVal, ScopeEnv, SourceMark, Stmt, StmtId,
+            SymbolId, Token, TokenKind, Type, UnaryOp, ValidationCheck, ValidationFieldPlan,
+            ValidationPlan, ValidationPlanTable, ValidationShapePlan, ValidationVariantPlan,
         };
     }
 
     pub mod ir {
         pub use super::{
-            compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
-            compile_program_to_ir_with_options, compile_program_to_ir_with_options_and_profile,
-            compile_program_to_ir_with_profile, lower_expr_to_ir, lower_function_to_ir,
-            lower_logos_laws_to_ir, validate_ir, ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
+            compile_program_to_immutable_ir, compile_program_to_ir,
+            compile_program_to_ir_optimized, compile_program_to_ir_with_options,
+            compile_program_to_ir_with_options_and_profile, compile_program_to_ir_with_profile,
+            lower_expr_to_ir, lower_function_to_ir, lower_logos_laws_to_ir, validate_ir,
+            ImmutableIrProgram, IrFunction, IrInstr, LogosIrLaw,
         };
     }
 

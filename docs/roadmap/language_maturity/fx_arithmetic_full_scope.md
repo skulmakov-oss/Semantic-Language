@@ -71,5 +71,7 @@ This track is done only when:
 ## Slice History
 
 1. docs/governance checkpoint
-2. plain `fx` unary/binary arithmetic admitted by source typing, with explicit
-   canonical-lowering gap diagnostics until the lowering/VM slice lands
+2. plain `fx` unary/binary arithmetic admitted by source typing
+3. canonical lowering/verified execution for the same plain `fx` arithmetic
+   surface under a promoted SemCode header line
+4. docs/spec/test freeze for the widened post-stable contract
