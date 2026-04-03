@@ -70,6 +70,8 @@
     `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
   - current completed post-stable replay expansion checkpoint:
     `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
+  - current post-stable rollback checkpoint:
+    `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
 - `M6 v1 Lockdown`
   - freezes
   - golden baselines

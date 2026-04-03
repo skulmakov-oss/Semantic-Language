@@ -40,6 +40,8 @@ Current post-`v1` wave:
 
 - richer `fx` arithmetic beyond the current value path:
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- rollback persistence semantics:
+  `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
 
 Foundational work already in place:
 
