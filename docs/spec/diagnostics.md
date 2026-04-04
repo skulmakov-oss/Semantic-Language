@@ -64,9 +64,10 @@ Current honest limit:
 
 - the repository does not yet claim that every parser diagnostic code or exact
   wording is frozen as a long-term compatibility promise
-- current `main` reserves a frontend text-literal owner family, but executable
-  text parser admission diagnostics remain a later `M8.1` wave rather than part
-  of the current executable syntax contract
+- current `main` now admits executable double-quoted text literals and `text`
+  type spelling in the source parser path
+- exact parse wording for text-surface gaps is not yet a long-term frozen
+  compatibility promise
 
 ## Policy Diagnostics
 
@@ -223,14 +224,17 @@ Current message families include:
   overflow in the widened post-stable execution path
 - explicit gap messages for unit-carrying `fx` arithmetic outside the first
   post-stable `fx` arithmetic slice
+- explicit gap messages for text concatenation or text arithmetic beyond the
+  current equality-only `M8.1` Wave 2 surface
 
 Current honest limit:
 
 - exact wording of type-check messages is not yet a fully frozen compatibility
   contract
-- current `main` reserves frontend owner-layer `text`/text-literal families,
-  but executable type-check admission and equality diagnostics for text values
-  remain later `M8.1` waves
+- current `main` now admits executable text literal typing and same-family
+  equality in the source type-check path
+- current `main` still reports explicit gap messages for text arithmetic beyond
+  equality until later `M8.1` waves land
 - generated validation failures are currently documented as deterministic plan
   categories, not yet as a separate runtime or CLI diagnostic family
 - generated API contract failures are currently documented as deterministic

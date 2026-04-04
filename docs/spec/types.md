@@ -27,6 +27,7 @@ Current source-visible types:
 
 - `quad`
 - `bool`
+- `text`
 - `i32`
 - `u32`
 - `f64`
@@ -74,13 +75,22 @@ Current honest baseline:
 
 - the published stable `v1.1.1` line does not expose `text` as an executable
   source-visible type family
-- current `main` now reserves `text` as an explicit frontend owner-layer type
-  in `sm-front`
-- current `main` also reserves a double-quoted UTF-8 text literal family in the
-  frontend owner layer
-- parser admission, source typing, equality execution, lowering, verifier
-  admission, and VM execution for executable text values remain later `M8.1`
-  waves
+- current `main` now admits `text` in declared source type positions in the
+  Rust-like executable path
+- current `main` also admits a narrow double-quoted UTF-8 text literal family
+  in the same source path
+- current `main` admits same-family equality on `text`
+- current `main` does not yet admit text concatenation or a canonical runtime
+  text carrier
+- lowering, verifier admission, and VM execution for executable text values
+  remain later `M8.1` waves
+
+Current text-surface limits:
+
+- the current literal spelling is narrow: double-quoted same-line UTF-8 text
+  only
+- interpolation, formatting, escape-rich string syntax, and host/runtime text
+  ABI widening are not part of the current contract
 
 ## Unit
 

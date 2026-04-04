@@ -85,17 +85,20 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 1:
+Current branch scope for Wave 2:
 
-- explicit `text` owner-layer type in `sm-front`
-- explicit double-quoted UTF-8 text literal family ownership in `sm-front`
-- public API and docs/snapshot sync for that owner layer
+- parser admission for double-quoted text literals in the Rust-like executable
+  source surface
+- parser admission for `text` in declared type positions
+- source typing for executable text literals
+- same-family equality admission for `text == text` and `text != text`
+- explicit source-level gap wording for text arithmetic beyond equality
 
-Still intentionally not included in Wave 1:
+Still intentionally not included in Wave 2:
 
-- parser admission for executable text literals
-- source typing/equality admission for executable text expressions
-- IR, verifier, or VM carrier/runtime work
+- IR, verifier, or VM text carrier/runtime work
+- text concatenation
+- formatting, interpolation, or host-facing text ABI widening
 
 ## Acceptance Reading
 
