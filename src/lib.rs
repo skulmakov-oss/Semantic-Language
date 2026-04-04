@@ -143,9 +143,9 @@ pub mod frontend {
         FnSig, FnTable, FrontendError, FrontendErrorKind, Function, LogosEntity, LogosEntityField,
         LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, OptLevel,
         Program, QuadVal, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
-        SchemaVersion, ScopeEnv, Stmt, StmtId, SymbolId, Token, TokenKind, Type, UnaryOp,
-        ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationPlanTable,
-        ValidationShapePlan, ValidationVariantPlan,
+        SchemaVersion, ScopeEnv, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token,
+        TokenKind, Type, UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan,
+        ValidationPlanTable, ValidationShapePlan, ValidationVariantPlan,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
@@ -180,8 +180,9 @@ pub mod frontend {
             type_check_function_with_table, type_check_program, AstArena, BinaryOp, Expr, ExprId,
             FnSig, FnTable, FrontendError, Function, LogosEntity, LogosLaw, LogosProgram,
             LogosSystem, LogosWhen, MatchArm, Program, QuadVal, ScopeEnv, SourceMark, Stmt, StmtId,
-            SymbolId, Token, TokenKind, Type, UnaryOp, ValidationCheck, ValidationFieldPlan,
-            ValidationPlan, ValidationPlanTable, ValidationShapePlan, ValidationVariantPlan,
+            SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind, Type, UnaryOp,
+            ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationPlanTable,
+            ValidationShapePlan, ValidationVariantPlan,
         };
     }
 

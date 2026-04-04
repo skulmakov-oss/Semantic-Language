@@ -2,6 +2,10 @@ use std::fs;
 
 const TARGETS: &[(&str, &str)] = &[
     (
+        "crates/sm-front/src/lib.rs",
+        "tests/golden_snapshots/public_api/sm_front_lib.txt",
+    ),
+    (
         "crates/sm-ir/src/lib.rs",
         "tests/golden_snapshots/public_api/sm_ir_lib.txt",
     ),

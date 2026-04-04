@@ -1,6 +1,6 @@
 # Text Type Full Scope
 
-Status: proposed future M8.1 post-stable subtrack
+Status: active M8.1 post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -82,6 +82,20 @@ its widened contract on `main`.
 3. PR 3: parser/sema/type admission for text and equality
 4. PR 4: IR/verifier/VM path
 5. PR 5: freeze and close-out
+
+## Current Wave Reading
+
+Current branch scope for Wave 1:
+
+- explicit `text` owner-layer type in `sm-front`
+- explicit double-quoted UTF-8 text literal family ownership in `sm-front`
+- public API and docs/snapshot sync for that owner layer
+
+Still intentionally not included in Wave 1:
+
+- parser admission for executable text literals
+- source typing/equality admission for executable text expressions
+- IR, verifier, or VM carrier/runtime work
 
 ## Acceptance Reading
 

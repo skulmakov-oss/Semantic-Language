@@ -64,6 +64,9 @@ Current honest limit:
 
 - the repository does not yet claim that every parser diagnostic code or exact
   wording is frozen as a long-term compatibility promise
+- current `main` reserves a frontend text-literal owner family, but executable
+  text parser admission diagnostics remain a later `M8.1` wave rather than part
+  of the current executable syntax contract
 
 ## Policy Diagnostics
 
@@ -225,6 +228,9 @@ Current honest limit:
 
 - exact wording of type-check messages is not yet a fully frozen compatibility
   contract
+- current `main` reserves frontend owner-layer `text`/text-literal families,
+  but executable type-check admission and equality diagnostics for text values
+  remain later `M8.1` waves
 - generated validation failures are currently documented as deterministic plan
   categories, not yet as a separate runtime or CLI diagnostic family
 - generated API contract failures are currently documented as deterministic

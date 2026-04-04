@@ -68,6 +68,20 @@ Current compile-time-only declaration families:
 - generated wire-contract artifacts preserve declaration order and expose
   explicit format-version and generator metadata for reproducible review
 
+## Text
+
+Current honest baseline:
+
+- the published stable `v1.1.1` line does not expose `text` as an executable
+  source-visible type family
+- current `main` now reserves `text` as an explicit frontend owner-layer type
+  in `sm-front`
+- current `main` also reserves a double-quoted UTF-8 text literal family in the
+  frontend owner layer
+- parser admission, source typing, equality execution, lowering, verifier
+  admission, and VM execution for executable text values remain later `M8.1`
+  waves
+
 ## Unit
 
 `unit` is the implicit type of functions without an explicit return type.

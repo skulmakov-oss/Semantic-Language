@@ -1460,7 +1460,10 @@ impl<'a> Parser<'a> {
         scopes: &mut Vec<Vec<SymbolId>>,
     ) -> Result<(), FrontendError> {
         match self.arena.expr(expr_id) {
-            Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
+            Expr::QuadLiteral(_)
+            | Expr::BoolLiteral(_)
+            | Expr::TextLiteral(_)
+            | Expr::NumericLiteral(_) => Ok(()),
             Expr::Range(range_expr) => {
                 self.ensure_short_lambda_expr_capture_free(range_expr.start, scopes)?;
                 self.ensure_short_lambda_expr_capture_free(range_expr.end, scopes)

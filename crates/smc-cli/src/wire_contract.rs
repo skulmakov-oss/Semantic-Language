@@ -207,6 +207,7 @@ fn display_generated_wire_type(ty: &Type, arena: &AstArena) -> Result<String, Fr
         Type::Quad => "quad".to_string(),
         Type::QVec(width) => format!("qvec({})", width),
         Type::Bool => "bool".to_string(),
+        Type::Text => "text".to_string(),
         Type::I32 => "i32".to_string(),
         Type::U32 => "u32".to_string(),
         Type::Fx => "fx".to_string(),

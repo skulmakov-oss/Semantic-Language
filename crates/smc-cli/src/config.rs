@@ -347,6 +347,11 @@ fn validate_value_against_type(
                 diagnostics.push(type_mismatch(path, "expected bool value"));
             }
         }
+        Type::Text => {
+            if !matches!(value, ConfigValue::String(_)) {
+                diagnostics.push(type_mismatch(path, "expected text value"));
+            }
+        }
         Type::Quad => {
             if !matches!(value, ConfigValue::Quad(_)) {
                 diagnostics.push(type_mismatch(path, "expected quad value"));
@@ -481,6 +486,7 @@ fn display_config_type(ty: &Type, contract: &ConfigContract) -> String {
         Type::Quad => "quad".to_string(),
         Type::QVec(width) => format!("qvec({})", width),
         Type::Bool => "bool".to_string(),
+        Type::Text => "text".to_string(),
         Type::I32 => "i32".to_string(),
         Type::U32 => "u32".to_string(),
         Type::Fx => "fx".to_string(),
