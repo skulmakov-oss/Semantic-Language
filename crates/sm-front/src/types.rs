@@ -9,6 +9,7 @@ pub enum Type {
     Quad,
     QVec(usize),
     Bool,
+    Text,
     I32,
     U32,
     Fx,
@@ -85,6 +86,17 @@ pub enum NumericLiteral {
     Fx(f64),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextLiteralFamily {
+    DoubleQuotedUtf8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TextLiteral {
+    pub family: TextLiteralFamily,
+    pub spelling: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallArg {
     pub name: Option<SymbolId>,
@@ -152,6 +164,7 @@ pub enum RecordPatternTarget {
 pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
+    TextLiteral(TextLiteral),
     NumericLiteral(NumericLiteral),
     Range(RangeExpr),
     Tuple(Vec<ExprId>),
@@ -688,5 +701,21 @@ mod tests {
         let _s2 = arena.alloc_stmt(Stmt::Return(None));
         assert_eq!(arena.expr(e0), &Expr::QuadLiteral(QuadVal::T));
         assert_eq!(arena.stmt(s0), &Stmt::Expr(e0));
+    }
+
+    #[test]
+    fn text_type_is_non_numeric_and_survives_unit_erasure() {
+        assert_eq!(Type::Text.erase_units(), Type::Text);
+        assert!(!Type::Text.is_core_numeric_scalar());
+    }
+
+    #[test]
+    fn text_literal_owner_layer_is_stable_data() {
+        let literal = TextLiteral {
+            family: TextLiteralFamily::DoubleQuotedUtf8,
+            spelling: "\"semantic\"".to_string(),
+        };
+        assert_eq!(literal.family, TextLiteralFamily::DoubleQuotedUtf8);
+        assert_eq!(literal.spelling, "\"semantic\"");
     }
 }

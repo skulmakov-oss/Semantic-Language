@@ -1359,6 +1359,7 @@ fn infer_expr_type(
     match expr {
         Expr::QuadLiteral(_) => Ok(Type::Quad),
         Expr::BoolLiteral(_) => Ok(Type::Bool),
+        Expr::TextLiteral(_) => Ok(Type::Text),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
             NumericLiteral::U32(_) => Ok(Type::U32),
@@ -5537,6 +5538,7 @@ fn supports_stable_equality_type_inner(
     match ty {
         Type::Quad
         | Type::Bool
+        | Type::Text
         | Type::I32
         | Type::U32
         | Type::Fx

@@ -1404,6 +1404,12 @@ fn lower_expr_with_expected(
             out.push(IrInstr::LoadBool { dst: r, val: *v });
             Ok((r, Type::Bool))
         }
+        Expr::TextLiteral(_) => Err(FrontendError {
+            pos: 0,
+            message:
+                "text literal owner-layer is present on current main, but executable lowering remains a later M8.1 wave"
+                    .to_string(),
+        }),
         Expr::Range(range_expr) => {
             let (start_reg, start_ty) = lower_expr_with_expected(
                 range_expr.start,
