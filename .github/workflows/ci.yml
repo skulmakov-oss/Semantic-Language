@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+env:
+  # Opt into the upcoming GitHub Actions Node 24 runtime now so CI is
+  # validated before the platform-wide default switch.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   boundary-enforcement:
     runs-on: ubuntu-latest
