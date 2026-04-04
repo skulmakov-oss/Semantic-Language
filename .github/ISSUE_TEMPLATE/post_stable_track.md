@@ -10,6 +10,8 @@ assignees: ""
 
 Status: proposed post-stable expansion track
 Track class: <fx close-out | release-maintenance | new post-stable track>
+Milestone: <M7 | M8 | M9 | M10 | maintenance-only>
+Planned wave entry: <Wave 0 | Wave 1 | ...>
 Related stable baseline: <doc path or release note>
 Published stable line impact: <none | forward-only widening on main>
 
@@ -57,6 +59,14 @@ List what current `main` may already admit, if different.
 2. <first narrow code slice>
 3. <second narrow code slice>
 4. <freeze/close-out slice>
+
+## Planned PR Wave Reading
+
+- Wave 0: <governance checkpoint>
+- Wave 1: <owner-layer / admitted surface inventory>
+- Wave 2: <surface admission>
+- Wave 3: <runtime / execution / resolution path>
+- Wave 4: <freeze>
 
 ## Acceptance Reading
 

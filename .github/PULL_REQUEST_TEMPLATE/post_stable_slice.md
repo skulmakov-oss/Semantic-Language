@@ -1,6 +1,8 @@
 # <TRACK-ID> <Short Slice Name>
 
 Closes part of: <issue link or track id>
+Milestone: <M7 | M8 | M9 | M10 | maintenance-only>
+Wave: <Wave 0 | Wave 1 | Wave 2 | Wave 3 | Wave 4>
 Slice type: <docs-only | code | freeze>
 One PR = one logical step.
 

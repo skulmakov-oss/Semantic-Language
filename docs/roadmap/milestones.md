@@ -89,3 +89,29 @@
   - current stable-note checkpoints:
     - `docs/roadmap/language_maturity/release_version_cut_decision.md`
     - `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
+- `M7 UI Application Boundary`
+  - desktop window lifecycle
+  - explicit UI capability/admission ownership
+  - deterministic event polling and frame lifecycle
+  - minimal draw-command family and one canonical demo application
+  - current status: proposed post-stable milestone
+  - scope checkpoint:
+    `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
+  - current planning rule:
+    - keep backend choice internal to the runtime owner
+    - keep published `v1.1.1` separate from widened `main`
+    - deliver through PR waves rather than one large integration PR
+- `M8 Everyday Expressiveness Foundation`
+  - text / strings
+  - package ecosystem baseline
+  - collections
+  - first-class closures
+  - current status: proposed future post-stable language-maturity package
+  - planning docs:
+    - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
+    - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
+    - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
+  - planning rule:
+    - keep package baseline earlier than broad abstraction machinery
+    - keep one active stream at a time
+    - keep UI/platform expansion separate from language-maturity work
