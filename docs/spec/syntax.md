@@ -268,6 +268,9 @@ Current expression forms:
 - literals:
   - quad literals: `N`, `F`, `T`, `S`
   - bool literals: `true`, `false`
+  - text literals:
+    - double-quoted text `"hello"`
+    - empty text `""`
   - integer literals:
     - decimal `123`
     - decimal with separators `1_000`
@@ -318,6 +321,8 @@ Current expression forms:
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`
+- text type:
+  - `text`
 - first-wave units-of-measure annotations:
   - `f64[m]`
   - `u32[ms]`
@@ -356,6 +361,12 @@ Current v0 numeric-literal limits:
 - typed literal spelling does not imply new integer arithmetic beyond the
   already documented operator surface
 - tuple literal arity must be at least 2 in the current contract
+
+Current text-literal limits:
+
+- the current executable text surface is only double-quoted same-line text
+- interpolation and multi-line text blocks are not part of the current surface
+- text concatenation is not yet part of the current source contract
 
 Current v0 range-literal limits:
 

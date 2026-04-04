@@ -88,9 +88,8 @@ pub mod prom_state {
     pub use prom_state::{
         ContextWindow, FactResolution, FactValue, SemanticStateStore, StateEpoch, StateRecord,
         StateRollbackAdvance, StateRollbackArtifact, StateRollbackCheckpoint, StateRollbackCode,
-        StateRollbackError, StateSnapshot,
-        StateSnapshotArchive, StateSnapshotArchiveFormatError, StateTransitionMetadata,
-        StateUpdate, StateValidationCode, StateValidationError,
+        StateRollbackError, StateSnapshot, StateSnapshotArchive, StateSnapshotArchiveFormatError,
+        StateTransitionMetadata, StateUpdate, StateValidationCode, StateValidationError,
         STATE_ROLLBACK_ARTIFACT_FORMAT_VERSION, STATE_SNAPSHOT_ARCHIVE_FORMAT_VERSION,
     };
 }
@@ -106,9 +105,8 @@ pub mod prom_rules {
 pub mod prom_audit {
     pub use prom_audit::{
         AuditEvent, AuditEventId, AuditEventKind, AuditReplayArchive,
-        AuditReplayArchiveFormatError, AuditSessionMetadata, AuditTrail,
-        MultiSessionReplayArchive, MultiSessionReplayArchiveFormatError,
-        MultiSessionReplayArchiveSession, ReplayMetadata,
+        AuditReplayArchiveFormatError, AuditSessionMetadata, AuditTrail, MultiSessionReplayArchive,
+        MultiSessionReplayArchiveFormatError, MultiSessionReplayArchiveSession, ReplayMetadata,
         AUDIT_REPLAY_ARCHIVE_FORMAT_VERSION, MULTI_SESSION_REPLAY_ARCHIVE_FORMAT_VERSION,
     };
 }
@@ -207,7 +205,7 @@ pub mod frontend {
 Program      = { Function } ;
 Function     = "fn" Ident "(" [ Param { "," Param } ] ")" [ "->" Type ] Block ;
 Param        = Ident ":" Type ;
-Type         = "quad" | "bool" | "i32" | "u32" | "fx" | "f64" ;
+Type         = "quad" | "bool" | "text" | "i32" | "u32" | "fx" | "f64" ;
 Block        = "{" { Stmt } "}" ;
 Stmt         = LetStmt | IfStmt | MatchStmt | ReturnStmt | ExprStmt ;
 LetStmt      = "let" Ident [ ":" Type ] "=" Expr ";" ;
@@ -224,10 +222,11 @@ Eq           = Add { ("==" | "!=") Add } ;
 Add          = Mul { ("+" | "-") Mul } ;
 Mul          = Unary { ("*" | "/") Unary } ;
 Unary        = [ "!" | "+" | "-" ] Primary ;
-Primary      = QuadLit | BoolLit | Num | Float | Ident | Call | "(" Expr ")" ;
+Primary      = QuadLit | BoolLit | StringLit | Num | Float | Ident | Call | "(" Expr ")" ;
 Call         = Ident "(" [ Expr { "," Expr } ] ")" ;
 QuadLit      = "N" | "F" | "T" | "S" ;
 BoolLit      = "true" | "false" ;
+StringLit    = "\"" { ? any character except quote or newline ? } "\"" ;
 "#;
 }
 

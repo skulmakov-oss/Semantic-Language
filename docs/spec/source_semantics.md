@@ -692,6 +692,8 @@ Current v0 limits:
 Current operator meaning:
 
 - `==` and `!=` produce `bool`
+- same-family `text == text` and `text != text` are now admitted on current
+  `main`
 - `&&` and `||` work on `bool` and `quad` only when both operands are of the
   same family
 - `!` works on `bool` and `quad`
@@ -718,6 +720,9 @@ Current honest limit:
 - completed first-wave post-stable widening for general-purpose `fx`
   arithmetic is documented in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- the published stable `v1.1.1` line still does not expose executable `text`
+- current `main` admits `text` in the source type/equality layer only
+- text concatenation and runtime text execution remain later `M8.1` waves
 
 ## Builtin Call Meaning
 
