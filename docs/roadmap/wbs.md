@@ -13,6 +13,7 @@ Milestones:
 - `1.5` PROMETHEUS boundary
 - `1.6` semantic runtime
 - `1.7` v1 lockdown
+- `1.8` UI application boundary (post-stable)
 
 Current post-stable focus:
 
@@ -22,6 +23,14 @@ Current post-stable focus:
 
 Current non-blocking follow-up work:
 
+- the active post-stable UI application boundary track is scoped in
+  `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
+- its planned delivery waves are:
+  - Wave 0: governance and owner split
+  - Wave 1: boundary admission
+  - Wave 2: desktop lifecycle
+  - Wave 3: minimal drawing surface
+  - Wave 4: freeze and close-out
 - the retained non-owning TON618 compatibility perimeter is frozen as completed
   post-stable baseline history in
   `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`

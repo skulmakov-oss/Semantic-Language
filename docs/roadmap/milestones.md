@@ -89,3 +89,15 @@
   - current stable-note checkpoints:
     - `docs/roadmap/language_maturity/release_version_cut_decision.md`
     - `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
+- `M7 UI Application Boundary`
+  - desktop window lifecycle
+  - explicit UI capability/admission ownership
+  - deterministic event polling and frame lifecycle
+  - minimal draw-command family and one canonical demo application
+  - current status: proposed post-stable milestone
+  - scope checkpoint:
+    `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
+  - current planning rule:
+    - keep backend choice internal to the runtime owner
+    - keep published `v1.1.1` separate from widened `main`
+    - deliver through PR waves rather than one large integration PR
