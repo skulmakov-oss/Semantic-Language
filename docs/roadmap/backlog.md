@@ -26,6 +26,11 @@ Current post-`v1` wave:
 - `UI application boundary for Semantic desktop applications` is the current
   active post-stable track and is scoped in
   `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
+- the proposed next language-maturity package after the current post-stable UI
+  work is documented in:
+  - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
+  - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
+  - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
 - `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
   frozen baseline history in `docs/roadmap_next.md`
 - the retained non-owning TON618 compatibility perimeter is completed and now
