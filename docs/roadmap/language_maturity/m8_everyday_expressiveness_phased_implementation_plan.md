@@ -61,6 +61,10 @@ Default narrow PR pattern:
 - Wave 3: IR/lowering/VM path
 - Wave 4: docs/tests/compatibility freeze
 
+Current proposed checkpoint:
+
+- `docs/roadmap/language_maturity/text_type_full_scope.md`
+
 ### M8.2 Package Ecosystem Baseline
 
 - Wave 0: package scope checkpoint

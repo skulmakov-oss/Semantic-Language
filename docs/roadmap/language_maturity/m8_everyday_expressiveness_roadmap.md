@@ -92,6 +92,10 @@ Immediate next language-facing priorities in this proposal:
 - collections
 - first-class closures
 
+Current first proposed subtrack checkpoint:
+
+- `docs/roadmap/language_maturity/text_type_full_scope.md`
+
 ## Explicit Non-Goals
 
 This roadmap package does not by itself:
