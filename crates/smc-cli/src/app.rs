@@ -3,7 +3,7 @@ use crate::incremental::{
     emit_trace, module_graph_fingerprint, module_graph_module_count, read_graph_hash,
     update_cache_index, CacheEvent, CacheReason, ModuleGraphSnapshot,
 };
-use crate::package_manifest::admit_package_entry_module;
+use crate::package_manifest::{admit_package_entry_module, resolve_package_import_path};
 use crate::{format_path, FormatterMode};
 use sm_emit::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug,
@@ -31,6 +31,12 @@ impl ModuleProvider for CliFsModuleProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
         ensure_package_module_admission(Path::new(module_id))?;
         std::fs::read(module_id).map_err(|e| e.to_string())
+    }
+
+    fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String> {
+        resolve_package_import_path(Path::new(importer_module_id), spec)
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .map_err(|e| e.to_string())
     }
 }
 

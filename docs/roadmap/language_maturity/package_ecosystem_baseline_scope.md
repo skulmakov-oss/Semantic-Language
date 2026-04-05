@@ -86,22 +86,23 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 2:
+Current branch scope for Wave 3:
 
-- canonical `Semantic.package` text parsing for the first-wave manifest surface
-- explicit admission of package entry modules against package root and
-  `module_root`
-- narrow CLI/module-provider validation hooks so source entrypoints and scanned
-  modules agree on the same package boundary
-- dependency declarations remain local-path only and still do not imply package
-  graph loading
+- deterministic local-path dependency loading for package-qualified import specs
+  of the form `"alias::module/path.sm"`
+- one canonical resolution path shared by `smc-cli`, `sm-sema`, and the
+  incremental module graph
+- dependency manifest validation and package-name matching before dependency
+  modules are admitted
+- package graph loading that remains local-path only and deterministic by the
+  declared manifest inventory
 
-Still intentionally not included in Wave 2:
+Still intentionally not included in Wave 3:
 
-- deterministic dependency loading across package boundaries
 - registry or publishing semantics
-- lockfile or solver ownership
-- workspace-wide build orchestration beyond deterministic path loading
+- semver or lockfile ownership
+- workspaces beyond deterministic local-path loading
+- package solver heuristics or alternate dependency sources
 
 ## Acceptance Reading
 

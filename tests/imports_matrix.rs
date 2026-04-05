@@ -9,6 +9,25 @@ impl ModuleProvider for FsProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
         fs::read(module_id).map_err(|e| e.to_string())
     }
+
+    fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String> {
+        Ok(resolve_fixture_import(importer_module_id, spec))
+    }
+}
+
+fn resolve_fixture_import(importer_module_id: &str, spec: &str) -> String {
+    let importer = Path::new(importer_module_id);
+    let base = importer.parent().unwrap_or_else(|| Path::new("."));
+    let mut spec_path = PathBuf::from(spec);
+    if spec_path.extension().is_none() {
+        spec_path.set_extension("exo");
+    }
+    let joined = if spec_path.is_absolute() {
+        spec_path
+    } else {
+        base.join(spec_path)
+    };
+    joined.to_string_lossy().replace('\\', "/")
 }
 
 fn fixture_dirs(root: &Path) -> Vec<PathBuf> {

@@ -182,6 +182,7 @@ impl Default for SymbolTable {
 
 pub trait ModuleProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String>;
+    fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

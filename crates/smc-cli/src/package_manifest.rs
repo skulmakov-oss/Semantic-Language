@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 pub const PACKAGE_MANIFEST_BASELINE_VERSION: u32 = 1;
 pub const PACKAGE_MANIFEST_FILE_NAME: &str = "Semantic.package";
+pub const PACKAGE_IMPORT_SEPARATOR: &str = "::";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageRoot {
@@ -133,6 +134,41 @@ impl fmt::Display for PackageModuleAdmissionError {
 }
 
 impl Error for PackageModuleAdmissionError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageImportResolutionCode {
+    ImporterResolutionFailed,
+    ImporterManifestMissing,
+    ImporterManifestReadFailed,
+    ImporterManifestParseFailed,
+    ImporterManifestValidationFailed,
+    ImporterPackageRootResolutionFailed,
+    ImporterModuleRootResolutionFailed,
+    InvalidQualifiedImportSpec,
+    UnknownDependencyAlias,
+    DependencyManifestMissing,
+    DependencyManifestReadFailed,
+    DependencyManifestParseFailed,
+    DependencyManifestValidationFailed,
+    DependencyPackageRootResolutionFailed,
+    DependencyModuleRootResolutionFailed,
+    DependencyPackageNameMismatch,
+    DependencyImportOutsideModuleRoot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageImportResolutionError {
+    pub code: PackageImportResolutionCode,
+    pub message: String,
+}
+
+impl fmt::Display for PackageImportResolutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "package import resolution error: {}", self.message)
+    }
+}
+
+impl Error for PackageImportResolutionError {}
 
 pub fn parse_package_manifest_baseline(
     source: &str,
@@ -401,6 +437,29 @@ pub fn admit_package_entry_module(
     }))
 }
 
+pub fn resolve_package_import_path(
+    importer_module: &Path,
+    spec: &str,
+) -> Result<PathBuf, PackageImportResolutionError> {
+    let importer_canonical =
+        importer_module
+            .canonicalize()
+            .map_err(|e| PackageImportResolutionError {
+                code: PackageImportResolutionCode::ImporterResolutionFailed,
+                message: format!(
+                    "failed to resolve importer module '{}': {}",
+                    importer_module.display(),
+                    e
+                ),
+            })?;
+    if let Some((alias, module_spec)) = spec.split_once(PACKAGE_IMPORT_SEPARATOR) {
+        return resolve_dependency_import(&importer_canonical, alias, module_spec, spec);
+    }
+
+    let base = importer_canonical.parent().unwrap_or_else(|| Path::new("."));
+    Ok(resolve_relative_import_path(base, spec))
+}
+
 fn parse_error(code: PackageManifestParseCode, line: usize, message: &str) -> PackageManifestParseError {
     PackageManifestParseError {
         code,
@@ -479,6 +538,13 @@ fn find_nearest_manifest(entry_canonical: &Path) -> Option<PathBuf> {
     None
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedPackageContext {
+    manifest: PackageManifest,
+    package_root: PathBuf,
+    module_root: PathBuf,
+}
+
 fn load_and_validate_manifest(
     manifest_path: &Path,
 ) -> Result<PackageManifest, PackageModuleAdmissionError> {
@@ -498,8 +564,207 @@ fn load_and_validate_manifest(
     Ok(manifest)
 }
 
+fn resolve_dependency_import(
+    importer_canonical: &Path,
+    alias: &str,
+    module_spec: &str,
+    original_spec: &str,
+) -> Result<PathBuf, PackageImportResolutionError> {
+    if alias.trim().is_empty() || module_spec.trim().is_empty() {
+        return Err(PackageImportResolutionError {
+            code: PackageImportResolutionCode::InvalidQualifiedImportSpec,
+            message: format!(
+                "qualified package import '{}' must be '<alias>{}<module_path>'",
+                original_spec, PACKAGE_IMPORT_SEPARATOR
+            ),
+        });
+    }
+
+    let importer_manifest_path =
+        find_nearest_manifest(importer_canonical).ok_or_else(|| PackageImportResolutionError {
+            code: PackageImportResolutionCode::ImporterManifestMissing,
+            message: format!(
+                "qualified package import '{}' requires an enclosing {} for '{}'",
+                original_spec,
+                PACKAGE_MANIFEST_FILE_NAME,
+                importer_canonical.display()
+            ),
+        })?;
+    let importer_ctx = resolve_manifest_context(
+        &importer_manifest_path,
+        PackageImportResolutionCode::ImporterManifestReadFailed,
+        PackageImportResolutionCode::ImporterManifestParseFailed,
+        PackageImportResolutionCode::ImporterManifestValidationFailed,
+        PackageImportResolutionCode::ImporterPackageRootResolutionFailed,
+        PackageImportResolutionCode::ImporterModuleRootResolutionFailed,
+    )?;
+
+    let dependency = importer_ctx
+        .manifest
+        .dependencies
+        .iter()
+        .find(|dep| dep.alias == alias)
+        .ok_or_else(|| PackageImportResolutionError {
+            code: PackageImportResolutionCode::UnknownDependencyAlias,
+            message: format!(
+                "package '{}' does not declare dependency alias '{}'",
+                importer_ctx.manifest.package.name, alias
+            ),
+        })?;
+
+    let dependency_path = match &dependency.source {
+        PackageDependencySource::LocalPath { path } => path,
+    };
+    let dependency_manifest_path = importer_ctx
+        .package_root
+        .join(dependency_path)
+        .join(PACKAGE_MANIFEST_FILE_NAME);
+    if !dependency_manifest_path.is_file() {
+        return Err(PackageImportResolutionError {
+            code: PackageImportResolutionCode::DependencyManifestMissing,
+            message: format!(
+                "dependency alias '{}' expected {} at '{}'",
+                alias,
+                PACKAGE_MANIFEST_FILE_NAME,
+                dependency_manifest_path.display()
+            ),
+        });
+    }
+
+    let dependency_ctx = resolve_manifest_context(
+        &dependency_manifest_path,
+        PackageImportResolutionCode::DependencyManifestReadFailed,
+        PackageImportResolutionCode::DependencyManifestParseFailed,
+        PackageImportResolutionCode::DependencyManifestValidationFailed,
+        PackageImportResolutionCode::DependencyPackageRootResolutionFailed,
+        PackageImportResolutionCode::DependencyModuleRootResolutionFailed,
+    )?;
+    if dependency_ctx.manifest.package.name != dependency.package_name {
+        return Err(PackageImportResolutionError {
+            code: PackageImportResolutionCode::DependencyPackageNameMismatch,
+            message: format!(
+                "dependency alias '{}' expected package '{}' but manifest declares '{}'",
+                alias, dependency.package_name, dependency_ctx.manifest.package.name
+            ),
+        });
+    }
+
+    let resolved = normalize_lexical(
+        &dependency_ctx
+            .module_root
+            .join(append_default_module_extension(module_spec)),
+    );
+    if resolved
+        .strip_prefix(&dependency_ctx.module_root)
+        .is_err()
+    {
+        return Err(PackageImportResolutionError {
+            code: PackageImportResolutionCode::DependencyImportOutsideModuleRoot,
+            message: format!(
+                "qualified package import '{}' escapes dependency module_root '{}'",
+                original_spec,
+                dependency_ctx.module_root.display()
+            ),
+        });
+    }
+    Ok(resolved)
+}
+
+fn resolve_manifest_context(
+    manifest_path: &Path,
+    read_code: PackageImportResolutionCode,
+    parse_code: PackageImportResolutionCode,
+    validate_code: PackageImportResolutionCode,
+    package_root_code: PackageImportResolutionCode,
+    module_root_code: PackageImportResolutionCode,
+) -> Result<ResolvedPackageContext, PackageImportResolutionError> {
+    let source = std::fs::read_to_string(manifest_path).map_err(|e| PackageImportResolutionError {
+        code: read_code,
+        message: format!("failed to read '{}': {}", manifest_path.display(), e),
+    })?;
+    let manifest =
+        parse_package_manifest_baseline(&source).map_err(|e| PackageImportResolutionError {
+            code: parse_code,
+            message: format!("failed to parse '{}': {}", manifest_path.display(), e),
+        })?;
+    validate_package_manifest_baseline(&manifest).map_err(|e| PackageImportResolutionError {
+        code: validate_code,
+        message: format!("failed to validate '{}': {}", manifest_path.display(), e),
+    })?;
+
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let package_root = manifest_dir
+        .join(&manifest.package.root.manifest_dir)
+        .canonicalize()
+        .map_err(|e| PackageImportResolutionError {
+            code: package_root_code,
+            message: format!(
+                "failed to resolve package root '{}' relative to '{}': {}",
+                manifest.package.root.manifest_dir,
+                manifest_path.display(),
+                e
+            ),
+        })?;
+    let module_root = package_root
+        .join(&manifest.package.root.module_root)
+        .canonicalize()
+        .map_err(|e| PackageImportResolutionError {
+            code: module_root_code,
+            message: format!(
+                "failed to resolve package module_root '{}' relative to '{}': {}",
+                manifest.package.root.module_root,
+                package_root.display(),
+                e
+            ),
+        })?;
+
+    Ok(ResolvedPackageContext {
+        manifest,
+        package_root,
+        module_root,
+    })
+}
+
+fn resolve_relative_import_path(base: &Path, spec: &str) -> PathBuf {
+    let path = append_default_module_extension(spec);
+    if path.is_absolute() {
+        normalize_lexical(&path)
+    } else {
+        normalize_lexical(&base.join(path))
+    }
+}
+
+fn append_default_module_extension(spec: &str) -> PathBuf {
+    let mut path = PathBuf::from(spec);
+    if path.extension().is_none() {
+        path.set_extension("exo");
+    }
+    path
+}
+
+fn normalize_lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+            Component::RootDir => out.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = out.pop();
+            }
+            Component::Normal(part) => out.push(part),
+        }
+    }
+    out
+}
+
 fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    normalized
+        .strip_prefix("//?/")
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 fn normalize_relative_path(path: &Path) -> String {
@@ -727,6 +992,138 @@ module_root src
 
         let err = admit_package_entry_module(&entry).expect_err("must reject");
         assert_eq!(err.code, PackageModuleAdmissionCode::EntryOutsideModuleRoot);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_package_import_path_keeps_relative_import_behavior() {
+        let dir = mk_temp_dir("pkg_import_relative");
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("mkdir src");
+        std::fs::write(
+            dir.join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write manifest");
+        let importer = src_dir.join("main.sm");
+        let child = src_dir.join("child.sm");
+        std::fs::write(&importer, "Import \"child.sm\"\nfn main() { return; }\n").expect("write importer");
+        std::fs::write(&child, "fn child() { return; }\n").expect("write child");
+
+        let resolved = resolve_package_import_path(&importer, "child.sm").expect("resolve");
+        assert_eq!(normalize_path(&resolved), normalize_path(&child));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_package_import_path_maps_local_path_dependency_alias() {
+        let dir = mk_temp_dir("pkg_import_alias");
+        let app_src = dir.join("app").join("src");
+        let math_src = dir.join("math").join("src");
+        std::fs::create_dir_all(&app_src).expect("mkdir app src");
+        std::fs::create_dir_all(&math_src).expect("mkdir math src");
+        std::fs::write(
+            dir.join("app").join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+dep math math ../math
+"#,
+        )
+        .expect("write app manifest");
+        std::fs::write(
+            dir.join("math").join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package math
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write math manifest");
+        let importer = app_src.join("main.sm");
+        let dep = math_src.join("core.sm");
+        std::fs::write(&importer, "Import \"math::core.sm\"\nfn main() { return; }\n")
+            .expect("write importer");
+        std::fs::write(&dep, "fn core() { return; }\n").expect("write dep");
+
+        let resolved = resolve_package_import_path(&importer, "math::core.sm").expect("resolve");
+        assert_eq!(normalize_path(&resolved), normalize_path(&dep));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_package_import_path_rejects_unknown_dependency_alias() {
+        let dir = mk_temp_dir("pkg_import_missing_alias");
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("mkdir src");
+        std::fs::write(
+            dir.join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write manifest");
+        let importer = src_dir.join("main.sm");
+        std::fs::write(&importer, "Import \"math::core.sm\"\nfn main() { return; }\n")
+            .expect("write importer");
+
+        let err = resolve_package_import_path(&importer, "math::core.sm").expect_err("must reject");
+        assert_eq!(err.code, PackageImportResolutionCode::UnknownDependencyAlias);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_package_import_path_rejects_dependency_package_name_mismatch() {
+        let dir = mk_temp_dir("pkg_import_name_mismatch");
+        let app_src = dir.join("app").join("src");
+        let math_src = dir.join("math").join("src");
+        std::fs::create_dir_all(&app_src).expect("mkdir app src");
+        std::fs::create_dir_all(&math_src).expect("mkdir math src");
+        std::fs::write(
+            dir.join("app").join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+dep math math ../math
+"#,
+        )
+        .expect("write app manifest");
+        std::fs::write(
+            dir.join("math").join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package other_math
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write math manifest");
+        let importer = app_src.join("main.sm");
+        std::fs::write(&importer, "Import \"math::core.sm\"\nfn main() { return; }\n")
+            .expect("write importer");
+
+        let err = resolve_package_import_path(&importer, "math::core.sm").expect_err("must reject");
+        assert_eq!(
+            err.code,
+            PackageImportResolutionCode::DependencyPackageNameMismatch
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
