@@ -96,9 +96,13 @@ Current completed first subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/text_type_full_scope.md`
 
-Current next candidate under this package:
+Current active second subtrack checkpoint:
 
-- package ecosystem baseline
+- `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+
+Current next candidate after package baseline:
+
+- collections
 
 ## Explicit Non-Goals
 
