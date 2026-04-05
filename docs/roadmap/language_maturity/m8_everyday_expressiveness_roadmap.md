@@ -1,6 +1,6 @@
 # M8 Everyday Expressiveness Roadmap
 
-Status: proposed future post-stable language-maturity package
+Status: active post-stable language-maturity package
 
 Related documents:
 
@@ -92,9 +92,13 @@ Immediate next language-facing priorities in this proposal:
 - collections
 - first-class closures
 
-Current first proposed subtrack checkpoint:
+Current completed first subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/text_type_full_scope.md`
+
+Current next candidate under this package:
+
+- package ecosystem baseline
 
 ## Explicit Non-Goals
 

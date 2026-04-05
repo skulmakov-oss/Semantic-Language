@@ -1,6 +1,6 @@
 # Text Type Full Scope
 
-Status: active M8.1 post-stable subtrack
+Status: completed M8.1 post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -9,8 +9,8 @@ Related roadmap package:
 Introduce a first-class text type and the minimum text semantics needed for
 real-world language use without silently widening the published `v1.1.1` line.
 
-This is a future language-maturity subtrack. It is not a claim that text has
-already landed on the published stable line.
+This is a completed first-wave language-maturity subtrack on current `main`.
+It is not a claim that text has landed on the published stable line.
 
 ## Stable Baseline Before This Track
 
@@ -83,18 +83,18 @@ its widened contract on `main`.
 4. PR 4: IR/verifier/VM path
 5. PR 5: freeze and close-out
 
-## Current Wave Reading
+## Close-Out Reading
 
-Current branch scope for Wave 3:
+Current completed first-wave reading:
 
-- canonical lowering of admitted text literals into a dedicated IR carrier
-- `SEMCODE8` promotion when emitted usage requires executable text values
-- verifier admission for the text value carrier through `CAP_TEXT_VALUES`
-- VM execution and disassembly support for literal/equality text programs
-- explicit continued source-level gap wording for text arithmetic beyond
-  equality
+- `text` is now an explicit source-visible type family on current `main`
+- narrow double-quoted text literals are admitted in the Rust-like executable
+  path
+- same-family `text == text` / `text != text` are admitted end-to-end
+- canonical lowering, `SEMCODE8`, verifier admission, VM execution, and
+  disassembly now agree on the same text literal/equality carrier
 
-Still intentionally not included in Wave 3:
+Still intentionally not included after close-out:
 
 - text concatenation
 - formatting or interpolation

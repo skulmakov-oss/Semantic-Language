@@ -106,11 +106,13 @@
   - package ecosystem baseline
   - collections
   - first-class closures
-  - current status: proposed future post-stable language-maturity package
+  - current status: active post-stable language-maturity package
   - planning docs:
     - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
     - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
     - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
+  - current completed first subtrack:
+    `docs/roadmap/language_maturity/text_type_full_scope.md`
   - planning rule:
     - keep package baseline earlier than broad abstraction machinery
     - keep one active stream at a time
