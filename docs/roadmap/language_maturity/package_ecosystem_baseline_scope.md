@@ -86,16 +86,19 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 0:
+Current branch scope for Wave 1:
 
-- define the admitted first-wave package baseline as local path packages only
-- separate package identity/manifest work from registries and publishing
-- separate package graph loading from future lockfile or cache stories
-- keep the published `v1.1.1` line explicitly narrower than current `main`
+- explicit owner-layer types for package manifest, package identity, package
+  root, and local path dependencies
+- canonical baseline manifest version ownership
+- narrow inventory validation for duplicate dependency aliases and empty root or
+  path fields
+- no executable package loading path yet
 
-Still intentionally not included in Wave 0:
+Still intentionally not included in Wave 1:
 
-- executable package implementation
+- manifest parser admission
+- module-provider/package integration
 - registry or publishing semantics
 - lockfile or solver ownership
 - workspace-wide build orchestration beyond deterministic path loading
