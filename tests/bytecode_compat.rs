@@ -6,8 +6,8 @@ use semantic_language::prom_abi::{AbiValue, RecordingHostAbi};
 use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
 use semantic_language::semcode_format::{
     header_spec_from_magic, CAP_CLOCK_READ, CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH,
-    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY, CAP_STATE_UPDATE, MAGIC0, MAGIC1,
-    MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7,
+    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES,
+    MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
 };
 use semantic_language::semcode_vm::{
     disasm_semcode, run_semcode, run_verified_semcode_with_host_and_capabilities, RuntimeError,
@@ -270,6 +270,30 @@ fn compat_v7_header_and_clock_read_run() {
 }
 
 #[test]
+fn compat_v8_header_and_text_run() {
+    let src = r#"
+        fn echo(x: text) -> text { return x; }
+
+        fn main() {
+            let left: text = "alpha";
+            let right: text = echo("alpha");
+            assert(left == right);
+            assert(left != "beta");
+            return;
+        }
+    "#;
+    let bytes = compile_program_to_semcode(src).expect("compile");
+    assert_eq!(&bytes[0..8], &MAGIC8);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 9);
+    assert_ne!(spec.capabilities & CAP_TEXT_VALUES, 0);
+    run_verified_semcode(&bytes).expect("verified run");
+}
+
+#[test]
 fn compat_cli_o0_v1_f64_arithmetic_runs_on_verified_path() {
     let src = r#"
         fn main() {
@@ -376,6 +400,7 @@ fn compat_unsupported_version_has_migration_hint() {
             assert!(supported.contains("SEMCODE5"));
             assert!(supported.contains("SEMCODE6"));
             assert!(supported.contains("SEMCODE7"));
+            assert!(supported.contains("SEMCODE8"));
         }
         other => panic!("unexpected error: {other:?}"),
     }

@@ -721,8 +721,10 @@ Current honest limit:
   arithmetic is documented in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 - the published stable `v1.1.1` line still does not expose executable `text`
-- current `main` admits `text` in the source type/equality layer only
-- text concatenation and runtime text execution remain later `M8.1` waves
+- current `main` now admits `text` through the source type/equality layer and
+  through the canonical runtime carrier for those admitted programs
+- text concatenation remains a later `M8.1` wave
+- host-facing text ABI widening is still out of scope
 
 ## Builtin Call Meaning
 

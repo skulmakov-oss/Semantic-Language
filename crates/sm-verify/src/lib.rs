@@ -8,7 +8,7 @@ use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS,
     CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
-    CAP_STATE_QUERY, CAP_STATE_UPDATE,
+    CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -534,6 +534,14 @@ fn decode_operands(
             refs.required_capabilities |= CAP_FX_VALUES;
             read_i32_le(code, cursor).map_err(|_| invalid("truncated fx literal"))?;
         }
+        Opcode::LoadText => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            mark_reg(dst);
+            refs.required_capabilities |= CAP_TEXT_VALUES;
+            let sid =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated text literal string id"))?;
+            refs.string_refs.push((offset, sid as usize, "text literal"));
+        }
         Opcode::MakeTuple => {
             let dst =
                 read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple dst register"))?;
@@ -1012,6 +1020,22 @@ mod tests {
     }
 
     #[test]
+    fn verifier_accepts_text_semcode() {
+        let src = r#"
+            fn main() {
+                let left: text = "alpha";
+                let right: text = "alpha";
+                assert(left == right);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 9);
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
     fn verifier_accepts_u32_numeric_literal_semcode() {
         let src = r#"
             fn main() {
@@ -1450,6 +1474,25 @@ mod tests {
         )
         .expect("emit");
         bytes[7] = b'6';
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::CapabilityViolation
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_text_under_v7_capabilities() {
+        let src = r#"
+            fn main() {
+                let left: text = "alpha";
+                let right: text = "alpha";
+                assert(left == right);
+                return;
+            }
+        "#;
+        let mut bytes = compile_program_to_semcode(src).expect("compile");
+        bytes[7] = b'7';
         let report = verify_semcode(&bytes).expect_err("must reject");
         assert_eq!(
             report.diagnostics[0].code,

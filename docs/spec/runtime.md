@@ -76,6 +76,13 @@ Current narrow orchestration helpers:
   - `prom-state` for `StateSnapshotArchive`
   - `prom-audit` for `AuditReplayArchive`
 
+Current admitted execution-value reading:
+
+- current `main` now executes admitted `text` literal/equality programs through
+  the verified SemCode path
+- this carrier remains internal to verified Semantic execution
+- the PROMETHEUS host ABI still does not admit text values
+
 These helpers are orchestration glue only. They must not redefine:
 
 - state validation rules

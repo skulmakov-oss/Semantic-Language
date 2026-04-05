@@ -80,10 +80,10 @@ Current honest baseline:
 - current `main` also admits a narrow double-quoted UTF-8 text literal family
   in the same source path
 - current `main` admits same-family equality on `text`
-- current `main` does not yet admit text concatenation or a canonical runtime
-  text carrier
-- lowering, verifier admission, and VM execution for executable text values
-  remain later `M8.1` waves
+- current `main` now admits a canonical runtime text carrier for admitted
+  literal/equality programs
+- current `main` still does not admit text concatenation
+- current `main` does not widen the PROMETHEUS host ABI with text values
 
 Current text-surface limits:
 
