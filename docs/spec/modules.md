@@ -129,6 +129,10 @@ The current module contract does not yet claim stable support for:
 Those concerns belong to the future package ecosystem surface rather than the
 current source module baseline.
 
+Current active package-baseline checkpoint:
+
+- `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+
 ## Validation Evidence
 
 Current repository fixtures cover this surface in:
