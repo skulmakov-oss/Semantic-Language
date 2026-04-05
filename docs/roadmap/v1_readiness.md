@@ -101,6 +101,10 @@ The following limits remain explicit and should be treated as release-facing hon
 - the published `v1.1.1` line intentionally excludes executable `text`, even
   though current `main` now admits first-wave text literals/equality through
   canonical `SEMCODE8`, verifier admission, and VM execution
+- the published `v1.1.1` line intentionally excludes the first-wave package
+  ecosystem baseline, even though current `main` now admits `Semantic.package`
+  parsing, package entry-module admission, and deterministic local-path
+  dependency loading for package-qualified imports
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or

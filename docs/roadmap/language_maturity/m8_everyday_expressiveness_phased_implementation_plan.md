@@ -73,7 +73,7 @@ Current completed checkpoint:
 - Wave 3: resolution/lock baseline or explicit first-wave non-commitment
 - Wave 4: docs/tests/compatibility freeze
 
-Current active checkpoint:
+Current completed checkpoint:
 
 - `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
 

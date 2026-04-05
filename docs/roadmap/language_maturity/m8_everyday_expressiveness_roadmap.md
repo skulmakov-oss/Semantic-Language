@@ -96,7 +96,7 @@ Current completed first subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/text_type_full_scope.md`
 
-Current active second subtrack checkpoint:
+Current completed second subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
 

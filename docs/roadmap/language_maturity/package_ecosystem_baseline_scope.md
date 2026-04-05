@@ -1,6 +1,6 @@
 # Package Ecosystem Baseline Scope
 
-Status: active M8.2 post-stable subtrack
+Status: completed M8.2 first-wave post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -84,24 +84,26 @@ its widened contract on `main`.
 4. PR 4: deterministic local path resolution baseline
 5. PR 5: freeze and close-out
 
-## Current Wave Reading
+## Close-Out Reading
 
-Current branch scope for Wave 3:
+`M8.2` is now completed on current `main` as a first-wave package baseline.
 
-- deterministic local-path dependency loading for package-qualified import specs
-  of the form `"alias::module/path.sm"`
+Completed first-wave contract:
+
+- canonical `Semantic.package` parsing and validation
+- explicit package identity, package-root, and dependency inventory ownership
+- package entry-module admission against admitted `module_root`
+- deterministic local-path dependency loading for package-qualified imports
+  such as `"alias::module/path.sm"`
 - one canonical resolution path shared by `smc-cli`, `sm-sema`, and the
   incremental module graph
-- dependency manifest validation and package-name matching before dependency
-  modules are admitted
-- package graph loading that remains local-path only and deterministic by the
-  declared manifest inventory
 
-Still intentionally not included in Wave 3:
+Still intentionally not included after close-out:
 
 - registry or publishing semantics
 - semver or lockfile ownership
-- workspaces beyond deterministic local-path loading
+- workspace/package-manager orchestration beyond deterministic local-path
+  loading
 - package solver heuristics or alternate dependency sources
 
 ## Acceptance Reading

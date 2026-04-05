@@ -91,6 +91,9 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to first-wave executable `text`
   through `SEMCODE8` and the narrow literal/equality runtime carrier on
   current `main`
+- the same forward-only reading also applies to the first-wave package
+  ecosystem baseline on current `main`, including `Semantic.package`,
+  deterministic local-path dependency loading, and package-qualified imports
 
 ## Explicit Non-Commitments
 
@@ -108,6 +111,8 @@ The repository does not yet claim final compatibility guarantees for:
   declared `StateWrite` / `AuditNote` contract
 - text semantics beyond the current admitted first-wave literal/equality
   contract on `main`
+- package ecosystem semantics beyond the current admitted first-wave local-path
+  manifest/dependency baseline on `main`
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule
