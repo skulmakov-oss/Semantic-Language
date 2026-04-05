@@ -115,8 +115,10 @@
     `docs/roadmap/language_maturity/text_type_full_scope.md`
   - current completed second subtrack:
     `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
-  - current next candidate:
-    `M8.3 Collections Surface`
+  - current active third subtrack:
+    `docs/roadmap/language_maturity/collections_surface_full_scope.md`
+  - current next candidate after collections:
+    `M8.4 First-Class Closures`
   - planning rule:
     - keep package baseline earlier than broad abstraction machinery
     - keep one active stream at a time
