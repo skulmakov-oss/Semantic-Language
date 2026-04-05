@@ -133,15 +133,28 @@ Current active package-baseline checkpoint:
 
 - `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
 
-Current `main` also now owns an inert package-manifest baseline in `smc-cli`
-for:
+Current `main` also now owns a first-wave `Semantic.package` baseline in
+`smc-cli` for:
 
 - package identity
 - package root layout
 - local path dependency inventory
+- canonical package manifest parsing
+- package entry-module admission against `module_root`
 
-That owner-layer is not yet the same thing as admitted source/package
-resolution. Parser/loading integration remains a later `M8.2` wave.
+Current admitted manifest directives are:
+
+```text
+format <u32>
+package <name>
+manifest_dir <path>
+module_root <path>
+dep <alias> <package_name> <local_path>
+```
+
+That baseline is still not the same thing as admitted dependency resolution
+across package boundaries. Deterministic local-path dependency loading remains a
+later `M8.2` wave.
 
 ## Validation Evidence
 

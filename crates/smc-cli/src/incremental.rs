@@ -1,3 +1,4 @@
+use crate::package_manifest::admit_package_entry_module;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -273,6 +274,9 @@ fn collect_module_graph(
     let canonical = path
         .canonicalize()
         .map_err(|e| format!("resolve '{}': {}", path.display(), e))?;
+    admit_package_entry_module(&canonical)
+        .map(|_| ())
+        .map_err(|e| e.to_string())?;
     if graph.contains_key(&canonical) {
         return Ok(());
     }

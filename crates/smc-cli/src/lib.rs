@@ -42,7 +42,7 @@ pub use config::{build_config_contract, parse_config_document, validate_config_d
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 #[cfg(feature = "std")]
-pub use package_manifest::{validate_package_manifest_baseline, PackageDependency, PackageDependencySource, PackageIdentity, PackageManifest, PackageManifestValidationCode, PackageManifestValidationError, PackageRoot, PACKAGE_MANIFEST_BASELINE_VERSION};
+pub use package_manifest::{admit_package_entry_module, parse_package_manifest_baseline, validate_package_manifest_baseline, PackageDependency, PackageDependencySource, PackageIdentity, PackageManifest, PackageManifestParseCode, PackageManifestParseError, PackageManifestValidationCode, PackageManifestValidationError, PackageModuleAdmission, PackageModuleAdmissionCode, PackageModuleAdmissionError, PackageRoot, PACKAGE_MANIFEST_BASELINE_VERSION, PACKAGE_MANIFEST_FILE_NAME};
 #[cfg(feature = "std")]
 pub use schema_versioning::{build_schema_migration_metadata, classify_record_schema_compatibility, classify_tagged_union_schema_compatibility, format_schema_migration_metadata, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind, SchemaMigrationChangeSet, SchemaMigrationMetadataArtifact, SchemaMigrationReviewKind, SchemaMigrationShapeKind, SchemaVariantChangeKind, TaggedUnionSchemaCompatibilityReport, TaggedUnionSchemaVariantChange};
 #[cfg(feature = "std")]
@@ -54,6 +54,9 @@ struct CliFsProvider;
 #[cfg(feature = "std")]
 impl ModuleProvider for CliFsProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
+        package_manifest::admit_package_entry_module(Path::new(module_id))
+            .map(|_| ())
+            .map_err(|e| e.to_string())?;
         std::fs::read(module_id).map_err(|e| e.to_string())
     }
 }
@@ -102,6 +105,21 @@ impl CliPipeline {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn mk_temp_dir(prefix: &str) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "{}_{}_{}",
+            prefix,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("mkdir");
+        base
+    }
 
     #[test]
     fn compile_pipeline_smoke() {
@@ -126,5 +144,37 @@ Law "L" [priority 1]:
     fn explain_smoke() {
         let text = CliPipeline::explain("E0101").expect("known code");
         assert!(text.contains("indent"));
+    }
+
+    #[test]
+    fn semantic_check_file_admits_entry_within_package_module_root() {
+        let dir = mk_temp_dir("smc_cli_pkg_admit_ok");
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("mkdir src");
+        std::fs::write(
+            dir.join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write manifest");
+        let entry = src_dir.join("main.sm");
+        std::fs::write(
+            &entry,
+            r#"
+Law "L" [priority 1]:
+    When true ->
+        System.recovery()
+"#,
+        )
+        .expect("write source");
+
+        let report = CliPipeline::semantic_check_file(&entry).expect("check");
+        assert_eq!(report.scheduled_laws.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
