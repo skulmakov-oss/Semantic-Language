@@ -284,6 +284,10 @@ The current source type contract does not yet claim stable support for:
 - implicit numeric widening across unrelated families
 - a broad collection type ecosystem
 
+Current active collections checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/collections_surface_full_scope.md`
+
 ## Contract Rule
 
 Any public change to source-visible type meaning or source type-checking rules
