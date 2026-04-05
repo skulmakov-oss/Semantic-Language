@@ -1,7 +1,7 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
@@ -38,6 +38,10 @@ pub enum IrInstr {
     LoadFx {
         dst: u16,
         val: i32,
+    },
+    LoadText {
+        dst: u16,
+        val: String,
     },
     AddFx {
         dst: u16,
@@ -735,7 +739,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v7_clock_read_instr(funcs) {
+    if has_v8_text_instr(funcs) {
+        out.extend_from_slice(&MAGIC8);
+    } else if has_v7_clock_read_instr(funcs) {
         out.extend_from_slice(&MAGIC7);
     } else if has_v6_event_post_instr(funcs) {
         out.extend_from_slice(&MAGIC6);
@@ -779,6 +785,9 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
     let mut interner = StringInterner::new();
     for instr in &f.instrs {
         match instr {
+            IrInstr::LoadText { val, .. } => {
+                let _ = interner.id(val)?;
+            }
             IrInstr::LoadVar { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -893,6 +902,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadU32 { .. } => 1 + 2 + 4,
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
+        IrInstr::LoadText { .. } => 1 + 2 + 2,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeRecord { items, .. } => 1 + 2 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeAdt { items, .. } => 1 + 2 + 2 + 2 + 2 + 2 + (items.len() * 2),
@@ -980,6 +990,11 @@ fn emit_instr(
             out.push(Opcode::LoadFx.byte());
             write_u16_le(out, *dst);
             write_i32_le(out, *val);
+        }
+        IrInstr::LoadText { dst, val } => {
+            out.push(Opcode::LoadText.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, interner.lookup(val)?);
         }
         IrInstr::MakeTuple { dst, items } => {
             out.push(Opcode::MakeTuple.byte());
@@ -1268,6 +1283,12 @@ fn has_v7_clock_read_instr(funcs: &[IrFunction]) -> bool {
         .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::ClockRead { .. })))
 }
 
+fn has_v8_text_instr(funcs: &[IrFunction]) -> bool {
+    funcs
+        .iter()
+        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::LoadText { .. })))
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
@@ -1404,12 +1425,14 @@ fn lower_expr_with_expected(
             out.push(IrInstr::LoadBool { dst: r, val: *v });
             Ok((r, Type::Bool))
         }
-        Expr::TextLiteral(_) => Err(FrontendError {
-            pos: 0,
-            message:
-                "text literal owner-layer is present on current main, but executable lowering remains a later M8.1 wave"
-                    .to_string(),
-        }),
+        Expr::TextLiteral(lit) => {
+            let r = alloc(next);
+            out.push(IrInstr::LoadText {
+                dst: r,
+                val: lit.spelling.clone(),
+            });
+            Ok((r, Type::Text))
+        }
         Expr::Range(range_expr) => {
             let (start_reg, start_ty) = lower_expr_with_expected(
                 range_expr.start,
@@ -6349,6 +6372,28 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::DivFx { .. })));
+    }
+
+    #[test]
+    fn text_literals_lower_to_load_text_and_semcode8() {
+        let src = r#"
+            fn main() {
+                let left: text = "alpha";
+                let right: text = "alpha";
+                assert(left == right);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("text literals should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadText { .. })));
+
+        let bytes = compile_program_to_semcode(src).expect("text semcode should emit");
+        assert_eq!(&bytes[0..8], b"SEMCODE8");
     }
 
     #[test]

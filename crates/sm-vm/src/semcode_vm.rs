@@ -22,6 +22,7 @@ const MAX_DEBUG_SYMBOLS_PER_FUNCTION: usize = 8192;
 pub enum Value {
     Quad(QuadVal),
     Bool(bool),
+    Text(String),
     I32(i32),
     F64(f64),
     U32(u32),
@@ -514,6 +515,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::LoadText => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::QAnd
             | Opcode::QOr
             | Opcode::QImpl
@@ -817,6 +822,13 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
                 set_reg(vm, frame_idx, dst, Value::Fx(v))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::LoadText => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let value = lookup_str(&f, sid)?.to_string();
+                set_reg(vm, frame_idx, dst, Value::Text(value))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::MakeTuple => {
@@ -1231,6 +1243,9 @@ fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
     match value {
         Value::Quad(q) => Ok(AbiValue::Quad(quad_to_u8(q))),
         Value::Bool(v) => Ok(AbiValue::Bool(v)),
+        Value::Text(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "text values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
         Value::I32(v) => Ok(AbiValue::I32(v)),
         Value::F64(v) => Ok(AbiValue::F64(v)),
         Value::U32(v) => Ok(AbiValue::U32(v)),
@@ -1464,6 +1479,7 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     match (a, b) {
         (Value::Quad(x), Value::Quad(y)) => Ok(x == y),
         (Value::Bool(x), Value::Bool(y)) => Ok(x == y),
+        (Value::Text(x), Value::Text(y)) => Ok(x == y),
         (Value::I32(x), Value::I32(y)) => Ok(x == y),
         (Value::F64(x), Value::F64(y)) => Ok(x == y),
         (Value::U32(x), Value::U32(y)) => Ok(x == y),
@@ -1565,6 +1581,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let b = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_BOOL r{}, {}", d, b)
+        }
+        Opcode::LoadText => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let text = lookup_str(f, sid)?;
+            format!("LOAD_TEXT r{}, {:?}", d, text)
         }
         Opcode::LoadI32 => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -2077,6 +2099,25 @@ mod tests {
         assert!(disasm.contains("SUB_FX"));
         assert!(disasm.contains("MUL_FX"));
         assert!(disasm.contains("DIV_FX"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_text_literal_and_equality_path() {
+        let src = r#"
+            fn echo(x: text) -> text { return x; }
+
+            fn main() {
+                let a: text = "alpha";
+                let b: text = echo("alpha");
+                assert(a == b);
+                assert(a != "beta");
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("LOAD_TEXT"));
         run_semcode(&bytes).expect("run");
     }
 

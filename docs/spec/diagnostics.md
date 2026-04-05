@@ -225,7 +225,7 @@ Current message families include:
 - explicit gap messages for unit-carrying `fx` arithmetic outside the first
   post-stable `fx` arithmetic slice
 - explicit gap messages for text concatenation or text arithmetic beyond the
-  current equality-only `M8.1` Wave 2 surface
+  current `M8.1` Wave 3 literal/equality/runtime surface
 
 Current honest limit:
 
@@ -233,6 +233,8 @@ Current honest limit:
   contract
 - current `main` now admits executable text literal typing and same-family
   equality in the source type-check path
+- current `main` now also admits verified runtime execution for the same narrow
+  text literal/equality surface
 - current `main` still reports explicit gap messages for text arithmetic beyond
   equality until later `M8.1` waves land
 - generated validation failures are currently documented as deterministic plan

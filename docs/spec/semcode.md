@@ -36,6 +36,7 @@ Current supported header family:
 - `SEMCODE5`
 - `SEMCODE6`
 - `SEMCODE7`
+- `SEMCODE8`
 
 Observed runtime support in the current toolchain:
 
@@ -47,6 +48,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE5`: epoch `0`, revision `6`
 - `SEMCODE6`: epoch `0`, revision `7`
 - `SEMCODE7`: epoch `0`, revision `8`
+- `SEMCODE8`: epoch `0`, revision `9`
 
 Header responsibilities:
 
@@ -118,6 +120,13 @@ Compatibility rules:
 - keeps `SEMCODE0..6` fixed for older artifacts that do not use the widened
   clock-query host-call family
 
+`SEMCODE8`
+
+- promoted contract used when emitted program usage requires the canonical text
+  value carrier for admitted literal/equality programs
+- keeps `SEMCODE0..7` fixed for older artifacts that do not use executable
+  text values
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -144,6 +153,7 @@ Current canonical capability families:
 - `CAP_STATE_UPDATE`
 - `CAP_EVENT_POST`
 - `CAP_CLOCK_READ`
+- `CAP_TEXT_VALUES`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:

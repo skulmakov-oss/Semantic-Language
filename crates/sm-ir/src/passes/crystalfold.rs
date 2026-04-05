@@ -130,6 +130,10 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.insert(dst, ConstVal::Fx(val));
                 out.push(IrInstr::LoadFx { dst, val });
             }
+            IrInstr::LoadText { dst, val } => {
+                cst.remove(&dst);
+                out.push(IrInstr::LoadText { dst, val });
+            }
             IrInstr::MakeTuple { dst, items } => {
                 cst.remove(&dst);
                 out.push(IrInstr::MakeTuple { dst, items });

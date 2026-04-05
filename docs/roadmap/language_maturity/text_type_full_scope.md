@@ -85,20 +85,21 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 2:
+Current branch scope for Wave 3:
 
-- parser admission for double-quoted text literals in the Rust-like executable
-  source surface
-- parser admission for `text` in declared type positions
-- source typing for executable text literals
-- same-family equality admission for `text == text` and `text != text`
-- explicit source-level gap wording for text arithmetic beyond equality
+- canonical lowering of admitted text literals into a dedicated IR carrier
+- `SEMCODE8` promotion when emitted usage requires executable text values
+- verifier admission for the text value carrier through `CAP_TEXT_VALUES`
+- VM execution and disassembly support for literal/equality text programs
+- explicit continued source-level gap wording for text arithmetic beyond
+  equality
 
-Still intentionally not included in Wave 2:
+Still intentionally not included in Wave 3:
 
-- IR, verifier, or VM text carrier/runtime work
 - text concatenation
-- formatting, interpolation, or host-facing text ABI widening
+- formatting or interpolation
+- host-facing text ABI widening
+- richer text collections or library surface
 
 ## Acceptance Reading
 
