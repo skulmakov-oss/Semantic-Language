@@ -113,8 +113,10 @@
     - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
   - current completed first subtrack:
     `docs/roadmap/language_maturity/text_type_full_scope.md`
-  - current active second subtrack:
+  - current completed second subtrack:
     `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+  - current next candidate:
+    `M8.3 Collections Surface`
   - planning rule:
     - keep package baseline earlier than broad abstraction machinery
     - keep one active stream at a time

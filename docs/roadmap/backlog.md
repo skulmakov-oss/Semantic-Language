@@ -33,9 +33,10 @@ Current post-`v1` wave:
   - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
 - `M8.1 Text / String Surface` is completed as first-wave baseline history in
   `docs/roadmap/language_maturity/text_type_full_scope.md`
-- `M8.2 Package Ecosystem Baseline` is now the active M8 subtrack and is
-  scoped in
+- `M8.2 Package Ecosystem Baseline` is now completed as first-wave baseline
+  history and is scoped in
   `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+- the next candidate inside `M8` is `M8.3 Collections Surface`
 - `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
   frozen baseline history in `docs/roadmap_next.md`
 - the retained non-owning TON618 compatibility perimeter is completed and now
