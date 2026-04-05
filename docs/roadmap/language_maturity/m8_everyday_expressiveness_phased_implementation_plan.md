@@ -1,6 +1,6 @@
 # M8 Everyday Expressiveness Phased Implementation Plan
 
-Status: proposed future post-stable execution plan
+Status: active post-stable execution plan
 
 Related documents:
 
@@ -16,7 +16,7 @@ discipline, and a narrow execution model.
 
 | Milestone | Name | Focus | Status | Depends on |
 |---|---|---|---|---|
-| M8 | Everyday Expressiveness Foundation | text, package baseline, collections, closures | proposed | stable `v1.1.1` baseline |
+| M8 | Everyday Expressiveness Foundation | text, package baseline, collections, closures | active | stable `v1.1.1` baseline |
 | M9 | General Abstraction Layer | generics, traits, iterables, richer patterns | proposed | M8 core outputs |
 | M10 | Application and Platform Expansion | UI boundary, concurrency, broader runtime/platform surfaces | proposed | M8 + selected M9 outputs |
 
@@ -42,7 +42,7 @@ Default narrow PR pattern:
 
 | Phase | Track | Goal | Output | Success Criteria |
 |---|---|---|---|---|
-| Phase 1 | M8.1 Text | introduce first-class text contract | text spec + implementation + tests | text is a stable admitted type across parse/sema/IR/VM |
+| Phase 1 | M8.1 Text | introduce first-class text contract | text spec + implementation + tests | completed first-wave admitted type across parse/sema/IR/VM on current `main` |
 | Phase 2 | M8.2 Packages | establish package/dependency contract | manifest/package baseline + docs + tests | package identity/dependency rules are explicit and reproducible |
 | Phase 3 | M8.3 Collections | introduce minimum first-class collection carriers | collections spec + implementation + tests | at least one narrow collection baseline is usable and documented |
 | Phase 4 | M8.4 Closures | introduce real closure values | closure spec + capture rules + runtime path | closures are no longer only immediate/pipeline sugar |
@@ -61,7 +61,7 @@ Default narrow PR pattern:
 - Wave 3: IR/lowering/VM path
 - Wave 4: docs/tests/compatibility freeze
 
-Current proposed checkpoint:
+Current completed checkpoint:
 
 - `docs/roadmap/language_maturity/text_type_full_scope.md`
 

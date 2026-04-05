@@ -20,6 +20,7 @@ Current post-stable admitted families on `main`:
 - `SEMCODE5`
 - `SEMCODE6`
 - `SEMCODE7`
+- `SEMCODE8`
 
 Current compatibility rule:
 
@@ -87,6 +88,9 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to first-wave rollback persistence
   semantics for `StateRollbackArtifact` ownership and deterministic
   `SemanticStateStore::apply_rollback(...)`
+- the same forward-only reading also applies to first-wave executable `text`
+  through `SEMCODE8` and the narrow literal/equality runtime carrier on
+  current `main`
 
 ## Explicit Non-Commitments
 
@@ -102,6 +106,8 @@ The repository does not yet claim final compatibility guarantees for:
   artifact ownership and deterministic apply/restore contract
 - rule-side effect execution semantics beyond the current admitted first-wave
   declared `StateWrite` / `AuditNote` contract
+- text semantics beyond the current admitted first-wave literal/equality
+  contract on `main`
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule
