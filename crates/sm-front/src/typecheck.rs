@@ -1386,6 +1386,11 @@ fn infer_expr_type(
         Expr::QuadLiteral(_) => Ok(Type::Quad),
         Expr::BoolLiteral(_) => Ok(Type::Bool),
         Expr::TextLiteral(_) => Ok(Type::Text),
+        Expr::SequenceLiteral(_) => Err(FrontendError {
+            pos: 0,
+            message: "ordered sequence literals are not part of the current M8.3 Wave 1 type admission"
+                .to_string(),
+        }),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
             NumericLiteral::U32(_) => Ok(Type::U32),
@@ -1760,6 +1765,13 @@ fn infer_expr_type(
                     }
                 }
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    if matches!(lt, Type::Sequence(_)) || matches!(rt, Type::Sequence(_)) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "ordered sequence values are not part of the current M8.3 Wave 1 operator surface"
+                                .to_string(),
+                        });
+                    }
                     if lt == Type::Text || rt == Type::Text {
                         let message = if *op == BinaryOp::Add
                             && lt == Type::Text
@@ -5646,6 +5658,7 @@ fn supports_stable_equality_type_inner(
         Type::Measured(base, _) => {
             supports_stable_equality_type_inner(base, record_table, adt_table, active)
         }
+        Type::Sequence(_) => Ok(false),
         Type::QVec(_) => Ok(false),
         Type::RangeI32 => Ok(false),
         Type::Tuple(items) => {

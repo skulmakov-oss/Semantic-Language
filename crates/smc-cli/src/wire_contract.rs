@@ -226,6 +226,14 @@ fn display_generated_wire_type(ty: &Type, arena: &AstArena) -> Result<String, Fr
                 .collect::<Result<Vec<_>, _>>()?
                 .join(", ")
         ),
+        Type::Sequence(_) => {
+            return Err(FrontendError {
+                pos: 0,
+                message:
+                    "ordered sequence types are not part of the current M8.3 Wave 1 generated wire-contract surface"
+                        .to_string(),
+            })
+        }
         Type::Option(item) => format!("Option({})", display_generated_wire_type(item, arena)?),
         Type::Result(ok_ty, err_ty) => format!(
             "Result({}, {})",

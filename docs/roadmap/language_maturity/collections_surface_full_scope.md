@@ -85,17 +85,19 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 0:
+Current branch scope for Wave 1:
 
-- define the first-wave collection track as an ordered sequence baseline
-- keep maps, sets, and abstraction-heavy collection machinery explicitly out of
-  scope
-- align roadmap/planning/spec pointers with the new active `M8.3` track
+- make the first admitted collection family explicit as an ordered sequence
+  owner-layer surface
+- define deterministic metadata for sequence family, sequence type, and
+  sequence literal ownership
+- keep parser, sema, and runtime admission explicitly outside the Wave 1 slice
 
-Still intentionally not included in Wave 0:
+Still intentionally not included in Wave 1:
 
-- syntax choice finalization for every later operation
-- runtime carrier details
+- parser spelling for sequence literals or sequence types
+- executable typing/equality/indexing/iteration admission
+- runtime carrier details or VM lowering
 - collection mutation policy beyond the first admitted baseline
 
 ## Acceptance Reading

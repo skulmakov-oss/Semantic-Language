@@ -226,6 +226,8 @@ Current message families include:
   post-stable `fx` arithmetic slice
 - explicit gap messages for text concatenation or text arithmetic beyond the
   current `M8.1` Wave 3 literal/equality/runtime surface
+- explicit gap messages for ordered sequence literals before `M8.3` parser,
+  type, and runtime admission lands
 
 Current honest limit:
 
