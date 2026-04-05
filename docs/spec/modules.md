@@ -129,6 +129,20 @@ The current module contract does not yet claim stable support for:
 Those concerns belong to the future package ecosystem surface rather than the
 current source module baseline.
 
+Current active package-baseline checkpoint:
+
+- `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+
+Current `main` also now owns an inert package-manifest baseline in `smc-cli`
+for:
+
+- package identity
+- package root layout
+- local path dependency inventory
+
+That owner-layer is not yet the same thing as admitted source/package
+resolution. Parser/loading integration remains a later `M8.2` wave.
+
 ## Validation Evidence
 
 Current repository fixtures cover this surface in:
