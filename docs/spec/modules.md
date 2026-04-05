@@ -152,9 +152,31 @@ module_root <path>
 dep <alias> <package_name> <local_path>
 ```
 
-That baseline is still not the same thing as admitted dependency resolution
-across package boundaries. Deterministic local-path dependency loading remains a
-later `M8.2` wave.
+Current `main` now also admits one first-wave package-qualified dependency
+import form:
+
+```sm
+Import "math::core.sm"
+Import "ui::widgets/button.sm" as Button
+```
+
+Current first-wave package loading rules:
+
+- the `alias` segment must match a dependency declared in the nearest
+  `Semantic.package`
+- dependency sources are local paths only
+- the dependency path is resolved relative to the importer package root
+- the dependency package manifest must exist and validate successfully
+- the dependency package name must match the declared `package_name`
+- the imported module path is resolved inside the dependency package
+  `module_root`
+
+Current package-baseline limits still remain:
+
+- no registries
+- no semver solving
+- no lockfiles
+- no publishing workflow
 
 ## Validation Evidence
 

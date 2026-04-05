@@ -1,4 +1,4 @@
-use crate::package_manifest::admit_package_entry_module;
+use crate::package_manifest::{admit_package_entry_module, resolve_package_import_path};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -240,18 +240,6 @@ fn parse_import_specs(source: &str) -> Vec<String> {
     out
 }
 
-fn resolve_import(base: &Path, spec: &str) -> PathBuf {
-    let mut path = PathBuf::from(spec);
-    if path.extension().is_none() {
-        path.set_extension("exo");
-    }
-    if path.is_absolute() {
-        path
-    } else {
-        base.join(path)
-    }
-}
-
 fn canonical_module_key(canonical: &Path, root_base: &Path) -> String {
     if let Ok(rel) = canonical.strip_prefix(root_base) {
         let value = rel.to_string_lossy().replace('\\', "/");
@@ -286,10 +274,9 @@ fn collect_module_graph(
     let source = std::fs::read_to_string(&canonical)
         .map_err(|e| format!("read '{}': {}", canonical.display(), e))?;
     let source_hash = fnv1a64(source.as_bytes());
-    let base = canonical.parent().unwrap_or_else(|| Path::new("."));
     let mut deps = Vec::new();
     for spec in parse_import_specs(&source) {
-        let child = resolve_import(base, &spec);
+        let child = resolve_package_import_path(&canonical, &spec).map_err(|e| e.to_string())?;
         let child_canonical = child
             .canonicalize()
             .map_err(|e| format!("resolve '{}': {}", child.display(), e))?;
@@ -363,6 +350,67 @@ Law "C" [priority 1]:
             &child,
             r#"
 Law "C2" [priority 2]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("rewrite child");
+        let fp2 = module_graph_fingerprint(&root, 2).expect("fp2");
+        assert_ne!(fp1, fp2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn module_graph_fingerprint_tracks_local_path_package_dependencies() {
+        let dir = mk_temp_dir("smc_pkg_module_graph_fp");
+        let app_src = dir.join("app").join("src");
+        let math_src = dir.join("math").join("src");
+        std::fs::create_dir_all(&app_src).expect("mkdir app src");
+        std::fs::create_dir_all(&math_src).expect("mkdir math src");
+        std::fs::write(
+            dir.join("app").join("Semantic.package"),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+dep math math ../math
+"#,
+        )
+        .expect("write app manifest");
+        std::fs::write(
+            dir.join("math").join("Semantic.package"),
+            r#"
+format 1
+package math
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write math manifest");
+        let root = app_src.join("main.sm");
+        let child = math_src.join("core.sm");
+        std::fs::write(
+            &root,
+            r#"
+Import "math::core.sm"
+Law "Root" [priority 1]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("write root");
+        std::fs::write(
+            &child,
+            r#"
+Law "Core" [priority 1]:
+    When true -> System.recovery()
+"#,
+        )
+        .expect("write child");
+        let fp1 = module_graph_fingerprint(&root, 2).expect("fp1");
+        std::fs::write(
+            &child,
+            r#"
+Law "Core2" [priority 2]:
     When true -> System.recovery()
 "#,
         )

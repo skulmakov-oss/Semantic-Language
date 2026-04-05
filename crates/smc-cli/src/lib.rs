@@ -42,7 +42,7 @@ pub use config::{build_config_contract, parse_config_document, validate_config_d
 #[cfg(feature = "std")]
 pub use formatter::{format_path, format_source_text, FormatterMode, FormatterSummary};
 #[cfg(feature = "std")]
-pub use package_manifest::{admit_package_entry_module, parse_package_manifest_baseline, validate_package_manifest_baseline, PackageDependency, PackageDependencySource, PackageIdentity, PackageManifest, PackageManifestParseCode, PackageManifestParseError, PackageManifestValidationCode, PackageManifestValidationError, PackageModuleAdmission, PackageModuleAdmissionCode, PackageModuleAdmissionError, PackageRoot, PACKAGE_MANIFEST_BASELINE_VERSION, PACKAGE_MANIFEST_FILE_NAME};
+pub use package_manifest::{admit_package_entry_module, parse_package_manifest_baseline, resolve_package_import_path, validate_package_manifest_baseline, PackageDependency, PackageDependencySource, PackageIdentity, PackageImportResolutionCode, PackageImportResolutionError, PackageManifest, PackageManifestParseCode, PackageManifestParseError, PackageManifestValidationCode, PackageManifestValidationError, PackageModuleAdmission, PackageModuleAdmissionCode, PackageModuleAdmissionError, PackageRoot, PACKAGE_IMPORT_SEPARATOR, PACKAGE_MANIFEST_BASELINE_VERSION, PACKAGE_MANIFEST_FILE_NAME};
 #[cfg(feature = "std")]
 pub use schema_versioning::{build_schema_migration_metadata, classify_record_schema_compatibility, classify_tagged_union_schema_compatibility, format_schema_migration_metadata, RecordSchemaCompatibilityReport, SchemaCompatibilityBuildError, SchemaCompatibilityKind, SchemaFieldChange, SchemaFieldChangeKind, SchemaMigrationChangeSet, SchemaMigrationMetadataArtifact, SchemaMigrationReviewKind, SchemaMigrationShapeKind, SchemaVariantChangeKind, TaggedUnionSchemaCompatibilityReport, TaggedUnionSchemaVariantChange};
 #[cfg(feature = "std")]
@@ -58,6 +58,12 @@ impl ModuleProvider for CliFsProvider {
             .map(|_| ())
             .map_err(|e| e.to_string())?;
         std::fs::read(module_id).map_err(|e| e.to_string())
+    }
+
+    fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String> {
+        package_manifest::resolve_package_import_path(Path::new(importer_module_id), spec)
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -174,6 +180,61 @@ Law "L" [priority 1]:
 
         let report = CliPipeline::semantic_check_file(&entry).expect("check");
         assert_eq!(report.scheduled_laws.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn semantic_check_file_resolves_local_path_package_dependency() {
+        let dir = mk_temp_dir("smc_cli_pkg_dep_ok");
+        let app_src = dir.join("app").join("src");
+        let math_src = dir.join("math").join("src");
+        std::fs::create_dir_all(&app_src).expect("mkdir app src");
+        std::fs::create_dir_all(&math_src).expect("mkdir math src");
+        std::fs::write(
+            dir.join("app").join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package app
+manifest_dir .
+module_root src
+dep math math ../math
+"#,
+        )
+        .expect("write app manifest");
+        std::fs::write(
+            dir.join("math").join(PACKAGE_MANIFEST_FILE_NAME),
+            r#"
+format 1
+package math
+manifest_dir .
+module_root src
+"#,
+        )
+        .expect("write math manifest");
+        let entry = app_src.join("main.sm");
+        std::fs::write(
+            &entry,
+            r#"
+Import "math::core.sm"
+Law "App" [priority 1]:
+    When true ->
+        System.recovery()
+"#,
+        )
+        .expect("write app source");
+        std::fs::write(
+            math_src.join("core.sm"),
+            r#"
+Law "Core" [priority 1]:
+    When true ->
+        System.recovery()
+"#,
+        )
+        .expect("write dep source");
+
+        let report = CliPipeline::semantic_check_file(&entry).expect("check");
+        assert_eq!(report.scheduled_laws.len(), 2);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
