@@ -3,6 +3,7 @@ use crate::incremental::{
     emit_trace, module_graph_fingerprint, module_graph_module_count, read_graph_hash,
     update_cache_index, CacheEvent, CacheReason, ModuleGraphSnapshot,
 };
+use crate::package_manifest::admit_package_entry_module;
 use crate::{format_path, FormatterMode};
 use sm_emit::{
     compile_program_to_semcode, compile_program_to_semcode_with_options_debug,
@@ -28,8 +29,21 @@ struct CliFsModuleProvider;
 
 impl ModuleProvider for CliFsModuleProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
+        ensure_package_module_admission(Path::new(module_id))?;
         std::fs::read(module_id).map_err(|e| e.to_string())
     }
+}
+
+fn ensure_package_module_admission(path: &Path) -> Result<(), String> {
+    admit_package_entry_module(path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+fn read_source_with_package_admission(path: &Path) -> Result<String, String> {
+    ensure_package_module_admission(path)?;
+    std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read '{}': {}", path.display(), e))
 }
 
 fn cli_profile() -> ParserProfile {
@@ -124,8 +138,7 @@ fn cmd_compile(args: &[String]) -> Result<(), String> {
     }
     let out = out.ok_or_else(|| "missing -o <out.smc>".to_string())?;
     let t0 = Instant::now();
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let t_read = Instant::now();
     let parser_profile = cli_profile();
     let bytes = compile_program_to_semcode_with_options_debug(&src, profile, opt, debug_symbols)
@@ -273,8 +286,7 @@ fn cmd_check(args: &[String]) -> Result<(), String> {
         );
     }
     let t0 = Instant::now();
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let t_read = Instant::now();
     let prev_graph_hash = read_graph_hash(Path::new(CACHE_GRAPH_FILE));
     let mut graph_hash_now = None;
@@ -651,8 +663,7 @@ fn cmd_lint(args: &[String]) -> Result<(), String> {
         );
     }
     let root = PathBuf::from(input);
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(&root) {
         let _ = snapshot.write_to(Path::new(CACHE_GRAPH_FILE), CACHE_SCHEMA_VERSION);
     }
@@ -808,8 +819,7 @@ fn cmd_dump_ast(args: &[String]) -> Result<(), String> {
         return Err("usage: smc dump-ast <input.sm>".to_string());
     }
     let input = args[0].as_str();
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let parser_profile = cli_profile();
     let ast_key = ast_pack_key(Path::new(input), &src)?;
     let ast_pack = cache_ast_file_for_key(ast_key)?;
@@ -862,8 +872,7 @@ fn cmd_dump_ir(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let parser_profile = cli_profile();
     let ir_key = ir_pack_key(Path::new(input), &src, profile, opt)?;
     let ir_pack = cache_ir_file_for_key(ir_key)?;
@@ -943,8 +952,7 @@ fn cmd_dump_bytecode(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let _parser_profile = cli_profile();
     let exb_key = smc_pack_key(Path::new(input), &src, profile, opt, debug_symbols)?;
     let exb_pack = cache_smc_file_for_key(exb_key)?;
@@ -1547,8 +1555,7 @@ fn cmd_hash_ast(args: &[String]) -> Result<(), String> {
         return Err("usage: smc hash-ast <input.sm>".to_string());
     }
     let input = args[0].as_str();
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let parser_profile = cli_profile();
     let ast_key = ast_pack_key(Path::new(input), &src)?;
     let ast_pack = cache_ast_file_for_key(ast_key)?;
@@ -1602,8 +1609,7 @@ fn cmd_hash_ir(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let parser_profile = cli_profile();
     let ir_key = ir_pack_key(Path::new(input), &src, profile, opt)?;
     let ir_pack = cache_ir_file_for_key(ir_key)?;
@@ -1686,8 +1692,7 @@ fn cmd_hash_smc(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let prev_graph_hash = read_graph_hash(Path::new(CACHE_GRAPH_FILE));
     let graph_hash_now = if let Ok(snapshot) = ModuleGraphSnapshot::read_from_root(Path::new(input)) {
         let hash = snapshot.hash(CACHE_SCHEMA_VERSION);
@@ -2092,8 +2097,7 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         return Err("usage: smc run <input.sm>".to_string());
     }
     let input = args[0].as_str();
-    let src =
-        std::fs::read_to_string(input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let src = read_source_with_package_admission(Path::new(input))?;
     let bytes = compile_program_to_semcode(&src).map_err(|e| e.to_string())?;
     run_semcode(&bytes).map_err(|e| e.to_string())
 }

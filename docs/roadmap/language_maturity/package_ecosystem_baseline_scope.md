@@ -86,19 +86,19 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 1:
+Current branch scope for Wave 2:
 
-- explicit owner-layer types for package manifest, package identity, package
-  root, and local path dependencies
-- canonical baseline manifest version ownership
-- narrow inventory validation for duplicate dependency aliases and empty root or
-  path fields
-- no executable package loading path yet
+- canonical `Semantic.package` text parsing for the first-wave manifest surface
+- explicit admission of package entry modules against package root and
+  `module_root`
+- narrow CLI/module-provider validation hooks so source entrypoints and scanned
+  modules agree on the same package boundary
+- dependency declarations remain local-path only and still do not imply package
+  graph loading
 
-Still intentionally not included in Wave 1:
+Still intentionally not included in Wave 2:
 
-- manifest parser admission
-- module-provider/package integration
+- deterministic dependency loading across package boundaries
 - registry or publishing semantics
 - lockfile or solver ownership
 - workspace-wide build orchestration beyond deterministic path loading
