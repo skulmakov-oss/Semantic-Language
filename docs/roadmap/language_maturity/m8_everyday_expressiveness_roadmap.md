@@ -100,11 +100,11 @@ Current completed second subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
 
-Current active third subtrack checkpoint:
+Current completed third subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/collections_surface_full_scope.md`
 
-Current next candidate after collections:
+Current next candidate after the completed collections first wave:
 
 - first-class closures
 

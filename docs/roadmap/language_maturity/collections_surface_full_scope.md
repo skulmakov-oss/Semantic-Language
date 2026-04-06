@@ -1,6 +1,6 @@
 # Collections Surface Full Scope
 
-Status: active M8.3 post-stable subtrack
+Status: completed M8.3 first-wave post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -83,35 +83,23 @@ its widened contract on `main`.
 4. PR 4: runtime/VM iteration and indexing baseline
 5. PR 5: freeze and close-out
 
-## Current Wave Reading
+## Final First-Wave Reading
 
-Current branch scope for Wave 2:
+Completed `M8.3` first-wave contract on current `main`:
 
-- admit `Sequence(type)` in declared source type positions
-- admit bracketed ordered sequence literals in the Rust-like source path
-- admit same-family equality for ordered sequence values when the item type
-  already supports stable equality
-- keep runtime lowering/indexing/iteration explicitly outside the Wave 2 slice
+- one ordered sequence family is explicit in declared type positions through
+  `Sequence(type)`
+- bracketed ordered sequence literals are admitted in the Rust-like source path
+- same-family equality is admitted when the item type already supports stable
+  equality
+- `expr[index]` is admitted with `i32` index operands
+- canonical verified execution is admitted through the promoted `SEMCODE9` /
+  `CAP_SEQUENCE_VALUES` contract
 
-Still intentionally not included in Wave 2:
+Still intentionally not included after close-out:
 
-- indexing or length operations
-- iteration syntax or iterable loops
-- runtime carrier details or VM lowering
-- collection mutation policy beyond the first admitted baseline
-
-Current branch scope for Wave 3:
-
-- canonical runtime carrier for admitted ordered sequence values
-- deterministic `expr[index]` execution with `i32` index operands
-- same-family verified runtime equality for admitted ordered sequence values
-- promoted `SEMCODE9` / `CAP_SEQUENCE_VALUES` contract for programs that
-  actually require the widened sequence carrier
-
-Still intentionally not included in Wave 3:
-
-- `len` / `is_empty` surface
-- `for value in sequence` or any general iterable loop story
+- `len` / `is_empty`
+- `for value in sequence` or any iterable loop story
 - maps, sets, or generic collection abstractions
 - host-ABI widening for sequence values
 
@@ -134,3 +122,10 @@ Even after this first wave lands, the repository still does not claim:
 - generic iterator/protocol frameworks
 - lazy collection pipelines or comprehensions
 - that collection support was already part of the published `v1.1.1` line
+
+## Close-Out Reading
+
+`M8.3` is now frozen as completed first-wave baseline history.
+
+The next language-facing candidate inside the `M8` package is `M8.4
+First-Class Closures`.

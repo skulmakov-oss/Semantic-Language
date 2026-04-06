@@ -105,6 +105,10 @@ The following limits remain explicit and should be treated as release-facing hon
   ecosystem baseline, even though current `main` now admits `Semantic.package`
   parsing, package entry-module admission, and deterministic local-path
   dependency loading for package-qualified imports
+- the published `v1.1.1` line intentionally excludes the first-wave ordered
+  sequence collection surface, even though current `main` now admits
+  `Sequence(type)`, bracketed literals, same-family equality, `expr[index]`,
+  and canonical verified execution through `SEMCODE9`
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or
