@@ -22,6 +22,7 @@ Current post-stable admitted families on `main`:
 - `SEMCODE7`
 - `SEMCODE8`
 - `SEMCODE9`
+- `SEMCODE10`
 
 Current compatibility rule:
 
@@ -98,6 +99,9 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to the first-wave ordered
   sequence collection surface on current `main`, including `Sequence(type)`,
   bracketed literals, same-family equality, `expr[index]`, and `SEMCODE9`
+- the same forward-only reading also applies to the first-wave first-class
+  closure surface on current `main`, including `Closure(T -> U)`, standalone
+  closure literals, immutable capture, direct invocation, and `SEMCODE10`
 
 ## Explicit Non-Commitments
 
@@ -119,6 +123,8 @@ The repository does not yet claim final compatibility guarantees for:
   manifest/dependency baseline on `main`
 - collection semantics beyond the current admitted first-wave ordered sequence
   carrier/index/equality contract on `main`
+- closure semantics beyond the current admitted first-wave `Closure(T -> U)`
+  family, immutable capture, and direct invocation contract on `main`
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule

@@ -97,7 +97,7 @@ Current completed checkpoint:
 - Wave 3: lowering/runtime representation
 - Wave 4: docs/tests/compatibility freeze
 
-Current active checkpoint:
+Current completed checkpoint:
 
 - `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
 

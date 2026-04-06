@@ -1,6 +1,6 @@
 # First-Class Closures Full Scope
 
-Status: active M8.4 post-stable subtrack
+Status: completed M8.4 first-wave post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -96,23 +96,32 @@ The first-wave closure contract is intentionally narrow:
 That keeps the track additive over the current short-lambda sugar without
 turning it into a general abstraction system in one step.
 
-Current Wave 3 reading on `main`:
+## Final First-Wave Reading
 
-- current `main` now owns one first-wave closure family in the frontend owner
+Completed `M8.4` first-wave contract on current `main`:
+
+- one first-wave closure family is explicit and owned in the frontend owner
   layer
-- current `main` now admits `Closure(T -> U)` in declared source type positions
-- current `main` now admits standalone first-class closure literals in
-  contextual closure-typed positions
-- current `main` records immutable capture inventory for admitted standalone
-  closure literals
-- current `main` now admits one canonical runtime closure carrier for that same
-  first-wave family
-- current `main` now admits direct invocation of admitted closure values
-- current `main` keeps closure execution narrow:
+- `Closure(T -> U)` is admitted in declared source type positions
+- standalone first-class closure literals are admitted in contextual
+  closure-typed positions
+- immutable capture inventory is recorded for admitted standalone closure
+  literals
+- one canonical runtime closure carrier is admitted for that first-wave family
+- direct invocation of admitted closure values is admitted
+- closure execution is kept narrow:
   - exactly one positional argument
   - immutable capture only
   - no closure equality
   - no PROMETHEUS host-ABI closure transport
+
+Still intentionally not included after close-out:
+
+- multi-argument closure syntax
+- async or mutable-capture closure semantics
+- trait/protocol-based callable abstractions
+- generic closure signatures
+- host-ABI widening for closure values
 
 ## Acceptance Reading
 
@@ -133,3 +142,10 @@ Even after this first wave lands, the repository still does not claim:
 - async/generator closure semantics
 - multi-argument or variadic closure families
 - that first-class closures were already part of the published `v1.1.1` line
+
+## Close-Out Reading
+
+`M8.4` is now frozen as completed first-wave baseline history.
+
+The next language-facing candidate inside the `M8` package is `M9.1
+Generics`.
