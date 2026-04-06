@@ -32,8 +32,8 @@ its widened contract on `main`.
 
 - explicit ownership of one first-wave ordered sequence collection family
 - deterministic construction/literal surface for that collection family
-- narrow indexing, length, emptiness, and same-family equality semantics
-- deterministic iteration surface over that admitted sequence family
+- narrow indexing and same-family equality semantics
+- deterministic runtime carrier for the admitted sequence family
 - docs/spec/tests/compatibility wording for the widened contract
 
 ## Explicit Non-Goals
@@ -100,12 +100,27 @@ Still intentionally not included in Wave 2:
 - runtime carrier details or VM lowering
 - collection mutation policy beyond the first admitted baseline
 
+Current branch scope for Wave 3:
+
+- canonical runtime carrier for admitted ordered sequence values
+- deterministic `expr[index]` execution with `i32` index operands
+- same-family verified runtime equality for admitted ordered sequence values
+- promoted `SEMCODE9` / `CAP_SEQUENCE_VALUES` contract for programs that
+  actually require the widened sequence carrier
+
+Still intentionally not included in Wave 3:
+
+- `len` / `is_empty` surface
+- `for value in sequence` or any general iterable loop story
+- maps, sets, or generic collection abstractions
+- host-ABI widening for sequence values
+
 ## Acceptance Reading
 
 This subtrack is done only when:
 
 - one ordered sequence collection family is explicit and inspectable
-- collection construction, indexing, and iteration agree on one deterministic
+- collection construction, indexing, and equality agree on one deterministic
   first-wave model
 - docs/spec/tests describe the same admitted baseline
 - published `v1.1.1` and widened `main` are explicitly distinguished

@@ -8,7 +8,7 @@ use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS,
     CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
-    CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES,
+    CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -542,6 +542,20 @@ fn decode_operands(
                 read_u16_le(code, cursor).map_err(|_| invalid("truncated text literal string id"))?;
             refs.string_refs.push((offset, sid as usize, "text literal"));
         }
+        Opcode::MakeSequence => {
+            let dst =
+                read_u16_le(code, cursor).map_err(|_| invalid("truncated sequence dst register"))?;
+            mark_reg(dst);
+            refs.required_capabilities |= CAP_SEQUENCE_VALUES;
+            let count = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence arity"))?
+                as usize;
+            for _ in 0..count {
+                let src = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated sequence item register"))?;
+                mark_reg(src);
+            }
+        }
         Opcode::MakeTuple => {
             let dst =
                 read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple dst register"))?;
@@ -645,6 +659,18 @@ fn decode_operands(
             read_u16_le(code, cursor).map_err(|_| invalid("truncated tuple-get index"))?;
             mark_reg(dst);
             mark_reg(src);
+        }
+        Opcode::SequenceGet => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-get dst register"))?;
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-get src register"))?;
+            let index = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-get index register"))?;
+            mark_reg(dst);
+            mark_reg(src);
+            mark_reg(index);
+            refs.required_capabilities |= CAP_SEQUENCE_VALUES;
         }
         Opcode::LoadVar => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;

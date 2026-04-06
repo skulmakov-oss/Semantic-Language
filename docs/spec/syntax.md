@@ -379,10 +379,12 @@ Current active collections checkpoint on `main`:
   `Sequence(type)`
 - bracketed ordered sequence literals are now admitted in the Rust-like source
   path
+- postfix indexing `expr[index]` is now admitted when `expr` is an admitted
+  ordered sequence and `index` is `i32`
 - same-family equality is now admitted for ordered sequence values when the
   item type already supports stable equality
-- indexing, iteration, maps, sets, and generic collection abstractions are not
-  part of the current `M8.3` Wave 2 syntax contract
+- iteration, `len`, `is_empty`, maps, sets, and generic collection
+  abstractions are not part of the current `M8.3` first-wave syntax contract
 
 Current v0 range-literal limits:
 

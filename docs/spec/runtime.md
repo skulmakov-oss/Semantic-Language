@@ -82,6 +82,11 @@ Current admitted execution-value reading:
   the verified SemCode path
 - this carrier remains internal to verified Semantic execution
 - the PROMETHEUS host ABI still does not admit text values
+- current `main` now also executes one ordered sequence family through the
+  verified SemCode path, including literal materialization, same-family
+  equality, and `expr[index]`
+- this sequence carrier remains internal to verified Semantic execution
+- the PROMETHEUS host ABI still does not admit sequence values
 
 These helpers are orchestration glue only. They must not redefine:
 

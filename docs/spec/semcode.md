@@ -37,6 +37,7 @@ Current supported header family:
 - `SEMCODE6`
 - `SEMCODE7`
 - `SEMCODE8`
+- `SEMCODE9`
 
 Observed runtime support in the current toolchain:
 
@@ -49,6 +50,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE6`: epoch `0`, revision `7`
 - `SEMCODE7`: epoch `0`, revision `8`
 - `SEMCODE8`: epoch `0`, revision `9`
+- `SEMCODE9`: epoch `0`, revision `10`
 
 Header responsibilities:
 
@@ -127,6 +129,13 @@ Compatibility rules:
 - keeps `SEMCODE0..7` fixed for older artifacts that do not use executable
   text values
 
+`SEMCODE9`
+
+- promoted contract used when emitted program usage requires the canonical
+  ordered sequence carrier for the admitted `M8.3` first-wave surface
+- keeps `SEMCODE0..8` fixed for older artifacts that do not use executable
+  sequence values
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -154,6 +163,7 @@ Current canonical capability families:
 - `CAP_EVENT_POST`
 - `CAP_CLOCK_READ`
 - `CAP_TEXT_VALUES`
+- `CAP_SEQUENCE_VALUES`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:

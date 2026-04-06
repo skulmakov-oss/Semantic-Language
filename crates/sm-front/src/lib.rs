@@ -21,9 +21,9 @@ pub use types::{
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
-    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceLiteral,
-    SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind,
-    TuplePatternItem, Type,
+    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr,
+    SequenceLiteral, SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily,
+    Token, TokenKind, TuplePatternItem, Type,
     UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
     ValidationVariantPlan,
 };

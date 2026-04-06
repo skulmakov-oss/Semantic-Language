@@ -6,9 +6,9 @@ use crate::types::{
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
     RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
-    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceLiteral,
-    SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind,
-    TuplePatternItem, Type, UnaryOp,
+    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr,
+    SequenceLiteral, SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily,
+    Token, TokenKind, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -1136,6 +1136,14 @@ impl<'a> Parser<'a> {
                 expr = self.arena.alloc_expr(Expr::Call(field, args));
                 continue;
             }
+            if self.eat(TokenKind::LBracket) {
+                let index = self.parse_expr()?;
+                self.expect(TokenKind::RBracket, "expected ']' after sequence index")?;
+                expr = self
+                    .arena
+                    .alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base: expr, index }));
+                continue;
+            }
             if self.eat(TokenKind::KwWith) {
                 self.expect(
                     TokenKind::LBrace,
@@ -1554,6 +1562,10 @@ impl<'a> Parser<'a> {
             }
             Expr::RecordField(field_expr) => {
                 self.ensure_short_lambda_expr_capture_free(field_expr.base, scopes)
+            }
+            Expr::SequenceIndex(index_expr) => {
+                self.ensure_short_lambda_expr_capture_free(index_expr.base, scopes)?;
+                self.ensure_short_lambda_expr_capture_free(index_expr.index, scopes)
             }
             Expr::RecordUpdate(update_expr) => {
                 self.ensure_short_lambda_expr_capture_free(update_expr.base, scopes)?;
@@ -3023,6 +3035,39 @@ fn main() {
                 family: SequenceCollectionFamily::OrderedSequence,
                 items,
             }) if items.len() == 3
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_sequence_index_surface() {
+        let src = r#"
+fn main() {
+    let values: Sequence(i32) = [1, 2, 3];
+    let first: i32 = values[0];
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("sequence index surface should parse");
+        let func = &program.functions[0];
+
+        let Stmt::Let {
+            ty: Some(Type::I32),
+            value,
+            ..
+        } = program.arena.stmt(func.body[1])
+        else {
+            panic!("expected indexed let binding");
+        };
+
+        let Expr::SequenceIndex(index_expr) = program.arena.expr(*value) else {
+            panic!("expected sequence index expression");
+        };
+        assert!(matches!(program.arena.expr(index_expr.base), Expr::Var(_)));
+        assert!(matches!(
+            program.arena.expr(index_expr.index),
+            Expr::NumericLiteral(NumericLiteral::I32(0))
         ));
     }
 

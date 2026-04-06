@@ -694,6 +694,8 @@ Current operator meaning:
 - `==` and `!=` produce `bool`
 - same-family `text == text` and `text != text` are now admitted on current
   `main`
+- same-family `Sequence(T) == Sequence(T)` and `Sequence(T) != Sequence(T)` are
+  now admitted on current `main` when `T` already supports stable equality
 - `&&` and `||` work on `bool` and `quad` only when both operands are of the
   same family
 - `!` works on `bool` and `quad`
@@ -725,6 +727,11 @@ Current honest limit:
   through the canonical runtime carrier for those admitted programs
 - text concatenation remains a later `M8.1` wave
 - host-facing text ABI widening is still out of scope
+- current `main` now also admits one ordered sequence family with bracketed
+  literals, same-family equality, and `expr[index]` through the canonical
+  `M8.3` first-wave carrier path
+- iteration, `len`, `is_empty`, maps, sets, and collection protocol machinery
+  remain outside the current `M8.3` first-wave contract
 
 ## Builtin Call Meaning
 

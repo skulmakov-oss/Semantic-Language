@@ -23,6 +23,7 @@ pub enum Value {
     Quad(QuadVal),
     Bool(bool),
     Text(String),
+    Sequence(Vec<Value>),
     I32(i32),
     F64(f64),
     U32(u32),
@@ -457,6 +458,13 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::MakeSequence => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
             Opcode::MakeRecord => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -499,6 +507,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
             Opcode::TupleGet => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::SequenceGet => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -831,6 +844,17 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 set_reg(vm, frame_idx, dst, Value::Text(value))?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::MakeSequence => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let mut items = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    items.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(vm, frame_idx, dst, Value::Sequence(items))?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::MakeTuple => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
@@ -966,6 +990,31 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 };
                 let item = items.get(index).cloned().ok_or_else(|| {
                     RuntimeError::BadFormat(format!("tuple-get index out of bounds: {}", index))
+                })?;
+                set_reg(vm, frame_idx, dst, item)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequenceGet => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let index_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, src)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_GET source must be sequence".to_string(),
+                    ));
+                };
+                let index = as_i32(get_reg(vm, frame_idx, index_reg)?)?;
+                if index < 0 {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_GET index must be non-negative".to_string(),
+                    ));
+                }
+                let item = items.get(index as usize).cloned().ok_or_else(|| {
+                    RuntimeError::TypeMismatchRuntime(format!(
+                        "SEQUENCE_GET index out of bounds: {}",
+                        index
+                    ))
                 })?;
                 set_reg(vm, frame_idx, dst, item)?;
                 next_pc = cur - f.instr_start;
@@ -1246,6 +1295,9 @@ fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
         Value::Text(_) => Err(RuntimeError::TypeMismatchRuntime(
             "text values are not part of the PROMETHEUS host ABI surface".to_string(),
         )),
+        Value::Sequence(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "sequence values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
         Value::I32(v) => Ok(AbiValue::I32(v)),
         Value::F64(v) => Ok(AbiValue::F64(v)),
         Value::U32(v) => Ok(AbiValue::U32(v)),
@@ -1480,6 +1532,17 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
         (Value::Quad(x), Value::Quad(y)) => Ok(x == y),
         (Value::Bool(x), Value::Bool(y)) => Ok(x == y),
         (Value::Text(x), Value::Text(y)) => Ok(x == y),
+        (Value::Sequence(xs), Value::Sequence(ys)) => {
+            if xs.len() != ys.len() {
+                return Ok(false);
+            }
+            for (x, y) in xs.iter().zip(ys.iter()) {
+                if !value_eq(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
         (Value::I32(x), Value::I32(y)) => Ok(x == y),
         (Value::F64(x), Value::F64(y)) => Ok(x == y),
         (Value::U32(x), Value::U32(y)) => Ok(x == y),
@@ -1614,6 +1677,20 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_FX r{}, raw:{}", d, n)
         }
+        Opcode::MakeSequence => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("MAKE_SEQUENCE r{}, [{}]", d, regs)
+        }
         Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1707,6 +1784,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("TUPLE_GET r{}, r{}, {}", d, s, i)
+        }
+        Opcode::SequenceGet => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_GET r{}, r{}, r{}", d, s, i)
         }
         Opcode::LoadVar => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -2118,6 +2201,25 @@ mod tests {
         let bytes = compile_program_to_semcode(src).expect("compile");
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("LOAD_TEXT"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_sequence_literal_index_and_equality_path() {
+        let src = r#"
+            fn main() {
+                let values: Sequence(i32) = [1, 2, 3];
+                let head: i32 = values[0];
+                assert(head == 1);
+                assert(values == [1, 2, 3]);
+                assert(values != [1, 2, 4]);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_SEQUENCE"));
+        assert!(disasm.contains("SEQUENCE_GET"));
         run_semcode(&bytes).expect("run");
     }
 
@@ -2616,7 +2718,7 @@ mod tests {
     fn vm_rejects_unsupported_bytecode_version_with_hint() {
         let src = "fn main() { return; }";
         let mut bytes = compile_program_to_semcode(src).expect("compile");
-        bytes[7] = b'9';
+        bytes[7] = b'X';
         let err = run_semcode(&bytes).expect_err("must fail");
         match err {
             RuntimeError::UnsupportedBytecodeVersion { found, supported } => {
@@ -2629,6 +2731,8 @@ mod tests {
                 assert!(supported.contains("SEMCODE5"));
                 assert!(supported.contains("SEMCODE6"));
                 assert!(supported.contains("SEMCODE7"));
+                assert!(supported.contains("SEMCODE8"));
+                assert!(supported.contains("SEMCODE9"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }

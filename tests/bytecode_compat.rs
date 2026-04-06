@@ -6,8 +6,9 @@ use semantic_language::prom_abi::{AbiValue, RecordingHostAbi};
 use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
 use semantic_language::semcode_format::{
     header_spec_from_magic, CAP_CLOCK_READ, CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH,
-    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES,
-    MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
+    CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE,
+    CAP_TEXT_VALUES, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
+    MAGIC9,
 };
 use semantic_language::semcode_vm::{
     disasm_semcode, run_semcode, run_verified_semcode_with_host_and_capabilities, RuntimeError,
@@ -294,6 +295,28 @@ fn compat_v8_header_and_text_run() {
 }
 
 #[test]
+fn compat_v9_header_and_sequence_run() {
+    let src = r#"
+        fn main() {
+            let values: Sequence(i32) = [1, 2, 3];
+            let head: i32 = values[0];
+            assert(head == 1);
+            assert(values == [1, 2, 3]);
+            return;
+        }
+    "#;
+    let bytes = compile_program_to_semcode(src).expect("compile");
+    assert_eq!(&bytes[0..8], &MAGIC9);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 10);
+    assert_ne!(spec.capabilities & CAP_SEQUENCE_VALUES, 0);
+    run_verified_semcode(&bytes).expect("verified run");
+}
+
+#[test]
 fn compat_cli_o0_v1_f64_arithmetic_runs_on_verified_path() {
     let src = r#"
         fn main() {
@@ -387,7 +410,7 @@ fn compat_example_semantic_policy_overdrive_trace_runs_on_verified_path() {
 fn compat_unsupported_version_has_migration_hint() {
     let src = "fn main() { return; }";
     let mut bytes = compile_program_to_semcode(src).expect("compile");
-    bytes[7] = b'9';
+    bytes[7] = b'X';
     let err = run_semcode(&bytes).expect_err("must fail");
     match err {
         RuntimeError::UnsupportedBytecodeVersion { found, supported } => {
@@ -401,6 +424,7 @@ fn compat_unsupported_version_has_migration_hint() {
             assert!(supported.contains("SEMCODE6"));
             assert!(supported.contains("SEMCODE7"));
             assert!(supported.contains("SEMCODE8"));
+            assert!(supported.contains("SEMCODE9"));
         }
         other => panic!("unexpected error: {other:?}"),
     }

@@ -1480,6 +1480,16 @@ fn infer_expr_type(
             ret_ty,
             loop_stack,
         ),
+        Expr::SequenceIndex(index_expr) => infer_sequence_index_type(
+            index_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::RecordUpdate(update_expr) => infer_record_update_type(
             update_expr,
             arena,
@@ -2111,6 +2121,52 @@ mod tests {
         let err =
             typecheck_source(src).expect_err("heterogeneous ordered sequence items must reject");
         assert!(err.message.contains("type mismatch"));
+    }
+
+    #[test]
+    fn sequence_index_surface_typechecks_in_wave3() {
+        let src = r#"
+            fn head(values: Sequence(i32)) -> i32 {
+                return values[0];
+            }
+
+            fn main() {
+                let values: Sequence(i32) = [1, 2, 3];
+                let first: i32 = head(values);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("ordered sequence indexing should typecheck");
+    }
+
+    #[test]
+    fn sequence_index_rejects_non_sequence_base() {
+        let src = r#"
+            fn main() {
+                let first: i32 = 1[0];
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("sequence indexing on non-sequence base must reject");
+        assert!(err.message.contains("sequence indexing requires Sequence(type) base"));
+    }
+
+    #[test]
+    fn sequence_index_rejects_non_i32_index() {
+        let src = r#"
+            fn main() {
+                let values: Sequence(i32) = [1, 2, 3];
+                let first: i32 = values[true];
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("sequence indexing with non-i32 index must reject");
+        assert!(err.message.contains("sequence indexing currently requires i32 index"));
     }
 
     #[test]
@@ -5651,6 +5707,10 @@ fn ensure_contract_expr_supported(
         Expr::RecordField(field_expr) => {
             ensure_contract_expr_supported(field_expr.base, arena, clause_name, binding_desc)
         }
+        Expr::SequenceIndex(index_expr) => {
+            ensure_contract_expr_supported(index_expr.base, arena, clause_name, binding_desc)?;
+            ensure_contract_expr_supported(index_expr.index, arena, clause_name, binding_desc)
+        }
         Expr::Unary(_, inner) => {
             ensure_contract_expr_supported(*inner, arena, clause_name, binding_desc)
         }
@@ -5661,7 +5721,7 @@ fn ensure_contract_expr_supported(
         _ => Err(FrontendError {
             pos: 0,
             message: format!(
-                "{clause_name} clause currently allows only {binding_desc}, tuple literals, record field reads, and pure unary/binary operator expressions"
+                "{clause_name} clause currently allows only {binding_desc}, tuple literals, record/sequence reads, and pure unary/binary operator expressions"
             ),
         }),
     }
@@ -5696,6 +5756,12 @@ fn find_named_var_symbol(
             Ok(None)
         }
         Expr::RecordField(field_expr) => find_named_var_symbol(field_expr.base, arena, name),
+        Expr::SequenceIndex(index_expr) => {
+            if let Some(symbol) = find_named_var_symbol(index_expr.base, arena, name)? {
+                return Ok(Some(symbol));
+            }
+            find_named_var_symbol(index_expr.index, arena, name)
+        }
         Expr::Unary(_, inner) => find_named_var_symbol(*inner, arena, name),
         Expr::Binary(lhs, _, rhs) => {
             if let Some(symbol) = find_named_var_symbol(*lhs, arena, name)? {
@@ -5905,8 +5971,59 @@ fn infer_record_field_access_type(
                 resolve_symbol_name(arena, record_name)?,
                 resolve_symbol_name(arena, field_expr.field)?
             ),
-        })?;
+    })?;
     canonicalize_declared_type(&field.ty, record_table, adt_table, arena)
+}
+
+fn infer_sequence_index_type(
+    index_expr: &SequenceIndexExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let base_ty = infer_expr_type(
+        index_expr.base,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        ret_ty.clone(),
+        loop_stack,
+    )?;
+    let Type::Sequence(sequence_ty) = base_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "sequence indexing requires Sequence(type) base before '[...]', got {:?}",
+                base_ty
+            ),
+        });
+    };
+    let index_ty = infer_expr_type(
+        index_expr.index,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        ret_ty,
+        loop_stack,
+    )?;
+    if index_ty != Type::I32 {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "sequence indexing currently requires i32 index, got {:?}",
+                index_ty
+            ),
+        });
+    }
+    Ok(sequence_ty.item.as_ref().clone())
 }
 
 fn infer_record_update_type(
@@ -6158,6 +6275,16 @@ fn infer_expr_type_with_expected(
             record_table,
             adt_table,
             expected.as_ref(),
+            ret_ty,
+            loop_stack,
+        ),
+        Expr::SequenceIndex(index_expr) => infer_sequence_index_type(
+            index_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
             ret_ty,
             loop_stack,
         ),
