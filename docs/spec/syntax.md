@@ -471,12 +471,18 @@ Current precedence, from tighter to looser:
 Current short-lambda rules:
 
 - short lambda syntax is currently single-parameter only: `x => expr`
-- short lambdas are not first-class values in v0
+- the published stable `v1.1.1` line keeps short lambdas as non-first-class
+  call-site sugar only
+- current `main` now admits standalone first-class closure literals in
+  contextual positions such as `let f: Closure(f64 -> f64) = (x => x + 1.0);`
 - the stable v0 surface accepts short lambdas only as:
   - immediate call sugar: `(x => expr)(arg)`
   - pipeline stage sugar: `value |> (x => expr)`
-- short lambdas are capture-free in v0; they may not reference outer local
-  bindings
+- immediate-call and pipeline sugar remain capture-free in the stable line
+- current `main` admits immutable capture inventory for standalone first-class
+  closure literals
+- `Closure(T -> U)` is the current narrow declared type spelling for the
+  admitted first-wave closure family on `main`
 - typed lambda parameters and multi-argument lambda forms are not yet part of
   the stable source contract
 

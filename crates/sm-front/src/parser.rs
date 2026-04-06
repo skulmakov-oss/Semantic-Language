@@ -1,14 +1,15 @@
 use crate::lexer::lex_tokens;
 use crate::types::{
     AdtCtorExpr, AdtDecl, AdtMatchPattern, AdtPatternItem, AdtVariant, AstArena, BinaryOp,
-    BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
-    LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
-    RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
-    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr,
-    SequenceLiteral, SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily,
-    Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    BlockExpr, CallArg, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily, Expr, ExprId,
+    FrontendError, Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind,
+    LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm,
+    MatchPattern, NumericLiteral, Program, QuadVal, RangeExpr, RecordDecl, RecordField,
+    RecordFieldExpr, RecordInitField, RecordLiteralExpr, RecordPatternItem, RecordPatternTarget,
+    RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
+    SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr, SequenceLiteral, SequenceType,
+    Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind, TuplePatternItem,
+    Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -1457,25 +1458,27 @@ impl<'a> Parser<'a> {
         )?;
         let body = self.parse_expr()?;
         self.expect(TokenKind::RParen, "expected ')' after short lambda body")?;
-        self.ensure_short_lambda_capture_free(body, param)?;
 
-        let arg = if from_pipeline {
-            pipeline_input.expect("pipeline input must be provided for pipeline short lambda")
-        } else {
-            self.parse_short_lambda_immediate_arg()?
-        };
-        self.build_short_lambda_apply(param, body, arg)
+        if from_pipeline {
+            self.ensure_short_lambda_capture_free(body, param)?;
+            let arg = pipeline_input.expect("pipeline input must be provided for pipeline short lambda");
+            return self.build_short_lambda_apply(param, body, arg);
+        }
+
+        if self.check(TokenKind::LParen) {
+            self.ensure_short_lambda_capture_free(body, param)?;
+            let arg = self.parse_short_lambda_immediate_arg()?;
+            return self.build_short_lambda_apply(param, body, arg);
+        }
+
+        self.build_first_class_closure_literal(param, body)
     }
 
     fn parse_short_lambda_immediate_arg(&mut self) -> Result<ExprId, FrontendError> {
-        if !self.eat(TokenKind::LParen) {
-            return Err(FrontendError {
-                pos: self.pos(),
-                message:
-                    "short lambda is v0 call-site sugar only; use immediate invocation '(x => expr)(arg)' or pipeline stage 'value |> (x => expr)'"
-                        .to_string(),
-            });
-        }
+        self.expect(
+            TokenKind::LParen,
+            "short lambda direct call currently requires form '(x => expr)(arg)'",
+        )?;
         if self.check(TokenKind::RParen) {
             return Err(FrontendError {
                 pos: self.pos(),
@@ -1496,6 +1499,23 @@ impl<'a> Parser<'a> {
         Ok(arg)
     }
 
+    fn build_first_class_closure_literal(
+        &mut self,
+        param: SymbolId,
+        body: ExprId,
+    ) -> Result<ExprId, FrontendError> {
+        let captures = self.collect_short_lambda_captures(body, param)?;
+        Ok(self.arena.alloc_expr(Expr::Closure(ClosureLiteral {
+            family: ClosureValueFamily::UnaryDirect,
+            capture: ClosureCapturePolicy::Immutable,
+            param,
+            param_ty: None,
+            ret_ty: None,
+            captures,
+            body,
+        })))
+    }
+
     fn build_short_lambda_apply(
         &mut self,
         param: SymbolId,
@@ -1511,6 +1531,183 @@ impl<'a> Parser<'a> {
             statements: vec![binding],
             tail: body,
         })))
+    }
+
+    fn collect_short_lambda_captures(
+        &self,
+        body: ExprId,
+        param: SymbolId,
+    ) -> Result<Vec<SymbolId>, FrontendError> {
+        let mut scopes = vec![vec![param]];
+        let mut captures = Vec::new();
+        self.collect_short_lambda_expr_captures(body, &mut scopes, &mut captures)?;
+        Ok(captures)
+    }
+
+    fn collect_short_lambda_expr_captures(
+        &self,
+        expr_id: ExprId,
+        scopes: &mut Vec<Vec<SymbolId>>,
+        captures: &mut Vec<SymbolId>,
+    ) -> Result<(), FrontendError> {
+        match self.arena.expr(expr_id) {
+            Expr::QuadLiteral(_)
+            | Expr::BoolLiteral(_)
+            | Expr::TextLiteral(_)
+            | Expr::NumericLiteral(_) => Ok(()),
+            Expr::Range(range_expr) => {
+                self.collect_short_lambda_expr_captures(range_expr.start, scopes, captures)?;
+                self.collect_short_lambda_expr_captures(range_expr.end, scopes, captures)
+            }
+            Expr::Tuple(items) => {
+                for item in items {
+                    self.collect_short_lambda_expr_captures(*item, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::SequenceLiteral(sequence) => {
+                for item in &sequence.items {
+                    self.collect_short_lambda_expr_captures(*item, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::RecordLiteral(record) => {
+                for field in &record.fields {
+                    self.collect_short_lambda_expr_captures(field.value, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::AdtCtor(ctor) => {
+                for item in &ctor.payload {
+                    self.collect_short_lambda_expr_captures(*item, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::RecordField(field_expr) => {
+                self.collect_short_lambda_expr_captures(field_expr.base, scopes, captures)
+            }
+            Expr::SequenceIndex(index_expr) => {
+                self.collect_short_lambda_expr_captures(index_expr.base, scopes, captures)?;
+                self.collect_short_lambda_expr_captures(index_expr.index, scopes, captures)
+            }
+            Expr::Closure(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "nested first-class closure literals are not yet admitted before M8.4 Wave 2"
+                        .to_string(),
+            }),
+            Expr::RecordUpdate(update_expr) => {
+                self.collect_short_lambda_expr_captures(update_expr.base, scopes, captures)?;
+                for field in &update_expr.fields {
+                    self.collect_short_lambda_expr_captures(field.value, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::Var(name) => {
+                if scopes.iter().rev().any(|scope| scope.contains(name)) {
+                    Ok(())
+                } else {
+                    if !captures.contains(name) {
+                        captures.push(*name);
+                    }
+                    Ok(())
+                }
+            }
+            Expr::Call(_, args) => {
+                for arg in args {
+                    self.collect_short_lambda_expr_captures(arg.value, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::Unary(_, inner) => self.collect_short_lambda_expr_captures(*inner, scopes, captures),
+            Expr::Binary(lhs, _, rhs) => {
+                self.collect_short_lambda_expr_captures(*lhs, scopes, captures)?;
+                self.collect_short_lambda_expr_captures(*rhs, scopes, captures)
+            }
+            Expr::Block(block) => self.collect_short_lambda_block_captures(block, scopes, captures),
+            Expr::If(if_expr) => {
+                self.collect_short_lambda_expr_captures(if_expr.condition, scopes, captures)?;
+                self.collect_short_lambda_block_captures(&if_expr.then_block, scopes, captures)?;
+                self.collect_short_lambda_block_captures(&if_expr.else_block, scopes, captures)
+            }
+            Expr::Match(match_expr) => {
+                self.collect_short_lambda_expr_captures(match_expr.scrutinee, scopes, captures)?;
+                for arm in &match_expr.arms {
+                    scopes.push(self.short_lambda_match_pattern_bindings(&arm.pat));
+                    if let Some(guard) = arm.guard {
+                        self.collect_short_lambda_expr_captures(guard, scopes, captures)?;
+                    }
+                    self.collect_short_lambda_block_captures(&arm.block, scopes, captures)?;
+                    let _ = scopes.pop();
+                }
+                if let Some(default) = &match_expr.default {
+                    self.collect_short_lambda_block_captures(default, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::Loop(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "first-class closure literals do not yet admit loop expressions in the closure body"
+                        .to_string(),
+            }),
+        }
+    }
+
+    fn collect_short_lambda_block_captures(
+        &self,
+        block: &BlockExpr,
+        scopes: &mut Vec<Vec<SymbolId>>,
+        captures: &mut Vec<SymbolId>,
+    ) -> Result<(), FrontendError> {
+        scopes.push(Vec::new());
+        for stmt_id in &block.statements {
+            self.collect_short_lambda_stmt_captures(*stmt_id, scopes, captures)?;
+        }
+        self.collect_short_lambda_expr_captures(block.tail, scopes, captures)?;
+        let _ = scopes.pop();
+        Ok(())
+    }
+
+    fn collect_short_lambda_stmt_captures(
+        &self,
+        stmt_id: StmtId,
+        scopes: &mut Vec<Vec<SymbolId>>,
+        captures: &mut Vec<SymbolId>,
+    ) -> Result<(), FrontendError> {
+        match self.arena.stmt(stmt_id) {
+            Stmt::Const { name, value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.push(*name);
+                }
+                Ok(())
+            }
+            Stmt::Let { name, value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.push(*name);
+                }
+                Ok(())
+            }
+            Stmt::LetTuple { items, value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.extend(items.iter().flatten().copied());
+                }
+                Ok(())
+            }
+            Stmt::Discard { value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)
+            }
+            Stmt::Expr(expr_id) => self.collect_short_lambda_expr_captures(*expr_id, scopes, captures),
+            _ => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "first-class closure literals currently support only expression-compatible block forms"
+                        .to_string(),
+            }),
+        }
     }
 
     fn ensure_short_lambda_capture_free(
@@ -2006,6 +2203,33 @@ impl<'a> Parser<'a> {
                     Type::Sequence(SequenceType {
                         family: SequenceCollectionFamily::OrderedSequence,
                         item: Box::new(item),
+                    })
+                } else {
+                    let record_name = self.expect_symbol()?;
+                    Type::Record(record_name)
+                }
+            } else if t == "Closure" {
+                let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
+                if self
+                    .tokens
+                    .get(lookahead)
+                    .map(|tok| tok.kind == TokenKind::LParen)
+                    .unwrap_or(false)
+                {
+                    let _ = self.advance();
+                    self.expect(TokenKind::LParen, "expected '(' after Closure type name")?;
+                    let param_ty = self.parse_type()?;
+                    self.expect(
+                        TokenKind::Implies,
+                        "expected '->' between Closure parameter and return types",
+                    )?;
+                    let ret_ty = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "expected ')' after Closure type")?;
+                    Type::Closure(crate::types::ClosureType {
+                        family: ClosureValueFamily::UnaryDirect,
+                        capture: ClosureCapturePolicy::Immutable,
+                        param: Box::new(param_ty),
+                        ret: Box::new(ret_ty),
                     })
                 } else {
                     let record_name = self.expect_symbol()?;
@@ -3284,19 +3508,76 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_standalone_short_lambda_value() {
+    fn rustlike_parser_accepts_standalone_first_class_closure_value() {
         let src = r#"
 fn main() {
-    let value: f64 = (x => x + 1.0);
+    let value: Closure(f64 -> f64) = (x => x + 1.0);
     return;
 }
 "#;
 
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("standalone short lambda must reject");
-        assert!(err
-            .message
-            .contains("short lambda is v0 call-site sugar only"));
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("standalone first-class closure should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            ty: Some(Type::Closure(closure_ty)),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0]) else {
+            panic!("expected typed let closure statement");
+        };
+        assert_eq!(closure_ty.family, ClosureValueFamily::UnaryDirect);
+        assert_eq!(closure_ty.capture, ClosureCapturePolicy::Immutable);
+        let Expr::Closure(closure) = program.arena.expr(*value) else {
+            panic!("expected closure literal");
+        };
+        assert_eq!(closure.family, ClosureValueFamily::UnaryDirect);
+        assert_eq!(closure.capture, ClosureCapturePolicy::Immutable);
+        assert!(closure.captures.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_collects_first_class_closure_capture_inventory() {
+        let src = r#"
+fn main() {
+    let offset: f64 = 1.0;
+    let value: Closure(f64 -> f64) = (x => x + offset);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("capturing closure literal should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[1]) else {
+            panic!("expected closure let statement");
+        };
+        let Expr::Closure(closure) = program.arena.expr(*value) else {
+            panic!("expected closure literal");
+        };
+        assert_eq!(closure.captures.len(), 1);
+        assert_eq!(program.arena.symbol_name(closure.captures[0]), "offset");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_closure_type_in_function_signature() {
+        let src = r#"
+fn id(value: Closure(f64 -> f64)) -> Closure(f64 -> f64) = value;
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("closure type in signature should parse");
+        let func = &program.functions[0];
+        assert_eq!(
+            func.params[0].1,
+            Type::Closure(crate::types::ClosureType {
+                family: ClosureValueFamily::UnaryDirect,
+                capture: ClosureCapturePolicy::Immutable,
+                param: Box::new(Type::F64),
+                ret: Box::new(Type::F64),
+            })
+        );
+        assert_eq!(func.ret, func.params[0].1);
     }
 
     #[test]

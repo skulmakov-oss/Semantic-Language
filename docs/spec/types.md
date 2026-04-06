@@ -100,14 +100,16 @@ Current honest baseline:
   or closure types
 - current `main` now owns one first-wave closure family in the frontend owner
   layer
-- current `main` does not yet admit first-class closures in executable parser
-  positions, declared type positions, or runtime carriers
+- current `main` now admits declared `Closure(T -> U)` type positions and
+  standalone closure literals in contextual closure-typed positions
+- current `main` does not yet admit runtime closure carriers or direct closure
+  invocation
 
 Current first-wave limits:
 
 - immutable capture only is the intended direction for the first-wave family
 - direct invocation only is the intended call model for that family
-- executable admission still begins in `M8.4 Wave 2`
+- direct invocation still remains deferred until `M8.4 Wave 3`
 - generic callable abstractions, traits/protocols, async closures, and host-ABI
   closure transport are not part of the current contract
 

@@ -672,20 +672,27 @@ Current v0 limit:
 
 Current short-lambda semantics:
 
-- short lambdas are currently capture-free call-site sugar only
+- the published stable `v1.1.1` line keeps short lambdas as capture-free
+  call-site sugar only
 - `(x => expr)(arg)` is interpreted as a fresh lexical block equivalent to
   `{ let x = arg; expr }`
 - `value |> (x => expr)` is interpreted as the same block sugar with `value` as
   the bound argument
 - the lambda body is checked and lowered through ordinary block-expression
   semantics; no alternate runtime callable representation is introduced
+- current `main` now also admits standalone first-class closure literals in
+  contextual `Closure(T -> U)` positions
+- admitted standalone closure literals record immutable capture inventory in
+  declaration order of first use
 
-Current v0 limits:
+Current active limits:
 
-- short lambdas are not first-class values
-- short lambdas currently support exactly one parameter and exactly one applied
-  argument
-- outer local-name capture is rejected in the current source contract
+- the published stable line still does not claim first-class closures
+- the current first-wave closure family still supports exactly one parameter
+- direct invocation of first-class closure values is still deferred until
+  `M8.4 Wave 3`
+- typed closure parameters, multi-argument closures, and async closure forms are
+  not part of the current contract
 
 Current active closures checkpoint on `main`:
 
