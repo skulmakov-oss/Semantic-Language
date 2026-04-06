@@ -687,6 +687,12 @@ Current v0 limits:
   argument
 - outer local-name capture is rejected in the current source contract
 
+Current active closures checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- published `v1.1.1` still keeps short lambdas as capture-free sugar rather
+  than as runtime closure values
+
 ## Operator Meaning
 
 Current operator meaning:

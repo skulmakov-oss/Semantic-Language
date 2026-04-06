@@ -480,6 +480,12 @@ Current short-lambda rules:
 - typed lambda parameters and multi-argument lambda forms are not yet part of
   the stable source contract
 
+Current active closures checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- published `v1.1.1` still keeps short lambdas as non-first-class call-site
+  sugar only
+
 Current named-argument rules:
 
 - ordinary user-defined calls may use named arguments

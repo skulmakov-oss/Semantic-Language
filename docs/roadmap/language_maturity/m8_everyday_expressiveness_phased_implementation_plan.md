@@ -97,6 +97,10 @@ Current completed checkpoint:
 - Wave 3: lowering/runtime representation
 - Wave 4: docs/tests/compatibility freeze
 
+Current active checkpoint:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+
 ## Primary Recommended Order
 
 1. M8.1 Text / strings

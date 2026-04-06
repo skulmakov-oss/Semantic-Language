@@ -104,9 +104,9 @@ Current completed third subtrack checkpoint:
 
 - `docs/roadmap/language_maturity/collections_surface_full_scope.md`
 
-Current next candidate after the completed collections first wave:
+Current active fourth subtrack checkpoint:
 
-- first-class closures
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
 
 ## Explicit Non-Goals
 

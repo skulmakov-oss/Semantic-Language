@@ -300,6 +300,12 @@ Current active collections checkpoint on `main`:
 - current `main` still does not admit iteration, `len`, or `is_empty` for
   that sequence family in the current `M8.3` first-wave surface
 
+Current active closures checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- published `v1.1.1` still does not claim first-class closure values or
+  closure types in the public source type contract
+
 ## Contract Rule
 
 Any public change to source-visible type meaning or source type-checking rules
