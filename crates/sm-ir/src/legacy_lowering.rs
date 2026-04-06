@@ -1433,6 +1433,12 @@ fn lower_expr_with_expected(
             });
             Ok((r, Type::Text))
         }
+        Expr::SequenceLiteral(_) => Err(FrontendError {
+            pos: 0,
+            message:
+                "ordered sequence literals are not part of the current M8.3 Wave 1 execution surface"
+                    .to_string(),
+        }),
         Expr::Range(range_expr) => {
             let (start_reg, start_ty) = lower_expr_with_expected(
                 range_expr.start,

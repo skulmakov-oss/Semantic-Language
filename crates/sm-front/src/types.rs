@@ -10,6 +10,7 @@ pub enum Type {
     QVec(usize),
     Bool,
     Text,
+    Sequence(SequenceType),
     I32,
     U32,
     Fx,
@@ -29,6 +30,10 @@ impl Type {
         match self {
             Type::Measured(base, _) => base.erase_units(),
             Type::Tuple(items) => Type::Tuple(items.iter().map(Type::erase_units).collect()),
+            Type::Sequence(sequence) => Type::Sequence(SequenceType {
+                family: sequence.family,
+                item: Box::new(sequence.item.erase_units()),
+            }),
             Type::Option(item) => Type::Option(Box::new(item.erase_units())),
             Type::Result(ok_ty, err_ty) => Type::Result(
                 Box::new(ok_ty.erase_units()),
@@ -95,6 +100,23 @@ pub enum TextLiteralFamily {
 pub struct TextLiteral {
     pub family: TextLiteralFamily,
     pub spelling: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SequenceCollectionFamily {
+    OrderedSequence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SequenceType {
+    pub family: SequenceCollectionFamily,
+    pub item: Box<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SequenceLiteral {
+    pub family: SequenceCollectionFamily,
+    pub items: Vec<ExprId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,6 +187,7 @@ pub enum Expr {
     QuadLiteral(QuadVal),
     BoolLiteral(bool),
     TextLiteral(TextLiteral),
+    SequenceLiteral(SequenceLiteral),
     NumericLiteral(NumericLiteral),
     Range(RangeExpr),
     Tuple(Vec<ExprId>),
@@ -710,6 +733,22 @@ mod tests {
     }
 
     #[test]
+    fn sequence_type_preserves_family_and_erases_nested_units() {
+        let ty = Type::Sequence(SequenceType {
+            family: SequenceCollectionFamily::OrderedSequence,
+            item: Box::new(Type::Measured(Box::new(Type::F64), SymbolId(7))),
+        });
+        assert_eq!(
+            ty.erase_units(),
+            Type::Sequence(SequenceType {
+                family: SequenceCollectionFamily::OrderedSequence,
+                item: Box::new(Type::F64),
+            })
+        );
+        assert!(!ty.is_core_numeric_scalar());
+    }
+
+    #[test]
     fn text_literal_owner_layer_is_stable_data() {
         let literal = TextLiteral {
             family: TextLiteralFamily::DoubleQuotedUtf8,
@@ -717,5 +756,15 @@ mod tests {
         };
         assert_eq!(literal.family, TextLiteralFamily::DoubleQuotedUtf8);
         assert_eq!(literal.spelling, "\"semantic\"");
+    }
+
+    #[test]
+    fn sequence_literal_owner_layer_is_stable_data() {
+        let literal = SequenceLiteral {
+            family: SequenceCollectionFamily::OrderedSequence,
+            items: vec![ExprId(2), ExprId(5)],
+        };
+        assert_eq!(literal.family, SequenceCollectionFamily::OrderedSequence);
+        assert_eq!(literal.items, vec![ExprId(2), ExprId(5)]);
     }
 }

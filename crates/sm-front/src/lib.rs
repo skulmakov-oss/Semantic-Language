@@ -21,8 +21,9 @@ pub use types::{
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
-    SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, TextLiteral,
-    TextLiteralFamily, Token, TokenKind, TuplePatternItem, Type,
+    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceLiteral,
+    SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind,
+    TuplePatternItem, Type,
     UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
     ValidationVariantPlan,
 };
@@ -249,6 +250,15 @@ pub fn canonicalize_declared_type(
                 .map(|item| canonicalize_declared_type(item, record_table, adt_table, arena))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Type::Sequence(sequence) => Ok(Type::Sequence(SequenceType {
+            family: sequence.family,
+            item: Box::new(canonicalize_declared_type(
+                sequence.item.as_ref(),
+                record_table,
+                adt_table,
+                arena,
+            )?),
+        })),
         Type::Measured(base, unit) => {
             let canonical_base = canonicalize_declared_type(base, record_table, adt_table, arena)?;
             if !canonical_base.is_core_numeric_scalar() {

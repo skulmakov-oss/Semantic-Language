@@ -287,6 +287,10 @@ The current source type contract does not yet claim stable support for:
 Current active collections checkpoint on `main`:
 
 - `docs/roadmap/language_maturity/collections_surface_full_scope.md`
+- current `main` now owns one ordered sequence collection family as metadata in
+  the frontend owner layer
+- current `main` does not yet admit parser spelling, executable typing, or
+  runtime carriers for that sequence family in the `M8.3` Wave 1 slice
 
 ## Contract Rule
 

@@ -395,6 +395,7 @@ fn validate_value_against_type(
         }
         Type::Option(_)
         | Type::Result(_, _)
+        | Type::Sequence(_)
         | Type::Tuple(_)
         | Type::Adt(_)
         | Type::RangeI32
@@ -505,6 +506,9 @@ fn display_config_type(ty: &Type, contract: &ConfigContract) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Type::Sequence(sequence) => {
+            format!("ordered-sequence<{}>", display_config_type(sequence.item.as_ref(), contract))
+        }
         Type::Option(item) => format!("Option({})", display_config_type(item, contract)),
         Type::Result(ok_ty, err_ty) => format!(
             "Result({}, {})",

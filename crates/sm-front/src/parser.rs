@@ -1511,6 +1511,12 @@ impl<'a> Parser<'a> {
                 }
                 Ok(())
             }
+            Expr::SequenceLiteral(sequence) => {
+                for item in &sequence.items {
+                    self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
+                }
+                Ok(())
+            }
             Expr::RecordLiteral(record) => {
                 for field in &record.fields {
                     self.ensure_short_lambda_expr_capture_free(field.value, scopes)?;
