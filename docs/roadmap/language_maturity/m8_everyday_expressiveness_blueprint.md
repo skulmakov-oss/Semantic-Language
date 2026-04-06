@@ -1,6 +1,6 @@
 # M8 Everyday Expressiveness Blueprint
 
-Status: proposed future post-stable language-maturity blueprint
+Status: active post-stable language-maturity blueprint (M8 completed, M9 active)
 
 Related documents:
 
@@ -124,3 +124,28 @@ M10 remains a separate class of work.
 If repository governance already carries a separately opened UI milestone, that
 milestone stays the canonical platform-track entry point rather than being
 silently absorbed by this language-maturity package.
+
+## Architectural Consequences
+
+The next phase should therefore preserve these practical rules:
+
+- do not mix UI/platform work into M8 or M9 language-maturity streams
+- do not open generics before text/packages/collections/closures exist as
+  stable first-wave carriers
+- do not open trait/protocol abstraction before a generic foundation is stable
+- do not interpret non-commitments as backlog by default
+- do not widen the published stable line silently while current `main` moves
+  forward
+- keep one active language-expansion stream at a time
+
+## Final Blueprint Reading
+
+The correct architectural progression is:
+
+1. preserve the stable semantic core
+2. strengthen everyday expressiveness (M8 — now completed)
+3. only then open reusable abstraction systems (M9 — now active)
+4. only after that widen into broader application/platform work (M10)
+
+That progression is the guardrail that keeps Semantic readable as one coherent
+program rather than a collection of unrelated expansions.
