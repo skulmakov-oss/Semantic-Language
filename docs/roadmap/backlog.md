@@ -23,11 +23,11 @@ Current remaining `v1` wave:
 
 Current post-`v1` wave:
 
-- `UI application boundary for Semantic desktop applications` remains a
-  separate proposed platform track and is scoped in
+- `UI application boundary for Semantic desktop applications` is a separate
+  active platform track and is scoped in
   `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
-- the active language-maturity package after the completed post-stable runtime
-  waves is documented in:
+- the language-maturity package after the completed post-stable runtime waves
+  is documented in:
   - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
   - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
   - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
