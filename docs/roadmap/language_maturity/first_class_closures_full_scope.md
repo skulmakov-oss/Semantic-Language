@@ -96,14 +96,16 @@ The first-wave closure contract is intentionally narrow:
 That keeps the track additive over the current short-lambda sugar without
 turning it into a general abstraction system in one step.
 
-Current Wave 1 reading on `main`:
+Current Wave 2 reading on `main`:
 
 - current `main` now owns one first-wave closure family in the frontend owner
   layer
-- current `main` does not yet admit first-class closures in executable parser or
-  source-typing positions
-- current `main` surfaces explicit Wave 1 gap diagnostics instead of silently
-  widening parsing or runtime behavior
+- current `main` now admits `Closure(T -> U)` in declared source type positions
+- current `main` now admits standalone first-class closure literals in
+  contextual closure-typed positions
+- current `main` records immutable capture inventory for admitted standalone
+  closure literals
+- direct invocation and runtime closure carriers still remain deferred to Wave 3
 
 ## Acceptance Reading
 

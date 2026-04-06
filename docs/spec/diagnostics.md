@@ -68,9 +68,10 @@ Current honest limit:
   type spelling in the source parser path
 - exact parse wording for text-surface gaps is not yet a long-term frozen
   compatibility promise
-- current `main` does not yet admit first-class closure syntax in the source
-  parser path; Wave 1 closure diagnostics are still explicit gap wording rather
-  than frozen parser-surface compatibility
+- current `main` now admits standalone first-class closure literal syntax in
+  contextual source positions
+- exact parse/type wording for closure-surface gaps is not yet a long-term
+  frozen compatibility promise
 
 ## Policy Diagnostics
 
@@ -139,7 +140,9 @@ Current message families include:
 - range literal requires `i32` bounds
 - range equality not part of stable v0 range surface
 - range literal rejected in tuple/user-data position
-- first-class closure values not yet admitted before `M8.4 Wave 2`
+- first-class closure literals without contextual `Closure(T -> U)` type
+- direct invocation of first-class closure values not yet admitted before
+  `M8.4 Wave 3`
 - for-range requires `i32` range expression
 - duplicate record declaration
 - duplicate schema declaration

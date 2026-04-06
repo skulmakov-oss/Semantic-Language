@@ -1397,12 +1397,17 @@ fn infer_expr_type(
             ret_ty,
             loop_stack,
         ),
-        Expr::Closure(_) => Err(FrontendError {
-            pos: 0,
-            message:
-                "first-class closures are not yet admitted in executable source positions before M8.4 Wave 2"
-                    .to_string(),
-        }),
+        Expr::Closure(closure) => infer_closure_literal_type(
+            closure,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            None,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
             NumericLiteral::U32(_) => Ok(Type::U32),
@@ -1614,6 +1619,13 @@ fn infer_expr_type(
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
                 s
+            } else if matches!(env.get(*name), Some(Type::Closure(_))) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "direct invocation of first-class closure values is not yet admitted before M8.4 Wave 3"
+                            .to_string(),
+                });
             } else {
                 return Err(FrontendError {
                     pos: 0,
@@ -2752,6 +2764,49 @@ mod tests {
 
         let err = typecheck_source(src).expect_err("captureful short lambda must reject");
         assert!(err.message.contains("capture-free only"));
+    }
+
+    #[test]
+    fn first_class_closure_literal_requires_contextual_type() {
+        let src = r#"
+            fn main() {
+                let value = (x => x);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("closure literal without context must reject");
+        assert!(err.message.contains("contextual Closure(T -> U) type"));
+    }
+
+    #[test]
+    fn first_class_closure_literal_typechecks_with_declared_signature_and_capture() {
+        let src = r#"
+            fn keep(f: Closure(f64 -> f64)) -> Closure(f64 -> f64) = f;
+
+            fn main() {
+                let offset: f64 = 1.0;
+                let f: Closure(f64 -> f64) = (x => x + offset);
+                let g: Closure(f64 -> f64) = keep(f);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("contextual first-class closure should typecheck");
+    }
+
+    #[test]
+    fn direct_first_class_closure_invocation_is_deferred_to_wave3() {
+        let src = r#"
+            fn main() {
+                let f: Closure(f64 -> f64) = (x => x + 1.0);
+                let total: f64 = f(2.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("closure invocation must stay deferred");
+        assert!(err.message.contains("not yet admitted before M8.4 Wave 3"));
     }
 
     #[test]
@@ -6295,6 +6350,17 @@ fn infer_expr_type_with_expected(
             ret_ty,
             loop_stack,
         ),
+        Expr::Closure(closure) => infer_closure_literal_type(
+            closure,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            expected.as_ref(),
+            ret_ty,
+            loop_stack,
+        ),
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
             arena,
@@ -6418,6 +6484,71 @@ fn infer_sequence_literal_type(
         family: SequenceCollectionFamily::OrderedSequence,
         item: Box::new(first_ty),
     }))
+}
+
+fn infer_closure_literal_type(
+    closure: &ClosureLiteral,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<&Type>,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let Some(Type::Closure(expected_closure)) = expected else {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "first-class closure literals currently require contextual Closure(T -> U) type in M8.4 Wave 2"
+                    .to_string(),
+        });
+    };
+
+    if expected_closure.family != closure.family || expected_closure.capture != closure.capture {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "first-class closure literal does not match the current Wave 2 closure family/capture contract"
+                    .to_string(),
+        });
+    }
+
+    for capture in &closure.captures {
+        if env.get(*capture).is_none() {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown captured value '{}' in first-class closure literal",
+                    resolve_symbol_name(arena, *capture)?
+                ),
+            });
+        }
+    }
+
+    let mut closure_env = env.clone();
+    closure_env.push_scope();
+    closure_env.insert(closure.param, expected_closure.param.as_ref().clone());
+    let body_ty = infer_expr_type_with_expected(
+        closure.body,
+        arena,
+        &closure_env,
+        table,
+        record_table,
+        adt_table,
+        Some(expected_closure.ret.as_ref().clone()),
+        ret_ty,
+        loop_stack,
+    )?;
+    ensure_binding_value_type(
+        expected_closure.ret.as_ref().clone(),
+        body_ty,
+        closure.body,
+        arena,
+        "first-class closure body".to_string(),
+    )?;
+    Ok(Type::Closure(expected_closure.clone()))
 }
 
 fn infer_std_form_ctor_type(
