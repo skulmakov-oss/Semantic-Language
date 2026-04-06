@@ -92,6 +92,25 @@ Current text-surface limits:
 - interpolation, formatting, escape-rich string syntax, and host/runtime text
   ABI widening are not part of the current contract
 
+## First-Class Closures
+
+Current honest baseline:
+
+- the published stable `v1.1.1` line does not claim first-class closure values
+  or closure types
+- current `main` now owns one first-wave closure family in the frontend owner
+  layer
+- current `main` does not yet admit first-class closures in executable parser
+  positions, declared type positions, or runtime carriers
+
+Current first-wave limits:
+
+- immutable capture only is the intended direction for the first-wave family
+- direct invocation only is the intended call model for that family
+- executable admission still begins in `M8.4 Wave 2`
+- generic callable abstractions, traits/protocols, async closures, and host-ABI
+  closure transport are not part of the current contract
+
 ## Unit
 
 `unit` is the implicit type of functions without an explicit return type.

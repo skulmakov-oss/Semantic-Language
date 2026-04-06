@@ -11,6 +11,7 @@ pub enum Type {
     Bool,
     Text,
     Sequence(SequenceType),
+    Closure(ClosureType),
     I32,
     U32,
     Fx,
@@ -33,6 +34,12 @@ impl Type {
             Type::Sequence(sequence) => Type::Sequence(SequenceType {
                 family: sequence.family,
                 item: Box::new(sequence.item.erase_units()),
+            }),
+            Type::Closure(closure) => Type::Closure(ClosureType {
+                family: closure.family,
+                capture: closure.capture,
+                param: Box::new(closure.param.erase_units()),
+                ret: Box::new(closure.ret.erase_units()),
             }),
             Type::Option(item) => Type::Option(Box::new(item.erase_units())),
             Type::Result(ok_ty, err_ty) => Type::Result(
@@ -125,6 +132,35 @@ pub struct SequenceIndexExpr {
     pub index: ExprId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClosureValueFamily {
+    UnaryDirect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClosureCapturePolicy {
+    Immutable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClosureType {
+    pub family: ClosureValueFamily,
+    pub capture: ClosureCapturePolicy,
+    pub param: Box<Type>,
+    pub ret: Box<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClosureLiteral {
+    pub family: ClosureValueFamily,
+    pub capture: ClosureCapturePolicy,
+    pub param: SymbolId,
+    pub param_ty: Option<Type>,
+    pub ret_ty: Option<Type>,
+    pub captures: Vec<SymbolId>,
+    pub body: ExprId,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallArg {
     pub name: Option<SymbolId>,
@@ -200,6 +236,7 @@ pub enum Expr {
     RecordLiteral(RecordLiteralExpr),
     RecordField(RecordFieldExpr),
     SequenceIndex(SequenceIndexExpr),
+    Closure(ClosureLiteral),
     RecordUpdate(RecordUpdateExpr),
     AdtCtor(AdtCtorExpr),
     Var(SymbolId),
@@ -783,5 +820,45 @@ mod tests {
         };
         assert_eq!(expr.base, ExprId(3));
         assert_eq!(expr.index, ExprId(4));
+    }
+
+    #[test]
+    fn closure_type_preserves_family_and_erases_nested_units() {
+        let ty = Type::Closure(ClosureType {
+            family: ClosureValueFamily::UnaryDirect,
+            capture: ClosureCapturePolicy::Immutable,
+            param: Box::new(Type::Measured(Box::new(Type::Fx), SymbolId(9))),
+            ret: Box::new(Type::Measured(Box::new(Type::F64), SymbolId(10))),
+        });
+        assert_eq!(
+            ty.erase_units(),
+            Type::Closure(ClosureType {
+                family: ClosureValueFamily::UnaryDirect,
+                capture: ClosureCapturePolicy::Immutable,
+                param: Box::new(Type::Fx),
+                ret: Box::new(Type::F64),
+            })
+        );
+        assert!(!ty.is_core_numeric_scalar());
+    }
+
+    #[test]
+    fn closure_literal_owner_layer_is_stable_data() {
+        let literal = ClosureLiteral {
+            family: ClosureValueFamily::UnaryDirect,
+            capture: ClosureCapturePolicy::Immutable,
+            param: SymbolId(2),
+            param_ty: Some(Type::Text),
+            ret_ty: Some(Type::Bool),
+            captures: vec![SymbolId(5), SymbolId(7)],
+            body: ExprId(11),
+        };
+        assert_eq!(literal.family, ClosureValueFamily::UnaryDirect);
+        assert_eq!(literal.capture, ClosureCapturePolicy::Immutable);
+        assert_eq!(literal.param, SymbolId(2));
+        assert_eq!(literal.param_ty, Some(Type::Text));
+        assert_eq!(literal.ret_ty, Some(Type::Bool));
+        assert_eq!(literal.captures, vec![SymbolId(5), SymbolId(7)]);
+        assert_eq!(literal.body, ExprId(11));
     }
 }

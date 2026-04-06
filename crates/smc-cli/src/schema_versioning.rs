@@ -745,6 +745,14 @@ fn display_schema_compatibility_type(
                         .to_string(),
             })
         }
+        Type::Closure(_) => {
+            return Err(FrontendError {
+                pos: 0,
+                message:
+                    "first-class closure types are not part of the current M8.4 Wave 1 schema compatibility surface"
+                        .to_string(),
+            })
+        }
         Type::Option(item) => format!("Option({})", display_schema_compatibility_type(item, arena)?),
         Type::Result(ok_ty, err_ty) => format!(
             "Result({}, {})",
