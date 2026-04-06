@@ -39,9 +39,10 @@ Current post-`v1` wave:
 - `M8.3 Collections Surface` is now completed as first-wave baseline history
   and is scoped in
   `docs/roadmap/language_maturity/collections_surface_full_scope.md`
-- `M8.4 First-Class Closures` is now the active `M8` subtrack and is scoped
-  in
+- `M8.4 First-Class Closures` is now completed as first-wave baseline history
+  and is scoped in
   `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- the next active candidate inside `M8` is `M9.1 Generics`
 - `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
   frozen baseline history in `docs/roadmap_next.md`
 - the retained non-owning TON618 compatibility perimeter is completed and now

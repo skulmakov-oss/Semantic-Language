@@ -109,6 +109,10 @@ The following limits remain explicit and should be treated as release-facing hon
   sequence collection surface, even though current `main` now admits
   `Sequence(type)`, bracketed literals, same-family equality, `expr[index]`,
   and canonical verified execution through `SEMCODE9`
+- the published `v1.1.1` line intentionally excludes the first-wave first-class
+  closure surface, even though current `main` now admits `Closure(T -> U)`,
+  standalone closure literals, immutable capture, direct invocation, and
+  canonical verified execution through `SEMCODE10`
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or
