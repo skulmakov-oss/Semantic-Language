@@ -66,6 +66,24 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.clear();
                 out.push(IrInstr::Call { dst, name, args });
             }
+            IrInstr::MakeClosure {
+                dst,
+                name,
+                captures,
+            } => {
+                cst.remove(&dst);
+                out.push(IrInstr::MakeClosure {
+                    dst,
+                    name,
+                    captures,
+                });
+            }
+            IrInstr::ClosureCall { dst, closure, arg } => {
+                if let Some(dst) = dst {
+                    cst.remove(&dst);
+                }
+                out.push(IrInstr::ClosureCall { dst, closure, arg });
+            }
             IrInstr::GateRead {
                 dst,
                 device_id,

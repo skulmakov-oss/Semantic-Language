@@ -1619,13 +1619,47 @@ fn infer_expr_type(
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
                 s
-            } else if matches!(env.get(*name), Some(Type::Closure(_))) {
-                return Err(FrontendError {
-                    pos: 0,
-                    message:
-                        "direct invocation of first-class closure values is not yet admitted before M8.4 Wave 3"
-                            .to_string(),
-                });
+            } else if let Some(Type::Closure(closure_ty)) = env.get(*name) {
+                if closure_ty.family != ClosureValueFamily::UnaryDirect
+                    || closure_ty.capture != ClosureCapturePolicy::Immutable
+                {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "direct invocation currently admits only the UnaryDirect immutable closure family in M8.4 Wave 3"
+                                .to_string(),
+                    });
+                }
+                if args.len() != 1 || args.iter().any(|arg| arg.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "direct invocation of first-class closure values currently requires exactly one positional argument in M8.4 Wave 3"
+                                .to_string(),
+                    });
+                }
+                let arg_ty = infer_expr_type_with_expected(
+                    args[0].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(closure_ty.param.as_ref().clone()),
+                    ret_ty,
+                    loop_stack,
+                )?;
+                ensure_binding_value_type(
+                    closure_ty.param.as_ref().clone(),
+                    arg_ty,
+                    args[0].value,
+                    arena,
+                    format!(
+                        "closure argument for '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                )?;
+                return Ok(closure_ty.ret.as_ref().clone());
             } else {
                 return Err(FrontendError {
                     pos: 0,
@@ -2796,7 +2830,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_first_class_closure_invocation_is_deferred_to_wave3() {
+    fn direct_first_class_closure_invocation_typechecks_in_wave3() {
         let src = r#"
             fn main() {
                 let f: Closure(f64 -> f64) = (x => x + 1.0);
@@ -2805,8 +2839,24 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("closure invocation must stay deferred");
-        assert!(err.message.contains("not yet admitted before M8.4 Wave 3"));
+        typecheck_source(src).expect("closure invocation should typecheck in Wave 3");
+    }
+
+    #[test]
+    fn direct_first_class_closure_invocation_rejects_named_arguments() {
+        let src = r#"
+            fn main() {
+                let f: Closure(f64 -> f64) = (x => x + 1.0);
+                let total: f64 = f(x: 2.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("named closure invocation must reject");
+        assert!(
+            err.message.contains("exactly one positional argument")
+                || err.message.contains("expected ')'")
+        );
     }
 
     #[test]

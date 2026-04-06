@@ -1,13 +1,15 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10,
 };
 use sm_front::types::{
-    AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
-    RecordPatternTarget, SequenceCollectionFamily, SequenceType,
+    AdtCtorExpr, AdtPatternItem, ClosureCapturePolicy, ClosureLiteral, ClosureType,
+    ClosureValueFamily,
+    MatchPattern, NumericLiteral, RecordPatternItem, RecordPatternTarget,
+    SequenceCollectionFamily, SequenceType,
 };
-use sm_front::{LoopExpr, TuplePatternItem};
+use sm_front::{CallArg, LoopExpr, TuplePatternItem};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,10 +49,20 @@ pub enum IrInstr {
         dst: u16,
         items: Vec<u16>,
     },
+    MakeClosure {
+        dst: u16,
+        name: String,
+        captures: Vec<u16>,
+    },
     SequenceGet {
         dst: u16,
         src: u16,
         index: u16,
+    },
+    ClosureCall {
+        dst: Option<u16>,
+        closure: u16,
+        arg: u16,
     },
     AddFx {
         dst: u16,
@@ -264,6 +276,12 @@ impl ImmutableIrProgram {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct LoweredFunctionBundle {
+    primary: IrFunction,
+    lifted: Vec<IrFunction>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogosIrLaw {
     pub name: String,
@@ -372,6 +390,11 @@ pub fn lower_expr_to_ir(
     let mut next = 0u16;
     let mut env = ScopeEnv::new();
     let mut loop_stack = Vec::new();
+    let mut closure_state = ClosureLoweringState {
+        parent_fn_name: "__expr".to_string(),
+        next_closure_id: 0,
+        lifted_funcs: Vec::new(),
+    };
     let empty_records = RecordTable::new();
     let empty_adts = AdtTable::new();
     for (name, ty) in var_types {
@@ -388,7 +411,14 @@ pub fn lower_expr_to_ir(
         &empty_records,
         &empty_adts,
         Type::Unit,
+        &mut closure_state,
     )?;
+    if !closure_state.lifted_funcs.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: "lower_expr_to_ir does not emit lifted closure helpers; use compile_program_to_ir for first-class closures".to_string(),
+        });
+    }
     Ok(out)
 }
 
@@ -398,10 +428,12 @@ fn lower_function_to_ir_with_tables(
     fn_table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
-) -> Result<IrFunction, FrontendError> {
+) -> Result<LoweredFunctionBundle, FrontendError> {
+    let parent_fn_name = resolve_symbol_name(arena, func.name)?.to_string();
     let ensures_result_symbol = find_contract_result_symbol(&func.ensures, arena)?;
     let invariants_result_symbol = find_contract_result_symbol(&func.invariants, arena)?;
     let mut ctx = LoweringCtx::new(
+        parent_fn_name.clone(),
         func.ensures.clone(),
         ensures_result_symbol,
         func.invariants.clone(),
@@ -441,6 +473,7 @@ fn lower_function_to_ir_with_tables(
             record_table,
             adt_table,
             canonical_ret.clone(),
+            &mut ctx.closure_state,
         )?;
         if cond_ty != Type::Bool {
             return Err(FrontendError {
@@ -467,6 +500,7 @@ fn lower_function_to_ir_with_tables(
         record_table,
         adt_table,
         func.ret.clone(),
+        &mut ctx.closure_state,
     )?;
     for stmt in &func.body {
         lower_stmt(
@@ -496,6 +530,7 @@ fn lower_function_to_ir_with_tables(
                 record_table,
                 adt_table,
                 func.ret.clone(),
+                &mut ctx.closure_state,
             )?;
             lower_invariant_clauses(
                 &ctx.invariants,
@@ -511,6 +546,7 @@ fn lower_function_to_ir_with_tables(
                 record_table,
                 adt_table,
                 func.ret.clone(),
+                &mut ctx.closure_state,
             )?;
             ctx.instrs.push(IrInstr::Ret { src: None });
         } else {
@@ -525,9 +561,12 @@ fn lower_function_to_ir_with_tables(
         }
     }
 
-    Ok(IrFunction {
-        name: resolve_symbol_name(arena, func.name)?.to_string(),
-        instrs: ctx.instrs,
+    Ok(LoweredFunctionBundle {
+        primary: IrFunction {
+            name: parent_fn_name,
+            instrs: ctx.instrs,
+        },
+        lifted: ctx.closure_state.lifted_funcs,
     })
 }
 
@@ -539,7 +578,14 @@ pub fn lower_function_to_ir(
     type_check_function_with_table(func, arena, fn_table)?;
     let empty_records = RecordTable::new();
     let empty_adts = AdtTable::new();
-    lower_function_to_ir_with_tables(func, arena, fn_table, &empty_records, &empty_adts)
+    let lowered = lower_function_to_ir_with_tables(func, arena, fn_table, &empty_records, &empty_adts)?;
+    if !lowered.lifted.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: "lower_function_to_ir does not emit lifted closure helpers; use compile_program_to_ir for first-class closures".to_string(),
+        });
+    }
+    Ok(lowered.primary)
 }
 
 pub fn compile_program_to_ir(input: &str) -> Result<Vec<IrFunction>, FrontendError> {
@@ -642,13 +688,15 @@ pub fn compile_program_to_ir_with_options_and_profile(
     type_check_program(&program)?;
     let mut out = Vec::new();
     for f in &program.functions {
-        out.push(lower_function_to_ir_with_tables(
+        let lowered = lower_function_to_ir_with_tables(
             f,
             &program.arena,
             &fn_table,
             &record_table,
             &adt_table,
-        )?);
+        )?;
+        out.push(lowered.primary);
+        out.extend(lowered.lifted);
     }
     if matches!(opt, OptLevel::O1) {
         let _ = crate::passes::run_default_opt_passes(&mut out);
@@ -748,7 +796,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v9_sequence_instr(funcs) {
+    if has_v10_closure_instr(funcs) {
+        out.extend_from_slice(&MAGIC10);
+    } else if has_v9_sequence_instr(funcs) {
         out.extend_from_slice(&MAGIC9);
     } else if has_v8_text_instr(funcs) {
         out.extend_from_slice(&MAGIC8);
@@ -800,6 +850,10 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
                 let _ = interner.id(val)?;
             }
             IrInstr::MakeSequence { .. } | IrInstr::SequenceGet { .. } => {}
+            IrInstr::MakeClosure { name, .. } => {
+                let _ = interner.id(name)?;
+            }
+            IrInstr::ClosureCall { .. } => {}
             IrInstr::LoadVar { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -916,7 +970,9 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::LoadText { .. } => 1 + 2 + 2,
         IrInstr::MakeSequence { items, .. } => 1 + 2 + 2 + (items.len() * 2),
+        IrInstr::MakeClosure { captures, .. } => 1 + 2 + 2 + 2 + (captures.len() * 2),
         IrInstr::SequenceGet { .. } => 1 + 2 + 2 + 2,
+        IrInstr::ClosureCall { .. } => 1 + 1 + 2 + 2 + 2,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeRecord { items, .. } => 1 + 2 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeAdt { items, .. } => 1 + 2 + 2 + 2 + 2 + 2 + (items.len() * 2),
@@ -1022,11 +1078,43 @@ fn emit_instr(
                 write_u16_le(out, *item);
             }
         }
+        IrInstr::MakeClosure {
+            dst,
+            name,
+            captures,
+        } => {
+            out.push(Opcode::MakeClosure.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, interner.lookup(name)?);
+            let count = u16::try_from(captures.len()).map_err(|_| FrontendError {
+                pos: 0,
+                message: "closure literal captures exceed v0 limit".to_string(),
+            })?;
+            write_u16_le(out, count);
+            for capture in captures {
+                write_u16_le(out, *capture);
+            }
+        }
         IrInstr::SequenceGet { dst, src, index } => {
             out.push(Opcode::SequenceGet.byte());
             write_u16_le(out, *dst);
             write_u16_le(out, *src);
             write_u16_le(out, *index);
+        }
+        IrInstr::ClosureCall { dst, closure, arg } => {
+            out.push(Opcode::ClosureCall.byte());
+            match dst {
+                Some(reg) => {
+                    out.push(1);
+                    write_u16_le(out, *reg);
+                }
+                None => {
+                    out.push(0);
+                    write_u16_le(out, 0);
+                }
+            }
+            write_u16_le(out, *closure);
+            write_u16_le(out, *arg);
         }
         IrInstr::MakeTuple { dst, items } => {
             out.push(Opcode::MakeTuple.byte());
@@ -1332,6 +1420,14 @@ fn has_v9_sequence_instr(funcs: &[IrFunction]) -> bool {
     })
 }
 
+fn has_v10_closure_instr(funcs: &[IrFunction]) -> bool {
+    funcs.iter().any(|f| {
+        f.instrs.iter().any(|i| {
+            matches!(i, IrInstr::MakeClosure { .. } | IrInstr::ClosureCall { .. })
+        })
+    })
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
@@ -1417,6 +1513,295 @@ impl StringInterner {
     }
 }
 
+fn next_closure_function_name(closure_state: &mut ClosureLoweringState) -> String {
+    let id = closure_state.next_closure_id;
+    closure_state.next_closure_id += 1;
+    format!(
+        "__closure_{}_{}",
+        closure_state.parent_fn_name.replace("::", "_"),
+        id
+    )
+}
+
+fn lower_closure_literal_expr(
+    closure: &ClosureLiteral,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<&Type>,
+    closure_state: &mut ClosureLoweringState,
+) -> Result<(u16, Type), FrontendError> {
+    let Some(Type::Closure(expected_closure)) = expected else {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "canonical lowering for first-class closures requires contextual Closure(T -> U) type in M8.4 Wave 3"
+                    .to_string(),
+        });
+    };
+    if expected_closure.family != ClosureValueFamily::UnaryDirect
+        || expected_closure.capture != ClosureCapturePolicy::Immutable
+    {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "canonical lowering currently admits only the UnaryDirect immutable closure family in M8.4 Wave 3"
+                    .to_string(),
+        });
+    }
+
+    let helper_name = next_closure_function_name(closure_state);
+    let mut lifted_env = ScopeEnv::new();
+    let mut lifted_instrs = Vec::new();
+    let mut local_next = u16::try_from(closure.captures.len() + 1).map_err(|_| FrontendError {
+        pos: 0,
+        message: "closure parameter/capture count exceeds register space".to_string(),
+    })?;
+    let mut local_loop_stack = Vec::new();
+
+    for (index, capture) in closure.captures.iter().enumerate() {
+        let capture_ty = env.get(*capture).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "unknown captured value '{}' during closure lowering",
+                resolve_symbol_name(arena, *capture)?
+            ),
+        })?;
+        if env.is_const(*capture) {
+            lifted_env.insert_const(*capture, capture_ty.clone());
+        } else {
+            lifted_env.insert(*capture, capture_ty.clone());
+        }
+        lifted_instrs.push(IrInstr::StoreVar {
+            name: resolve_symbol_name(arena, *capture)?.to_string(),
+            src: u16::try_from(index).map_err(|_| FrontendError {
+                pos: 0,
+                message: "closure capture index exceeds v0 limit".to_string(),
+            })?,
+        });
+    }
+
+    let param_reg = u16::try_from(closure.captures.len()).map_err(|_| FrontendError {
+        pos: 0,
+        message: "closure parameter index exceeds v0 limit".to_string(),
+    })?;
+    lifted_env.insert(closure.param, expected_closure.param.as_ref().clone());
+    lifted_instrs.push(IrInstr::StoreVar {
+        name: resolve_symbol_name(arena, closure.param)?.to_string(),
+        src: param_reg,
+    });
+
+    let (body_reg, body_ty) = lower_expr_with_expected(
+        closure.body,
+        arena,
+        &mut local_next,
+        &mut lifted_instrs,
+        &lifted_env,
+        &mut local_loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        Some(expected_closure.ret.as_ref().clone()),
+        expected_closure.ret.as_ref().clone(),
+        closure_state,
+    )?;
+    if body_ty != expected_closure.ret.as_ref().clone() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "lifted closure body type mismatch during lowering: expected {:?}, got {:?}",
+                expected_closure.ret, body_ty
+            ),
+        });
+    }
+    lifted_instrs.push(IrInstr::Ret {
+        src: Some(body_reg),
+    });
+    closure_state.lifted_funcs.push(IrFunction {
+        name: helper_name.clone(),
+        instrs: lifted_instrs,
+    });
+
+    let mut capture_regs = Vec::with_capacity(closure.captures.len());
+    for capture in &closure.captures {
+        let capture_reg = alloc(next);
+        out.push(IrInstr::LoadVar {
+            dst: capture_reg,
+            name: resolve_symbol_name(arena, *capture)?.to_string(),
+        });
+        capture_regs.push(capture_reg);
+    }
+    let dst = alloc(next);
+    out.push(IrInstr::MakeClosure {
+        dst,
+        name: helper_name,
+        captures: capture_regs,
+    });
+    Ok((dst, Type::Closure(expected_closure.clone())))
+}
+
+fn lower_direct_closure_call_expr(
+    name: SymbolId,
+    args: &[CallArg],
+    closure_ty: &ClosureType,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
+) -> Result<(u16, Type), FrontendError> {
+    if closure_ty.family != ClosureValueFamily::UnaryDirect
+        || closure_ty.capture != ClosureCapturePolicy::Immutable
+    {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "direct invocation lowering currently admits only the UnaryDirect immutable closure family in M8.4 Wave 3"
+                    .to_string(),
+        });
+    }
+    if args.len() != 1 || args.iter().any(|arg| arg.name.is_some()) {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "direct invocation of first-class closure values currently requires exactly one positional argument in M8.4 Wave 3"
+                    .to_string(),
+        });
+    }
+    if closure_ty.ret.as_ref() == &Type::Unit {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "unit-returning direct closure call '{}' cannot be used as expression value",
+                resolve_symbol_name(arena, name)?
+            ),
+        });
+    }
+
+    let closure_reg = alloc(next);
+    out.push(IrInstr::LoadVar {
+        dst: closure_reg,
+        name: resolve_symbol_name(arena, name)?.to_string(),
+    });
+    let (arg_reg, arg_ty) = lower_expr_with_expected(
+        args[0].value,
+        arena,
+        next,
+        out,
+        env,
+        loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        Some(closure_ty.param.as_ref().clone()),
+        ret_ty,
+        closure_state,
+    )?;
+    if arg_ty != closure_ty.param.as_ref().clone() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "closure argument for '{}' has type {:?}, expected {:?}",
+                resolve_symbol_name(arena, name)?,
+                arg_ty,
+                closure_ty.param
+            ),
+        });
+    }
+    let dst = alloc(next);
+    out.push(IrInstr::ClosureCall {
+        dst: Some(dst),
+        closure: closure_reg,
+        arg: arg_reg,
+    });
+    Ok((dst, closure_ty.ret.as_ref().clone()))
+}
+
+fn lower_direct_closure_call_stmt(
+    name: SymbolId,
+    args: &[CallArg],
+    closure_ty: &ClosureType,
+    arena: &AstArena,
+    next: &mut u16,
+    out: &mut Vec<IrInstr>,
+    env: &ScopeEnv,
+    loop_stack: &mut Vec<LoopLoweringFrame>,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
+) -> Result<(), FrontendError> {
+    if closure_ty.family != ClosureValueFamily::UnaryDirect
+        || closure_ty.capture != ClosureCapturePolicy::Immutable
+    {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "direct invocation lowering currently admits only the UnaryDirect immutable closure family in M8.4 Wave 3"
+                    .to_string(),
+        });
+    }
+    if args.len() != 1 || args.iter().any(|arg| arg.name.is_some()) {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "direct invocation of first-class closure values currently requires exactly one positional argument in M8.4 Wave 3"
+                    .to_string(),
+        });
+    }
+    let closure_reg = alloc(next);
+    out.push(IrInstr::LoadVar {
+        dst: closure_reg,
+        name: resolve_symbol_name(arena, name)?.to_string(),
+    });
+    let (arg_reg, arg_ty) = lower_expr_with_expected(
+        args[0].value,
+        arena,
+        next,
+        out,
+        env,
+        loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        Some(closure_ty.param.as_ref().clone()),
+        ret_ty,
+        closure_state,
+    )?;
+    if arg_ty != closure_ty.param.as_ref().clone() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "closure argument for '{}' has type {:?}, expected {:?}",
+                resolve_symbol_name(arena, name)?,
+                arg_ty,
+                closure_ty.param
+            ),
+        });
+    }
+    let dst = if closure_ty.ret.as_ref() == &Type::Unit {
+        None
+    } else {
+        Some(alloc(next))
+    };
+    out.push(IrInstr::ClosureCall {
+        dst,
+        closure: closure_reg,
+        arg: arg_reg,
+    });
+    Ok(())
+}
+
 fn lower_expr(
     expr_id: ExprId,
     arena: &AstArena,
@@ -1428,6 +1813,7 @@ fn lower_expr(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(u16, Type), FrontendError> {
     lower_expr_with_expected(
         expr_id,
@@ -1441,6 +1827,7 @@ fn lower_expr(
         adt_table,
         None,
         ret_ty,
+        closure_state,
     )
 }
 
@@ -1456,6 +1843,7 @@ fn lower_expr_with_expected(
     adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(u16, Type), FrontendError> {
     match arena.expr(expr_id) {
         Expr::QuadLiteral(v) => {
@@ -1504,6 +1892,7 @@ fn lower_expr_with_expected(
                     adt_table,
                     item_ty.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 if let Some(expected_item_ty) = item_ty.as_ref() {
                     if *expected_item_ty != actual_ty {
@@ -1537,12 +1926,18 @@ fn lower_expr_with_expected(
                 }),
             ))
         }
-        Expr::Closure(_) => Err(FrontendError {
-            pos: 0,
-            message:
-                "first-class closures are not yet admitted in the canonical lowering path before M8.4 Wave 3"
-                    .to_string(),
-        }),
+        Expr::Closure(closure) => lower_closure_literal_expr(
+            closure,
+            arena,
+            next,
+            out,
+            env,
+            fn_table,
+            record_table,
+            adt_table,
+            expected.as_ref(),
+            closure_state,
+        ),
         Expr::Range(range_expr) => {
             let (start_reg, start_ty) = lower_expr_with_expected(
                 range_expr.start,
@@ -1556,6 +1951,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 Some(Type::I32),
                 ret_ty.clone(),
+                closure_state,
             )?;
             if start_ty != Type::I32 {
                 return Err(FrontendError {
@@ -1578,6 +1974,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 Some(Type::I32),
                 ret_ty,
+                closure_state,
             )?;
             if end_ty != Type::I32 {
                 return Err(FrontendError {
@@ -1633,6 +2030,7 @@ fn lower_expr_with_expected(
                     adt_table,
                     item_expected,
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 regs.push(reg);
                 tys.push(ty);
@@ -1678,6 +2076,7 @@ fn lower_expr_with_expected(
                     adt_table,
                     Some(expected_field_ty),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 lowered_fields.insert(field.name, reg);
             }
@@ -1716,6 +2115,7 @@ fn lower_expr_with_expected(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             let Type::Record(record_name) = base_ty else {
                 return Err(FrontendError {
@@ -1771,6 +2171,7 @@ fn lower_expr_with_expected(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             let Type::Sequence(sequence_ty) = base_ty else {
                 return Err(FrontendError {
@@ -1793,6 +2194,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 Some(Type::I32),
                 ret_ty,
+                closure_state,
             )?;
             if index_ty != Type::I32 {
                 return Err(FrontendError {
@@ -1823,6 +2225,7 @@ fn lower_expr_with_expected(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             let Type::Record(record_name) = base_ty else {
                 return Err(FrontendError {
@@ -1874,6 +2277,7 @@ fn lower_expr_with_expected(
                     adt_table,
                     Some(expected_field_ty),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 if lowered_overrides.insert(field.name, reg).is_some() {
                     return Err(FrontendError {
@@ -1924,6 +2328,7 @@ fn lower_expr_with_expected(
             adt_table,
             expected,
             ret_ty,
+            closure_state,
         ),
         Expr::NumericLiteral(NumericLiteral::I32(n)) => {
             let r = alloc(next);
@@ -2026,6 +2431,7 @@ fn lower_expr_with_expected(
             adt_table,
             expected,
             ret_ty,
+            closure_state,
         ),
         Expr::If(if_expr) => {
             let (cond_reg, cond_ty) = lower_expr(
@@ -2039,6 +2445,7 @@ fn lower_expr_with_expected(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -2074,6 +2481,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 expected.clone(),
                 ret_ty.clone(),
+                closure_state,
             )?;
             out.push(IrInstr::StoreVar {
                 name: result_name.clone(),
@@ -2096,6 +2504,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 expected.clone(),
                 ret_ty.clone(),
+                closure_state,
             )?;
             if then_ty != else_ty {
                 return Err(FrontendError {
@@ -2134,6 +2543,7 @@ fn lower_expr_with_expected(
             adt_table,
             expected,
             ret_ty,
+            closure_state,
         ),
         Expr::Match(match_expr) => lower_match_expr(
             match_expr,
@@ -2147,6 +2557,7 @@ fn lower_expr_with_expected(
             adt_table,
             expected,
             ret_ty,
+            closure_state,
         ),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, fn_table)? {
@@ -2161,6 +2572,22 @@ fn lower_expr_with_expected(
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
                 s
+            } else if let Some(Type::Closure(closure_ty)) = env.get(*name) {
+                return lower_direct_closure_call_expr(
+                    *name,
+                    args,
+                    &closure_ty,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    closure_state,
+                );
             } else {
                 return Err(FrontendError {
                     pos: 0,
@@ -2183,6 +2610,7 @@ fn lower_expr_with_expected(
                     adt_table,
                     Some(expected_arg_ty.clone()),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 if t != expected_arg_ty {
                     return Err(FrontendError {
@@ -2239,6 +2667,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 expected,
                 ret_ty,
+                closure_state,
             )?;
             match op {
                 UnaryOp::Not => {
@@ -2322,6 +2751,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 expected.clone(),
                 ret_ty.clone(),
+                closure_state,
             )?;
             let (rr, rt) = lower_expr_with_expected(
                 *right,
@@ -2335,6 +2765,7 @@ fn lower_expr_with_expected(
                 adt_table,
                 expected,
                 ret_ty,
+                closure_state,
             )?;
             if lt != rt {
                 return Err(FrontendError {
@@ -2676,6 +3107,7 @@ fn bind_let_else_record_items(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     if *record_ty != Type::Record(record_name) {
         return Err(FrontendError {
@@ -2769,6 +3201,7 @@ fn bind_let_else_record_items(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 out.push(IrInstr::Label {
                     name: continue_label,
@@ -2891,6 +3324,7 @@ fn lower_for_range_stmt(
         adt_table,
         Some(Type::RangeI32),
         ret_ty.clone(),
+        &mut ctx.closure_state,
     )?;
     if range_ty != Type::RangeI32 {
         return Err(FrontendError {
@@ -3062,6 +3496,7 @@ fn bind_let_else_tuple_items(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     let Type::Tuple(item_tys) = tuple_ty else {
         return Err(FrontendError {
@@ -3137,6 +3572,7 @@ fn bind_let_else_tuple_items(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 out.push(IrInstr::Label {
                     name: continue_label,
@@ -3180,6 +3616,7 @@ fn lower_stmt(
                 adt_table,
                 ty.clone(),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
             env.insert_const(*name, final_ty);
@@ -3202,6 +3639,7 @@ fn lower_stmt(
                 adt_table,
                 ty.clone(),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
             env.insert(*name, final_ty);
@@ -3224,6 +3662,7 @@ fn lower_stmt(
                 adt_table,
                 ty.clone(),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
             bind_tuple_items(
@@ -3253,6 +3692,7 @@ fn lower_stmt(
                 adt_table,
                 Some(Type::Record(*record_name)),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             bind_record_items(
                 *record_name,
@@ -3285,6 +3725,7 @@ fn lower_stmt(
                 adt_table,
                 Some(Type::Record(*record_name)),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             bind_let_else_record_items(
                 *record_name,
@@ -3305,6 +3746,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty,
+                &mut ctx.closure_state,
             )
         }
         Stmt::LetElseTuple {
@@ -3325,6 +3767,7 @@ fn lower_stmt(
                 adt_table,
                 ty.clone(),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
             bind_let_else_tuple_items(
@@ -3345,6 +3788,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty,
+                &mut ctx.closure_state,
             )
         }
         Stmt::Discard { ty, value } => {
@@ -3360,6 +3804,7 @@ fn lower_stmt(
                 adt_table,
                 ty.clone(),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             Ok(())
         }
@@ -3392,6 +3837,7 @@ fn lower_stmt(
                 adt_table,
                 Some(target_ty),
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             ctx.instrs.push(IrInstr::StoreVar {
                 name: resolve_symbol_name(arena, *name)?.to_string(),
@@ -3411,6 +3857,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty,
+                &mut ctx.closure_state,
             )?;
             assign_tuple_items(
                 items,
@@ -3459,6 +3906,7 @@ fn lower_stmt(
                 adt_table,
                 expected_break,
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             if let Some(expected_ty) = &prior_result_ty {
                 if *expected_ty != break_ty {
@@ -3500,6 +3948,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -3529,6 +3978,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             ctx.instrs.push(IrInstr::Label {
                 name: continue_label,
@@ -3563,6 +4013,7 @@ fn lower_stmt(
             record_table,
             adt_table,
             ret_ty.clone(),
+            &mut ctx.closure_state,
         ),
         Stmt::If {
             condition,
@@ -3580,6 +4031,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -3660,6 +4112,7 @@ fn lower_stmt(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                &mut ctx.closure_state,
             )?;
             if !matches!(
                 scr_ty,
@@ -3794,6 +4247,7 @@ fn lower_stmt(
                             record_table,
                             adt_table,
                             ret_ty.clone(),
+                            &mut ctx.closure_state,
                         )? {
                             let guarded_body_label = format!("match_{}_body_{}", mid, i);
                             ctx.instrs.push(IrInstr::JmpIf {
@@ -3899,6 +4353,7 @@ fn lower_stmt(
                             record_table,
                             adt_table,
                             ret_ty.clone(),
+                            &mut ctx.closure_state,
                         )? {
                             let guarded_body_label = format!("match_{}_body_{}", mid, i);
                             ctx.instrs.push(IrInstr::JmpIf {
@@ -3980,6 +4435,7 @@ fn lower_value_block_expr(
     adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(u16, Type), FrontendError> {
     let mut block_env = env.clone();
     block_env.push_scope();
@@ -3998,6 +4454,7 @@ fn lower_value_block_expr(
                     adt_table,
                     ty.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
                 block_env.insert_const(*name, final_ty);
@@ -4019,6 +4476,7 @@ fn lower_value_block_expr(
                     adt_table,
                     ty.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
                 block_env.insert(*name, final_ty);
@@ -4040,6 +4498,7 @@ fn lower_value_block_expr(
                     adt_table,
                     ty.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
                 bind_tuple_items(
@@ -4069,6 +4528,7 @@ fn lower_value_block_expr(
                     adt_table,
                     Some(Type::Record(*record_name)),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 bind_record_items(
                     *record_name,
@@ -4103,6 +4563,7 @@ fn lower_value_block_expr(
                     adt_table,
                     ty.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
             }
             Stmt::Expr(expr) => {
@@ -4117,6 +4578,7 @@ fn lower_value_block_expr(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )?;
             }
             _ => {
@@ -4139,6 +4601,7 @@ fn lower_value_block_expr(
         adt_table,
         expected,
         ret_ty,
+        closure_state,
     )?;
     block_env.pop_scope();
     Ok(tail)
@@ -4156,6 +4619,7 @@ fn lower_adt_ctor_expr(
     adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(u16, Type), FrontendError> {
     if let Some(lowered) = lower_std_form_ctor_expr(
         ctor_expr,
@@ -4169,6 +4633,7 @@ fn lower_adt_ctor_expr(
         adt_table,
         expected.clone(),
         ret_ty.clone(),
+        closure_state,
     )? {
         return Ok(lowered);
     }
@@ -4221,6 +4686,7 @@ fn lower_adt_ctor_expr(
             adt_table,
             Some(expected_ty.clone()),
             ret_ty.clone(),
+            closure_state,
         )?;
         if actual_ty != expected_ty {
             return Err(FrontendError {
@@ -4263,6 +4729,7 @@ fn lower_std_form_ctor_expr(
     adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<Option<(u16, Type)>, FrontendError> {
     let type_name = resolve_symbol_name(arena, ctor_expr.adt_name)?;
     let variant_name = resolve_symbol_name(arena, ctor_expr.variant_name)?;
@@ -4290,10 +4757,11 @@ fn lower_std_form_ctor_expr(
                     loop_stack,
                     fn_table,
                     record_table,
-                    adt_table,
-                    item_expected.clone(),
-                    ret_ty,
-                )?;
+                adt_table,
+                item_expected.clone(),
+                ret_ty,
+                closure_state,
+            )?;
                 if let Some(expected_item) = item_expected {
                     if item_ty != expected_item {
                         return Err(FrontendError {
@@ -4391,6 +4859,7 @@ fn lower_std_form_ctor_expr(
             adt_table,
             Some(payload_expected.clone()),
             ret_ty,
+            closure_state,
         )?;
         if payload_ty != payload_expected {
             return Err(FrontendError {
@@ -4698,6 +5167,7 @@ fn lower_match_guard(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<Option<u16>, FrontendError> {
     let Some(guard_expr) = guard else {
         return Ok(None);
@@ -4713,6 +5183,7 @@ fn lower_match_guard(
         record_table,
         adt_table,
         ret_ty,
+        closure_state,
     )?;
     if guard_ty != Type::Bool {
         return Err(FrontendError {
@@ -4736,6 +5207,7 @@ fn lower_ensures_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     if contract_ensures.is_empty() {
         return Ok(());
@@ -4766,6 +5238,7 @@ fn lower_ensures_clauses(
             record_table,
             adt_table,
             ret_ty.clone(),
+            closure_state,
         )?;
         if cond_ty != Type::Bool {
             return Err(FrontendError {
@@ -4802,6 +5275,7 @@ fn lower_invariant_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     if contract_invariants.is_empty() {
         return Ok(());
@@ -4841,6 +5315,7 @@ fn lower_invariant_clauses(
             record_table,
             adt_table,
             ret_ty.clone(),
+            closure_state,
         )?;
         if cond_ty != Type::Bool {
             return Err(FrontendError {
@@ -4872,6 +5347,7 @@ fn lower_return_payload(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     match value {
         Some(expr_id) => {
@@ -4887,6 +5363,7 @@ fn lower_return_payload(
                 adt_table,
                 Some(ret_ty.clone()),
                 ret_ty.clone(),
+                closure_state,
             )?;
             if ty != ret_ty {
                 return Err(FrontendError {
@@ -4910,6 +5387,7 @@ fn lower_return_payload(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             lower_invariant_clauses(
                 contract_invariants,
@@ -4925,6 +5403,7 @@ fn lower_return_payload(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             out.push(IrInstr::Ret { src: Some(reg) });
             Ok(())
@@ -4949,6 +5428,7 @@ fn lower_return_payload(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             lower_invariant_clauses(
                 contract_invariants,
@@ -4964,6 +5444,7 @@ fn lower_return_payload(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             out.push(IrInstr::Ret { src: None });
             Ok(())
@@ -4983,6 +5464,7 @@ fn lower_loop_expr(
     adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(u16, Type), FrontendError> {
     let id = alloc_loop_expr_id(next);
     let start_label = format!("loop_expr_{}_start", id);
@@ -5014,6 +5496,7 @@ fn lower_loop_expr(
             record_table,
             adt_table,
             ret_ty.clone(),
+            closure_state,
         )?;
     }
     body_env.pop_scope();
@@ -5055,6 +5538,7 @@ fn lower_loop_expr_stmt(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
         Stmt::LetElseTuple { .. } | Stmt::LetElseRecord { .. } => Err(FrontendError {
@@ -5086,6 +5570,7 @@ fn lower_loop_expr_stmt(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -5122,6 +5607,7 @@ fn lower_loop_expr_stmt(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )?;
             }
             then_env.pop_scope();
@@ -5144,6 +5630,7 @@ fn lower_loop_expr_stmt(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )?;
             }
             else_env.pop_scope();
@@ -5170,6 +5657,7 @@ fn lower_loop_expr_stmt(
                 record_table,
                 adt_table,
                 ret_ty.clone(),
+                closure_state,
             )?;
             if !matches!(
                 scr_ty,
@@ -5259,6 +5747,7 @@ fn lower_loop_expr_stmt(
                             record_table,
                             adt_table,
                             ret_ty.clone(),
+                            closure_state,
                         )? {
                             let guarded_body_label = format!("loop_match_{}_body_{}", id, i);
                             out.push(IrInstr::JmpIf {
@@ -5282,6 +5771,7 @@ fn lower_loop_expr_stmt(
                                 record_table,
                                 adt_table,
                                 ret_ty.clone(),
+                                closure_state,
                             )?;
                         }
                         arm_env.pop_scope();
@@ -5367,6 +5857,7 @@ fn lower_loop_expr_stmt(
                             record_table,
                             adt_table,
                             ret_ty.clone(),
+                            closure_state,
                         )? {
                             let guarded_body_label = format!("loop_match_{}_body_{}", id, i);
                             out.push(IrInstr::JmpIf {
@@ -5390,6 +5881,7 @@ fn lower_loop_expr_stmt(
                                 record_table,
                                 adt_table,
                                 ret_ty.clone(),
+                                closure_state,
                             )?;
                         }
                         arm_env.pop_scope();
@@ -5426,6 +5918,7 @@ fn lower_loop_expr_stmt(
                         record_table,
                         adt_table,
                         ret_ty.clone(),
+                        closure_state,
                     )?;
                 }
                 def_env.pop_scope();
@@ -5441,6 +5934,7 @@ fn lower_loop_expr_stmt(
                 next_reg: *next,
                 next_label_id: out.len() as u32,
                 loop_stack: loop_stack.clone(),
+                closure_state: core::mem::take(closure_state),
                 ensures: Vec::new(),
                 ensures_result_symbol: None,
                 invariants: Vec::new(),
@@ -5460,6 +5954,7 @@ fn lower_loop_expr_stmt(
             *next = ctx.next_reg;
             *out = ctx.instrs;
             *loop_stack = ctx.loop_stack;
+            *closure_state = ctx.closure_state;
             result
         }
     }
@@ -5477,6 +5972,7 @@ fn lower_match_expr(
     adt_table: &AdtTable,
     expected: Option<Type>,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(u16, Type), FrontendError> {
     let (scr_reg, scr_ty) = lower_expr(
         match_expr.scrutinee,
@@ -5489,6 +5985,7 @@ fn lower_match_expr(
         record_table,
         adt_table,
         ret_ty.clone(),
+        closure_state,
     )?;
     if !matches!(
         scr_ty,
@@ -5580,6 +6077,7 @@ fn lower_match_expr(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )? {
                     let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
                     out.push(IrInstr::JmpIf {
@@ -5603,6 +6101,7 @@ fn lower_match_expr(
                     adt_table,
                     expected.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 arm_env.pop_scope();
                 if let Some(ref expected_ty) = result_ty {
@@ -5705,6 +6204,7 @@ fn lower_match_expr(
                     record_table,
                     adt_table,
                     ret_ty.clone(),
+                    closure_state,
                 )? {
                     let guarded_body_label = format!("match_expr_{}_body_{}", id, i);
                     out.push(IrInstr::JmpIf {
@@ -5728,6 +6228,7 @@ fn lower_match_expr(
                     adt_table,
                     expected.clone(),
                     ret_ty.clone(),
+                    closure_state,
                 )?;
                 arm_env.pop_scope();
                 if let Some(ref expected_ty) = result_ty {
@@ -5777,6 +6278,7 @@ fn lower_match_expr(
             adt_table,
             expected,
             ret_ty,
+            closure_state,
         )?;
         if let Some(ref expected_ty) = result_ty {
             if *expected_ty != default_ty {
@@ -5833,6 +6335,7 @@ fn lower_expr_stmt(
         record_table,
         adt_table,
         ret_ty,
+        &mut ctx.closure_state,
     )
 }
 
@@ -5865,6 +6368,7 @@ fn lower_expr_stmt_with_parts(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     ret_ty: Type,
+    closure_state: &mut ClosureLoweringState,
 ) -> Result<(), FrontendError> {
     let expr = arena.expr(expr_id);
     if let Expr::Call(name, args) = expr {
@@ -5887,6 +6391,7 @@ fn lower_expr_stmt_with_parts(
                 adt_table,
                 Some(Type::Bool),
                 ret_ty,
+                closure_state,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -5901,6 +6406,22 @@ fn lower_expr_stmt_with_parts(
             s.clone()
         } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
             s
+        } else if let Some(Type::Closure(closure_ty)) = env.get(*name) {
+            return lower_direct_closure_call_stmt(
+                *name,
+                args,
+                &closure_ty,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                ret_ty,
+                closure_state,
+            );
         } else {
             return Err(FrontendError {
                 pos: 0,
@@ -5922,6 +6443,7 @@ fn lower_expr_stmt_with_parts(
                 adt_table,
                 Some(sig.params[i].clone()),
                 ret_ty.clone(),
+                closure_state,
             )?;
             if t != sig.params[i] {
                 return Err(FrontendError {
@@ -5959,8 +6481,16 @@ fn lower_expr_stmt_with_parts(
         record_table,
         adt_table,
         ret_ty,
+        closure_state,
     )?;
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct ClosureLoweringState {
+    parent_fn_name: String,
+    next_closure_id: u32,
+    lifted_funcs: Vec<IrFunction>,
 }
 
 #[derive(Debug, Default)]
@@ -5968,6 +6498,7 @@ struct LoweringCtx {
     next_reg: u16,
     next_label_id: u32,
     loop_stack: Vec<LoopLoweringFrame>,
+    closure_state: ClosureLoweringState,
     ensures: Vec<ExprId>,
     ensures_result_symbol: Option<SymbolId>,
     invariants: Vec<ExprId>,
@@ -5985,6 +6516,7 @@ struct LoopLoweringFrame {
 
 impl LoweringCtx {
     fn new(
+        parent_fn_name: String,
         ensures: Vec<ExprId>,
         ensures_result_symbol: Option<SymbolId>,
         invariants: Vec<ExprId>,
@@ -5994,6 +6526,11 @@ impl LoweringCtx {
             next_reg: 0,
             next_label_id: 0,
             loop_stack: Vec::new(),
+            closure_state: ClosureLoweringState {
+                parent_fn_name,
+                next_closure_id: 0,
+                lifted_funcs: Vec::new(),
+            },
             ensures,
             ensures_result_symbol,
             invariants,
@@ -6594,6 +7131,41 @@ mod opt_tests {
         let bytes =
             compile_program_to_semcode(src).expect("ordered sequence semcode should emit");
         assert_eq!(&bytes[0..8], b"SEMCODE9");
+    }
+
+    #[test]
+    fn first_class_closures_lower_to_runtime_carrier_and_semcod10() {
+        let src = r#"
+            fn main() {
+                let offset: f64 = 1.0;
+                let add: Closure(f64 -> f64) = (x => x + offset);
+                let total: f64 = add(2.0);
+                assert(total == 3.0);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("first-class closures should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::MakeClosure { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::ClosureCall { .. })));
+        let helper = ir
+            .iter()
+            .find(|func| func.name.starts_with("__closure_main_"))
+            .expect("lifted closure helper");
+        assert!(helper
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::AddF64 { .. })));
+
+        let bytes = compile_program_to_semcode(src).expect("closure semcode should emit");
+        assert_eq!(&bytes[0..8], b"SEMCOD10");
     }
 
     #[test]

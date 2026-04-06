@@ -19,11 +19,18 @@ const MAX_STRING_LEN: usize = 8192;
 const MAX_DEBUG_SYMBOLS_PER_FUNCTION: usize = 8192;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClosureValue {
+    pub function_name: String,
+    pub captures: Vec<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Quad(QuadVal),
     Bool(bool),
     Text(String),
     Sequence(Vec<Value>),
+    Closure(ClosureValue),
     I32(i32),
     F64(f64),
     U32(u32),
@@ -465,6 +472,14 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
             }
+            Opcode::MakeClosure => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
             Opcode::MakeRecord => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -512,6 +527,12 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
             Opcode::SequenceGet => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::ClosureCall => {
+                let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -855,6 +876,27 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 set_reg(vm, frame_idx, dst, Value::Sequence(items))?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::MakeClosure => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let function_name = lookup_str(&f, sid)?.to_string();
+                let mut captures = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    captures.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(
+                    vm,
+                    frame_idx,
+                    dst,
+                    Value::Closure(ClosureValue {
+                        function_name,
+                        captures,
+                    }),
+                )?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::MakeTuple => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
@@ -1190,6 +1232,28 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     continue;
                 }
             }
+            Opcode::ClosureCall => {
+                let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let closure_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let arg_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let closure = get_reg(vm, frame_idx, closure_reg)?;
+                let Value::Closure(closure) = closure else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "CLOSURE_CALL source must be closure".to_string(),
+                    ));
+                };
+                let mut args = closure.captures;
+                args.push(get_reg(vm, frame_idx, arg_reg)?);
+                vm.callstack[frame_idx].pc = cur - f.instr_start;
+                push_frame(
+                    vm,
+                    &closure.function_name,
+                    args,
+                    if has_dst { Some(dst) } else { None },
+                )?;
+                continue;
+            }
             Opcode::Assert => {
                 let cond = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 match get_reg(vm, frame_idx, cond)? {
@@ -1297,6 +1361,9 @@ fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
         )),
         Value::Sequence(_) => Err(RuntimeError::TypeMismatchRuntime(
             "sequence values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
+        Value::Closure(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "closure values are not part of the PROMETHEUS host ABI surface".to_string(),
         )),
         Value::I32(v) => Ok(AbiValue::I32(v)),
         Value::F64(v) => Ok(AbiValue::F64(v)),
@@ -1543,6 +1610,9 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
+        (Value::Closure(_), Value::Closure(_)) => Err(RuntimeError::TypeMismatchRuntime(
+            "closure values are not comparable with CmpEq/CmpNe".to_string(),
+        )),
         (Value::I32(x), Value::I32(y)) => Ok(x == y),
         (Value::F64(x), Value::F64(y)) => Ok(x == y),
         (Value::U32(x), Value::U32(y)) => Ok(x == y),
@@ -1691,6 +1761,22 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 .join(", ");
             format!("MAKE_SEQUENCE r{}, [{}]", d, regs)
         }
+        Opcode::MakeClosure => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let target = lookup_str(f, sid)?;
+            format!("MAKE_CLOSURE r{}, {}, [{}]", d, target, regs)
+        }
         Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1790,6 +1876,17 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("SEQUENCE_GET r{}, r{}, r{}", d, s, i)
+        }
+        Opcode::ClosureCall => {
+            let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let closure = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let arg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            if has_dst {
+                format!("CLOSURE_CALL r{}, r{}, r{}", d, closure, arg)
+            } else {
+                format!("CLOSURE_CALL -, r{}, r{}", closure, arg)
+            }
         }
         Opcode::LoadVar => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -2220,6 +2317,24 @@ mod tests {
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("MAKE_SEQUENCE"));
         assert!(disasm.contains("SEQUENCE_GET"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_first_class_closure_direct_invocation_path() {
+        let src = r#"
+            fn main() {
+                let offset: f64 = 1.0;
+                let add: Closure(f64 -> f64) = (x => x + offset);
+                let total: f64 = add(2.0);
+                assert(total == 3.0);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_CLOSURE"));
+        assert!(disasm.contains("CLOSURE_CALL"));
         run_semcode(&bytes).expect("run");
     }
 
@@ -2733,6 +2848,7 @@ mod tests {
                 assert!(supported.contains("SEMCODE7"));
                 assert!(supported.contains("SEMCODE8"));
                 assert!(supported.contains("SEMCODE9"));
+                assert!(supported.contains("SEMCOD10"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }

@@ -96,7 +96,7 @@ The first-wave closure contract is intentionally narrow:
 That keeps the track additive over the current short-lambda sugar without
 turning it into a general abstraction system in one step.
 
-Current Wave 2 reading on `main`:
+Current Wave 3 reading on `main`:
 
 - current `main` now owns one first-wave closure family in the frontend owner
   layer
@@ -105,7 +105,14 @@ Current Wave 2 reading on `main`:
   contextual closure-typed positions
 - current `main` records immutable capture inventory for admitted standalone
   closure literals
-- direct invocation and runtime closure carriers still remain deferred to Wave 3
+- current `main` now admits one canonical runtime closure carrier for that same
+  first-wave family
+- current `main` now admits direct invocation of admitted closure values
+- current `main` keeps closure execution narrow:
+  - exactly one positional argument
+  - immutable capture only
+  - no closure equality
+  - no PROMETHEUS host-ABI closure transport
 
 ## Acceptance Reading
 

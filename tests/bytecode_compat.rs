@@ -7,8 +7,8 @@ use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
 use semantic_language::semcode_format::{
     header_spec_from_magic, CAP_CLOCK_READ, CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH,
     CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE,
-    CAP_TEXT_VALUES, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
-    MAGIC9,
+    CAP_TEXT_VALUES, CAP_CLOSURE_VALUES, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6,
+    MAGIC7, MAGIC8, MAGIC9, MAGIC10,
 };
 use semantic_language::semcode_vm::{
     disasm_semcode, run_semcode, run_verified_semcode_with_host_and_capabilities, RuntimeError,
@@ -313,6 +313,28 @@ fn compat_v9_header_and_sequence_run() {
     assert_eq!(spec.epoch, 0);
     assert_eq!(spec.rev, 10);
     assert_ne!(spec.capabilities & CAP_SEQUENCE_VALUES, 0);
+    run_verified_semcode(&bytes).expect("verified run");
+}
+
+#[test]
+fn compat_v10_header_and_closure_run() {
+    let src = r#"
+        fn main() {
+            let offset: f64 = 1.0;
+            let add: Closure(f64 -> f64) = (x => x + offset);
+            let total: f64 = add(2.0);
+            assert(total == 3.0);
+            return;
+        }
+    "#;
+    let bytes = compile_program_to_semcode(src).expect("compile");
+    assert_eq!(&bytes[0..8], &MAGIC10);
+    let mut magic = [0u8; 8];
+    magic.copy_from_slice(&bytes[0..8]);
+    let spec = header_spec_from_magic(&magic).expect("known header");
+    assert_eq!(spec.epoch, 0);
+    assert_eq!(spec.rev, 11);
+    assert_ne!(spec.capabilities & CAP_CLOSURE_VALUES, 0);
     run_verified_semcode(&bytes).expect("verified run");
 }
 

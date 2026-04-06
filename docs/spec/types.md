@@ -102,14 +102,16 @@ Current honest baseline:
   layer
 - current `main` now admits declared `Closure(T -> U)` type positions and
   standalone closure literals in contextual closure-typed positions
-- current `main` does not yet admit runtime closure carriers or direct closure
-  invocation
+- current `main` now admits one canonical runtime closure carrier for the same
+  first-wave family
+- current `main` now admits direct invocation of admitted closure values
 
 Current first-wave limits:
 
 - immutable capture only is the intended direction for the first-wave family
 - direct invocation only is the intended call model for that family
-- direct invocation still remains deferred until `M8.4 Wave 3`
+- direct invocation currently requires exactly one positional argument
+- closure equality is not part of the current contract
 - generic callable abstractions, traits/protocols, async closures, and host-ABI
   closure transport are not part of the current contract
 
@@ -326,6 +328,8 @@ Current active closures checkpoint on `main`:
 - `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
 - published `v1.1.1` still does not claim first-class closure values or
   closure types in the public source type contract
+- current `main` now admits one first-wave runtime closure carrier and direct
+  invocation for admitted closure values
 
 ## Contract Rule
 

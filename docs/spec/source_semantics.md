@@ -684,13 +684,18 @@ Current short-lambda semantics:
   contextual `Closure(T -> U)` positions
 - admitted standalone closure literals record immutable capture inventory in
   declaration order of first use
+- current `main` now materializes admitted first-class closures through one
+  canonical runtime closure carrier
+- current `main` now admits direct invocation of admitted closure values
+  through ordinary call syntax using exactly one positional argument
 
 Current active limits:
 
 - the published stable line still does not claim first-class closures
 - the current first-wave closure family still supports exactly one parameter
-- direct invocation of first-class closure values is still deferred until
-  `M8.4 Wave 3`
+- named arguments, multi-argument forms, and non-direct callable abstraction
+  remain outside the current contract
+- closure equality is not part of the current first-wave surface
 - typed closure parameters, multi-argument closures, and async closure forms are
   not part of the current contract
 
@@ -745,6 +750,11 @@ Current honest limit:
   `M8.3` first-wave carrier path
 - iteration, `len`, `is_empty`, maps, sets, and collection protocol machinery
   remain outside the current `M8.3` first-wave contract
+- current `main` now also admits one first-wave closure family through the
+  canonical verified runtime path, including immutable capture materialization
+  and direct invocation with exactly one positional argument
+- closure equality, host-ABI transport, and broader callable abstraction
+  machinery remain outside the current `M8.4` first-wave contract
 
 ## Builtin Call Meaning
 

@@ -70,6 +70,8 @@ Current honest limit:
   compatibility promise
 - current `main` now admits standalone first-class closure literal syntax in
   contextual source positions
+- current `main` now also admits direct invocation and verified runtime
+  execution for one first-wave closure family
 - exact parse/type wording for closure-surface gaps is not yet a long-term
   frozen compatibility promise
 
@@ -141,8 +143,11 @@ Current message families include:
 - range equality not part of stable v0 range surface
 - range literal rejected in tuple/user-data position
 - first-class closure literals without contextual `Closure(T -> U)` type
-- direct invocation of first-class closure values not yet admitted before
-  `M8.4 Wave 3`
+- direct invocation of first-class closure values requires exactly one
+  positional argument in the current `M8.4` first-wave surface
+- named arguments on direct closure invocation are rejected in the current
+  `M8.4` first-wave surface
+- closure equality is not part of the current `M8.4` first-wave surface
 - for-range requires `i32` range expression
 - duplicate record declaration
 - duplicate schema declaration
