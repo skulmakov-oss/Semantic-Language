@@ -25,9 +25,10 @@ pub mod semcode_format {
         read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
         Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS,
         CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
-        CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES, HEADER_V0, HEADER_V1, HEADER_V2,
-        HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7, HEADER_V8, MAGIC0, MAGIC1,
-        MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
+        CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES, HEADER_V0,
+        HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7, HEADER_V8,
+        HEADER_V9, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
+        MAGIC9,
     };
 }
 #[cfg(feature = "std")]
@@ -141,9 +142,10 @@ pub mod frontend {
         FnSig, FnTable, FrontendError, FrontendErrorKind, Function, LogosEntity, LogosEntityField,
         LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, MatchArm, OptLevel,
         Program, QuadVal, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
-        SchemaVersion, ScopeEnv, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token,
-        TokenKind, Type, UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan,
-        ValidationPlanTable, ValidationShapePlan, ValidationVariantPlan,
+        SchemaVersion, ScopeEnv, SequenceCollectionFamily, SequenceIndexExpr, SequenceLiteral,
+        SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind,
+        Type, UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationPlanTable,
+        ValidationShapePlan, ValidationVariantPlan,
     };
     pub use sm_ir::{
         compile_program_to_immutable_ir, compile_program_to_ir, compile_program_to_ir_optimized,
@@ -177,10 +179,11 @@ pub mod frontend {
             parse_program, resolve_symbol_name, type_check_function,
             type_check_function_with_table, type_check_program, AstArena, BinaryOp, Expr, ExprId,
             FnSig, FnTable, FrontendError, Function, LogosEntity, LogosLaw, LogosProgram,
-            LogosSystem, LogosWhen, MatchArm, Program, QuadVal, ScopeEnv, SourceMark, Stmt, StmtId,
-            SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind, Type, UnaryOp,
-            ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationPlanTable,
-            ValidationShapePlan, ValidationVariantPlan,
+            LogosSystem, LogosWhen, MatchArm, Program, QuadVal, ScopeEnv, SequenceCollectionFamily,
+            SequenceIndexExpr, SequenceLiteral, SequenceType, SourceMark, Stmt, StmtId, SymbolId,
+            TextLiteral, TextLiteralFamily, Token, TokenKind, Type, UnaryOp, ValidationCheck,
+            ValidationFieldPlan, ValidationPlan, ValidationPlanTable, ValidationShapePlan,
+            ValidationVariantPlan,
         };
     }
 

@@ -119,6 +119,12 @@ pub struct SequenceLiteral {
     pub items: Vec<ExprId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SequenceIndexExpr {
+    pub base: ExprId,
+    pub index: ExprId,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallArg {
     pub name: Option<SymbolId>,
@@ -193,6 +199,7 @@ pub enum Expr {
     Tuple(Vec<ExprId>),
     RecordLiteral(RecordLiteralExpr),
     RecordField(RecordFieldExpr),
+    SequenceIndex(SequenceIndexExpr),
     RecordUpdate(RecordUpdateExpr),
     AdtCtor(AdtCtorExpr),
     Var(SymbolId),
@@ -766,5 +773,15 @@ mod tests {
         };
         assert_eq!(literal.family, SequenceCollectionFamily::OrderedSequence);
         assert_eq!(literal.items, vec![ExprId(2), ExprId(5)]);
+    }
+
+    #[test]
+    fn sequence_index_expr_owner_layer_is_stable_data() {
+        let expr = SequenceIndexExpr {
+            base: ExprId(3),
+            index: ExprId(4),
+        };
+        assert_eq!(expr.base, ExprId(3));
+        assert_eq!(expr.index, ExprId(4));
     }
 }

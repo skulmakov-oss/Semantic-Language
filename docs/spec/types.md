@@ -293,8 +293,12 @@ Current active collections checkpoint on `main`:
   Rust-like source path
 - current `main` now admits same-family equality for ordered sequence values
   when the item type already supports stable equality
-- current `main` still does not admit runtime carriers, indexing, or iteration
-  for that sequence family in the `M8.3` Wave 2 slice
+- current `main` now admits a canonical runtime carrier for the same ordered
+  sequence family
+- current `main` now admits `expr[index]` when the base is an admitted ordered
+  sequence and the index is `i32`
+- current `main` still does not admit iteration, `len`, or `is_empty` for
+  that sequence family in the current `M8.3` first-wave surface
 
 ## Contract Rule
 

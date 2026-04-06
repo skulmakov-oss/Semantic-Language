@@ -1,11 +1,11 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternItem,
-    RecordPatternTarget,
+    RecordPatternTarget, SequenceCollectionFamily, SequenceType,
 };
 use sm_front::{LoopExpr, TuplePatternItem};
 use std::collections::BTreeSet;
@@ -42,6 +42,15 @@ pub enum IrInstr {
     LoadText {
         dst: u16,
         val: String,
+    },
+    MakeSequence {
+        dst: u16,
+        items: Vec<u16>,
+    },
+    SequenceGet {
+        dst: u16,
+        src: u16,
+        index: u16,
     },
     AddFx {
         dst: u16,
@@ -739,7 +748,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v8_text_instr(funcs) {
+    if has_v9_sequence_instr(funcs) {
+        out.extend_from_slice(&MAGIC9);
+    } else if has_v8_text_instr(funcs) {
         out.extend_from_slice(&MAGIC8);
     } else if has_v7_clock_read_instr(funcs) {
         out.extend_from_slice(&MAGIC7);
@@ -788,6 +799,7 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             IrInstr::LoadText { val, .. } => {
                 let _ = interner.id(val)?;
             }
+            IrInstr::MakeSequence { .. } | IrInstr::SequenceGet { .. } => {}
             IrInstr::LoadVar { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -903,6 +915,8 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadF64 { .. } => 1 + 2 + 8,
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::LoadText { .. } => 1 + 2 + 2,
+        IrInstr::MakeSequence { items, .. } => 1 + 2 + 2 + (items.len() * 2),
+        IrInstr::SequenceGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::MakeTuple { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeRecord { items, .. } => 1 + 2 + 2 + 2 + (items.len() * 2),
         IrInstr::MakeAdt { items, .. } => 1 + 2 + 2 + 2 + 2 + 2 + (items.len() * 2),
@@ -995,6 +1009,24 @@ fn emit_instr(
             out.push(Opcode::LoadText.byte());
             write_u16_le(out, *dst);
             write_u16_le(out, interner.lookup(val)?);
+        }
+        IrInstr::MakeSequence { dst, items } => {
+            out.push(Opcode::MakeSequence.byte());
+            write_u16_le(out, *dst);
+            let count = u16::try_from(items.len()).map_err(|_| FrontendError {
+                pos: 0,
+                message: "sequence literal has too many items".to_string(),
+            })?;
+            write_u16_le(out, count);
+            for item in items {
+                write_u16_le(out, *item);
+            }
+        }
+        IrInstr::SequenceGet { dst, src, index } => {
+            out.push(Opcode::SequenceGet.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *src);
+            write_u16_le(out, *index);
         }
         IrInstr::MakeTuple { dst, items } => {
             out.push(Opcode::MakeTuple.byte());
@@ -1289,6 +1321,17 @@ fn has_v8_text_instr(funcs: &[IrFunction]) -> bool {
         .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::LoadText { .. })))
 }
 
+fn has_v9_sequence_instr(funcs: &[IrFunction]) -> bool {
+    funcs.iter().any(|f| {
+        f.instrs.iter().any(|i| {
+            matches!(
+                i,
+                IrInstr::MakeSequence { .. } | IrInstr::SequenceGet { .. }
+            )
+        })
+    })
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
@@ -1433,12 +1476,67 @@ fn lower_expr_with_expected(
             });
             Ok((r, Type::Text))
         }
-        Expr::SequenceLiteral(_) => Err(FrontendError {
-            pos: 0,
-            message:
-                "ordered sequence literals are not part of the current M8.3 Wave 1 execution surface"
-                    .to_string(),
-        }),
+        Expr::SequenceLiteral(sequence) => {
+            let expected_item_ty = match expected.as_ref() {
+                Some(Type::Sequence(sequence_ty)) => Some(sequence_ty.item.as_ref().clone()),
+                _ => None,
+            };
+            if sequence.items.is_empty() && expected_item_ty.is_none() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "empty ordered sequence literal currently requires contextual Sequence(type) in M8.3 Wave 2"
+                            .to_string(),
+                });
+            }
+            let mut item_regs = Vec::with_capacity(sequence.items.len());
+            let mut item_ty = expected_item_ty;
+            for item in &sequence.items {
+                let (reg, actual_ty) = lower_expr_with_expected(
+                    *item,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    item_ty.clone(),
+                    ret_ty.clone(),
+                )?;
+                if let Some(expected_item_ty) = item_ty.as_ref() {
+                    if *expected_item_ty != actual_ty {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "ordered sequence literal item type mismatch during lowering: expected {:?}, got {:?}",
+                                expected_item_ty, actual_ty
+                            ),
+                        });
+                    }
+                } else {
+                    item_ty = Some(actual_ty.clone());
+                }
+                item_regs.push(reg);
+            }
+            let item_ty = item_ty.ok_or(FrontendError {
+                pos: 0,
+                message: "ordered sequence literal lowering requires at least one item or contextual Sequence(type)".to_string(),
+            })?;
+            let dst = alloc(next);
+            out.push(IrInstr::MakeSequence {
+                dst,
+                items: item_regs,
+            });
+            Ok((
+                dst,
+                Type::Sequence(SequenceType {
+                    family: SequenceCollectionFamily::OrderedSequence,
+                    item: Box::new(item_ty),
+                }),
+            ))
+        }
         Expr::Range(range_expr) => {
             let (start_reg, start_ty) = lower_expr_with_expected(
                 range_expr.start,
@@ -1654,6 +1752,58 @@ fn lower_expr_with_expected(
                 })?,
             });
             Ok((dst, field.ty.clone()))
+        }
+        Expr::SequenceIndex(index_expr) => {
+            let (src, base_ty) = lower_expr(
+                index_expr.base,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+            )?;
+            let Type::Sequence(sequence_ty) = base_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "sequence indexing lowering requires Sequence(type) base before '[...]', got {:?}",
+                        base_ty
+                    ),
+                });
+            };
+            let (index_reg, index_ty) = lower_expr_with_expected(
+                index_expr.index,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                Some(Type::I32),
+                ret_ty,
+            )?;
+            if index_ty != Type::I32 {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "sequence indexing currently requires i32 index during lowering, got {:?}",
+                        index_ty
+                    ),
+                });
+            }
+            let dst = alloc(next);
+            out.push(IrInstr::SequenceGet {
+                dst,
+                src,
+                index: index_reg,
+            });
+            Ok((dst, sequence_ty.item.as_ref().clone()))
         }
         Expr::RecordUpdate(update_expr) => {
             let (base_reg, base_ty) = lower_expr(
@@ -2240,14 +2390,6 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Quad));
                 }
                 BinaryOp::Eq => {
-                    if matches!(lt, Type::Sequence(_)) {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message:
-                                "ordered sequence equality is not part of the current M8.3 Wave 2 execution surface"
-                                    .to_string(),
-                        });
-                    }
                     out.push(IrInstr::CmpEq {
                         dst,
                         lhs: lr,
@@ -2256,14 +2398,6 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Bool));
                 }
                 BinaryOp::Ne => {
-                    if matches!(lt, Type::Sequence(_)) {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message:
-                                "ordered sequence equality is not part of the current M8.3 Wave 2 execution surface"
-                                    .to_string(),
-                        });
-                    }
                     out.push(IrInstr::CmpNe {
                         dst,
                         lhs: lr,
@@ -6419,23 +6553,41 @@ mod opt_tests {
     }
 
     #[test]
-    fn sequence_equality_stays_outside_wave2_execution_surface() {
+    fn sequence_literals_indexing_and_equality_lower_to_semcode9() {
         let src = r#"
-            fn compare(left: Sequence(i32), right: Sequence(i32)) {
-                assert(left == right);
-                return;
+            fn head(values: Sequence(i32), index: i32) -> i32 {
+                return values[index];
             }
 
             fn main() {
+                let left: Sequence(i32) = [1, 2, 3];
+                let right: Sequence(i32) = [1, 2, 3];
+                let first: i32 = head(left, 0);
+                assert(first == 1);
+                assert(left == right);
                 return;
             }
         "#;
 
-        let err = compile_program_to_ir(src)
-            .expect_err("ordered sequence equality must stay outside the Wave 2 execution path");
-        assert!(err.message.contains(
-            "ordered sequence equality is not part of the current M8.3 Wave 2 execution surface"
-        ));
+        let ir = compile_program_to_ir(src).expect("ordered sequence runtime surface should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::MakeSequence { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpEq { .. })));
+        let head = ir.iter().find(|func| func.name == "head").expect("head fn");
+        assert!(head
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::SequenceGet { .. })));
+
+        let bytes =
+            compile_program_to_semcode(src).expect("ordered sequence semcode should emit");
+        assert_eq!(&bytes[0..8], b"SEMCODE9");
     }
 
     #[test]
