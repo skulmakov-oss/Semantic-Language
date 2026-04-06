@@ -8,6 +8,7 @@ Project zones:
 
 Current pending ownership notes:
 
+- `sm-front` consolidates lexer, AST, and source-level type-check in a single crate; the originally planned `sm-lexer` / `sm-ast` split was not carried forward; a future split would require an explicit decision and code move
 - optimizer surface is owned by `sm-ir` in the current `v1` baseline; a future `sm-opt` split would require an explicit follow-up decision and code move
 - SemCode format contract is owned by `sm-ir` in the current `v1` baseline; `sm-emit` remains a producer-facing facade and compatibility layer
 - public CLI contract is owned by `smc-cli` in the current `v1` baseline; root `smc` is a thin entrypoint wrapper over that owner
