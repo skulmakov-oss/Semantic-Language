@@ -4,8 +4,8 @@ One concept must have one owner module.
 
 Core ownership:
 
-- lexical model: `sm-lexer` / current frontend lexer layer
-- AST and syntax model: `sm-ast` / current frontend AST layer
+- lexical model: `sm-front` (consolidated frontend crate owns lexer layer)
+- AST and syntax model: `sm-front` (consolidated frontend crate owns AST layer)
 - parser profiles: `sm-profile`
 - compiler semantics: `sm-sema`
 - IR and lowering: `sm-ir`
@@ -29,6 +29,7 @@ Ownership rules:
 
 - no public contract may keep two long-term owners;
 - pending ownership decisions must be marked explicitly rather than implied as settled;
+- `sm-front` is the canonical frontend owner crate; the original split into `sm-lexer` + `sm-ast` was not carried forward — lexer, AST, and source-level type-check layers are intentionally consolidated in `sm-front` for the current `v1` baseline; if a later decision splits them out, that requires explicit crate creation with matching code movement and ownership transfer;
 - `sm-opt` is not a canonical owner crate for `v1`; optimizer contract lives in `sm-ir` unless a later architecture decision creates a separate owner with matching code movement;
 - `sm-emit` is a producer-facing facade in the current `v1` baseline; the SemCode header/opcode/capability contract is owned by `sm-ir`;
 - `smc-cli` is the canonical owner of the public CLI contract in the current `v1` baseline; root `smc` and `svm` binaries are process entrypoints and not second CLI owners;
