@@ -38,6 +38,7 @@ Current supported header family:
 - `SEMCODE7`
 - `SEMCODE8`
 - `SEMCODE9`
+- `SEMCOD10`
 
 Observed runtime support in the current toolchain:
 
@@ -51,6 +52,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE7`: epoch `0`, revision `8`
 - `SEMCODE8`: epoch `0`, revision `9`
 - `SEMCODE9`: epoch `0`, revision `10`
+- `SEMCOD10`: epoch `0`, revision `11`
 
 Header responsibilities:
 
@@ -136,6 +138,16 @@ Compatibility rules:
 - keeps `SEMCODE0..8` fixed for older artifacts that do not use executable
   sequence values
 
+`SEMCOD10`
+
+- promoted contract used when emitted program usage requires the canonical
+  first-wave closure carrier and direct invocation path for admitted `M8.4`
+  closure values
+- keeps `SEMCODE0..9` fixed for older artifacts that do not use executable
+  closure values
+- uses the fixed-width 8-byte header magic form `SEMCOD10` rather than
+  `SEMCODE10`
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -164,6 +176,7 @@ Current canonical capability families:
 - `CAP_CLOCK_READ`
 - `CAP_TEXT_VALUES`
 - `CAP_SEQUENCE_VALUES`
+- `CAP_CLOSURE_VALUES`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:

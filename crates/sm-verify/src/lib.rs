@@ -8,7 +8,7 @@ use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS,
     CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
-    CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES,
+    CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES, CAP_CLOSURE_VALUES,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -671,6 +671,43 @@ fn decode_operands(
             mark_reg(src);
             mark_reg(index);
             refs.required_capabilities |= CAP_SEQUENCE_VALUES;
+        }
+        Opcode::MakeClosure => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated closure dst register"))?;
+            mark_reg(dst);
+            refs.required_capabilities |= CAP_CLOSURE_VALUES;
+            let sid = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated closure function string id"))?;
+            refs.string_refs
+                .push((offset, sid as usize, "closure function name"));
+            let count = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated closure capture arity"))?
+                as usize;
+            for _ in 0..count {
+                let src = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated closure capture register"))?;
+                mark_reg(src);
+            }
+        }
+        Opcode::ClosureCall => {
+            let has_dst =
+                read_u8(code, cursor).map_err(|_| invalid("truncated closure-call dst flag"))? != 0;
+            if has_dst {
+                let dst = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated closure-call dst register"))?;
+                mark_reg(dst);
+            } else {
+                let _ = read_u16_le(code, cursor)
+                    .map_err(|_| invalid("truncated closure-call dst register"))?;
+            }
+            let closure = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated closure-call source register"))?;
+            let arg = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated closure-call arg register"))?;
+            mark_reg(closure);
+            mark_reg(arg);
+            refs.required_capabilities |= CAP_CLOSURE_VALUES;
         }
         Opcode::LoadVar => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;

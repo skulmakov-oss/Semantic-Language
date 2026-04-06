@@ -87,6 +87,11 @@ Current admitted execution-value reading:
   equality, and `expr[index]`
 - this sequence carrier remains internal to verified Semantic execution
 - the PROMETHEUS host ABI still does not admit sequence values
+- current `main` now also executes one first-wave closure family through the
+  verified SemCode path, including immutable capture materialization and direct
+  invocation with exactly one positional argument
+- this closure carrier remains internal to verified Semantic execution
+- the PROMETHEUS host ABI still does not admit closure values
 
 These helpers are orchestration glue only. They must not redefine:
 

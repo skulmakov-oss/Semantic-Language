@@ -8,6 +8,7 @@ pub const MAGIC6: [u8; 8] = *b"SEMCODE6";
 pub const MAGIC7: [u8; 8] = *b"SEMCODE7";
 pub const MAGIC8: [u8; 8] = *b"SEMCODE8";
 pub const MAGIC9: [u8; 8] = *b"SEMCODE9";
+pub const MAGIC10: [u8; 8] = *b"SEMCOD10";
 
 pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
 pub const CAP_F64_MATH: u32 = 1 << 1;
@@ -20,6 +21,7 @@ pub const CAP_EVENT_POST: u32 = 1 << 7;
 pub const CAP_CLOCK_READ: u32 = 1 << 8;
 pub const CAP_TEXT_VALUES: u32 = 1 << 9;
 pub const CAP_SEQUENCE_VALUES: u32 = 1 << 10;
+pub const CAP_CLOSURE_VALUES: u32 = 1 << 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SemcodeHeaderSpec {
@@ -144,10 +146,28 @@ pub const HEADER_V9: SemcodeHeaderSpec = SemcodeHeaderSpec {
         | CAP_SEQUENCE_VALUES,
 };
 
+pub const HEADER_V10: SemcodeHeaderSpec = SemcodeHeaderSpec {
+    magic: MAGIC10,
+    epoch: 0,
+    rev: 11,
+    capabilities: CAP_DEBUG_SYMBOLS
+        | CAP_F64_MATH
+        | CAP_GATE_SURFACE
+        | CAP_FX_VALUES
+        | CAP_FX_MATH
+        | CAP_STATE_QUERY
+        | CAP_STATE_UPDATE
+        | CAP_EVENT_POST
+        | CAP_CLOCK_READ
+        | CAP_TEXT_VALUES
+        | CAP_SEQUENCE_VALUES
+        | CAP_CLOSURE_VALUES,
+};
+
 pub fn supported_headers() -> &'static [SemcodeHeaderSpec] {
     &[
         HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7,
-        HEADER_V8, HEADER_V9,
+        HEADER_V8, HEADER_V9, HEADER_V10,
     ]
 }
 
@@ -204,6 +224,8 @@ pub enum Opcode {
     LoadText = 0x5a,
     MakeSequence = 0x5b,
     SequenceGet = 0x5c,
+    MakeClosure = 0x5d,
+    ClosureCall = 0x5e,
     GateRead = 0x60,
     GateWrite = 0x61,
     PulseEmit = 0x62,
@@ -282,6 +304,8 @@ impl Opcode {
             x if x == Self::LoadText as u8 => Ok(Self::LoadText),
             x if x == Self::MakeSequence as u8 => Ok(Self::MakeSequence),
             x if x == Self::SequenceGet as u8 => Ok(Self::SequenceGet),
+            x if x == Self::MakeClosure as u8 => Ok(Self::MakeClosure),
+            x if x == Self::ClosureCall as u8 => Ok(Self::ClosureCall),
             x if x == Self::GateRead as u8 => Ok(Self::GateRead),
             x if x == Self::GateWrite as u8 => Ok(Self::GateWrite),
             x if x == Self::PulseEmit as u8 => Ok(Self::PulseEmit),
