@@ -6,8 +6,9 @@ use crate::types::{
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
     RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
-    SchemaShape, SchemaVariant, SchemaVersion, Stmt, StmtId, SymbolId, TextLiteral,
-    TextLiteralFamily, Token, TokenKind, TuplePatternItem, Type, UnaryOp,
+    SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceLiteral,
+    SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind,
+    TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -1170,6 +1171,9 @@ impl<'a> Parser<'a> {
             }
             return self.parse_paren_expr_or_tuple();
         }
+        if self.eat(TokenKind::LBracket) {
+            return self.parse_bracket_expr();
+        }
         if self.eat(TokenKind::QuadN) {
             return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::N)));
         }
@@ -1232,6 +1236,25 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected primary expression".to_string(),
         })
+    }
+
+    fn parse_bracket_expr(&mut self) -> Result<ExprId, FrontendError> {
+        let mut items = Vec::new();
+        while !self.check(TokenKind::RBracket) {
+            items.push(self.parse_expr()?);
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBracket) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBracket, "expected ']' after sequence literal")?;
+        Ok(self.arena.alloc_expr(Expr::SequenceLiteral(SequenceLiteral {
+            family: SequenceCollectionFamily::OrderedSequence,
+            items,
+        })))
     }
 
     fn parse_adt_ctor_payload_exprs(&mut self) -> Result<Vec<ExprId>, FrontendError> {
@@ -1946,6 +1969,26 @@ impl<'a> Parser<'a> {
                         "expected ')' after Result type arguments",
                     )?;
                     Type::Result(Box::new(ok_ty), Box::new(err_ty))
+                } else {
+                    let record_name = self.expect_symbol()?;
+                    Type::Record(record_name)
+                }
+            } else if t == "Sequence" {
+                let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
+                if self
+                    .tokens
+                    .get(lookahead)
+                    .map(|tok| tok.kind == TokenKind::LParen)
+                    .unwrap_or(false)
+                {
+                    let _ = self.advance();
+                    self.expect(TokenKind::LParen, "expected '(' after Sequence type name")?;
+                    let item = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "expected ')' after Sequence type argument")?;
+                    Type::Sequence(SequenceType {
+                        family: SequenceCollectionFamily::OrderedSequence,
+                        item: Box::new(item),
+                    })
                 } else {
                     let record_name = self.expect_symbol()?;
                     Type::Record(record_name)
@@ -2946,6 +2989,40 @@ fn main() {
                 family: TextLiteralFamily::DoubleQuotedUtf8,
                 spelling,
             }) if spelling == "\"hello\""
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_sequence_literal_and_sequence_type_surface() {
+        let src = r#"
+fn main() {
+    let values: Sequence(i32) = [1, 2, 3];
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("sequence literal and Sequence(type) should parse");
+        let func = &program.functions[0];
+
+        let Stmt::Let {
+            name,
+            ty: Some(Type::Sequence(sequence_ty)),
+            value,
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected sequence-typed let binding");
+        };
+
+        assert_eq!(program.arena.symbol_name(*name), "values");
+        assert_eq!(sequence_ty.family, SequenceCollectionFamily::OrderedSequence);
+        assert_eq!(sequence_ty.item.as_ref(), &Type::I32);
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::SequenceLiteral(SequenceLiteral {
+                family: SequenceCollectionFamily::OrderedSequence,
+                items,
+            }) if items.len() == 3
         ));
     }
 

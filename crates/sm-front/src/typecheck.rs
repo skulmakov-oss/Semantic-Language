@@ -1386,11 +1386,17 @@ fn infer_expr_type(
         Expr::QuadLiteral(_) => Ok(Type::Quad),
         Expr::BoolLiteral(_) => Ok(Type::Bool),
         Expr::TextLiteral(_) => Ok(Type::Text),
-        Expr::SequenceLiteral(_) => Err(FrontendError {
-            pos: 0,
-            message: "ordered sequence literals are not part of the current M8.3 Wave 1 type admission"
-                .to_string(),
-        }),
+        Expr::SequenceLiteral(sequence) => infer_sequence_literal_type(
+            sequence,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            None,
+            ret_ty,
+            loop_stack,
+        ),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
             NumericLiteral::U32(_) => Ok(Type::U32),
@@ -2057,6 +2063,54 @@ mod tests {
         assert!(err
             .message
             .contains("text concatenation is not part of the current M8.1 Wave 2 contract"));
+    }
+
+    #[test]
+    fn sequence_literal_and_equality_surface_typechecks_in_wave2() {
+        let src = r#"
+            fn id(values: Sequence(i32)) -> Sequence(i32) {
+                return values;
+            }
+
+            fn main() {
+                let left: Sequence(i32) = [1, 2, 3];
+                let right: Sequence(i32) = id([1, 2, 3]);
+                let same = left == right;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("ordered sequence literals and equality should typecheck");
+    }
+
+    #[test]
+    fn empty_sequence_literal_requires_contextual_sequence_type() {
+        let src = r#"
+            fn main() {
+                let values = [];
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("empty ordered sequence literal without context must reject");
+        assert!(err.message.contains(
+            "empty ordered sequence literal currently requires contextual Sequence(type) in M8.3 Wave 2"
+        ));
+    }
+
+    #[test]
+    fn sequence_literal_rejects_heterogeneous_item_types() {
+        let src = r#"
+            fn main() {
+                let values: Sequence(i32) = [1, true];
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("heterogeneous ordered sequence items must reject");
+        assert!(err.message.contains("type mismatch"));
     }
 
     #[test]
@@ -5462,6 +5516,13 @@ fn ensure_type_resolved(
             }
         }
         Type::Option(item) => ensure_type_resolved(item, record_table, adt_table, arena, context),
+        Type::Sequence(sequence) => ensure_type_resolved(
+            sequence.item.as_ref(),
+            record_table,
+            adt_table,
+            arena,
+            context,
+        ),
         Type::Result(ok_ty, err_ty) => {
             ensure_type_resolved(ok_ty, record_table, adt_table, arena, context.clone())?;
             ensure_type_resolved(err_ty, record_table, adt_table, arena, context)
@@ -5481,6 +5542,9 @@ fn ensure_executable_type_supported(
                 ensure_executable_type_supported(item, arena, context.clone())?;
             }
             Ok(())
+        }
+        Type::Sequence(sequence) => {
+            ensure_executable_type_supported(sequence.item.as_ref(), arena, context)
         }
         Type::Measured(base, _) => ensure_executable_type_supported(base, arena, context),
         Type::Option(item) => ensure_executable_type_supported(item, arena, context),
@@ -5513,6 +5577,9 @@ fn ensure_storage_type_supported(
                 ensure_storage_type_supported(item, arena, context.clone())?;
             }
             Ok(())
+        }
+        Type::Sequence(sequence) => {
+            ensure_storage_type_supported(sequence.item.as_ref(), arena, context)
         }
         Type::Measured(base, _) => ensure_storage_type_supported(base, arena, context),
         Type::Option(item) => ensure_storage_type_supported(item, arena, context),
@@ -5658,7 +5725,12 @@ fn supports_stable_equality_type_inner(
         Type::Measured(base, _) => {
             supports_stable_equality_type_inner(base, record_table, adt_table, active)
         }
-        Type::Sequence(_) => Ok(false),
+        Type::Sequence(sequence) => supports_stable_equality_type_inner(
+            sequence.item.as_ref(),
+            record_table,
+            adt_table,
+            active,
+        ),
         Type::QVec(_) => Ok(false),
         Type::RangeI32 => Ok(false),
         Type::Tuple(items) => {
@@ -6078,6 +6150,17 @@ fn infer_expr_type_with_expected(
             }
             Ok(Type::Tuple(item_tys))
         }
+        Expr::SequenceLiteral(sequence) => infer_sequence_literal_type(
+            sequence,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            expected.as_ref(),
+            ret_ty,
+            loop_stack,
+        ),
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
             arena,
@@ -6106,6 +6189,101 @@ fn infer_expr_type_with_expected(
             )
         }
     }
+}
+
+fn infer_sequence_literal_type(
+    sequence: &SequenceLiteral,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<&Type>,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+) -> Result<Type, FrontendError> {
+    let expected_item = match expected {
+        Some(Type::Sequence(sequence_ty))
+            if sequence_ty.family == SequenceCollectionFamily::OrderedSequence =>
+        {
+            Some(sequence_ty.item.as_ref())
+        }
+        _ => None,
+    };
+
+    if sequence.items.is_empty() {
+        let Some(expected_item) = expected_item else {
+            return Err(FrontendError {
+                pos: 0,
+                message:
+                    "empty ordered sequence literal currently requires contextual Sequence(type) in M8.3 Wave 2"
+                        .to_string(),
+            });
+        };
+        return Ok(Type::Sequence(SequenceType {
+            family: SequenceCollectionFamily::OrderedSequence,
+            item: Box::new(expected_item.clone()),
+        }));
+    }
+
+    let first_ty = if let Some(expected_item) = expected_item {
+        let actual_ty = infer_expr_type_with_expected(
+            sequence.items[0],
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            Some(expected_item.clone()),
+            ret_ty.clone(),
+            loop_stack,
+        )?;
+        ensure_binding_value_type(
+            expected_item.clone(),
+            actual_ty,
+            sequence.items[0],
+            arena,
+            "ordered sequence item 0".to_string(),
+        )?;
+        expected_item.clone()
+    } else {
+        infer_expr_type(
+            sequence.items[0],
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty.clone(),
+            loop_stack,
+        )?
+    };
+
+    for (index, item) in sequence.items.iter().enumerate().skip(1) {
+        let actual_ty = infer_expr_type_with_expected(
+            *item,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            Some(first_ty.clone()),
+            ret_ty.clone(),
+            loop_stack,
+        )?;
+        ensure_binding_value_type(
+            first_ty.clone(),
+            actual_ty,
+            *item,
+            arena,
+            format!("ordered sequence item {}", index),
+        )?;
+    }
+
+    Ok(Type::Sequence(SequenceType {
+        family: SequenceCollectionFamily::OrderedSequence,
+        item: Box::new(first_ty),
+    }))
 }
 
 fn infer_std_form_ctor_type(

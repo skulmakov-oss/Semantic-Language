@@ -304,6 +304,9 @@ Current expression forms:
 - tuple literals:
   - `(1, true)`
   - `(value, ready, 1.0)`
+- ordered sequence literals:
+  - `[1, 2, 3]`
+  - `["alpha", "beta"]`
 - record literals:
   - `DecisionContext { camera: T, quality: 0.75 }`
   - `DecisionContext { quality: 0.75, camera: T }`
@@ -323,6 +326,8 @@ Current expression forms:
   - `(f64, quad, bool)`
 - text type:
   - `text`
+- ordered sequence type:
+  - `Sequence(i32)`
 - first-wave units-of-measure annotations:
   - `f64[m]`
   - `u32[ms]`
@@ -367,6 +372,17 @@ Current text-literal limits:
 - the current executable text surface is only double-quoted same-line text
 - interpolation and multi-line text blocks are not part of the current surface
 - text concatenation is not yet part of the current source contract
+
+Current active collections checkpoint on `main`:
+
+- one ordered sequence family is now admitted in declared type positions as
+  `Sequence(type)`
+- bracketed ordered sequence literals are now admitted in the Rust-like source
+  path
+- same-family equality is now admitted for ordered sequence values when the
+  item type already supports stable equality
+- indexing, iteration, maps, sets, and generic collection abstractions are not
+  part of the current `M8.3` Wave 2 syntax contract
 
 Current v0 range-literal limits:
 

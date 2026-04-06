@@ -85,18 +85,18 @@ its widened contract on `main`.
 
 ## Current Wave Reading
 
-Current branch scope for Wave 1:
+Current branch scope for Wave 2:
 
-- make the first admitted collection family explicit as an ordered sequence
-  owner-layer surface
-- define deterministic metadata for sequence family, sequence type, and
-  sequence literal ownership
-- keep parser, sema, and runtime admission explicitly outside the Wave 1 slice
+- admit `Sequence(type)` in declared source type positions
+- admit bracketed ordered sequence literals in the Rust-like source path
+- admit same-family equality for ordered sequence values when the item type
+  already supports stable equality
+- keep runtime lowering/indexing/iteration explicitly outside the Wave 2 slice
 
-Still intentionally not included in Wave 1:
+Still intentionally not included in Wave 2:
 
-- parser spelling for sequence literals or sequence types
-- executable typing/equality/indexing/iteration admission
+- indexing or length operations
+- iteration syntax or iterable loops
 - runtime carrier details or VM lowering
 - collection mutation policy beyond the first admitted baseline
 
