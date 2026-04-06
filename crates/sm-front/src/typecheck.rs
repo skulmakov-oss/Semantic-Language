@@ -1397,6 +1397,12 @@ fn infer_expr_type(
             ret_ty,
             loop_stack,
         ),
+        Expr::Closure(_) => Err(FrontendError {
+            pos: 0,
+            message:
+                "first-class closures are not yet admitted in executable source positions before M8.4 Wave 2"
+                    .to_string(),
+        }),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
             NumericLiteral::U32(_) => Ok(Type::U32),
@@ -5834,6 +5840,7 @@ fn supports_stable_equality_type_inner(
             active.remove(name);
             Ok(true)
         }
+        Type::Closure(_) => Ok(false),
         Type::Adt(_) => Ok(false),
     }
 }

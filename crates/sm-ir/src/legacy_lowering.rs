@@ -1537,6 +1537,12 @@ fn lower_expr_with_expected(
                 }),
             ))
         }
+        Expr::Closure(_) => Err(FrontendError {
+            pos: 0,
+            message:
+                "first-class closures are not yet admitted in the canonical lowering path before M8.4 Wave 3"
+                    .to_string(),
+        }),
         Expr::Range(range_expr) => {
             let (start_reg, start_ty) = lower_expr_with_expected(
                 range_expr.start,

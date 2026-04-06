@@ -1567,6 +1567,12 @@ impl<'a> Parser<'a> {
                 self.ensure_short_lambda_expr_capture_free(index_expr.base, scopes)?;
                 self.ensure_short_lambda_expr_capture_free(index_expr.index, scopes)
             }
+            Expr::Closure(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "short lambda v0 does not currently allow nested first-class closure values in the lambda body"
+                        .to_string(),
+            }),
             Expr::RecordUpdate(update_expr) => {
                 self.ensure_short_lambda_expr_capture_free(update_expr.base, scopes)?;
                 for field in &update_expr.fields {

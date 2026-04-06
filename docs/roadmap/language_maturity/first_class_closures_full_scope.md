@@ -57,6 +57,7 @@ its widened contract on `main`.
 - closure family ownership
 - closure type/literal/capture metadata inventory
 - deterministic closure value-model boundaries
+- explicit typecheck/lowering gap diagnostics before executable admission
 
 ### Wave 2 — Source Admission
 
@@ -94,6 +95,15 @@ The first-wave closure contract is intentionally narrow:
 
 That keeps the track additive over the current short-lambda sugar without
 turning it into a general abstraction system in one step.
+
+Current Wave 1 reading on `main`:
+
+- current `main` now owns one first-wave closure family in the frontend owner
+  layer
+- current `main` does not yet admit first-class closures in executable parser or
+  source-typing positions
+- current `main` surfaces explicit Wave 1 gap diagnostics instead of silently
+  widening parsing or runtime behavior
 
 ## Acceptance Reading
 
