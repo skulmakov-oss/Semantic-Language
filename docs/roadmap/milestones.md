@@ -106,7 +106,7 @@
   - package ecosystem baseline
   - collections
   - first-class closures
-  - current status: active post-stable language-maturity package
+  - current status: completed post-stable language-maturity package
   - planning docs:
     - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
     - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
@@ -122,4 +122,16 @@
   - planning rule:
     - keep package baseline earlier than broad abstraction machinery
     - keep one active stream at a time
+    - keep UI/platform expansion separate from language-maturity work
+- `M9 General Abstraction Layer`
+  - generics / parametric polymorphism
+  - traits / protocols / interfaces
+  - iterable abstraction
+  - richer pattern surface
+  - current status: active post-stable language-maturity package
+  - current active first subtrack:
+    `docs/roadmap/language_maturity/generics_full_scope.md`
+  - planning rule:
+    - keep one active stream at a time
+    - do not open trait/protocol bounds before generics foundation is stable
     - keep UI/platform expansion separate from language-maturity work

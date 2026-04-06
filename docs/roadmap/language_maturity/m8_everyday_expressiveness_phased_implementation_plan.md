@@ -101,6 +101,18 @@ Current completed checkpoint:
 
 - `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
 
+### M9.1 Generics
+
+- Wave 0: generics scope checkpoint
+- Wave 1: type-parameter ownership and monomorphisation policy
+- Wave 2: parser/sema/type admission
+- Wave 3: IR monomorphisation and lowering path
+- Wave 4: docs/tests/compatibility freeze
+
+Current active checkpoint:
+
+- `docs/roadmap/language_maturity/generics_full_scope.md`
+
 ## Primary Recommended Order
 
 1. M8.1 Text / strings
