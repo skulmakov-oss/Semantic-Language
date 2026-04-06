@@ -21,6 +21,7 @@ Current post-stable admitted families on `main`:
 - `SEMCODE6`
 - `SEMCODE7`
 - `SEMCODE8`
+- `SEMCODE9`
 
 Current compatibility rule:
 
@@ -94,6 +95,9 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to the first-wave package
   ecosystem baseline on current `main`, including `Semantic.package`,
   deterministic local-path dependency loading, and package-qualified imports
+- the same forward-only reading also applies to the first-wave ordered
+  sequence collection surface on current `main`, including `Sequence(type)`,
+  bracketed literals, same-family equality, `expr[index]`, and `SEMCODE9`
 
 ## Explicit Non-Commitments
 
@@ -113,6 +117,8 @@ The repository does not yet claim final compatibility guarantees for:
   contract on `main`
 - package ecosystem semantics beyond the current admitted first-wave local-path
   manifest/dependency baseline on `main`
+- collection semantics beyond the current admitted first-wave ordered sequence
+  carrier/index/equality contract on `main`
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule

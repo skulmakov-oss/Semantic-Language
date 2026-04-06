@@ -85,7 +85,7 @@ Current completed checkpoint:
 - Wave 3: iteration/runtime/VM path
 - Wave 4: docs/tests/compatibility freeze
 
-Current active checkpoint:
+Current completed checkpoint:
 
 - `docs/roadmap/language_maturity/collections_surface_full_scope.md`
 
