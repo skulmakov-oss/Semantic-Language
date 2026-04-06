@@ -2240,6 +2240,14 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Quad));
                 }
                 BinaryOp::Eq => {
+                    if matches!(lt, Type::Sequence(_)) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "ordered sequence equality is not part of the current M8.3 Wave 2 execution surface"
+                                    .to_string(),
+                        });
+                    }
                     out.push(IrInstr::CmpEq {
                         dst,
                         lhs: lr,
@@ -2248,6 +2256,14 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Bool));
                 }
                 BinaryOp::Ne => {
+                    if matches!(lt, Type::Sequence(_)) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message:
+                                "ordered sequence equality is not part of the current M8.3 Wave 2 execution surface"
+                                    .to_string(),
+                        });
+                    }
                     out.push(IrInstr::CmpNe {
                         dst,
                         lhs: lr,
@@ -6400,6 +6416,26 @@ mod opt_tests {
 
         let bytes = compile_program_to_semcode(src).expect("text semcode should emit");
         assert_eq!(&bytes[0..8], b"SEMCODE8");
+    }
+
+    #[test]
+    fn sequence_equality_stays_outside_wave2_execution_surface() {
+        let src = r#"
+            fn compare(left: Sequence(i32), right: Sequence(i32)) {
+                assert(left == right);
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src)
+            .expect_err("ordered sequence equality must stay outside the Wave 2 execution path");
+        assert!(err.message.contains(
+            "ordered sequence equality is not part of the current M8.3 Wave 2 execution surface"
+        ));
     }
 
     #[test]

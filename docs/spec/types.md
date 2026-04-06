@@ -287,10 +287,14 @@ The current source type contract does not yet claim stable support for:
 Current active collections checkpoint on `main`:
 
 - `docs/roadmap/language_maturity/collections_surface_full_scope.md`
-- current `main` now owns one ordered sequence collection family as metadata in
-  the frontend owner layer
-- current `main` does not yet admit parser spelling, executable typing, or
-  runtime carriers for that sequence family in the `M8.3` Wave 1 slice
+- current `main` now admits one ordered sequence collection family through
+  `Sequence(type)` in declared source type positions
+- current `main` now admits bracketed ordered sequence literals in the
+  Rust-like source path
+- current `main` now admits same-family equality for ordered sequence values
+  when the item type already supports stable equality
+- current `main` still does not admit runtime carriers, indexing, or iteration
+  for that sequence family in the `M8.3` Wave 2 slice
 
 ## Contract Rule
 
