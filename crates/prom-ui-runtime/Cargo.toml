@@ -1,0 +1,15 @@
+[package]
+name = "prom-ui-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["prom-ui/std", "prom-abi/std"]
+
+[dependencies]
+prom-ui = { path = "../prom-ui", default-features = false }
+prom-abi = { path = "../prom-abi", default-features = false }
