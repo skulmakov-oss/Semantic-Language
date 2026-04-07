@@ -1,6 +1,6 @@
 # Option and Result Standard Forms Scope
 
-Status: proposed checkpoint
+Status: proposed M9.5 post-stable subtrack
 
 ## Purpose
 
@@ -131,3 +131,41 @@ for type syntax and constructor semantics only.
 
 If the answer is no, reshape `#117` first and move the wider feature to a later
 wave.
+
+## Wave Order
+
+### Wave 0 — Governance
+- scope checkpoint and backlog/milestone linkage
+
+### Wave 1 — Owner Layer
+- type-system additions for `Option(T)` and `Result(T,E)` standard forms
+- AST/sema nodes for the standard-form type constructors
+- monomorphisation policy: standard forms are built-in, not user-declared generics
+
+### Wave 2 — Source Admission
+- parser admission for `Option(T)` and `Result(T,E)` in type positions
+- constructor syntax: `Option::Some(v)`, `Option::None`, `Result::Ok(v)`, `Result::Err(e)`
+
+### Wave 3 — Typecheck and Lowering
+- sema validation of standard forms without introducing general generics
+- `match` ergonomics over standard forms reusing canonical ADT pattern path
+- canonical lowering through existing ADT carrier family
+
+### Wave 4 — Freeze
+- docs/spec/tests/golden freeze
+
+## Decision Check
+
+- [ ] This is a new explicit post-stable track with its own scope decision
+- [ ] This does not silently widen published `v1.1.1`
+- [ ] This is one stream, not a mixture of multiple tracks
+- [ ] This can be closed with a clear done-boundary
+
+## Merge Gate
+
+Before closing this track:
+
+- [ ] code/tests are green
+- [ ] spec/docs are synced
+- [ ] public API or golden snapshots are updated if needed
+- [ ] compatibility/release-facing wording is honest
