@@ -340,6 +340,14 @@ fn tokenize_line(
                 };
                 push_tok(out, kind, text, abs_pos, line_no, col);
             }
+            b'<' => {
+                push_tok(out, TokenKind::LAngle, "<", abs_pos, line_no, col);
+                i += 1;
+            }
+            b'>' => {
+                push_tok(out, TokenKind::RAngle, ">", abs_pos, line_no, col);
+                i += 1;
+            }
             _ => {
                 return Err(fmt_mark_error(
                     "E0001",
