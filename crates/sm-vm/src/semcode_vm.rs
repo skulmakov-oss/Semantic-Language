@@ -4,7 +4,8 @@ use crate::semcode_format::{
 };
 use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
-use prom_cap::{CapabilityChecker, CapabilityDenied};
+use prom_cap::{CapabilityChecker, CapabilityDenied, UiCapabilityChecker, UiCapabilityDenied};
+use prom_ui::UiOperationId;
 use sm_runtime_core::{
     AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier,
     RuntimeQuotas, RuntimeSymbolTable, RuntimeTrap, SymbolId,
@@ -92,6 +93,9 @@ pub enum RuntimeError {
     InvalidStringId(u16),
     HostAbi(AbiError),
     CapabilityDenied(CapabilityDenied),
+    /// A UI operation was attempted but the required UI capability was not
+    /// admitted in the manifest. Wired at M7 Wave 1.
+    UiCapabilityDenied(UiCapabilityDenied),
     Trap(RuntimeTrap),
 }
 
@@ -122,6 +126,7 @@ impl core::fmt::Display for RuntimeError {
             RuntimeError::InvalidStringId(id) => write!(f, "invalid string id {}", id),
             RuntimeError::HostAbi(err) => write!(f, "{err}"),
             RuntimeError::CapabilityDenied(err) => write!(f, "{err}"),
+            RuntimeError::UiCapabilityDenied(err) => write!(f, "{err}"),
             RuntimeError::Trap(RuntimeTrap::AssertionFailed) => write!(f, "assertion failed"),
             RuntimeError::Trap(trap) => write!(f, "runtime trap: {:?}", trap),
         }
@@ -218,6 +223,36 @@ pub fn run_verified_semcode_with_host_and_capabilities_and_config<
     };
     push_frame(&mut vm, entry, Vec::new(), None)?;
     let mut bridge = PrometheusVmHost { host, capabilities };
+    exec_loop(&mut vm, &mut bridge)
+}
+
+/// Run verified SemCode with both a standard capability checker and a UI
+/// capability checker.
+///
+/// UI operations attempted without the corresponding `UiCapabilityKind` in
+/// `ui_capabilities` will return `RuntimeError::UiCapabilityDenied`. This is
+/// the Wave 1 denial path for the M7 UI application boundary track.
+pub fn run_verified_semcode_with_ui_capabilities<
+    H: PrometheusHostAbi,
+    C: CapabilityChecker,
+    U: UiCapabilityChecker,
+>(
+    bytes: &[u8],
+    host: &mut H,
+    capabilities: &C,
+    ui_capabilities: &U,
+) -> Result<(), RuntimeError> {
+    verify_semcode(bytes).map_err(RuntimeError::VerifierRejected)?;
+    let (_, symbols, functions) = parse_semcode(bytes)?;
+    let mut vm = VM {
+        functions,
+        callstack: Vec::new(),
+        config: ExecutionConfig::for_context(ExecutionContext::KernelBound),
+        effect_calls: 0,
+        symbols,
+    };
+    push_frame(&mut vm, "main", Vec::new(), None)?;
+    let mut bridge = PrometheusUiVmHost { host, capabilities, ui_capabilities };
     exec_loop(&mut vm, &mut bridge)
 }
 
@@ -666,6 +701,39 @@ trait VmHostBridge {
     fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError>;
     fn event_post(&mut self, signal: &str) -> Result<(), RuntimeError>;
     fn clock_read(&mut self) -> Result<Value, RuntimeError>;
+
+    /// UI boundary operations — Wave 1 denial path.
+    ///
+    /// Default implementations return not-admitted. Overridden in
+    /// `PrometheusVmHost` when a `UiCapabilityChecker` is provided.
+    fn ui_window_create(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
+    fn ui_window_run(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
+    fn ui_event_poll(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
+    fn ui_frame_submit(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
 }
 
 struct LegacyVmHost;
@@ -773,6 +841,113 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
             .clock_read()
             .map(Value::U32)
             .map_err(RuntimeError::HostAbi)
+    }
+}
+
+/// VM host bridge that also carries a `UiCapabilityChecker`.
+///
+/// Created when the caller provides an explicit UI capability manifest.
+/// UI operations check the `UiCapabilityChecker` and return
+/// `RuntimeError::UiCapabilityDenied` when the capability is absent.
+struct PrometheusUiVmHost<'a, H: PrometheusHostAbi, C: CapabilityChecker, U: UiCapabilityChecker> {
+    host: &'a mut H,
+    capabilities: &'a C,
+    ui_capabilities: &'a U,
+}
+
+impl<'a, H: PrometheusHostAbi, C: CapabilityChecker, U: UiCapabilityChecker> VmHostBridge
+    for PrometheusUiVmHost<'a, H, C, U>
+{
+    fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::GateRead)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .gate_read(device_id, port)
+            .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::GateWrite)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .gate_write(device_id, port, value_to_abi(value)?)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::PulseEmit)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host.pulse_emit(signal).map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateQuery)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_query(key)
+            .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateUpdate)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_update(key, value_to_abi(value)?)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn event_post(&mut self, signal: &str) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::EventPost)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .event_post(signal)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn clock_read(&mut self) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::ClockRead)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .clock_read()
+            .map(Value::U32)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn ui_window_create(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::WindowCreate)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual window creation is deferred to Wave 2 (desktop lifecycle).
+    }
+
+    fn ui_window_run(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::WindowRun)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual event/frame loop is deferred to Wave 2.
+    }
+
+    fn ui_event_poll(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::EventPoll)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual event polling is deferred to Wave 2.
+    }
+
+    fn ui_frame_submit(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::FrameSubmit)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual frame submission is deferred to Wave 3 (drawing surface).
     }
 }
 
