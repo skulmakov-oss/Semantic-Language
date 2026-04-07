@@ -18,13 +18,13 @@ pub mod types;
 pub use types::{
     AdtCtorExpr, AdtDecl, AdtVariant, AstArena, BinaryOp, BlockExpr, CallArg,
     ClosureCapturePolicy, ClosureLiteral, ClosureType, ClosureValueFamily, Expr, ExprId,
-    FrontendError, FrontendErrorKind, Function, IfExpr, LogosEntity, LogosEntityField,
+    FrontendError, FrontendErrorKind, Function, IfExpr, ImplDecl, LogosEntity, LogosEntityField,
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
     MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
     SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr,
     SequenceLiteral, SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token,
-    TokenKind, TuplePatternItem, Type,
+    TokenKind, TraitBound, TraitDecl, TraitMethodSig, TuplePatternItem, Type,
     UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
     ValidationVariantPlan,
 };
@@ -51,6 +51,11 @@ pub struct FnSig {
     /// Non-empty signals a generic function. Call-site type-checking performs
     /// substitution map inference from arguments before checking param types.
     pub type_params: Vec<SymbolId>,
+    /// Trait bounds on the type parameters: `<T: TraitName>` constraints.
+    ///
+    /// Admitted at the owner layer (Wave 1). Bound checking at call sites
+    /// and impl resolution are deferred to Wave 3.
+    pub trait_bounds: Vec<TraitBound>,
     pub params: Vec<Type>,
     pub param_names: Option<Vec<SymbolId>>,
     pub param_defaults: Option<Vec<Option<ExprId>>>,
@@ -71,6 +76,21 @@ pub type SchemaTable = BTreeMap<SymbolId, SchemaDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub type ValidationPlanTable = BTreeMap<SymbolId, ValidationPlan>;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+/// Trait definitions indexed by trait name.
+///
+/// Admitted at the owner layer (Wave 1). Build function is deferred to Wave 2
+/// when parser admission lands.
+pub type TraitTable = BTreeMap<SymbolId, TraitDecl>;
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+/// All impl blocks in the program, ordered by declaration.
+///
+/// Not keyed by a single SymbolId because the coherence key is
+/// (trait_name, for_type). Admitted at the owner layer (Wave 1).
+/// Build function and coherence checks are deferred to Wave 2/3.
+pub type ImplTable = Vec<ImplDecl>;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +195,7 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
             f.name,
             FnSig {
                 type_params: f.type_params.clone(),
+                trait_bounds: f.trait_bounds.clone(),
                 params: f
                     .params
                     .iter()
@@ -466,6 +487,7 @@ pub fn builtin_sig(name: &str) -> Option<FnSig> {
     match name {
         "sin" | "cos" | "tan" | "sqrt" | "abs" => Some(FnSig {
             type_params: Vec::new(),
+            trait_bounds: Vec::new(),
             params: vec![Type::F64],
             param_names: None,
             param_defaults: None,
@@ -473,6 +495,7 @@ pub fn builtin_sig(name: &str) -> Option<FnSig> {
         }),
         "pow" => Some(FnSig {
             type_params: Vec::new(),
+            trait_bounds: Vec::new(),
             params: vec![Type::F64, Type::F64],
             param_names: None,
             param_defaults: None,

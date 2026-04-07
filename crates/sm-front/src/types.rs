@@ -386,6 +386,68 @@ pub struct MatchArm {
     pub block: Vec<StmtId>,
 }
 
+/// A named behavior bound on a type parameter.
+///
+/// Represents the `T: TraitName` constraint in a `<T: TraitName>` parameter
+/// list. Admitted at the owner layer (Wave 1). Bound checking at call sites
+/// and impl resolution are deferred to Wave 3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitBound {
+    /// The type parameter that carries the bound.
+    pub param: SymbolId,
+    /// The named trait the parameter must implement.
+    pub bound: SymbolId,
+}
+
+/// A method signature declared inside a `trait` definition body.
+///
+/// No default method bodies in first wave — each method is an abstract
+/// signature only. Admitted at the owner layer (Wave 1). Parser admission
+/// is deferred to Wave 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitMethodSig {
+    pub name: SymbolId,
+    pub params: Vec<(SymbolId, Type)>,
+    pub ret: Type,
+}
+
+/// A named behavior contract declared with the `trait` keyword.
+///
+/// First-wave shape: named trait with a list of abstract method signatures.
+/// No default bodies, no associated types, no higher-ranked bounds.
+///
+/// Admitted at the owner layer (Wave 1). Parser admission is deferred to
+/// Wave 2. Impl resolution and static dispatch are deferred to Wave 3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraitDecl {
+    pub name: SymbolId,
+    /// Generic type parameters on the trait itself (`trait Foo<T>`).
+    /// Empty in first-wave canonical form.
+    pub type_params: Vec<SymbolId>,
+    pub methods: Vec<TraitMethodSig>,
+}
+
+/// An explicit named impl block binding a concrete type to a trait.
+///
+/// First-wave shape: one impl per (trait, type) pair; type_params on impl
+/// blocks are empty in first-wave canonical form.
+///
+/// Admitted at the owner layer (Wave 1). Parser admission is deferred to
+/// Wave 2. Impl resolution and static dispatch are deferred to Wave 3.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplDecl {
+    /// The trait being implemented.
+    pub trait_name: SymbolId,
+    /// The concrete nominal type that implements the trait.
+    pub for_type: SymbolId,
+    /// Type parameters on the impl block.
+    /// Empty in first-wave canonical form.
+    pub type_params: Vec<SymbolId>,
+    /// Concrete method implementations. Each method must match a signature in
+    /// the corresponding `TraitDecl`.
+    pub methods: Vec<Function>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: SymbolId,
@@ -394,6 +456,11 @@ pub struct Function {
     /// Admitted at the owner layer (Wave 1). Executable use (monomorphisation,
     /// instantiation) is deferred to Wave 2.
     pub type_params: Vec<SymbolId>,
+    /// Trait bounds on the type parameters: `<T: TraitName>` constraints.
+    ///
+    /// Admitted at the owner layer (Wave 1). Bound checking at call sites
+    /// and impl resolution are deferred to Wave 3.
+    pub trait_bounds: Vec<TraitBound>,
     pub params: Vec<(SymbolId, Type)>,
     pub param_defaults: Vec<Option<ExprId>>,
     pub requires: Vec<ExprId>,
@@ -582,6 +649,16 @@ pub enum TokenKind {
     KwSchema,
     KwEnum,
     KwConst,
+    /// `trait` — introduces a named behavior contract declaration.
+    ///
+    /// Admitted to the lexer at the owner layer (Wave 1).
+    /// Parser admission is deferred to Wave 2.
+    KwTrait,
+    /// `impl` — introduces an explicit named impl block.
+    ///
+    /// Admitted to the lexer at the owner layer (Wave 1).
+    /// Parser admission is deferred to Wave 2.
+    KwImpl,
     KwLet,
     KwFor,
     KwIn,
@@ -889,6 +966,7 @@ mod tests {
         let func = Function {
             name,
             type_params: vec![t_param],
+            trait_bounds: vec![],
             params: vec![(param, Type::TypeVar(t_param))],
             param_defaults: vec![None],
             requires: vec![],
@@ -934,5 +1012,92 @@ mod tests {
         assert_eq!(literal.ret_ty, Some(Type::Bool));
         assert_eq!(literal.captures, vec![SymbolId(5), SymbolId(7)]);
         assert_eq!(literal.body, ExprId(11));
+    }
+
+    #[test]
+    fn trait_bound_owner_layer_data_is_stable() {
+        let mut arena = AstArena::default();
+        let t = arena.intern_symbol("T");
+        let display = arena.intern_symbol("Display");
+        let bound = TraitBound { param: t, bound: display };
+        assert_eq!(bound.param, t);
+        assert_eq!(bound.bound, display);
+    }
+
+    #[test]
+    fn trait_decl_owner_layer_data_is_stable() {
+        let mut arena = AstArena::default();
+        let name = arena.intern_symbol("Display");
+        let method = arena.intern_symbol("fmt");
+        let self_param = arena.intern_symbol("self");
+        let sig = TraitMethodSig {
+            name: method,
+            params: vec![(self_param, Type::Unit)],
+            ret: Type::Text,
+        };
+        let decl = TraitDecl {
+            name,
+            type_params: vec![],
+            methods: vec![sig],
+        };
+        assert_eq!(decl.name, name);
+        assert_eq!(decl.methods.len(), 1);
+        assert_eq!(decl.methods[0].name, method);
+        assert_eq!(decl.methods[0].ret, Type::Text);
+    }
+
+    #[test]
+    fn impl_decl_owner_layer_data_is_stable() {
+        let mut arena = AstArena::default();
+        let trait_name = arena.intern_symbol("Display");
+        let for_type = arena.intern_symbol("MyRecord");
+        let decl = ImplDecl {
+            trait_name,
+            for_type,
+            type_params: vec![],
+            methods: vec![],
+        };
+        assert_eq!(decl.trait_name, trait_name);
+        assert_eq!(decl.for_type, for_type);
+        assert!(decl.methods.is_empty());
+    }
+
+    #[test]
+    fn function_trait_bound_owner_layer_is_stable() {
+        let mut arena = AstArena::default();
+        let name = arena.intern_symbol("print_all");
+        let t_param = arena.intern_symbol("T");
+        let display = arena.intern_symbol("Display");
+        let param = arena.intern_symbol("x");
+        let body_expr = arena.alloc_expr(Expr::Var(param));
+        let body = arena.alloc_stmt(Stmt::Return(Some(body_expr)));
+        let func = Function {
+            name,
+            type_params: vec![t_param],
+            trait_bounds: vec![TraitBound { param: t_param, bound: display }],
+            params: vec![(param, Type::TypeVar(t_param))],
+            param_defaults: vec![None],
+            requires: vec![],
+            ensures: vec![],
+            invariants: vec![],
+            ret: Type::Unit,
+            body: vec![body],
+        };
+        assert_eq!(func.trait_bounds.len(), 1);
+        assert_eq!(func.trait_bounds[0].bound, display);
+        assert!(func.type_params.contains(&t_param));
+    }
+
+    #[test]
+    fn kw_trait_and_kw_impl_lex_to_reserved_tokens() {
+        use crate::lexer::lex_tokens;
+        let tokens = lex_tokens("trait Display { }").unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::KwTrait),
+            "expected KwTrait token from 'trait'");
+        let tokens2 = lex_tokens("impl Display for MyRecord { }").unwrap();
+        assert!(tokens2.iter().any(|t| t.kind == TokenKind::KwImpl),
+            "expected KwImpl token from 'impl'");
+        assert!(tokens2.iter().any(|t| t.kind == TokenKind::KwFor),
+            "expected KwFor token from 'for'");
     }
 }

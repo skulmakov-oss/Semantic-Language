@@ -73,6 +73,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
         func.name,
         FnSig {
             type_params: Vec::new(),
+            trait_bounds: Vec::new(),
             params: func
                 .params
                 .iter()
