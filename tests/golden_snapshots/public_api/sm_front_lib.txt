@@ -14,6 +14,7 @@ pub use typecheck::{
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnSig {
+pub type_params: Vec<SymbolId>,
 pub params: Vec<Type>,
 pub param_names: Option<Vec<SymbolId>>,
 pub param_defaults: Option<Vec<Option<ExprId>>>,
@@ -54,6 +55,8 @@ pub fn build_adt_table(program: &Program) -> Result<AdtTable, FrontendError> {
 pub fn build_schema_table(program: &Program) -> Result<SchemaTable, FrontendError> {
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn canonicalize_declared_type(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn canonicalize_declared_type_generic(
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn builtin_sig(name: &str) -> Option<FnSig> {
 #[cfg(any(feature = "alloc", feature = "std"))]

@@ -129,7 +129,7 @@
   - iterable abstraction
   - richer pattern surface
   - current status: active post-stable language-maturity package
-  - current active first subtrack:
+  - current completed first subtrack:
     `docs/roadmap/language_maturity/generics_full_scope.md`
   - planning rule:
     - keep one active stream at a time

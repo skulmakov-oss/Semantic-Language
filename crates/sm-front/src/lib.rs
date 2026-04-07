@@ -46,6 +46,11 @@ pub use typecheck::{
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnSig {
+    /// Generic type parameter names declared on this function.
+    ///
+    /// Non-empty signals a generic function. Call-site type-checking performs
+    /// substitution map inference from arguments before checking param types.
+    pub type_params: Vec<SymbolId>,
     pub params: Vec<Type>,
     pub param_names: Option<Vec<SymbolId>>,
     pub param_defaults: Option<Vec<Option<ExprId>>>,
@@ -169,14 +174,19 @@ pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
         out.insert(
             f.name,
             FnSig {
+                type_params: f.type_params.clone(),
                 params: f
                     .params
                     .iter()
-                    .map(|(_, t)| canonicalize_declared_type(t, &record_table, &adt_table, &program.arena))
+                    .map(|(_, t)| canonicalize_declared_type_generic(
+                        t, &record_table, &adt_table, &program.arena, &f.type_params,
+                    ))
                     .collect::<Result<Vec<_>, _>>()?,
                 param_names: Some(f.params.iter().map(|(name, _)| *name).collect()),
                 param_defaults: Some(f.param_defaults.clone()),
-                ret: canonicalize_declared_type(&f.ret, &record_table, &adt_table, &program.arena)?,
+                ret: canonicalize_declared_type_generic(
+                    &f.ret, &record_table, &adt_table, &program.arena, &f.type_params,
+                )?,
             },
         );
     }
@@ -340,16 +350,129 @@ pub fn canonicalize_declared_type(
     }
 }
 
+/// Variant of `canonicalize_declared_type` that permits `TypeVar` when the
+/// variable is listed in `type_params`.
+///
+/// Used during `build_fn_table` so that generic function signatures can be
+/// stored with TypeVar placeholders without triggering the policy_violation gap.
+/// Monomorphisation (substituting concrete types at call sites) is done at
+/// Wave 3 call-site type-check time.
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn canonicalize_declared_type_generic(
+    ty: &Type,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+    type_params: &[SymbolId],
+) -> Result<Type, FrontendError> {
+    match ty {
+        Type::Tuple(items) => Ok(Type::Tuple(
+            items
+                .iter()
+                .map(|item| canonicalize_declared_type_generic(item, record_table, adt_table, arena, type_params))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        Type::Sequence(sequence) => Ok(Type::Sequence(SequenceType {
+            family: sequence.family,
+            item: Box::new(canonicalize_declared_type_generic(
+                sequence.item.as_ref(), record_table, adt_table, arena, type_params,
+            )?),
+        })),
+        Type::Measured(base, unit) => {
+            let canonical_base = canonicalize_declared_type_generic(base, record_table, adt_table, arena, type_params)?;
+            if !canonical_base.is_core_numeric_scalar() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unit annotation '{}' is allowed only on i32, u32, f64, or fx in v0",
+                        resolve_symbol_name(arena, *unit)?
+                    ),
+                });
+            }
+            Ok(Type::Measured(Box::new(canonical_base), *unit))
+        }
+        Type::Option(item) => Ok(Type::Option(Box::new(
+            canonicalize_declared_type_generic(item, record_table, adt_table, arena, type_params)?,
+        ))),
+        Type::Result(ok_ty, err_ty) => Ok(Type::Result(
+            Box::new(canonicalize_declared_type_generic(ok_ty, record_table, adt_table, arena, type_params)?),
+            Box::new(canonicalize_declared_type_generic(err_ty, record_table, adt_table, arena, type_params)?),
+        )),
+        Type::Closure(closure) => Ok(Type::Closure(crate::types::ClosureType {
+            family: closure.family,
+            capture: closure.capture,
+            param: Box::new(canonicalize_declared_type_generic(
+                &closure.param, record_table, adt_table, arena, type_params,
+            )?),
+            ret: Box::new(canonicalize_declared_type_generic(
+                &closure.ret, record_table, adt_table, arena, type_params,
+            )?),
+        })),
+        Type::Record(name) => {
+            let is_record = record_table.contains_key(name);
+            let is_adt = adt_table.contains_key(name);
+            match (is_record, is_adt) {
+                (true, false) => Ok(Type::Record(*name)),
+                (false, true) => Ok(Type::Adt(*name)),
+                (true, true) => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "top-level name '{}' is ambiguously declared as both record and enum",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                }),
+                (false, false) => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown nominal type '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                }),
+            }
+        }
+        Type::Adt(name) => {
+            if adt_table.contains_key(name) {
+                Ok(Type::Adt(*name))
+            } else {
+                Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown enum type '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                })
+            }
+        }
+        Type::TypeVar(name) => {
+            if type_params.contains(name) {
+                Ok(Type::TypeVar(*name))
+            } else {
+                Err(FrontendError::policy_violation(
+                    0,
+                    format!(
+                        "type variable '{}' is not in scope; \
+                         it was not declared as a type parameter of this declaration",
+                        resolve_symbol_name(arena, *name).unwrap_or("<unknown>")
+                    ),
+                ))
+            }
+        }
+        _ => Ok(ty.clone()),
+    }
+}
+
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn builtin_sig(name: &str) -> Option<FnSig> {
     match name {
         "sin" | "cos" | "tan" | "sqrt" | "abs" => Some(FnSig {
+            type_params: Vec::new(),
             params: vec![Type::F64],
             param_names: None,
             param_defaults: None,
             ret: Type::F64,
         }),
         "pow" => Some(FnSig {
+            type_params: Vec::new(),
             params: vec![Type::F64, Type::F64],
             param_names: None,
             param_defaults: None,

@@ -72,6 +72,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
     table.insert(
         func.name,
         FnSig {
+            type_params: Vec::new(),
             params: func
                 .params
                 .iter()
@@ -210,18 +211,26 @@ fn type_check_function_with_tables(
             message: "function parameter/default metadata length mismatch".to_string(),
         });
     }
+    // Generic functions: canonicalize with type_params scope, skip executable
+    // type checks for TypeVar params (those are checked per call-site after
+    // substitution). Body type-check is deferred until Wave 3 monomorphisation.
+    let is_generic = !func.type_params.is_empty();
     let canonical_params = func
         .params
         .iter()
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
-    let canonical_ret = canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?;
+    let canonical_ret = canonicalize_declared_type_generic(&func.ret, record_table, adt_table, arena, &func.type_params)?;
     for (name, ty) in &canonical_params {
+        // Skip executable-type check for TypeVar — substitution happens at call site.
+        if matches!(ty, Type::TypeVar(_)) && is_generic {
+            continue;
+        }
         ensure_type_resolved(
             ty,
             record_table,
@@ -235,24 +244,27 @@ fn type_check_function_with_tables(
             format!("parameter '{}'", resolve_symbol_name(arena, *name)?),
         )?;
     }
-    ensure_type_resolved(
-        &canonical_ret,
-        record_table,
-        adt_table,
-        arena,
-        format!(
-            "return type of '{}'",
-            resolve_symbol_name(arena, func.name)?
-        ),
-    )?;
-    ensure_executable_type_supported(
-        &canonical_ret,
-        arena,
-        format!(
-            "return type of '{}'",
-            resolve_symbol_name(arena, func.name)?
-        ),
-    )?;
+    // Skip return-type executable check for TypeVar.
+    if !matches!(canonical_ret, Type::TypeVar(_)) || !is_generic {
+        ensure_type_resolved(
+            &canonical_ret,
+            record_table,
+            adt_table,
+            arena,
+            format!(
+                "return type of '{}'",
+                resolve_symbol_name(arena, func.name)?
+            ),
+        )?;
+        ensure_executable_type_supported(
+            &canonical_ret,
+            arena,
+            format!(
+                "return type of '{}'",
+                resolve_symbol_name(arena, func.name)?
+            ),
+        )?;
+    }
     let empty_env = ScopeEnv::new();
     let mut default_loop_stack = Vec::new();
     for ((name, ty), default_expr) in canonical_params.iter().zip(func.param_defaults.iter()) {
@@ -313,13 +325,16 @@ fn check_requires_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
+    if func.requires.is_empty() {
+        return Ok(());
+    }
     let params = func
         .params
         .iter()
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
@@ -334,7 +349,7 @@ fn check_requires_clauses(
             table,
             record_table,
             adt_table,
-            canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?,
+            canonicalize_declared_type_generic(&func.ret, record_table, adt_table, arena, &func.type_params)?,
             &mut loop_stack,
         )?;
         if condition_ty != Type::Bool {
@@ -368,7 +383,7 @@ fn check_ensures_clauses(
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
@@ -423,7 +438,7 @@ fn check_invariant_clauses(
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
@@ -1371,6 +1386,17 @@ fn check_stmt(
     }
 }
 
+/// Apply a type-variable substitution map to `ty` (M9.1 Wave 3).
+/// Only direct `TypeVar` occurrences are substituted; compound types
+/// that could theoretically contain a TypeVar (e.g. `Sequence<T>`) are
+/// not handled here — those are deferred to the monomorphisation pass.
+fn subst_apply(ty: &Type, subst: &BTreeMap<SymbolId, Type>) -> Type {
+    match ty {
+        Type::TypeVar(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
+        _ => ty.clone(),
+    }
+}
+
 fn infer_expr_type(
     expr_id: ExprId,
     arena: &AstArena,
@@ -1667,6 +1693,92 @@ fn infer_expr_type(
                 });
             };
             let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
+            // M9.1 Wave 3: generic call-site substitution.
+            // When the function is generic (sig.type_params non-empty), infer a
+            // substitution map TypeVar(T) → concrete_type from the argument
+            // expressions and apply it before checking argument/return types.
+            if !sig.type_params.is_empty() {
+                let fn_name = resolve_symbol_name(arena, *name)?;
+                // First pass: build substitution map from arguments whose
+                // expected param type is a TypeVar.
+                let mut subst: BTreeMap<SymbolId, Type> = BTreeMap::new();
+                for (i, arg) in ordered_args.iter().enumerate() {
+                    if let Type::TypeVar(tid) = &sig.params[i] {
+                        if subst.contains_key(tid) {
+                            // Already bound — verify consistency below.
+                            continue;
+                        }
+                        let at = infer_expr_type(
+                            *arg,
+                            arena,
+                            env,
+                            table,
+                            record_table,
+                            adt_table,
+                            ret_ty.clone(),
+                            loop_stack,
+                        )?;
+                        subst.insert(*tid, at);
+                    }
+                }
+                // Every declared type parameter must have been bound.
+                for tp in &sig.type_params {
+                    if !subst.contains_key(tp) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "cannot infer type for type parameter '{}' in call to '{}': no argument constrains it",
+                                resolve_symbol_name(arena, *tp)?,
+                                fn_name,
+                            ),
+                        });
+                    }
+                }
+                // Substitute TypeVar → concrete in all param types and ret.
+                let concrete_params: Vec<Type> = sig.params.iter()
+                    .map(|p| subst_apply(p, &subst))
+                    .collect();
+                let concrete_ret = subst_apply(&sig.ret, &subst);
+                // Second pass: check every argument against its concrete type.
+                for (i, arg) in ordered_args.iter().enumerate() {
+                    let expected_ty = concrete_params[i].clone();
+                    let at = infer_expr_type_with_expected(
+                        *arg,
+                        arena,
+                        env,
+                        table,
+                        record_table,
+                        adt_table,
+                        Some(expected_ty.clone()),
+                        ret_ty.clone(),
+                        loop_stack,
+                    )?;
+                    if at != expected_ty {
+                        if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
+                            if !is_fx_literal_expr(*arg, arena) {
+                                return Err(FrontendError {
+                                    pos: 0,
+                                    message: format!(
+                                        "{}; arg {} for '{}' currently requires an fx literal or an existing fx-typed value",
+                                        fx_coercion_gap_message(),
+                                        i,
+                                        fn_name,
+                                    ),
+                                });
+                            }
+                        } else {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "arg {} for '{}' has type {:?}, expected {:?}",
+                                    i, fn_name, at, expected_ty,
+                                ),
+                            });
+                        }
+                    }
+                }
+                return Ok(concrete_ret);
+            }
             for (i, arg) in ordered_args.iter().enumerate() {
                 let expected_ty = sig.params[i].clone();
                 let at = infer_expr_type_with_expected(
@@ -4655,6 +4767,78 @@ mod tests {
         assert!(err
             .message
             .contains("*, / on unit-carrying values are rejected in the first-wave units surface"));
+    }
+
+    // ── M9.1 Wave 3: generic call-site substitution ──────────────────────────
+
+    #[test]
+    fn generic_identity_fn_typechecks_with_i32() {
+        let src = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: i32 = identity(42);
+                let _ = v;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("identity<i32> should typecheck");
+    }
+
+    #[test]
+    fn generic_identity_fn_typechecks_with_bool() {
+        let src = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: bool = identity(true);
+                let _ = v;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("identity<bool> should typecheck");
+    }
+
+    #[test]
+    fn generic_fn_with_concrete_and_type_var_params() {
+        let src = r#"
+            fn first<T>(x: T, y: i32) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: bool = first(true, 1);
+                let _ = v;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("first<bool>(bool, i32) should typecheck");
+    }
+
+    #[test]
+    fn generic_call_wrong_return_type_rejects() {
+        let src = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: i32 = identity(true);
+                let _ = v;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("bool assigned to i32 binding must reject");
+        assert!(
+            err.message.contains("type mismatch") || err.message.contains("bool"),
+            "unexpected error: {}",
+            err.message
+        );
     }
 }
 
