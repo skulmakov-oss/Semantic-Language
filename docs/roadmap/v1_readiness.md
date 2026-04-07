@@ -117,6 +117,10 @@ The following limits remain explicit and should be treated as release-facing hon
   surface, even though current `main` now admits type-parameter syntax for
   functions, records, and ADTs, and deterministic call-site monomorphisation
   under the narrow `TypeVar`-to-concrete substitution model
+- the published `v1.1.1` line intentionally excludes the first-wave UI
+  application boundary, even though current `main` now admits single-window
+  session ownership, deterministic event polling, frame-token ownership, and
+  the minimal `DrawCommand`/`DrawFrame` family as exercised by `prom-ui-demo`
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or

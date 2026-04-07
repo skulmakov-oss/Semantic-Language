@@ -1,6 +1,6 @@
 # UI Application Boundary Scope
 
-Status: proposed post-stable track
+Status: completed M7 first-wave post-stable track
 Related backlog item: `UI application boundary for Semantic desktop applications`
 
 ## Goal
@@ -60,18 +60,18 @@ owner.
 
 ## Milestone Reading
 
-Proposed milestone: `M7 UI Application Boundary`
+Completed milestone: `M7 UI Application Boundary`
 
-This milestone is complete only when:
+This milestone is complete:
 
-- a Semantic program can open a single desktop window through the admitted UI
-  boundary
-- deterministic input polling and frame lifecycle behavior are explicit and
-  tested
-- a minimal draw-command family is owned by the runtime boundary and exercised
-  by a canonical demo
-- release-facing docs keep the widened `main` behavior distinct from published
-  `v1.1.1`
+- [x] a Semantic program can open a single desktop window through the admitted
+  UI boundary (`DesktopSession<B>` + `UiBackendAdapter`)
+- [x] deterministic input polling and frame lifecycle behavior are explicit and
+  tested (`EventBuffer`, `FrameToken`, `FrameTokenIssuer`, 10 unit tests)
+- [x] a minimal draw-command family is owned by the runtime boundary and
+  exercised by a canonical demo (`DrawCommand`, `DrawFrame`, `prom-ui-demo`)
+- [x] release-facing docs keep the widened `main` behavior distinct from
+  published `v1.1.1`
 
 ## PR Waves
 
