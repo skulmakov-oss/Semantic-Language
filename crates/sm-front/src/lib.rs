@@ -328,6 +328,14 @@ pub fn canonicalize_declared_type(
                 })
             }
         }
+        Type::TypeVar(name) => Err(FrontendError::policy_violation(
+            0,
+            format!(
+                "type variable '{}' is not admitted in the executable type-check path yet; \
+                 generic monomorphisation is deferred to M9.1 Wave 2",
+                resolve_symbol_name(arena, *name).unwrap_or("<unknown>")
+            ),
+        )),
         _ => Ok(ty.clone()),
     }
 }

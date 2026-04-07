@@ -401,7 +401,8 @@ fn validate_value_against_type(
         | Type::Adt(_)
         | Type::RangeI32
         | Type::Unit
-        | Type::QVec(_) => diagnostics.push(type_mismatch(
+        | Type::QVec(_)
+        | Type::TypeVar(_) => diagnostics.push(type_mismatch(
             path,
             &format!(
                 "config validation does not yet support field type '{}'",
@@ -520,6 +521,8 @@ fn display_config_type(ty: &Type, contract: &ConfigContract) -> String {
         Type::Record(name) => contract.program.arena.symbol_name(*name).to_string(),
         Type::Adt(name) => contract.program.arena.symbol_name(*name).to_string(),
         Type::Unit => "()".to_string(),
+        // TypeVar is an owner-layer marker; display as a type variable placeholder.
+        Type::TypeVar(name) => format!("<TypeVar:{}>", contract.program.arena.symbol_name(*name)),
     }
 }
 

@@ -5947,6 +5947,9 @@ fn supports_stable_equality_type_inner(
         }
         Type::Closure(_) => Ok(false),
         Type::Adt(_) => Ok(false),
+        // TypeVar is an owner-layer marker; equality support is unknown until
+        // monomorphisation substitutes the variable (Wave 2).
+        Type::TypeVar(_) => Ok(false),
     }
 }
 
