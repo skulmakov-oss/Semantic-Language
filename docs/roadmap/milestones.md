@@ -94,13 +94,9 @@
   - explicit UI capability/admission ownership
   - deterministic event polling and frame lifecycle
   - minimal draw-command family and one canonical demo application
-  - current status: proposed post-stable milestone
+  - current status: completed post-stable milestone
   - scope checkpoint:
     `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
-  - current planning rule:
-    - keep backend choice internal to the runtime owner
-    - keep published `v1.1.1` separate from widened `main`
-    - deliver through PR waves rather than one large integration PR
 - `M8 Everyday Expressiveness Foundation`
   - text / strings
   - package ecosystem baseline

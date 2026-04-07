@@ -23,8 +23,8 @@ Current remaining `v1` wave:
 
 Current post-`v1` wave:
 
-- `UI application boundary for Semantic desktop applications` is a separate
-  active platform track and is scoped in
+- `M7 UI Application Boundary` is now completed as first-wave baseline history
+  and is scoped in
   `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
 - the language-maturity package after the completed post-stable runtime waves
   is documented in:

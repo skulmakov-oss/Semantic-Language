@@ -106,6 +106,11 @@ Current `v1` scope commitment:
   on current `main`, including type-parameter syntax for functions, records, and
   ADTs, deterministic call-site monomorphisation, and the narrow
   `TypeVar`-to-concrete substitution model
+- the same forward-only reading also applies to the first-wave UI application
+  boundary on current `main`, including single-window session ownership
+  (`DesktopSession`), deterministic event polling (`EventBuffer`), frame-token
+  ownership (`FrameToken`), and the minimal draw-command family (`DrawCommand`,
+  `DrawFrame`) as exercised by the canonical `prom-ui-demo` application
 
 ## Explicit Non-Commitments
 
@@ -133,6 +138,10 @@ The repository does not yet claim final compatibility guarantees for:
   family, call-site substitution, and monomorphisation contract on `main`
   (trait/protocol bounds, higher-kinded types, variance, and specialisation are
   not claimed)
+- UI application boundary semantics beyond the current admitted first-wave
+  owner-layer contract on `main` (general widget framework, multi-window,
+  browser/mobile targets, forked graphics stack, and shader-language ownership
+  are not claimed)
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule
