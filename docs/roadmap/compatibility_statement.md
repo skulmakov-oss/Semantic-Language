@@ -102,6 +102,10 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to the first-wave first-class
   closure surface on current `main`, including `Closure(T -> U)`, standalone
   closure literals, immutable capture, direct invocation, and `SEMCODE10`
+- the same forward-only reading also applies to the first-wave generics surface
+  on current `main`, including type-parameter syntax for functions, records, and
+  ADTs, deterministic call-site monomorphisation, and the narrow
+  `TypeVar`-to-concrete substitution model
 
 ## Explicit Non-Commitments
 
@@ -125,6 +129,10 @@ The repository does not yet claim final compatibility guarantees for:
   carrier/index/equality contract on `main`
 - closure semantics beyond the current admitted first-wave `Closure(T -> U)`
   family, immutable capture, and direct invocation contract on `main`
+- generics semantics beyond the current admitted first-wave type-parameter
+  family, call-site substitution, and monomorphisation contract on `main`
+  (trait/protocol bounds, higher-kinded types, variance, and specialisation are
+  not claimed)
 - broader packaged release layout beyond the current stable assets
 
 ## Release Honesty Rule

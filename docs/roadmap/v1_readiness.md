@@ -113,6 +113,10 @@ The following limits remain explicit and should be treated as release-facing hon
   closure surface, even though current `main` now admits `Closure(T -> U)`,
   standalone closure literals, immutable capture, direct invocation, and
   canonical verified execution through `SEMCODE10`
+- the published `v1.1.1` line intentionally excludes the first-wave generics
+  surface, even though current `main` now admits type-parameter syntax for
+  functions, records, and ADTs, and deterministic call-site monomorphisation
+  under the narrow `TypeVar`-to-concrete substitution model
 - current `main` still does not claim rollback, retry/compensation, or generic
   mixed-family rule-effect execution semantics
 - current `main` still does not claim rollback, migration, recovery, or

@@ -1,6 +1,6 @@
 # Generics Full Scope
 
-Status: proposed M9.1 post-stable subtrack
+Status: completed M9.1 first-wave post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -30,10 +30,10 @@ trait dispatch, async abstractions, or higher-kinded types.
 
 ## Decision Check
 
-- [ ] This is a new explicit post-stable track with its own scope decision
-- [ ] This does not silently widen published `v1.1.1`
-- [ ] This is one stream, not a mixture of multiple tracks
-- [ ] This can be closed with a clear done-boundary
+- [x] This is a new explicit post-stable track with its own scope decision
+- [x] This does not silently widen published `v1.1.1`
+- [x] This is one stream, not a mixture of multiple tracks
+- [x] This can be closed with a clear done-boundary
 
 ## Stable Baseline Before This Track
 
@@ -150,7 +150,7 @@ Even after this first wave lands, the repository still does not claim:
 
 Before closing this track:
 
-- [ ] code/tests are green
-- [ ] spec/docs are synced
-- [ ] public API or golden snapshots are updated if needed
-- [ ] compatibility/release-facing wording is honest
+- [x] code/tests are green
+- [x] spec/docs are synced
+- [x] public API or golden snapshots are updated if needed
+- [x] compatibility/release-facing wording is honest
