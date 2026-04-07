@@ -44,6 +44,22 @@ Current post-`v1` wave:
   `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
 - `M9.1 Generics` is now completed as first-wave baseline history and is scoped
   in `docs/roadmap/language_maturity/generics_full_scope.md`
+- `M9.2 Traits/Protocols` is now the active `M9` second subtrack and is scoped
+  in `docs/roadmap/language_maturity/traits_protocols_full_scope.md`
+- `M9.3 Iterable Abstraction` is a proposed `M9` third subtrack scoped in
+  `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
+- `M9.4 Richer Pattern Surface` is a proposed `M9` fourth subtrack scoped in
+  `docs/roadmap/language_maturity/richer_pattern_surface_full_scope.md`
+- `M9.5 Option/Result Standard Forms` is a proposed `M9` fifth subtrack scoped in
+  `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
+- `NEXT-1 Import/Re-export Closure` is now an active post-stable closure track
+  scoped in `docs/roadmap/language_maturity/import_reexport_full_scope.md`
+- `Tooling: smc explain` is a proposed tooling track scoped in
+  `docs/roadmap/language_maturity/smc_explain_scope.md`
+- `Tooling: smc repl` is a proposed tooling track scoped in
+  `docs/roadmap/language_maturity/smc_repl_scope.md`
+- `Tooling: Rich Diagnostics` is a proposed tooling track scoped in
+  `docs/roadmap/language_maturity/rich_diagnostics_scope.md`
 - `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
   frozen baseline history in `docs/roadmap_next.md`
 - the retained non-owning TON618 compatibility perimeter is completed and now

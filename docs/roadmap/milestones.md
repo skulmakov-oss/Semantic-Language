@@ -127,7 +127,33 @@
   - current status: active post-stable language-maturity package
   - current completed first subtrack:
     `docs/roadmap/language_maturity/generics_full_scope.md`
+  - current active second subtrack:
+    `docs/roadmap/language_maturity/traits_protocols_full_scope.md`
+  - current proposed third subtrack:
+    `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
+  - current proposed fourth subtrack:
+    `docs/roadmap/language_maturity/richer_pattern_surface_full_scope.md`
+  - current proposed fifth subtrack:
+    `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
   - planning rule:
     - keep one active stream at a time
     - do not open trait/protocol bounds before generics foundation is stable
     - keep UI/platform expansion separate from language-maturity work
+- `Tooling Tracks`
+  - rich diagnostics (rustc-style line:col + caret)
+  - `smc explain <error-code>`
+  - `smc repl` interactive mode
+  - import/re-export closure (`NEXT-1`)
+  - current status: proposed tooling tracks (parallel to M9, independent)
+  - smc explain scope:
+    `docs/roadmap/language_maturity/smc_explain_scope.md`
+  - smc repl scope:
+    `docs/roadmap/language_maturity/smc_repl_scope.md`
+  - rich diagnostics scope:
+    `docs/roadmap/language_maturity/rich_diagnostics_scope.md`
+  - import/re-export closure scope:
+    `docs/roadmap/language_maturity/import_reexport_full_scope.md`
+  - planning rule:
+    - tooling tracks are independent of language-maturity subtracks
+    - smc-explain and rich-diagnostics share the ErrorCode enum — coordinate
+    - keep one tooling stream active at a time
