@@ -1,6 +1,6 @@
 # Import Re-export Full Scope
 
-Status: proposed post-stable closure track
+Status: active post-stable closure track
 
 ## Goal
 
@@ -61,6 +61,22 @@ This closure track must not silently expand into:
 - fixtures and snapshots cover the matrix explicitly
 - `docs/imports.md` and `docs/exports.md` match actual repository behavior
 - `E0242..E0245` pages stop being placeholders in practice
+
+## Decision Check
+
+- [ ] This is a closure pass with its own explicit scope decision
+- [ ] This does not silently widen published `v1.1.1`
+- [ ] This is one stream, not a mixture of multiple tracks
+- [ ] This can be closed with a clear done-boundary
+
+## Merge Gate
+
+Before closing this track:
+
+- [ ] code/tests are green
+- [ ] spec/docs are synced
+- [ ] fixtures and snapshots cover the edge-case matrix
+- [ ] compatibility/release-facing wording is honest
 
 ## Non-Goal Reminder
 
