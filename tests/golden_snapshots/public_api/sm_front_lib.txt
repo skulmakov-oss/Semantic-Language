@@ -55,6 +55,8 @@ pub fn build_record_table(program: &Program) -> Result<RecordTable, FrontendErro
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn build_adt_table(program: &Program) -> Result<AdtTable, FrontendError> {
 #[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_trait_table(program: &Program) -> Result<TraitTable, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub fn build_schema_table(program: &Program) -> Result<SchemaTable, FrontendError> {
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub fn canonicalize_declared_type(

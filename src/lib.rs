@@ -170,6 +170,8 @@ pub mod frontend {
             records: p.records,
             schemas: p.schemas,
             functions: p.functions,
+            traits: p.traits,
+            impls: p.impls,
         })
     }
 

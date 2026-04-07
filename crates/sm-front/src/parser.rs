@@ -2,14 +2,14 @@ use crate::lexer::lex_tokens;
 use crate::types::{
     AdtCtorExpr, AdtDecl, AdtMatchPattern, AdtPatternItem, AdtVariant, AstArena, BinaryOp,
     BlockExpr, CallArg, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily, Expr, ExprId,
-    FrontendError, Function, IfExpr, LogosEntity, LogosEntityField, LogosEntityFieldKind,
+    FrontendError, Function, IfExpr, ImplDecl, LogosEntity, LogosEntityField, LogosEntityFieldKind,
     LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm, MatchExpr, MatchExprArm,
     MatchPattern, NumericLiteral, Program, QuadVal, RangeExpr, RecordDecl, RecordField,
     RecordFieldExpr, RecordInitField, RecordLiteralExpr, RecordPatternItem, RecordPatternTarget,
     RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
     SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr, SequenceLiteral, SequenceType,
-    Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind, TuplePatternItem,
-    Type, UnaryOp,
+    Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind, TraitBound,
+    TraitDecl, TraitMethodSig, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -74,6 +74,8 @@ impl<'a> Parser<'a> {
         let mut records = Vec::new();
         let mut schemas = Vec::new();
         let mut functions = Vec::new();
+        let mut traits = Vec::new();
+        let mut impls = Vec::new();
         loop {
             let i = self.next_non_layout_idx();
             if i >= self.tokens.len() {
@@ -89,11 +91,13 @@ impl<'a> Parser<'a> {
                 TokenKind::KwFn => functions.push(self.parse_function()?),
                 TokenKind::KwRecord => records.push(self.parse_record_decl()?),
                 TokenKind::KwSchema => schemas.push(self.parse_schema_decl()?),
+                TokenKind::KwTrait => traits.push(self.parse_trait_decl()?),
+                TokenKind::KwImpl => impls.push(self.parse_impl_decl()?),
                 _ => {
                     return Err(FrontendError {
                         pos: self.tokens[i].pos,
                         message:
-                            "expected top-level 'enum', 'fn', 'record', 'schema', or role-marked schema declaration"
+                            "expected top-level 'enum', 'fn', 'impl', 'record', 'schema', 'trait', or role-marked schema declaration"
                                 .to_string(),
                     });
                 }
@@ -105,13 +109,15 @@ impl<'a> Parser<'a> {
             records,
             schemas,
             functions,
+            traits,
+            impls,
         })
     }
 
     fn parse_function(&mut self) -> Result<Function, FrontendError> {
         self.expect(TokenKind::KwFn, "expected 'fn'")?;
         let name = self.expect_symbol()?;
-        let type_params = self.parse_type_params()?;
+        let (type_params, trait_bounds) = self.parse_type_params_with_bounds()?;
         self.expect(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
         let mut param_defaults = Vec::new();
@@ -164,10 +170,7 @@ impl<'a> Parser<'a> {
         Ok(Function {
             name,
             type_params,
-            // Wave 3 gap: trait-bound syntax (`<T: TraitName>`) is parsed in
-            // Wave 2 and bound-checked at call sites in Wave 3. Until then,
-            // all parsed functions carry an empty trait_bounds vec.
-            trait_bounds: Vec::new(),
+            trait_bounds,
             params,
             param_defaults,
             requires,
@@ -205,17 +208,21 @@ impl<'a> Parser<'a> {
         Ok((requires, ensures, invariants))
     }
 
-    /// Parse an optional `<T, U, ...>` type parameter list.
+    /// Parse an optional `<T, U: Bound, ...>` type parameter list with
+    /// optional trait bounds.
     ///
-    /// Returns the interned `SymbolId`s for the declared type parameters and
-    /// pushes them into `self.type_param_scope` so that `parse_type` can emit
-    /// `Type::TypeVar` for matching names. The caller is responsible for
-    /// calling `self.pop_type_param_scope(count)` after parsing the body.
-    fn parse_type_params(&mut self) -> Result<Vec<SymbolId>, FrontendError> {
+    /// Returns `(type_params, trait_bounds)`. Type parameter names are pushed
+    /// into `self.type_param_scope` so `parse_type` can emit `Type::TypeVar`
+    /// for matching names. The caller must call `pop_type_param_scope(count)`
+    /// after parsing the body.
+    fn parse_type_params_with_bounds(
+        &mut self,
+    ) -> Result<(Vec<SymbolId>, Vec<TraitBound>), FrontendError> {
         if !self.eat(TokenKind::LAngle) {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let mut params = Vec::new();
+        let mut bounds = Vec::new();
         loop {
             if self.check(TokenKind::RAngle) {
                 break;
@@ -223,6 +230,11 @@ impl<'a> Parser<'a> {
             let param_id = self.expect_type_param_name()?;
             params.push(param_id);
             self.type_param_scope.push(param_id);
+            // Optional `: TraitName` bound on this parameter.
+            if self.eat(TokenKind::Colon) {
+                let bound_name = self.expect_symbol()?;
+                bounds.push(TraitBound { param: param_id, bound: bound_name });
+            }
             if self.eat(TokenKind::Comma) {
                 continue;
             }
@@ -235,6 +247,16 @@ impl<'a> Parser<'a> {
             });
         }
         self.expect(TokenKind::RAngle, "expected '>' after type parameter list")?;
+        Ok((params, bounds))
+    }
+
+    /// Parse an optional `<T, U, ...>` type parameter list (no bounds).
+    ///
+    /// Thin wrapper over `parse_type_params_with_bounds` that discards any
+    /// bounds. Used for record and ADT declarations where trait bounds on type
+    /// parameters are not admitted in first wave.
+    fn parse_type_params(&mut self) -> Result<Vec<SymbolId>, FrontendError> {
+        let (params, _bounds) = self.parse_type_params_with_bounds()?;
         Ok(params)
     }
 
@@ -242,6 +264,85 @@ impl<'a> Parser<'a> {
     fn pop_type_param_scope(&mut self, count: usize) {
         let new_len = self.type_param_scope.len().saturating_sub(count);
         self.type_param_scope.truncate(new_len);
+    }
+
+    /// Parse a `trait TraitName { fn method(params) -> ret; ... }` declaration.
+    fn parse_trait_decl(&mut self) -> Result<TraitDecl, FrontendError> {
+        self.expect(TokenKind::KwTrait, "expected 'trait'")?;
+        let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
+        self.expect(TokenKind::LBrace, "expected '{' after trait name")?;
+        let mut methods = Vec::new();
+        loop {
+            let i = self.next_non_layout_idx();
+            if i >= self.tokens.len() {
+                break;
+            }
+            if self.tokens[i].kind == TokenKind::RBrace {
+                self.idx = i;
+                break;
+            }
+            self.idx = i;
+            methods.push(self.parse_trait_method_sig()?);
+        }
+        self.expect(TokenKind::RBrace, "expected '}' to close trait body")?;
+        self.pop_type_param_scope(type_params.len());
+        Ok(TraitDecl { name, type_params, methods })
+    }
+
+    /// Parse an abstract method signature inside a trait body:
+    /// `fn name(param: Type, ...) -> RetType;`
+    fn parse_trait_method_sig(&mut self) -> Result<TraitMethodSig, FrontendError> {
+        self.expect(TokenKind::KwFn, "expected 'fn' for trait method signature")?;
+        let name = self.expect_symbol()?;
+        self.expect(TokenKind::LParen, "expected '(' after trait method name")?;
+        let mut params = Vec::new();
+        if !self.check(TokenKind::RParen) {
+            loop {
+                let pname = self.expect_symbol()?;
+                self.expect(TokenKind::Colon, "expected ':' after parameter name")?;
+                let pty = self.parse_type()?;
+                params.push((pname, pty));
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "expected ')' after trait method parameters")?;
+        let ret = if self.eat(TokenKind::Implies) {
+            self.parse_type()?
+        } else {
+            Type::Unit
+        };
+        self.expect(TokenKind::Semi, "expected ';' after trait method signature")?;
+        Ok(TraitMethodSig { name, params, ret })
+    }
+
+    /// Parse an `impl TraitName for TypeName { fn method(...) { ... } ... }` block.
+    fn parse_impl_decl(&mut self) -> Result<ImplDecl, FrontendError> {
+        self.expect(TokenKind::KwImpl, "expected 'impl'")?;
+        let type_params = self.parse_type_params()?;
+        let trait_name = self.expect_symbol()?;
+        self.expect(TokenKind::KwFor, "expected 'for' after trait name in impl")?;
+        let for_type = self.expect_symbol()?;
+        self.expect(TokenKind::LBrace, "expected '{' after impl target type")?;
+        let mut methods = Vec::new();
+        loop {
+            let i = self.next_non_layout_idx();
+            if i >= self.tokens.len() {
+                break;
+            }
+            if self.tokens[i].kind == TokenKind::RBrace {
+                self.idx = i;
+                break;
+            }
+            self.idx = i;
+            methods.push(self.parse_function()?);
+        }
+        self.expect(TokenKind::RBrace, "expected '}' to close impl body")?;
+        self.pop_type_param_scope(type_params.len());
+        Ok(ImplDecl { trait_name, for_type, type_params, methods })
     }
 
     fn parse_record_decl(&mut self) -> Result<RecordDecl, FrontendError> {
@@ -5489,5 +5590,89 @@ fn main() { return; }
         let kinds: Vec<_> = tokens.iter().map(|t| t.kind).collect();
         assert!(kinds.contains(&TokenKind::LAngle));
         assert!(kinds.contains(&TokenKind::RAngle));
+    }
+
+    #[test]
+    fn trait_decl_with_one_method_sig_is_parsed() {
+        let src = r#"
+trait Display {
+    fn fmt(self: i32) -> i32;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("trait declaration should parse");
+        assert_eq!(program.traits.len(), 1);
+        assert_eq!(program.impls.len(), 0);
+        let t = &program.traits[0];
+        assert_eq!(t.methods.len(), 1);
+        assert_eq!(t.type_params.len(), 0);
+        let method = &t.methods[0];
+        assert_eq!(method.params.len(), 1);
+        assert_eq!(method.ret, Type::I32);
+    }
+
+    #[test]
+    fn trait_decl_with_multiple_method_sigs_is_parsed() {
+        let src = r#"
+trait Printable {
+    fn format(self: i32) -> i32;
+    fn debug(self: i32) -> i32;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("multi-method trait should parse");
+        assert_eq!(program.traits[0].methods.len(), 2);
+    }
+
+    #[test]
+    fn impl_decl_with_one_method_body_is_parsed() {
+        let src = r#"
+trait Display {
+    fn fmt(self: i32) -> i32;
+}
+record MyNum {
+    value: i32,
+}
+impl Display for MyNum {
+    fn fmt(self: i32) -> i32 {
+        return self;
+    }
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("impl block should parse");
+        assert_eq!(program.impls.len(), 1);
+        let imp = &program.impls[0];
+        assert_eq!(imp.methods.len(), 1);
+        assert_eq!(imp.type_params.len(), 0);
+    }
+
+    #[test]
+    fn function_with_trait_bound_is_parsed() {
+        let src = r#"
+fn print_all<T: Display>(x: T) -> i32 {
+    return 0;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("function with trait bound should parse");
+        let func = &program.functions[0];
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.trait_bounds.len(), 1);
+        assert_eq!(func.trait_bounds[0].param, func.type_params[0]);
+    }
+
+    #[test]
+    fn function_with_multiple_type_params_mixed_bounds_is_parsed() {
+        let src = r#"
+fn apply<T: Eq, U>(x: T, y: U) -> i32 {
+    return 0;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("mixed-bound function should parse");
+        let func = &program.functions[0];
+        assert_eq!(func.type_params.len(), 2);
+        assert_eq!(func.trait_bounds.len(), 1);
     }
 }
