@@ -7,9 +7,10 @@
 //!
 //! # Current Wave Status
 //!
-//! Wave 2: single-window session ownership, lifecycle API, deterministic event
-//! polling, and frame-token ownership. All types are owner-layer contracts.
-//! Actual backend wiring (winit/wgpu or equivalent) is deferred to Wave 3.
+//! Wave 3: minimal draw-command family (clear, filled rect, text label) and
+//! backend adapter wiring. `DrawCommand`, `Color`, `Rect`, `DrawFrame`, and
+//! the `draw_frame` method on `UiBackendAdapter` are the Wave 3 additions.
+//! One canonical demo binary lives in `crates/prom-ui-demo`.
 //!
 //! # Backend Policy
 //!
@@ -124,6 +125,16 @@ pub trait UiBackendAdapter {
         &mut self,
         on_event: F,
     ) -> Result<(), UiRuntimeError>;
+    /// Submit a completed `DrawFrame` to the backend for rendering.
+    ///
+    /// Called at the end of each frame after the application callback has
+    /// pushed draw commands. The backend is responsible for interpreting
+    /// `DrawCommand` values and producing visible output.
+    ///
+    /// Default implementation is a no-op so Wave 2 backends remain valid.
+    fn draw_frame(&mut self, _frame: &DrawFrame) -> Result<(), UiRuntimeError> {
+        Ok(())
+    }
 }
 
 /// Owner of a single desktop window session.
@@ -292,6 +303,137 @@ impl Default for FrameTokenIssuer {
     }
 }
 
+// ── PR 7: Minimal draw-command family ─────────────────────────────────────────
+
+/// An RGBA color value for use in draw commands.
+///
+/// All channels are in the range 0–255.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl Color {
+    pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a }
+    }
+
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self::rgba(r, g, b, 255)
+    }
+
+    pub const BLACK: Self = Self::rgb(0, 0, 0);
+    pub const WHITE: Self = Self::rgb(255, 255, 255);
+    pub const RED: Self = Self::rgb(255, 0, 0);
+    pub const GREEN: Self = Self::rgb(0, 255, 0);
+    pub const BLUE: Self = Self::rgb(0, 0, 255);
+}
+
+/// An axis-aligned integer rectangle in screen coordinates.
+///
+/// `x` and `y` are the top-left corner; `width` and `height` are in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Rect {
+    pub const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
+        Self { x, y, width, height }
+    }
+}
+
+/// A single draw command in the first-wave minimal drawing surface.
+///
+/// Three admitted forms: clear the surface, fill a rect, or draw a text label.
+/// Additional draw command families (images, paths, etc.) are deferred to
+/// future waves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DrawCommand {
+    /// Fill the entire surface with `color`.
+    Clear { color: Color },
+    /// Fill the axis-aligned `rect` with `color`.
+    FillRect { rect: Rect, color: Color },
+    /// Draw `text` at position (`x`, `y`) in `color`.
+    ///
+    /// Font selection, size, and layout are backend-determined in Wave 3.
+    DrawText {
+        text: alloc::string::String,
+        x: i32,
+        y: i32,
+        color: Color,
+    },
+}
+
+/// An ordered sequence of `DrawCommand` values for one frame.
+///
+/// Built by the application callback, then submitted to the backend via
+/// `UiBackendAdapter::draw_frame`. Commands are applied in order.
+#[derive(Debug, Default)]
+pub struct DrawFrame {
+    commands: alloc::vec::Vec<DrawCommand>,
+}
+
+impl DrawFrame {
+    pub fn new() -> Self {
+        Self {
+            commands: alloc::vec::Vec::new(),
+        }
+    }
+
+    /// Append a `DrawCommand` to this frame.
+    pub fn push(&mut self, cmd: DrawCommand) {
+        self.commands.push(cmd);
+    }
+
+    /// Convenience: clear the surface with `color`.
+    pub fn clear(&mut self, color: Color) {
+        self.push(DrawCommand::Clear { color });
+    }
+
+    /// Convenience: fill `rect` with `color`.
+    pub fn fill_rect(&mut self, rect: Rect, color: Color) {
+        self.push(DrawCommand::FillRect { rect, color });
+    }
+
+    /// Convenience: draw `text` at (`x`, `y`) in `color`.
+    pub fn draw_text(
+        &mut self,
+        text: impl Into<alloc::string::String>,
+        x: i32,
+        y: i32,
+        color: Color,
+    ) {
+        self.push(DrawCommand::DrawText {
+            text: text.into(),
+            x,
+            y,
+            color,
+        });
+    }
+
+    /// Read access to the accumulated commands (for backend consumption).
+    pub fn commands(&self) -> &[DrawCommand] {
+        &self.commands
+    }
+
+    /// Number of commands in this frame.
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Returns `true` if no commands have been pushed.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -401,5 +543,102 @@ mod tests {
 
         session.close();
         assert_eq!(session.state(), SessionState::Closed);
+    }
+
+    // ── Wave 3: draw-command family ───────────────────────────────────────────
+
+    #[test]
+    fn color_constants_and_constructors_are_correct() {
+        assert_eq!(Color::BLACK, Color::rgb(0, 0, 0));
+        assert_eq!(Color::WHITE, Color::rgb(255, 255, 255));
+        let c = Color::rgba(10, 20, 30, 128);
+        assert_eq!(c.r, 10);
+        assert_eq!(c.g, 20);
+        assert_eq!(c.b, 30);
+        assert_eq!(c.a, 128);
+        // rgb() fills alpha to 255
+        assert_eq!(Color::RED.a, 255);
+    }
+
+    #[test]
+    fn rect_constructor_holds_fields() {
+        let r = Rect::new(10, 20, 100, 50);
+        assert_eq!(r.x, 10);
+        assert_eq!(r.y, 20);
+        assert_eq!(r.width, 100);
+        assert_eq!(r.height, 50);
+    }
+
+    #[test]
+    fn draw_frame_push_and_commands_roundtrip() {
+        let mut frame = DrawFrame::new();
+        assert!(frame.is_empty());
+
+        frame.clear(Color::BLACK);
+        frame.fill_rect(Rect::new(0, 0, 100, 100), Color::RED);
+        frame.draw_text("hello", 10, 10, Color::WHITE);
+
+        assert_eq!(frame.len(), 3);
+        assert!(!frame.is_empty());
+
+        let cmds = frame.commands();
+        assert_eq!(cmds[0], DrawCommand::Clear { color: Color::BLACK });
+        assert_eq!(
+            cmds[1],
+            DrawCommand::FillRect {
+                rect: Rect::new(0, 0, 100, 100),
+                color: Color::RED,
+            }
+        );
+        assert_eq!(
+            cmds[2],
+            DrawCommand::DrawText {
+                text: "hello".into(),
+                x: 10,
+                y: 10,
+                color: Color::WHITE,
+            }
+        );
+    }
+
+    #[test]
+    fn draw_frame_submitted_to_mock_backend() {
+        struct DrawCapturingBackend {
+            captured: alloc::vec::Vec<DrawCommand>,
+        }
+        impl UiBackendAdapter for DrawCapturingBackend {
+            fn create_window(&mut self, _: &WindowConfig) -> Result<(), UiRuntimeError> {
+                Ok(())
+            }
+            fn close_window(&mut self) {}
+            fn run_event_loop<F: FnMut(LoopControl)>(
+                &mut self,
+                mut on_event: F,
+            ) -> Result<(), UiRuntimeError> {
+                on_event(LoopControl::Continue);
+                Ok(())
+            }
+            fn draw_frame(&mut self, frame: &DrawFrame) -> Result<(), UiRuntimeError> {
+                self.captured.extend(frame.commands().iter().cloned());
+                Ok(())
+            }
+        }
+
+        let mut backend = DrawCapturingBackend { captured: alloc::vec::Vec::new() };
+
+        let mut frame = DrawFrame::new();
+        frame.clear(Color::BLUE);
+        frame.fill_rect(Rect::new(5, 5, 10, 10), Color::GREEN);
+        backend.draw_frame(&frame).expect("draw_frame must succeed");
+
+        assert_eq!(backend.captured.len(), 2);
+        assert_eq!(backend.captured[0], DrawCommand::Clear { color: Color::BLUE });
+        assert_eq!(
+            backend.captured[1],
+            DrawCommand::FillRect {
+                rect: Rect::new(5, 5, 10, 10),
+                color: Color::GREEN,
+            }
+        );
     }
 }
