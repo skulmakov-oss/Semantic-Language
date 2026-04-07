@@ -761,6 +761,13 @@ fn display_schema_compatibility_type(
         ),
         Type::Record(name) | Type::Adt(name) => resolve_symbol_name(arena, *name)?.to_string(),
         Type::Unit => "()".to_string(),
+        Type::TypeVar(_) => {
+            return Err(FrontendError::policy_violation(
+                0,
+                "type variable is not part of the current schema compatibility surface; \
+                 generic instantiation is deferred to M9.1 Wave 2",
+            ))
+        }
     })
 }
 

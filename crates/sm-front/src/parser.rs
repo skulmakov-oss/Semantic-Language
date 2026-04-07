@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
         };
         Ok(Function {
             name,
+            type_params: Vec::new(),
             params,
             param_defaults,
             requires,
@@ -212,7 +213,7 @@ impl<'a> Parser<'a> {
             break;
         }
         self.expect(TokenKind::RBrace, "expected '}' after record declaration")?;
-        Ok(RecordDecl { name, fields })
+        Ok(RecordDecl { name, type_params: Vec::new(), fields })
     }
 
     fn parse_schema_decl(&mut self) -> Result<SchemaDecl, FrontendError> {
@@ -447,7 +448,7 @@ impl<'a> Parser<'a> {
             break;
         }
         self.expect(TokenKind::RBrace, "expected '}' after enum declaration")?;
-        Ok(AdtDecl { name, variants })
+        Ok(AdtDecl { name, type_params: Vec::new(), variants })
     }
 
     fn parse_adt_variant_payload_types(&mut self) -> Result<Vec<Type>, FrontendError> {

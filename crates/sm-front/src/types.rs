@@ -24,6 +24,11 @@ pub enum Type {
     Record(SymbolId),
     Adt(SymbolId),
     Unit,
+    /// Type variable introduced by a generic parameter list.
+    ///
+    /// Admitted at the owner layer (Wave 1). Executable use of TypeVar in
+    /// type-check and lowering is deferred to Wave 2 (monomorphisation pass).
+    TypeVar(SymbolId),
 }
 
 impl Type {
@@ -46,6 +51,9 @@ impl Type {
                 Box::new(ok_ty.erase_units()),
                 Box::new(err_ty.erase_units()),
             ),
+            // TypeVar is an owner-layer marker. Unit erasure is identity
+            // since monomorphisation has not yet substituted the variable.
+            Type::TypeVar(_) => self.clone(),
             _ => self.clone(),
         }
     }
@@ -381,6 +389,11 @@ pub struct MatchArm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: SymbolId,
+    /// Generic type parameter names declared on this function.
+    ///
+    /// Admitted at the owner layer (Wave 1). Executable use (monomorphisation,
+    /// instantiation) is deferred to Wave 2.
+    pub type_params: Vec<SymbolId>,
     pub params: Vec<(SymbolId, Type)>,
     pub param_defaults: Vec<Option<ExprId>>,
     pub requires: Vec<ExprId>,
@@ -399,6 +412,11 @@ pub struct RecordField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordDecl {
     pub name: SymbolId,
+    /// Generic type parameter names declared on this record.
+    ///
+    /// Admitted at the owner layer (Wave 1). Executable use is deferred to
+    /// Wave 2 (monomorphisation pass).
+    pub type_params: Vec<SymbolId>,
     pub fields: Vec<RecordField>,
 }
 
@@ -411,6 +429,11 @@ pub struct AdtVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdtDecl {
     pub name: SymbolId,
+    /// Generic type parameter names declared on this ADT.
+    ///
+    /// Admitted at the owner layer (Wave 1). Executable use is deferred to
+    /// Wave 2 (monomorphisation pass).
+    pub type_params: Vec<SymbolId>,
     pub variants: Vec<AdtVariant>,
 }
 
@@ -840,6 +863,53 @@ mod tests {
             })
         );
         assert!(!ty.is_core_numeric_scalar());
+    }
+
+    #[test]
+    fn typevar_owner_layer_is_stable_data() {
+        // TypeVar is admitted at the owner layer. It must survive arena
+        // round-trips and erase_units must be identity (no substitution yet).
+        let tv = Type::TypeVar(SymbolId(42));
+        assert_eq!(tv.erase_units(), Type::TypeVar(SymbolId(42)));
+        assert!(!tv.is_core_numeric_scalar());
+    }
+
+    #[test]
+    fn function_with_type_params_owner_layer_is_stable_data() {
+        let mut arena = AstArena::default();
+        let name = arena.intern_symbol("identity");
+        let t_param = arena.intern_symbol("T");
+        let param = arena.intern_symbol("x");
+        let body_expr = arena.alloc_expr(Expr::Var(param));
+        let body = arena.alloc_stmt(Stmt::Return(Some(body_expr)));
+        let func = Function {
+            name,
+            type_params: vec![t_param],
+            params: vec![(param, Type::TypeVar(t_param))],
+            param_defaults: vec![None],
+            requires: vec![],
+            ensures: vec![],
+            invariants: vec![],
+            ret: Type::TypeVar(t_param),
+            body: vec![body],
+        };
+        assert_eq!(func.type_params, vec![t_param]);
+        assert_eq!(func.params[0].1, Type::TypeVar(t_param));
+    }
+
+    #[test]
+    fn record_decl_with_type_params_owner_layer_is_stable_data() {
+        let mut arena = AstArena::default();
+        let name = arena.intern_symbol("Box");
+        let t_param = arena.intern_symbol("T");
+        let field_name = arena.intern_symbol("value");
+        let decl = RecordDecl {
+            name,
+            type_params: vec![t_param],
+            fields: vec![RecordField { name: field_name, ty: Type::TypeVar(t_param) }],
+        };
+        assert_eq!(decl.type_params, vec![t_param]);
+        assert_eq!(decl.fields[0].ty, Type::TypeVar(t_param));
     }
 
     #[test]
