@@ -33,6 +33,7 @@ pub fn parse_rustlike_with_profile(
         source: input.to_string(),
         arena: AstArena::default(),
         policy: CompilePolicyView::new(profile),
+        type_param_scope: Vec::new(),
     };
     p.parse_program()
 }
@@ -48,6 +49,7 @@ pub fn parse_logos_with_profile(
         source: input.to_string(),
         arena: AstArena::default(),
         policy: CompilePolicyView::new(profile),
+        type_param_scope: Vec::new(),
     };
     p.parse_logos_program()
 }
@@ -58,6 +60,12 @@ struct Parser<'a> {
     source: String,
     arena: AstArena,
     policy: CompilePolicyView<'a>,
+    /// Type parameters currently in scope for the declaration being parsed.
+    ///
+    /// Populated by `parse_type_params` and cleared after each
+    /// function/record/adt declaration finishes parsing. Drives `parse_type`
+    /// to emit `Type::TypeVar` rather than `Type::Record` for matching names.
+    type_param_scope: Vec<SymbolId>,
 }
 
 impl<'a> Parser<'a> {
@@ -103,6 +111,7 @@ impl<'a> Parser<'a> {
     fn parse_function(&mut self) -> Result<Function, FrontendError> {
         self.expect(TokenKind::KwFn, "expected 'fn'")?;
         let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
         let mut param_defaults = Vec::new();
@@ -151,9 +160,10 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_block()?
         };
+        self.pop_type_param_scope(type_params.len());
         Ok(Function {
             name,
-            type_params: Vec::new(),
+            type_params,
             params,
             param_defaults,
             requires,
@@ -191,9 +201,49 @@ impl<'a> Parser<'a> {
         Ok((requires, ensures, invariants))
     }
 
+    /// Parse an optional `<T, U, ...>` type parameter list.
+    ///
+    /// Returns the interned `SymbolId`s for the declared type parameters and
+    /// pushes them into `self.type_param_scope` so that `parse_type` can emit
+    /// `Type::TypeVar` for matching names. The caller is responsible for
+    /// calling `self.pop_type_param_scope(count)` after parsing the body.
+    fn parse_type_params(&mut self) -> Result<Vec<SymbolId>, FrontendError> {
+        if !self.eat(TokenKind::LAngle) {
+            return Ok(Vec::new());
+        }
+        let mut params = Vec::new();
+        loop {
+            if self.check(TokenKind::RAngle) {
+                break;
+            }
+            let param_id = self.expect_type_param_name()?;
+            params.push(param_id);
+            self.type_param_scope.push(param_id);
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            break;
+        }
+        if params.is_empty() {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "empty type parameter list is not allowed".to_string(),
+            });
+        }
+        self.expect(TokenKind::RAngle, "expected '>' after type parameter list")?;
+        Ok(params)
+    }
+
+    /// Remove `count` entries from the tail of `type_param_scope`.
+    fn pop_type_param_scope(&mut self, count: usize) {
+        let new_len = self.type_param_scope.len().saturating_sub(count);
+        self.type_param_scope.truncate(new_len);
+    }
+
     fn parse_record_decl(&mut self) -> Result<RecordDecl, FrontendError> {
         self.expect(TokenKind::KwRecord, "expected 'record'")?;
         let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace, "expected '{' after record name")?;
         let mut fields = Vec::new();
         while !self.check(TokenKind::RBrace) {
@@ -213,7 +263,8 @@ impl<'a> Parser<'a> {
             break;
         }
         self.expect(TokenKind::RBrace, "expected '}' after record declaration")?;
-        Ok(RecordDecl { name, type_params: Vec::new(), fields })
+        self.pop_type_param_scope(type_params.len());
+        Ok(RecordDecl { name, type_params, fields })
     }
 
     fn parse_schema_decl(&mut self) -> Result<SchemaDecl, FrontendError> {
@@ -426,6 +477,7 @@ impl<'a> Parser<'a> {
     fn parse_adt_decl(&mut self) -> Result<AdtDecl, FrontendError> {
         self.expect(TokenKind::KwEnum, "expected 'enum'")?;
         let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace, "expected '{' after enum name")?;
         let mut variants = Vec::new();
         while !self.check(TokenKind::RBrace) {
@@ -448,7 +500,8 @@ impl<'a> Parser<'a> {
             break;
         }
         self.expect(TokenKind::RBrace, "expected '}' after enum declaration")?;
-        Ok(AdtDecl { name, type_params: Vec::new(), variants })
+        self.pop_type_param_scope(type_params.len());
+        Ok(AdtDecl { name, type_params, variants })
     }
 
     fn parse_adt_variant_payload_types(&mut self) -> Result<Vec<Type>, FrontendError> {
@@ -2130,6 +2183,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
+        // Check if the next token is a quad-value token (T/F/S/N) that is
+        // actually a type parameter name in the current scope. These lex as
+        // QuadT/QuadF/QuadS/QuadN rather than Ident.
+        {
+            let i = self.next_non_layout_idx();
+            if let Some(tok) = self.tokens.get(i) {
+                if matches!(
+                    tok.kind,
+                    TokenKind::QuadT | TokenKind::QuadF | TokenKind::QuadS | TokenKind::QuadN
+                ) {
+                    let name = tok.text.clone();
+                    let candidate = self.arena.intern_symbol(&name);
+                    if self.type_param_scope.contains(&candidate) {
+                        self.idx = i + 1;
+                        return Ok(Type::TypeVar(candidate));
+                    }
+                }
+            }
+        }
         let base = if self.eat(TokenKind::LParen) {
             self.parse_paren_type_or_tuple()?
         } else if self.check(TokenKind::Ident) {
@@ -2241,7 +2313,13 @@ impl<'a> Parser<'a> {
                 Type::Text
             } else {
                 let record_name = self.expect_symbol()?;
-                Type::Record(record_name)
+                // If the name matches a type parameter in scope, emit TypeVar
+                // rather than a nominal Record reference.
+                if self.type_param_scope.contains(&record_name) {
+                    Type::TypeVar(record_name)
+                } else {
+                    Type::Record(record_name)
+                }
             }
         } else if self.eat(TokenKind::TyQuad) {
             Type::Quad
@@ -2818,6 +2896,32 @@ impl<'a> Parser<'a> {
             Err(FrontendError {
                 pos: self.pos(),
                 message: msg.to_string(),
+            })
+        }
+    }
+
+    /// Accept an identifier as a type parameter name.
+    ///
+    /// Extends `expect_symbol` to also accept quad-value tokens (`T`, `F`,
+    /// `S`, `N`) since those single letters lex as `QuadT/QuadF/QuadS/QuadN`
+    /// rather than `Ident`, but are conventional type-parameter names.
+    fn expect_type_param_name(&mut self) -> Result<SymbolId, FrontendError> {
+        let i = self.next_non_layout_idx();
+        let is_type_param_name = self.tokens.get(i).map(|t| matches!(
+            t.kind,
+            TokenKind::Ident
+            | TokenKind::QuadT
+            | TokenKind::QuadF
+            | TokenKind::QuadS
+            | TokenKind::QuadN
+        )).unwrap_or(false);
+        if is_type_param_name {
+            let name = self.advance().text;
+            Ok(self.arena.intern_symbol(&name))
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: "expected type parameter name".to_string(),
             })
         }
     }
@@ -5278,5 +5382,108 @@ Law "L" [priority 1]:
 
         assert_eq!(err.kind(), FrontendErrorKind::PolicyViolation);
         assert!(err.message.contains("Logos surface"));
+    }
+
+    // --- M9.1 Wave 2: generic syntax admission tests ---
+
+    #[test]
+    fn generic_function_type_params_are_parsed_and_stored() {
+        let src = r#"
+fn identity<T>(x: T) -> T { return x; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("generic function should parse");
+        let identity = &program.functions[0];
+        assert_eq!(identity.type_params.len(), 1);
+        let tp_name = program.arena.symbol_name(identity.type_params[0]);
+        assert_eq!(tp_name, "T");
+        // param type must be TypeVar, not Record
+        assert!(matches!(identity.params[0].1, Type::TypeVar(_)));
+        // return type must be TypeVar
+        assert!(matches!(identity.ret, Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn generic_function_two_type_params_are_parsed() {
+        let src = r#"
+fn pair<A, B>(a: A, b: B) -> A { return a; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("two-param generic function should parse");
+        let f = &program.functions[0];
+        assert_eq!(f.type_params.len(), 2);
+        assert!(matches!(f.params[0].1, Type::TypeVar(_)));
+        assert!(matches!(f.params[1].1, Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn generic_record_type_params_are_parsed_and_stored() {
+        let src = r#"
+record Box<T> {
+    value: T,
+}
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("generic record should parse");
+        let rec = &program.records[0];
+        assert_eq!(rec.type_params.len(), 1);
+        assert_eq!(program.arena.symbol_name(rec.type_params[0]), "T");
+        assert!(matches!(rec.fields[0].ty, Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn generic_enum_type_params_are_parsed_and_stored() {
+        let src = r#"
+enum Maybe<T> {
+    Some(T),
+    None,
+}
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("generic enum should parse");
+        let adt = &program.adts[0];
+        assert_eq!(adt.type_params.len(), 1);
+        assert_eq!(program.arena.symbol_name(adt.type_params[0]), "T");
+        // Some(T) payload should be TypeVar
+        assert!(matches!(adt.variants[0].payload[0], Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn type_var_scope_does_not_leak_between_declarations() {
+        let src = r#"
+fn with_t<T>(x: T) -> T { return x; }
+fn no_t(x: i32) -> i32 { return x; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("should parse");
+        // second function has no type params
+        assert!(program.functions[1].type_params.is_empty());
+        // its param type must be I32, not TypeVar
+        assert!(matches!(program.functions[1].params[0].1, Type::I32));
+    }
+
+    #[test]
+    fn non_generic_function_retains_empty_type_params() {
+        let src = r#"
+fn add(a: i32, b: i32) -> i32 { return a; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("non-generic function should parse");
+        assert!(program.functions[0].type_params.is_empty());
+        assert!(matches!(program.functions[0].params[0].1, Type::I32));
+    }
+
+    #[test]
+    fn langle_rangle_tokens_lex_correctly() {
+        let tokens = crate::lexer::lex_tokens("fn foo<T>() {}").expect("should lex");
+        let kinds: Vec<_> = tokens.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&TokenKind::LAngle));
+        assert!(kinds.contains(&TokenKind::RAngle));
     }
 }

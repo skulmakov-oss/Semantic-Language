@@ -649,6 +649,10 @@ pub enum TokenKind {
     Dot,
     LBracket,
     RBracket,
+    /// `<` — used for generic type parameter lists (`fn foo<T>`).
+    LAngle,
+    /// `>` — used for generic type parameter lists.
+    RAngle,
     Underscore,
     Indent,
     Dedent,
