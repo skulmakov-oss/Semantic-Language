@@ -15,6 +15,7 @@ pub use typecheck::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnSig {
 pub type_params: Vec<SymbolId>,
+pub trait_bounds: Vec<TraitBound>,
 pub params: Vec<Type>,
 pub param_names: Option<Vec<SymbolId>>,
 pub param_defaults: Option<Vec<Option<ExprId>>>,
@@ -29,6 +30,8 @@ pub type AdtTable = BTreeMap<SymbolId, AdtDecl>;
 pub type SchemaTable = BTreeMap<SymbolId, SchemaDecl>;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub type ValidationPlanTable = BTreeMap<SymbolId, ValidationPlan>;
+pub type TraitTable = BTreeMap<SymbolId, TraitDecl>;
+pub type ImplTable = Vec<ImplDecl>;
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeBinding {

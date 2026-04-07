@@ -164,6 +164,10 @@ impl<'a> Parser<'a> {
         Ok(Function {
             name,
             type_params,
+            // Wave 3 gap: trait-bound syntax (`<T: TraitName>`) is parsed in
+            // Wave 2 and bound-checked at call sites in Wave 3. Until then,
+            // all parsed functions carry an empty trait_bounds vec.
+            trait_bounds: Vec::new(),
             params,
             param_defaults,
             requires,

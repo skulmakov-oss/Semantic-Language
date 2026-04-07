@@ -305,6 +305,8 @@ fn tokenize_line(
                     "schema" => TokenKind::KwSchema,
                     "enum" => TokenKind::KwEnum,
                     "const" => TokenKind::KwConst,
+                    "trait" => TokenKind::KwTrait,
+                    "impl" => TokenKind::KwImpl,
                     "let" => TokenKind::KwLet,
                     "for" => TokenKind::KwFor,
                     "in" => TokenKind::KwIn,
