@@ -251,6 +251,24 @@ pub fn build_adt_table(program: &Program) -> Result<AdtTable, FrontendError> {
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_trait_table(program: &Program) -> Result<TraitTable, FrontendError> {
+    let mut out = BTreeMap::new();
+    for t in &program.traits {
+        if out.contains_key(&t.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "duplicate trait '{}'",
+                    resolve_symbol_name(&program.arena, t.name)?
+                ),
+            });
+        }
+        out.insert(t.name, t.clone());
+    }
+    Ok(out)
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub fn build_schema_table(program: &Program) -> Result<SchemaTable, FrontendError> {
     let mut out = BTreeMap::new();
     for schema in &program.schemas {

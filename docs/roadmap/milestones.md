@@ -125,9 +125,9 @@
   - iterable abstraction
   - richer pattern surface
   - current status: active post-stable language-maturity package
-  - current completed first subtrack:
-    `docs/roadmap/language_maturity/generics_full_scope.md`
+  - completed subtracks:
+    - M9.1: `docs/roadmap/language_maturity/generics_full_scope.md`
+    - M9.2: `docs/roadmap/language_maturity/traits_full_scope.md`
   - planning rule:
     - keep one active stream at a time
-    - do not open trait/protocol bounds before generics foundation is stable
     - keep UI/platform expansion separate from language-maturity work

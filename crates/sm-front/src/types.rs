@@ -584,6 +584,10 @@ pub struct Program {
     pub records: Vec<RecordDecl>,
     pub schemas: Vec<SchemaDecl>,
     pub functions: Vec<Function>,
+    /// Trait definitions admitted by the parser (Wave 2+).
+    pub traits: Vec<TraitDecl>,
+    /// Impl blocks admitted by the parser (Wave 2+).
+    pub impls: Vec<ImplDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
