@@ -5599,6 +5599,88 @@ mod tests {
         });
         validate_binding_plan_conflicts(&plan).expect("double-borrow same path must not conflict");
     }
+
+    // M9.6 — prefix-overlap conflict detection
+
+    #[test]
+    fn prefix_overlap_move_and_borrow_rejects() {
+        // root.0 is a prefix of root.0.1 — move + borrow should conflict.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root().tuple_index(0);
+        let child  = PatternPath::root().tuple_index(0).tuple_index(1);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: parent, ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path: child, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("prefix-overlap move+borrow must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("overlapping"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn prefix_overlap_two_moves_rejects() {
+        // root and root.0 — both moved is also a conflict.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root();
+        let child  = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: parent, ty: Type::Quad,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Move, path: child, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect_err("prefix-overlap double-move must conflict");
+    }
+
+    #[test]
+    fn distinct_paths_no_conflict() {
+        // root.0 and root.1 share the root prefix but diverge at index — no overlap.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(1), ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect("distinct sibling paths must not conflict");
+    }
+
+    #[test]
+    fn prefix_overlap_two_borrows_ok() {
+        // root.0 borrows and root.0.1 also borrows — allowed.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root().tuple_index(0);
+        let child  = PatternPath::root().tuple_index(0).tuple_index(1);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: parent, ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path: child, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect("prefix-overlap double-borrow must not conflict");
+    }
 }
 
 fn is_builtin_assert_name(
@@ -8335,32 +8417,42 @@ fn ensure_const_initializer_safe(
 /// Validate that no two items in the plan access the same path via conflicting
 /// capture modes (borrow vs. move, or duplicate move).
 /// Multiple borrows of the same path are allowed.
-pub(crate) fn validate_binding_plan_conflicts(plan: &BindingPlan) -> Result<(), FrontendError> {
-    let mut seen: BTreeMap<Vec<u8>, AccessKind> = BTreeMap::new();
+/// M9.6: returns true if every element of `a` is a prefix of `b`.
+fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+    if a.elems.len() > b.elems.len() { return false; }
+    a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+}
 
-    for item in &plan.items {
-        // Encode path as bytes for BTreeMap key (no Hash needed).
-        let key = encode_path_key(&item.path);
-        let next = match item.capture {
-            CaptureMode::Borrow => AccessKind::Borrow,
-            CaptureMode::Move   => AccessKind::Move,
-        };
-        if let Some(&prev) = seen.get(&key) {
-            let conflict = match (prev, next) {
-                (AccessKind::Borrow, AccessKind::Borrow) => false,
-                _ => true,
-            };
-            if conflict {
+/// M9.6: two paths conflict (overlap) if one is a prefix of the other or they are equal.
+fn paths_overlap(a: &PatternPath, b: &PatternPath) -> bool {
+    path_is_prefix(a, b) || path_is_prefix(b, a)
+}
+
+fn captures_conflict(a: CaptureMode, b: CaptureMode) -> bool {
+    !matches!((a, b), (CaptureMode::Borrow, CaptureMode::Borrow))
+}
+
+/// Validate that no two items in the plan access overlapping paths via conflicting
+/// capture modes.  Two paths overlap when one is a prefix of the other (or equal).
+/// Multiple borrows of the same or ancestor/descendant path are allowed.
+///
+/// NOTE (M9.5/M9.6): overlap check is prefix-based only.
+/// Alias analysis and field-sensitivity beyond the current PatternPath model are deferred.
+pub(crate) fn validate_binding_plan_conflicts(plan: &BindingPlan) -> Result<(), FrontendError> {
+    for (i, a) in plan.items.iter().enumerate() {
+        for b in plan.items.iter().skip(i + 1) {
+            if !paths_overlap(&a.path, &b.path) {
+                continue;
+            }
+            if captures_conflict(a.capture, b.capture) {
                 return Err(FrontendError {
                     pos: 0,
                     message: format!(
-                        "conflicting capture modes on the same pattern path for binding '{}'",
-                        item.name.0
+                        "conflicting captures on overlapping pattern paths for '{}' and '{}'",
+                        a.name.0, b.name.0
                     ),
                 });
             }
-        } else {
-            seen.insert(key, next);
         }
     }
     Ok(())
