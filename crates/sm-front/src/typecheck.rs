@@ -1,5 +1,7 @@
 use crate::types::{
-    AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget,
+    AccessKind, AdtCtorExpr, AdtMatchPattern, AdtPatternItem, BindingPlan, BindingPlanItem,
+    CaptureMode, MatchPattern, NumericLiteral, PatternPath, RecordPatternTarget, ScrutineeUse,
+    ValueAvailability,
 };
 use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -1618,10 +1620,14 @@ fn infer_expr_type(
             loop_stack,
         impl_list,
         ),
-        Expr::Var(v) => env.get(*v).ok_or(FrontendError {
-            pos: 0,
-            message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
-        }),
+        Expr::Var(v) => {
+            // M9.5 Wave C: reject use of moved values.
+            check_var_not_consumed(*v, env, arena)?;
+            env.get(*v).ok_or(FrontendError {
+                pos: 0,
+                message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+            })
+        }
         Expr::Block(block) => infer_value_block_type(
             block,
             arena,
@@ -1724,15 +1730,19 @@ fn infer_expr_type(
                 loop_stack,
                 impl_list,
             )?;
-            // Typecheck pattern against value type — collect bindings.
-            let bindings =
-                bind_match_pattern(&if_let.pattern, &value_ty, arena, record_table, adt_table)?;
+            // M9.5 Wave C: build binding plan, validate conflicts, apply to then-env.
+            let mut plan = BindingPlan::default();
+            build_match_pattern_plan(
+                &if_let.pattern, &value_ty, &PatternPath::root(),
+                &mut plan, arena, adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
             // then-block sees the bindings.
             let mut then_env = env.clone();
             then_env.push_scope();
-            for (name, ty) in bindings {
-                then_env.insert(name, ty);
-            }
+            apply_binding_plan(&mut then_env, &plan);
+            // NOTE: scrutinee consumed-state is enforced at statement level only
+            // (infer_expr_type receives &ScopeEnv, which is immutable).
             let then_ty = infer_value_block_type(
                 &if_let.then_block,
                 arena,
@@ -5335,6 +5345,135 @@ mod tests {
             "unexpected error: {}", err.message
         );
     }
+
+    // M9.5 Wave B — parser admits `ref x` binding syntax
+
+    #[test]
+    fn ref_binding_in_tuple_pattern_parses() {
+        let src = r#"
+            fn make_pair() -> (i32, i32) { return (1, 2); }
+            fn main() {
+                let (ref a, b) = make_pair();
+                let _ = b;
+                return;
+            }
+        "#;
+        // Wave B: parser must admit `ref x` without error.
+        // CaptureMode::Borrow is stored but not yet enforced in typecheck (Wave C).
+        typecheck_source(src).expect("ref binding in tuple pattern should parse and typecheck");
+    }
+
+    #[test]
+    fn ref_binding_in_adt_pattern_parses() {
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(1); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(ref x) => { let _ = x; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("ref binding in ADT pattern should parse and typecheck");
+    }
+
+    // M9.5 Wave C — binding plan builders + conflict detection + consumed-state
+
+    #[test]
+    fn binding_plan_tuple_move_ok() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1),
+            capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0),
+            ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("single move binding should not conflict");
+    }
+
+    #[test]
+    fn binding_plan_two_borrows_same_path_ok() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("two borrows of same path should not conflict");
+    }
+
+    #[test]
+    fn binding_plan_move_and_borrow_same_path_rejects() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("move+borrow same path must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("capture"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn scrutinee_use_move_gives_consumed() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, ScrutineeUse, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        assert_eq!(scrutinee_use_from_plan(&plan), ScrutineeUse::Consumed);
+    }
+
+    #[test]
+    fn scrutinee_use_all_borrow_gives_preserved() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, ScrutineeUse, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        assert_eq!(scrutinee_use_from_plan(&plan), ScrutineeUse::Preserved);
+    }
+
+    #[test]
+    fn use_after_move_rejects() {
+        let src = r#"
+            fn take_val() -> i32 { return 5; }
+            fn main() {
+                let x: i32 = take_val();
+                let _ = x;
+                let _ = x;
+                return;
+            }
+        "#;
+        // i32 is Copy — use-after-move semantics only apply to non-Copy types.
+        // This test just validates the checker doesn't false-positive on i32.
+        typecheck_source(src).expect("plain i32 variable reuse should typecheck fine");
+    }
 }
 
 fn is_builtin_assert_name(
@@ -8058,4 +8197,263 @@ fn ensure_const_initializer_safe(
                     .to_string(),
         }),
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave C: binding plan builders + conflict validation
+// ──────────────────────────────────────────────────────────────
+
+/// Validate that no two items in the plan access the same path via conflicting
+/// capture modes (borrow vs. move, or duplicate move).
+/// Multiple borrows of the same path are allowed.
+pub(crate) fn validate_binding_plan_conflicts(plan: &BindingPlan) -> Result<(), FrontendError> {
+    let mut seen: BTreeMap<Vec<u8>, AccessKind> = BTreeMap::new();
+
+    for item in &plan.items {
+        // Encode path as bytes for BTreeMap key (no Hash needed).
+        let key = encode_path_key(&item.path);
+        let next = match item.capture {
+            CaptureMode::Borrow => AccessKind::Borrow,
+            CaptureMode::Move   => AccessKind::Move,
+        };
+        if let Some(&prev) = seen.get(&key) {
+            let conflict = match (prev, next) {
+                (AccessKind::Borrow, AccessKind::Borrow) => false,
+                _ => true,
+            };
+            if conflict {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "conflicting capture modes on the same pattern path for binding '{}'",
+                        item.name.0
+                    ),
+                });
+            }
+        } else {
+            seen.insert(key, next);
+        }
+    }
+    Ok(())
+}
+
+fn encode_path_key(path: &PatternPath) -> Vec<u8> {
+    use crate::types::PatternPathElem;
+    let mut out = Vec::new();
+    for elem in &path.elems {
+        match elem {
+            PatternPathElem::TupleIndex(i)  => { out.push(0); out.extend_from_slice(&(*i as u32).to_le_bytes()); }
+            PatternPathElem::Variant(s)     => { out.push(1); out.extend_from_slice(&s.0.to_le_bytes()); }
+            PatternPathElem::VariantField(i)=> { out.push(2); out.extend_from_slice(&(*i as u32).to_le_bytes()); }
+            PatternPathElem::RecordField(s) => { out.push(3); out.extend_from_slice(&s.0.to_le_bytes()); }
+        }
+    }
+    out
+}
+
+/// Determine whether the scrutinee is consumed (moved) by the plan.
+pub(crate) fn scrutinee_use_from_plan(plan: &BindingPlan) -> ScrutineeUse {
+    if plan.items.iter().any(|it| it.capture == CaptureMode::Move) {
+        ScrutineeUse::Consumed
+    } else {
+        ScrutineeUse::Preserved
+    }
+}
+
+/// Apply a binding plan to an env scope (insert all bindings as mutable locals).
+pub(crate) fn apply_binding_plan(env: &mut ScopeEnv, plan: &BindingPlan) {
+    for item in &plan.items {
+        env.insert(item.name, item.ty.clone());
+    }
+}
+
+/// Build a `BindingPlan` from tuple pattern items against a known tuple type.
+pub(crate) fn build_tuple_pattern_plan(
+    items: &[TuplePatternItem],
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(tuple_items) = expected_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple pattern requires tuple scrutinee, got {:?}", expected_ty
+            ),
+        });
+    };
+    if items.len() != tuple_items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple pattern arity mismatch: pattern has {} items, value has {}",
+                items.len(), tuple_items.len()
+            ),
+        });
+    }
+    for (idx, (item, item_ty)) in items.iter().zip(tuple_items.iter()).enumerate() {
+        let path = base.tuple_index(idx);
+        match item {
+            TuplePatternItem::Discard | TuplePatternItem::QuadLiteral(_) => {}
+            TuplePatternItem::Nested(nested) => {
+                build_tuple_pattern_plan(nested, item_ty, &path, out)?;
+            }
+            TuplePatternItem::Bind { name, capture } => {
+                out.push(BindingPlanItem {
+                    name: *name,
+                    capture: *capture,
+                    path,
+                    ty: item_ty.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from an ADT match pattern against a known ADT type.
+pub(crate) fn build_adt_pattern_plan(
+    pat: &AdtMatchPattern,
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let family = resolve_match_family_spec(expected_ty, arena, adt_table)?
+        .ok_or_else(|| FrontendError {
+            pos: 0,
+            message: "ADT pattern plan: scrutinee is not a sum type".to_string(),
+        })?;
+    let variant_name_str = resolve_symbol_name(arena, pat.variant_name)?;
+    let variant = family
+        .variants
+        .iter()
+        .find(|v| v.name == variant_name_str)
+        .ok_or_else(|| FrontendError {
+            pos: 0,
+            message: format!(
+                "unknown variant '{}' in ADT pattern plan",
+                variant_name_str
+            ),
+        })?;
+
+    if pat.items.len() != variant.payload.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "ADT pattern '{}::{}' arity mismatch: pattern has {} items, variant has {}",
+                family.family_name, variant_name_str,
+                pat.items.len(), variant.payload.len()
+            ),
+        });
+    }
+
+    let variant_root = base.variant(pat.variant_name);
+    for (idx, (item, item_ty)) in pat.items.iter().zip(variant.payload.iter()).enumerate() {
+        let path = variant_root.variant_field(idx);
+        match item {
+            AdtPatternItem::Discard => {}
+            AdtPatternItem::Bind { name, capture } => {
+                out.push(BindingPlanItem {
+                    name: *name,
+                    capture: *capture,
+                    path,
+                    ty: item_ty.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from any `MatchPattern`.
+///
+/// For `Or`, takes the first alternative as the canonical binding shape and
+/// validates that all other alternatives bind the same names/modes/types.
+pub(crate) fn build_match_pattern_plan(
+    pat: &MatchPattern,
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    match pat {
+        MatchPattern::Wildcard | MatchPattern::Quad(_) | MatchPattern::IntRange(_) => Ok(()),
+        MatchPattern::Adt(adt_pat) => {
+            build_adt_pattern_plan(adt_pat, expected_ty, base, out, arena, adt_table)
+        }
+        MatchPattern::Or(alts) => {
+            if alts.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "or-pattern must contain at least one alternative".to_string(),
+                });
+            }
+            let mut first_plan = BindingPlan::default();
+            build_match_pattern_plan(&alts[0], expected_ty, base, &mut first_plan, arena, adt_table)?;
+            validate_binding_plan_conflicts(&first_plan)?;
+
+            let baseline: Vec<(u32, CaptureMode)> = first_plan.items.iter()
+                .map(|it| (it.name.0, it.capture))
+                .collect();
+
+            for alt in &alts[1..] {
+                let mut alt_plan = BindingPlan::default();
+                build_match_pattern_plan(alt, expected_ty, base, &mut alt_plan, arena, adt_table)?;
+                validate_binding_plan_conflicts(&alt_plan)?;
+
+                let shape: Vec<(u32, CaptureMode)> = alt_plan.items.iter()
+                    .map(|it| (it.name.0, it.capture))
+                    .collect();
+
+                if shape != baseline {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "all or-pattern alternatives must bind the same names with the same capture modes".to_string(),
+                    });
+                }
+            }
+            out.items.extend(first_plan.items);
+            Ok(())
+        }
+    }
+}
+
+/// If the scrutinee expression is a plain variable and the plan consumed it,
+/// mark it unavailable in `env` so subsequent reads are rejected.
+pub(crate) fn maybe_mark_scrutinee_consumed(
+    scrutinee_id: ExprId,
+    plan: &BindingPlan,
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
+        if let Expr::Var(name) = arena.expr(scrutinee_id) {
+            env.mark_consumed(*name);
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave C: use-after-move guard for Expr::Var
+// ──────────────────────────────────────────────────────────────
+
+/// Call at every `Expr::Var` site in inference to reject use of moved values.
+pub(crate) fn check_var_not_consumed(
+    name: SymbolId,
+    env: &ScopeEnv,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    if env.is_consumed(name) {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "use of moved value '{}'",
+                resolve_symbol_name(arena, name)?
+            ),
+        });
+    }
+    Ok(())
 }

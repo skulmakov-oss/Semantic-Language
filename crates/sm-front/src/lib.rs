@@ -97,6 +97,8 @@ pub type ImplTable = Vec<ImplDecl>;
 pub struct ScopeBinding {
     pub ty: Type,
     pub is_const: bool,
+    /// M9.5 Wave C: true after the binding's value has been moved out.
+    pub consumed: bool,
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -137,12 +139,28 @@ impl ScopeEnv {
             ScopeBinding {
                 ty,
                 is_const: false,
+                consumed: false,
             },
         );
     }
 
     pub fn insert_const(&mut self, name: SymbolId, ty: Type) {
-        self.insert_binding(name, ScopeBinding { ty, is_const: true });
+        self.insert_binding(name, ScopeBinding { ty, is_const: true, consumed: false });
+    }
+
+    /// Mark a variable as consumed (moved out). Subsequent reads will be rejected.
+    pub fn mark_consumed(&mut self, name: SymbolId) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(binding) = scope.get_mut(&name) {
+                binding.consumed = true;
+                return;
+            }
+        }
+    }
+
+    /// Returns true if the variable has been moved and is no longer available.
+    pub fn is_consumed(&self, name: SymbolId) -> bool {
+        self.binding(name).map(|b| b.consumed).unwrap_or(false)
     }
 
     fn insert_binding(&mut self, name: SymbolId, binding: ScopeBinding) {

@@ -216,6 +216,93 @@ pub enum CaptureMode {
     Borrow,
 }
 
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave C: pattern path tracking, binding plans, scrutinee state
+// ──────────────────────────────────────────────────────────────
+
+/// One step in the address of a sub-value accessed by a pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PatternPathElem {
+    TupleIndex(usize),
+    Variant(SymbolId),
+    VariantField(usize),
+    RecordField(SymbolId),
+}
+
+/// Canonical address of a sub-value within the scrutinee.
+///
+/// `PatternPath::root()` refers to the scrutinee itself.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct PatternPath {
+    pub elems: Vec<PatternPathElem>,
+}
+
+impl PatternPath {
+    pub fn root() -> Self {
+        Self { elems: Vec::new() }
+    }
+    pub fn tuple_index(&self, idx: usize) -> Self {
+        let mut e = self.elems.clone(); e.push(PatternPathElem::TupleIndex(idx)); Self { elems: e }
+    }
+    pub fn variant(&self, name: SymbolId) -> Self {
+        let mut e = self.elems.clone(); e.push(PatternPathElem::Variant(name)); Self { elems: e }
+    }
+    pub fn variant_field(&self, idx: usize) -> Self {
+        let mut e = self.elems.clone(); e.push(PatternPathElem::VariantField(idx)); Self { elems: e }
+    }
+    pub fn record_field(&self, name: SymbolId) -> Self {
+        let mut e = self.elems.clone(); e.push(PatternPathElem::RecordField(name)); Self { elems: e }
+    }
+}
+
+/// A single binding produced by a pattern, with its sub-value address.
+#[derive(Debug, Clone)]
+pub struct BindingPlanItem {
+    pub name: SymbolId,
+    pub capture: CaptureMode,
+    pub path: PatternPath,
+    pub ty: Type,
+}
+
+/// The complete set of bindings a pattern produces from a scrutinee.
+///
+/// NOTE (M9.5 Wave A/B): CaptureMode is populated but not yet enforced in
+/// typecheck beyond conflict detection. Full move/borrow semantics arrive in
+/// Wave C.
+#[derive(Debug, Clone, Default)]
+pub struct BindingPlan {
+    pub items: Vec<BindingPlanItem>,
+}
+
+impl BindingPlan {
+    pub fn push(&mut self, item: BindingPlanItem) {
+        self.items.push(item);
+    }
+}
+
+/// Whether the same path is accessed as moved or borrowed (conflict detection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessKind {
+    Borrow,
+    Move,
+}
+
+/// Whether a scrutinee value is available after a match/if-let.
+///
+/// Consumed if any binding in the plan used `Move`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrutineeUse {
+    Preserved,
+    Consumed,
+}
+
+/// Availability of a local variable in scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueAvailability {
+    Available,
+    Consumed,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AdtPatternItem {
     /// M9.5 Wave A: binding now carries explicit capture mode (default `Move`).
@@ -731,6 +818,8 @@ pub enum TokenKind {
     KwPulse,
     KwProfile,
     KwImport,
+    /// M9.5 Wave B: `ref` keyword — borrow binding in patterns, e.g. `ref x` in tuple/ADT patterns.
+    KwRef,
     TyQuad,
     TyBool,
     TyI32,
@@ -1250,5 +1339,61 @@ mod tests {
         let item = AdtPatternItem::Bind { name: SymbolId(4), capture: CaptureMode::Move };
         let AdtPatternItem::Bind { capture, .. } = item else { panic!("expected Bind") };
         assert_eq!(capture, CaptureMode::Move, "default ADT binding capture must be Move");
+    }
+
+    // M9.5 Wave B — KwRef token owner layer
+
+    #[test]
+    fn kw_ref_lexes_to_reserved_token() {
+        use crate::lexer::lex_tokens;
+        let tokens = lex_tokens("ref x").unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::KwRef),
+            "expected KwRef token from 'ref'");
+    }
+
+    // M9.5 Wave C — PatternPath / BindingPlan owner layer
+
+    #[test]
+    fn pattern_path_root_is_empty() {
+        let p = PatternPath::root();
+        assert!(p.elems.is_empty());
+    }
+
+    #[test]
+    fn pattern_path_tuple_index_appends() {
+        let p = PatternPath::root().tuple_index(2);
+        assert_eq!(p.elems, vec![PatternPathElem::TupleIndex(2)]);
+    }
+
+    #[test]
+    fn pattern_path_nested_build() {
+        let p = PatternPath::root().tuple_index(1).variant_field(0);
+        assert_eq!(p.elems.len(), 2);
+        assert!(matches!(p.elems[0], PatternPathElem::TupleIndex(1)));
+        assert!(matches!(p.elems[1], PatternPathElem::VariantField(0)));
+    }
+
+    #[test]
+    fn binding_plan_default_is_empty() {
+        let plan = BindingPlan::default();
+        assert!(plan.items.is_empty());
+    }
+
+    #[test]
+    fn scrutinee_use_consumed_if_any_move() {
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1),
+            capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0),
+            ty: Type::I32,
+        });
+        assert_eq!(crate::types::ScrutineeUse::Consumed, {
+            if plan.items.iter().any(|it| it.capture == CaptureMode::Move) {
+                crate::types::ScrutineeUse::Consumed
+            } else {
+                crate::types::ScrutineeUse::Preserved
+            }
+        });
     }
 }

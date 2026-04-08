@@ -323,6 +323,7 @@ fn tokenize_line(
                     "Pulse" => TokenKind::KwPulse,
                     "Profile" => TokenKind::KwProfile,
                     "Import" => TokenKind::KwImport,
+                    "ref" => TokenKind::KwRef,
                     "quad" => TokenKind::TyQuad,
                     "bool" => TokenKind::TyBool,
                     "i32" => TokenKind::TyI32,

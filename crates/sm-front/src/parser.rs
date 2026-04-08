@@ -901,6 +901,9 @@ impl<'a> Parser<'a> {
                 TuplePatternItem::QuadLiteral(QuadVal::T)
             } else if self.eat(TokenKind::QuadS) {
                 TuplePatternItem::QuadLiteral(QuadVal::S)
+            } else if self.eat(TokenKind::KwRef) {
+                // M9.5 Wave B: `ref x` — borrow binding in tuple patterns.
+                TuplePatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Borrow }
             } else {
                 TuplePatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Move }
             };
@@ -2319,12 +2322,15 @@ impl<'a> Parser<'a> {
         loop {
             if self.eat(TokenKind::Underscore) {
                 items.push(AdtPatternItem::Discard);
+            } else if self.eat(TokenKind::KwRef) {
+                // M9.5 Wave B: `ref x` — borrow binding in ADT patterns.
+                items.push(AdtPatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Borrow });
             } else if self.check(TokenKind::Ident) {
                 items.push(AdtPatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Move });
             } else {
                 return Err(FrontendError {
                     pos: self.pos(),
-                    message: "enum match payload patterns currently support only flat name/_ items"
+                    message: "enum match payload patterns currently support name/ref name/_ items"
                         .to_string(),
                 });
             }
