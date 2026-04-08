@@ -693,6 +693,19 @@ impl<'a> Parser<'a> {
                         else_return,
                     }));
                 }
+                // M9.4 Wave 3: if any item is Nested, emit LetElseTuple (no else arm)
+                // so the typecheck path can handle recursive binding.
+                // Note: `=` and `value` are already consumed above.
+                let has_nested = items.iter().any(|i| matches!(i, TuplePatternItem::Nested(_)));
+                if has_nested {
+                    self.expect(TokenKind::Semi, "expected ';'")?;
+                    return Ok(self.arena.alloc_stmt(Stmt::LetElseTuple {
+                        items,
+                        ty,
+                        value,
+                        else_return: None,
+                    }));
+                }
                 let items = self.lower_tuple_pattern_items_to_bind(items)?;
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::LetTuple { items, ty, value }));

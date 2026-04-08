@@ -986,11 +986,9 @@ fn check_stmt(
                             });
                         }
                     }
-                    TuplePatternItem::Nested(_) => {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: "nested tuple patterns are not yet supported in typecheck; Wave 3 will add full support".to_string(),
-                        });
+                    TuplePatternItem::Nested(nested_items) => {
+                        // M9.4 Wave 3: recursive nested tuple destructuring.
+                        bind_tuple_pattern_items(nested_items, item_ty, env)?;
                     }
                 }
             }
@@ -1311,14 +1309,16 @@ fn check_stmt(
                 loop_stack,
             impl_list,
             )?;
+            // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
             if !matches!(
                 st,
                 Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+                    | Type::I32 | Type::U32
             ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             }
@@ -1708,10 +1708,63 @@ fn infer_expr_type(
             loop_stack,
         impl_list,
         ),
-        Expr::IfLet(_) => Err(FrontendError {
-            pos: 0,
-            message: "if-let expressions are not yet supported in typecheck; Wave 3 will add full support".to_string(),
-        }),
+        // M9.4 Wave 3: if-let expression typecheck.
+        Expr::IfLet(if_let) => {
+            // Infer value type.
+            let value_ty = infer_expr_type(
+                if_let.value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            // Typecheck pattern against value type — collect bindings.
+            let bindings =
+                bind_match_pattern(&if_let.pattern, &value_ty, arena, record_table, adt_table)?;
+            // then-block sees the bindings.
+            let mut then_env = env.clone();
+            then_env.push_scope();
+            for (name, ty) in bindings {
+                then_env.insert(name, ty);
+            }
+            let then_ty = infer_value_block_type(
+                &if_let.then_block,
+                arena,
+                &then_env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            // else-block uses original env (no bindings).
+            let else_ty = infer_value_block_type(
+                &if_let.else_block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+                impl_list,
+            )?;
+            if then_ty != else_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "if-let branch type mismatch: then is {:?}, else is {:?}",
+                        then_ty, else_ty
+                    ),
+                });
+            }
+            Ok(then_ty)
+        }
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
                 return Err(FrontendError {
@@ -5100,6 +5153,186 @@ mod tests {
             err.message
         );
     }
+
+    // M9.4 Wave 3 — richer pattern surface typecheck
+
+    #[test]
+    fn wildcard_match_pattern_typechecks() {
+        let src = r#"
+            enum Color { Red, Blue, Green }
+
+            fn main() {
+                let c: Color = Color::Red;
+                match c {
+                    Color::Red => { let r: i32 = 0; let _ = r; }
+                    Color::Blue => { let r: i32 = 1; let _ = r; }
+                    Color::Green => { let r: i32 = 2; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("exhaustive ADT match should typecheck");
+    }
+
+    #[test]
+    fn or_pattern_two_variants_covers_both() {
+        let src = r#"
+            enum Color { Red, Blue, Green }
+
+            fn main() {
+                let c: Color = Color::Red;
+                match c {
+                    Color::Red | Color::Blue => { let r: i32 = 0; let _ = r; }
+                    Color::Green => { let r: i32 = 2; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern covering two variants should typecheck");
+    }
+
+    #[test]
+    fn or_pattern_covers_all_variants_exhaustive() {
+        let src = r#"
+            enum Flag { A, B }
+
+            fn main() {
+                let f: Flag = Flag::A;
+                match f {
+                    Flag::A | Flag::B => { let r: i32 = 0; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern covering all variants should be exhaustive");
+    }
+
+    #[test]
+    fn int_range_pattern_typechecks_on_i32() {
+        let src = r#"
+            fn main() {
+                let x: i32 = 3;
+                match x {
+                    1..=5 => { let y: i32 = 1; let _ = y; }
+                    _ => { let y: i32 = 0; let _ = y; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("int range pattern on i32 should typecheck");
+    }
+
+    #[test]
+    fn int_range_pattern_rejects_non_integer_scrutinee() {
+        let src = r#"
+            fn main() {
+                let x: bool = true;
+                match x {
+                    1..=5 => { let r: i32 = 0; let _ = r; }
+                    _ => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("int range pattern on bool must reject");
+        assert!(
+            err.message.contains("i32") || err.message.contains("u32") || err.message.contains("scrutinee"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn int_range_inverted_bounds_rejects() {
+        let src = r#"
+            fn main() {
+                let x: i32 = 3;
+                match x {
+                    5..=1 => { let r: i32 = 0; let _ = r; }
+                    _ => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("inverted range bounds must reject");
+        assert!(
+            err.message.contains("start") || err.message.contains("end") || err.message.contains("<="),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn nested_tuple_destructuring_typechecks() {
+        let src = r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3));
+                let ra: i32 = a;
+                let rb: i32 = b;
+                let rc: i32 = c;
+                let _ = ra;
+                let _ = rb;
+                let _ = rc;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("nested tuple destructuring should typecheck");
+    }
+
+    #[test]
+    fn nested_tuple_arity_mismatch_rejects() {
+        let src = r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3, 4));
+                let _ = a;
+                let _ = b;
+                let _ = c;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("nested tuple arity mismatch must reject");
+        assert!(
+            err.message.contains("arity") || err.message.contains("mismatch"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn if_let_wildcard_typechecks() {
+        let src = r#"
+            fn make_int() -> i32 {
+                return 1;
+            }
+
+            fn main() {
+                let r: i32 = if let _ = make_int() { 1 } else { 0 };
+                let _ = r;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("if-let wildcard should typecheck");
+    }
+
+    #[test]
+    fn if_let_branch_type_mismatch_rejects() {
+        let src = r#"
+            enum Flag { A, B }
+
+            fn main() {
+                let f: Flag = Flag::A;
+                let r: i32 = if let Flag::A = f { 1 } else { true };
+                let _ = r;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("if-let branch type mismatch must reject");
+        assert!(
+            err.message.contains("mismatch") || err.message.contains("bool") || err.message.contains("i32"),
+            "unexpected error: {}", err.message
+        );
+    }
 }
 
 fn is_builtin_assert_name(
@@ -5230,14 +5463,16 @@ fn infer_match_expr_type(
         loop_stack,
     impl_list,
     )?;
+    // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
     if !matches!(
         scrutinee_ty,
         Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            | Type::I32 | Type::U32
     ) {
         return Err(FrontendError {
             pos: 0,
             message:
-                "match expression is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                "match expression is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                     .to_string(),
         });
     }
@@ -5471,14 +5706,16 @@ fn check_loop_expr_stmt(
                 loop_stack,
             impl_list,
             )?;
+            // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
             if !matches!(
                 st,
                 Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+                    | Type::I32 | Type::U32
             ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             }
@@ -7389,6 +7626,56 @@ fn resolve_match_family_spec(
     }
 }
 
+/// M9.4 Wave 3: recursively bind tuple pattern items into `env`.
+///
+/// Called for `LetElseTuple` with `Nested` items. Recurses into sub-tuples.
+fn bind_tuple_pattern_items(
+    items: &[TuplePatternItem],
+    tuple_ty: Type,
+    env: &mut ScopeEnv,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(item_tys) = tuple_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "nested tuple destructuring requires a tuple value, got {:?}",
+                tuple_ty
+            ),
+        });
+    };
+    if item_tys.len() != items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "nested tuple arity mismatch: pattern has {} items, value has {}",
+                items.len(),
+                item_tys.len()
+            ),
+        });
+    }
+    for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
+        match item {
+            TuplePatternItem::Bind(name) => env.insert(*name, item_ty),
+            TuplePatternItem::Discard => {}
+            TuplePatternItem::QuadLiteral(_) => {
+                if item_ty != Type::Quad {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "nested tuple quad pattern requires quad element, got {:?}",
+                            item_ty
+                        ),
+                    });
+                }
+            }
+            TuplePatternItem::Nested(nested_items) => {
+                bind_tuple_pattern_items(nested_items, item_ty, env)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn bind_match_pattern(
     pat: &MatchPattern,
     scrutinee_ty: &Type,
@@ -7422,7 +7709,7 @@ fn bind_match_pattern(
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             };
@@ -7486,16 +7773,50 @@ fn bind_match_pattern(
             }
             Ok(bindings)
         }
-        // M9.4 Wave 1: stubs — Wave 3 will add full typecheck support.
+        // M9.4 Wave 3: wildcard — no bindings, compatible with any scrutinee.
         (_, MatchPattern::Wildcard) => Ok(Vec::new()),
-        (_, MatchPattern::Or(_)) => Err(FrontendError {
-            pos: 0,
-            message: "or-patterns are not yet supported in typecheck; Wave 3 will add full support".to_string(),
-        }),
-        (_, MatchPattern::IntRange(_)) => Err(FrontendError {
-            pos: 0,
-            message: "integer range patterns are not yet supported in typecheck; Wave 3 will add full support".to_string(),
-        }),
+
+        // M9.4 Wave 3: or-pattern — all alternatives must typecheck against the
+        // same scrutinee; bindings from the first alternative are used (Wave 3
+        // does not enforce identical binding sets across alternatives).
+        (_, MatchPattern::Or(alts)) => {
+            if alts.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "or-pattern must have at least one alternative".to_string(),
+                });
+            }
+            // Typecheck each alternative against the scrutinee.
+            for alt in alts {
+                bind_match_pattern(alt, scrutinee_ty, arena, record_table, adt_table)?;
+            }
+            // Bindings come from the first alternative only.
+            bind_match_pattern(&alts[0], scrutinee_ty, arena, record_table, adt_table)
+        }
+
+        // M9.4 Wave 3: integer range pattern — scrutinee must be i32 or u32;
+        // start must be <= end.
+        (ty, MatchPattern::IntRange(range)) => {
+            if !matches!(ty, Type::I32 | Type::U32) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "integer range pattern requires i32 or u32 scrutinee, got {:?}",
+                        ty
+                    ),
+                });
+            }
+            if range.start > range.end {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "integer range pattern start ({}) must be <= end ({})",
+                        range.start, range.end
+                    ),
+                });
+            }
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -7514,9 +7835,25 @@ fn missing_exhaustive_sum_variants<'a>(
         if guard.is_some() {
             continue;
         }
-        // M9.4 Wave 1: wildcard covers all variants.
+        // M9.4 Wave 3: wildcard covers all variants.
         if matches!(pat, MatchPattern::Wildcard) {
             return Ok(Some((family.display_label, Vec::new())));
+        }
+        // M9.4 Wave 3: or-pattern — expand alternatives into coverage.
+        if let MatchPattern::Or(alts) = pat {
+            for alt in alts {
+                if matches!(alt, MatchPattern::Wildcard) {
+                    return Ok(Some((family.display_label, Vec::new())));
+                }
+                if let MatchPattern::Adt(adt_pat) = alt {
+                    if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
+                        covered.insert(
+                            resolve_symbol_name(arena, adt_pat.variant_name)?.to_string(),
+                        );
+                    }
+                }
+            }
+            continue;
         }
         if let MatchPattern::Adt(adt_pat) = pat {
             if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
