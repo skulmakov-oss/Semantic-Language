@@ -4,7 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-- No unreleased entries yet.
+### Added (post-v1.1.1 language-maturity subtracks)
+
+- **M9.2 Traits (static)**: traits/impls now have full owner-layer representation,
+  parser admission, and static typecheck support.
+  - `trait` and `impl` declarations admitted at top level
+  - `TraitDecl`, `ImplDecl`, `TraitBound`, `TraitMethodSig` AST nodes
+  - `<T: TraitName>` bound syntax on generic function type parameters
+  - `validate_trait_coherence`: rejects duplicate `(trait, for_type)` impl pairs
+  - `validate_impl_conformance`: rejects impls with missing methods or wrong return types
+  - bound satisfaction check at generic call sites
+  - runtime dispatch, trait objects, specialization, and blanket impls remain deferred
+  - done-boundary: `M9.2 closes at static trait admission + coherence/conformance + bound satisfaction`
 
 ## v1.1.1 - 2026-04-01
 

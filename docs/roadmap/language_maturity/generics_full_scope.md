@@ -65,7 +65,7 @@ its widened contract on `main`.
 
 - higher-kinded types
 - variance annotations (covariance, contravariance)
-- trait/protocol bounds on type parameters (deferred to M9.2)
+- trait/protocol bounds on type parameters (completed in M9.2)
 - associated types or type families
 - generic closures beyond what first-wave monomorphisation admits
 - specialisation or template-based optimisation
