@@ -187,14 +187,9 @@ fn tokenize_line(
                     push_tok(out, TokenKind::PipeForward, "|>", abs_pos, line_no, col);
                     i += 2;
                 } else {
-                    return Err(fmt_mark_error(
-                        "E0003",
-                        line_no,
-                        col,
-                        line_text,
-                        "expected '||' or '|>'",
-                        abs_pos,
-                    ));
+                    // M9.4 Wave 2: bare `|` is the or-pattern separator.
+                    push_tok(out, TokenKind::Pipe, "|", abs_pos, line_no, col);
+                    i += 1;
                 }
             }
             b'+' => {

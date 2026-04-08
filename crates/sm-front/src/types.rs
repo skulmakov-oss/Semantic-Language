@@ -735,6 +735,8 @@ pub enum TokenKind {
     AndAnd,
     OrOr,
     PipeForward,
+    /// `|` — bare pipe used as or-pattern separator. M9.4 Wave 2.
+    Pipe,
     AndAndAssign,
     OrOrAssign,
     PlusAssign,
