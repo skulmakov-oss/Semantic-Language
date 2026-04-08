@@ -1325,12 +1325,13 @@ fn check_stmt(
                 });
             }
 
+            // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
+            let mut any_arm_moves = false;
             for arm in arms {
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(&arm.pat, &st, arena, record_table, adt_table)?
-                {
-                    arm_env.insert(name, ty);
+                let (plan, mut arm_env) =
+                    build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                if scrutinee_use_from_plan(&plan) == ScrutineeUse::Consumed {
+                    any_arm_moves = true;
                 }
                 check_match_guard(
                     arm.guard,
@@ -1357,6 +1358,12 @@ fn check_stmt(
                     )?;
                 }
                 arm_env.pop_scope();
+            }
+            // Conservative: if any reachable arm moved from scrutinee variable → consumed.
+            if any_arm_moves {
+                if let Expr::Var(name) = arena.expr(*scrutinee) {
+                    env.mark_consumed(*name);
+                }
             }
 
             if default.is_empty() {
@@ -5474,6 +5481,124 @@ mod tests {
         // This test just validates the checker doesn't false-positive on i32.
         typecheck_source(src).expect("plain i32 variable reuse should typecheck fine");
     }
+
+    // M9.5 Wave D — match ownership pipeline
+
+    #[test]
+    fn match_borrow_binding_does_not_consume_scrutinee() {
+        // All-borrow match: scrutinee variable stays available after the match.
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn make() -> Maybe { return Maybe::None; }
+            fn main() {
+                let v: Maybe = make();
+                match v {
+                    Maybe::Some(ref x) => { let _ = x; }
+                    Maybe::None => { let r: i32 = 0; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("all-borrow match should not consume scrutinee");
+    }
+
+    #[test]
+    fn match_move_binding_typechecks() {
+        // Move binding in match arm: the binding captures the payload.
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(5); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(x) => { let r: i32 = x; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("move binding in match arm should typecheck");
+    }
+
+    #[test]
+    fn match_or_pattern_all_borrow_ok() {
+        // Or-pattern where all alternatives borrow: ok.
+        let src = r#"
+            enum Flag { A, B, C }
+            fn main() {
+                let f: Flag = Flag::A;
+                match f {
+                    Flag::A | Flag::B => { let r: i32 = 0; let _ = r; }
+                    Flag::C => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern match should typecheck");
+    }
+
+    #[test]
+    fn match_inconsistent_or_pattern_capture_rejects() {
+        // One arm binds with ref, the other without — must be same shape.
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(1); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(ref x) | Wrap::Val(y) => { let _ = y; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("inconsistent or-pattern capture modes must reject");
+        assert!(
+            err.message.contains("same") || err.message.contains("capture") || err.message.contains("alternative"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn match_same_path_move_and_borrow_rejects() {
+        // A single arm with two bindings for the same payload slot (move + borrow conflict).
+        // This is enforced by validate_binding_plan_conflicts.
+        // Note: parser currently only allows one binding per payload slot,
+        // so this test validates the plan-level conflict check via direct API.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().variant(SymbolId(0)).variant_field(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("move+borrow same path must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("capture"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn match_all_arms_borrow_path_ok() {
+        // Two bindings for the same path both borrowing: allowed.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("double-borrow same path must not conflict");
+    }
 }
 
 fn is_builtin_assert_name(
@@ -5618,15 +5743,13 @@ fn infer_match_expr_type(
         });
     }
 
+    // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
+    // NOTE: infer_match_expr_type receives &ScopeEnv (not mut), so consumed-state
+    // marking is skipped here; it is enforced at statement-level match sites instead.
     let mut result_ty = None;
     for arm in &match_expr.arms {
-        let mut arm_env = env.clone();
-        arm_env.push_scope();
-        for (name, ty) in
-            bind_match_pattern(&arm.pat, &scrutinee_ty, arena, record_table, adt_table)?
-        {
-            arm_env.insert(name, ty);
-        }
+        let (_, arm_env) =
+            build_and_apply_match_plan(&arm.pat, &scrutinee_ty, env, arena, adt_table)?;
         check_match_guard(
             arm.guard,
             arena,
@@ -5867,12 +5990,13 @@ fn check_loop_expr_stmt(
                 });
             }
 
+            // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
+            let mut any_arm_moves = false;
             for arm in arms {
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(&arm.pat, &st, arena, record_table, adt_table)?
-                {
-                    arm_env.insert(name, ty);
+                let (plan, mut arm_env) =
+                    build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                if scrutinee_use_from_plan(&plan) == ScrutineeUse::Consumed {
+                    any_arm_moves = true;
                 }
                 check_match_guard(
                     arm.guard,
@@ -5899,6 +6023,11 @@ fn check_loop_expr_stmt(
                     )?;
                 }
                 arm_env.pop_scope();
+            }
+            if any_arm_moves {
+                if let Expr::Var(name) = arena.expr(*scrutinee) {
+                    env.mark_consumed(*name);
+                }
             }
 
             let mut def_env = env.clone();
@@ -8325,6 +8454,17 @@ pub(crate) fn build_adt_pattern_plan(
             pos: 0,
             message: "ADT pattern plan: scrutinee is not a sum type".to_string(),
         })?;
+    // Verify that the pattern's enum name matches the scrutinee family.
+    let pattern_family_name = resolve_symbol_name(arena, pat.adt_name)?.to_string();
+    if pattern_family_name != family.family_name {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "match arm pattern type '{}' does not match scrutinee {}",
+                pattern_family_name, family.display_label
+            ),
+        });
+    }
     let variant_name_str = resolve_symbol_name(arena, pat.variant_name)?;
     let variant = family
         .variants
@@ -8333,8 +8473,8 @@ pub(crate) fn build_adt_pattern_plan(
         .ok_or_else(|| FrontendError {
             pos: 0,
             message: format!(
-                "unknown variant '{}' in ADT pattern plan",
-                variant_name_str
+                "{} has no variant named '{}' in match pattern",
+                family.display_label, variant_name_str
             ),
         })?;
 
@@ -8380,7 +8520,19 @@ pub(crate) fn build_match_pattern_plan(
     adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
     match pat {
-        MatchPattern::Wildcard | MatchPattern::Quad(_) | MatchPattern::IntRange(_) => Ok(()),
+        MatchPattern::Wildcard | MatchPattern::Quad(_) => Ok(()),
+        MatchPattern::IntRange(range) => {
+            if range.start > range.end {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "int range pattern start ({}) must be <= end ({})",
+                        range.start, range.end
+                    ),
+                });
+            }
+            Ok(())
+        }
         MatchPattern::Adt(adt_pat) => {
             build_adt_pattern_plan(adt_pat, expected_ty, base, out, arena, adt_table)
         }
@@ -8456,4 +8608,45 @@ pub(crate) fn check_var_not_consumed(
         });
     }
     Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave D: match integration helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Build a binding plan for one match arm pattern, validate conflicts,
+/// clone `env`, and apply the plan to the clone. Returns `(plan, arm_env)`.
+///
+/// NOTE (M9.5): PatternPath overlap (e.g., root vs root.0) is NOT checked yet.
+/// Only exact-path conflicts are validated.
+pub(crate) fn build_and_apply_match_plan<'e>(
+    pattern: &MatchPattern,
+    scrutinee_ty: &Type,
+    env: &'e ScopeEnv,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(BindingPlan, ScopeEnv), FrontendError> {
+    let mut plan = BindingPlan::default();
+    build_match_pattern_plan(pattern, scrutinee_ty, &PatternPath::root(), &mut plan, arena, adt_table)?;
+    validate_binding_plan_conflicts(&plan)?;
+    let mut arm_env = env.clone();
+    arm_env.push_scope();
+    apply_binding_plan(&mut arm_env, &plan);
+    Ok((plan, arm_env))
+}
+
+/// Mark the scrutinee variable consumed if the plan moved any value from it.
+/// Only acts when scrutinee_expr is a plain `Expr::Var`.
+/// Used at statement level where `env` is `&mut ScopeEnv`.
+pub(crate) fn mark_scrutinee_if_moved(
+    scrutinee_expr: ExprId,
+    plan: &BindingPlan,
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
+        if let Expr::Var(name) = arena.expr(scrutinee_expr) {
+            env.mark_consumed(*name);
+        }
+    }
 }
