@@ -973,7 +973,7 @@ fn check_stmt(
             )?;
             for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
                 match item {
-                    TuplePatternItem::Bind(name) => env.insert(*name, item_ty),
+                    TuplePatternItem::Bind { name, .. } => env.insert(*name, item_ty),
                     TuplePatternItem::Discard => {}
                     TuplePatternItem::QuadLiteral(_) => {
                         if item_ty != Type::Quad {
@@ -1710,6 +1710,8 @@ fn infer_expr_type(
         ),
         // M9.4 Wave 3: if-let expression typecheck.
         Expr::IfLet(if_let) => {
+            // TODO(M9.5): disambiguate expr parsing for scrutinee to avoid record-literal conflict
+            // (e.g. `if let Pat = v { ... }` where `v { ... }` is parsed as a record literal).
             // Infer value type.
             let value_ty = infer_expr_type(
                 if_let.value,
@@ -7629,6 +7631,10 @@ fn resolve_match_family_spec(
 /// M9.4 Wave 3: recursively bind tuple pattern items into `env`.
 ///
 /// Called for `LetElseTuple` with `Nested` items. Recurses into sub-tuples.
+///
+/// NOTE(M9.4 strategy): `let (a, (b, c)) = ...` is lowered to `LetElseTuple` (no else arm)
+/// instead of `LetTuple`, so this recursive helper can handle the nested binding.
+/// This is a temporary bridge — M9.5+ move/borrow semantics will revisit this path.
 fn bind_tuple_pattern_items(
     items: &[TuplePatternItem],
     tuple_ty: Type,
@@ -7655,7 +7661,7 @@ fn bind_tuple_pattern_items(
     }
     for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
         match item {
-            TuplePatternItem::Bind(name) => env.insert(*name, item_ty),
+            TuplePatternItem::Bind { name, .. } => env.insert(*name, item_ty),
             TuplePatternItem::Discard => {}
             TuplePatternItem::QuadLiteral(_) => {
                 if item_ty != Type::Quad {
@@ -7755,7 +7761,7 @@ fn bind_match_pattern(
             {
                 let payload_ty =
                     canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
-                if let AdtPatternItem::Bind(name) = item {
+                if let AdtPatternItem::Bind { name, .. } = item {
                     if !seen.insert(*name) {
                         return Err(FrontendError {
                             pos: 0,
@@ -7835,7 +7841,8 @@ fn missing_exhaustive_sum_variants<'a>(
         if guard.is_some() {
             continue;
         }
-        // M9.4 Wave 3: wildcard covers all variants.
+        // NOTE: Range and tuple patterns are not included in exhaustiveness (M9.4 Wave 3 boundary).
+        // Wildcard covers all variants.
         if matches!(pat, MatchPattern::Wildcard) {
             return Ok(Some((family.display_label, Vec::new())));
         }

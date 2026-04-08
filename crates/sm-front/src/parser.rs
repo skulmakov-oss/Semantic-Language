@@ -1,8 +1,8 @@
 use crate::lexer::lex_tokens;
 use crate::types::{
     AdtCtorExpr, AdtDecl, AdtMatchPattern, AdtPatternItem, AdtVariant, AstArena, BinaryOp,
-    BlockExpr, CallArg, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily, Expr, ExprId,
-    FrontendError, Function, IfExpr, IfLetExpr, ImplDecl, IntRangePattern, LogosEntity,
+    BlockExpr, CallArg, CaptureMode, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily,
+    Expr, ExprId, FrontendError, Function, IfExpr, IfLetExpr, ImplDecl, IntRangePattern, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField,
@@ -902,11 +902,11 @@ impl<'a> Parser<'a> {
             } else if self.eat(TokenKind::QuadS) {
                 TuplePatternItem::QuadLiteral(QuadVal::S)
             } else {
-                TuplePatternItem::Bind(self.expect_symbol()?)
+                TuplePatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Move }
             };
-            if let TuplePatternItem::Bind(name) = item {
+            if let TuplePatternItem::Bind { name, .. } = item {
                 if items.iter().any(|existing| {
-                    matches!(existing, TuplePatternItem::Bind(existing_name) if *existing_name == name)
+                    matches!(existing, TuplePatternItem::Bind { name: existing_name, .. } if *existing_name == name)
                 }) {
                     return Err(FrontendError {
                         pos: self.pos(),
@@ -946,7 +946,7 @@ impl<'a> Parser<'a> {
         let mut bind_items = Vec::with_capacity(items.len());
         for item in items {
             match item {
-                TuplePatternItem::Bind(name) => bind_items.push(Some(name)),
+                TuplePatternItem::Bind { name, .. } => bind_items.push(Some(name)),
                 TuplePatternItem::Discard => bind_items.push(None),
                 TuplePatternItem::QuadLiteral(_) => {
                     return Err(FrontendError {
@@ -2029,7 +2029,7 @@ impl<'a> Parser<'a> {
                 .items
                 .iter()
                 .filter_map(|item| match item {
-                    AdtPatternItem::Bind(name) => Some(*name),
+                    AdtPatternItem::Bind { name, .. } => Some(*name),
                     AdtPatternItem::Discard => None,
                 })
                 .collect(),
@@ -2320,7 +2320,7 @@ impl<'a> Parser<'a> {
             if self.eat(TokenKind::Underscore) {
                 items.push(AdtPatternItem::Discard);
             } else if self.check(TokenKind::Ident) {
-                items.push(AdtPatternItem::Bind(self.expect_symbol()?));
+                items.push(AdtPatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Move });
             } else {
                 return Err(FrontendError {
                     pos: self.pos(),
@@ -4241,7 +4241,7 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(pat.adt_name), "Maybe");
         assert_eq!(program.arena.symbol_name(pat.variant_name), "Some");
-        assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+        assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind { .. }]));
         assert!(match_expr.default.is_some());
     }
 
@@ -4427,7 +4427,7 @@ fn main() {
             panic!("expected tuple let-else statement");
         };
         assert_eq!(items.len(), 2);
-        assert!(matches!(items[0], TuplePatternItem::Bind(_)));
+        assert!(matches!(items[0], TuplePatternItem::Bind { .. }));
         assert!(matches!(
             items[1],
             TuplePatternItem::QuadLiteral(QuadVal::T)
@@ -4838,7 +4838,7 @@ fn main() {
                 };
                 assert_eq!(program.arena.symbol_name(pat.adt_name), "Option");
                 assert_eq!(program.arena.symbol_name(pat.variant_name), "Some");
-                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind { .. }]));
             }
             other => panic!("expected match stmt, got {:?}", other),
         }
@@ -4853,7 +4853,7 @@ fn main() {
                 };
                 assert_eq!(program.arena.symbol_name(pat.adt_name), "Result");
                 assert_eq!(program.arena.symbol_name(pat.variant_name), "Err");
-                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind { .. }]));
             }
             other => panic!("expected match stmt, got {:?}", other),
         }

@@ -2961,6 +2961,11 @@ fn lower_expr_with_expected(
             }
             Ok((dst, lt))
         }
+        // M9.4 Wave 1: IfLet lowering is deferred (typecheck-only in M9.4).
+        Expr::IfLet(_) => Err(FrontendError {
+            pos: 0,
+            message: "if-let lowering is not yet implemented in the IR backend".to_string(),
+        }),
     }
 }
 
@@ -3529,7 +3534,7 @@ fn bind_let_else_tuple_items(
             index,
         });
         match item {
-            TuplePatternItem::Bind(name) => deferred_binds.push((*name, reg, item_ty.clone())),
+            TuplePatternItem::Bind { name, .. } => deferred_binds.push((*name, reg, item_ty.clone())),
             TuplePatternItem::Discard => {}
             TuplePatternItem::QuadLiteral(pat) => {
                 if *item_ty != Type::Quad {
@@ -3578,6 +3583,11 @@ fn bind_let_else_tuple_items(
                     name: continue_label,
                 });
             }
+            // M9.4 Wave 1: nested tuple lowering is deferred.
+            TuplePatternItem::Nested(_) => return Err(FrontendError {
+                pos: 0,
+                message: "nested tuple lowering is not yet implemented in the IR backend".to_string(),
+            }),
         }
     }
 
@@ -4919,6 +4929,13 @@ fn expect_quad_match_pattern(pat: &MatchPattern) -> Result<QuadVal, FrontendErro
             pos: 0,
             message: "enum match pattern requires enum scrutinee in lowering".to_string(),
         }),
+        // M9.4 Wave 1: these patterns are typecheck-only in M9.4; lowering is deferred.
+        MatchPattern::Wildcard | MatchPattern::Or(_) | MatchPattern::IntRange(_) => {
+            Err(FrontendError {
+                pos: 0,
+                message: "wildcard/or/range match pattern lowering is not yet implemented in the IR backend".to_string(),
+            })
+        }
     }
 }
 
@@ -5053,7 +5070,7 @@ fn resolve_sum_match_pattern_for_lowering(
     for (index, (item, declared_ty)) in adt_pat.items.iter().zip(variant.payload.iter()).enumerate()
     {
         let payload_ty = canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
-        if let AdtPatternItem::Bind(name) = item {
+        if let AdtPatternItem::Bind { name, .. } = item {
             bindings.push(LoweredAdtMatchBinding {
                 name: *name,
                 ty: payload_ty,

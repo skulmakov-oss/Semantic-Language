@@ -206,9 +206,20 @@ pub struct AdtCtorExpr {
     pub payload: Vec<ExprId>,
 }
 
+/// M9.5 Wave A: capture mode for pattern bindings.
+///
+/// Default is `Move`. `Borrow` is spelled `ref x` in source.
+/// Mutable borrow, partial move, lifetime inference, and reborrow are deferred.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum CaptureMode {
+    Move,
+    Borrow,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AdtPatternItem {
-    Bind(SymbolId),
+    /// M9.5 Wave A: binding now carries explicit capture mode (default `Move`).
+    Bind { name: SymbolId, capture: CaptureMode },
     Discard,
 }
 
@@ -384,7 +395,8 @@ pub struct RangeExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TuplePatternItem {
-    Bind(SymbolId),
+    /// M9.5 Wave A: binding now carries explicit capture mode (default `Move`).
+    Bind { name: SymbolId, capture: CaptureMode },
     Discard,
     QuadLiteral(QuadVal),
     /// M9.4 Wave 1: nested tuple destructuring — `(a, (b, c))` beyond one level.
@@ -1146,7 +1158,7 @@ mod tests {
 
     #[test]
     fn nested_tuple_pattern_item_owner_layer_is_stable() {
-        let inner = vec![TuplePatternItem::Bind(SymbolId(0)), TuplePatternItem::Discard];
+        let inner = vec![TuplePatternItem::Bind { name: SymbolId(0), capture: CaptureMode::Move }, TuplePatternItem::Discard];
         let nested = TuplePatternItem::Nested(inner);
         assert!(matches!(nested, TuplePatternItem::Nested(ref items) if items.len() == 2));
     }
@@ -1195,5 +1207,48 @@ mod tests {
         };
         assert!(matches!(if_let.pattern, MatchPattern::Wildcard));
         assert_eq!(if_let.value, value_id);
+    }
+
+    // M9.5 Wave A — capture mode owner layer
+
+    #[test]
+    fn capture_mode_move_and_borrow_are_distinct() {
+        assert_ne!(CaptureMode::Move, CaptureMode::Borrow);
+        assert_eq!(CaptureMode::Move, CaptureMode::Move);
+        assert_eq!(CaptureMode::Borrow, CaptureMode::Borrow);
+    }
+
+    #[test]
+    fn tuple_pattern_bind_carries_capture_mode() {
+        let item_move = TuplePatternItem::Bind { name: SymbolId(1), capture: CaptureMode::Move };
+        let item_borrow = TuplePatternItem::Bind { name: SymbolId(1), capture: CaptureMode::Borrow };
+        assert!(matches!(item_move, TuplePatternItem::Bind { capture: CaptureMode::Move, .. }));
+        assert!(matches!(item_borrow, TuplePatternItem::Bind { capture: CaptureMode::Borrow, .. }));
+        // Two bindings of same name but different capture mode are distinct.
+        assert_ne!(item_move, item_borrow);
+    }
+
+    #[test]
+    fn adt_pattern_bind_carries_capture_mode() {
+        let item_move = AdtPatternItem::Bind { name: SymbolId(2), capture: CaptureMode::Move };
+        let item_borrow = AdtPatternItem::Bind { name: SymbolId(2), capture: CaptureMode::Borrow };
+        assert!(matches!(item_move, AdtPatternItem::Bind { capture: CaptureMode::Move, .. }));
+        assert!(matches!(item_borrow, AdtPatternItem::Bind { capture: CaptureMode::Borrow, .. }));
+        assert_ne!(item_move, item_borrow);
+    }
+
+    #[test]
+    fn tuple_pattern_default_is_move() {
+        // Default capture in parser-generated nodes is Move; Borrow requires explicit `ref`.
+        let item = TuplePatternItem::Bind { name: SymbolId(3), capture: CaptureMode::Move };
+        let TuplePatternItem::Bind { capture, .. } = item else { panic!("expected Bind") };
+        assert_eq!(capture, CaptureMode::Move, "default tuple binding capture must be Move");
+    }
+
+    #[test]
+    fn adt_pattern_default_is_move() {
+        let item = AdtPatternItem::Bind { name: SymbolId(4), capture: CaptureMode::Move };
+        let AdtPatternItem::Bind { capture, .. } = item else { panic!("expected Bind") };
+        assert_eq!(capture, CaptureMode::Move, "default ADT binding capture must be Move");
     }
 }
