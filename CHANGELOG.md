@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file.
 
 ### Added (post-v1.1.1 language-maturity subtracks)
 
+- **M9.4 Richer Pattern Surface**: five new pattern forms across owner layer, parser, and typecheck.
+  - `MatchPattern::Wildcard` — bare `_` matches any scrutinee, binds nothing
+  - `MatchPattern::Or(alts)` — pipe-separated alternatives `P1 | P2 | P3`
+  - `MatchPattern::IntRange(IntRangePattern)` — integer range `1..=5` / `1..5`; admitted for `i32`/`u32` scrutinees
+  - `TuplePatternItem::Nested(items)` — recursive tuple destructuring `let (a, (b, c)) = ...`
+  - `Expr::IfLet(IfLetExpr)` — `if let Pat = expr { } else { }` binding guard
+  - `TokenKind::Pipe` — bare `|` now lexes as a token (was error)
+  - exhaustiveness: Wildcard covers all variants; Or unwraps alternatives for variant coverage
+  - done-boundary: `M9.4 closes at owner layer + parser admission + typecheck for all five forms`
+
 - **M9.2 Traits (static)**: traits/impls now have full owner-layer representation,
   parser admission, and static typecheck support.
   - `trait` and `impl` declarations admitted at top level
