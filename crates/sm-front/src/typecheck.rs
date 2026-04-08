@@ -90,7 +90,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
     validate_record_declarations(program, &record_table, &adt_table)?;
     validate_adt_declarations(program, &record_table, &adt_table)?;
     validate_schema_declarations(program, &schema_table, &record_table, &adt_table)?;
-    type_check_function_with_tables(func, &program.arena, &table, &record_table, &adt_table)
+    type_check_function_with_tables(func, &program.arena, &table, &record_table, &adt_table, &[])
 }
 
 pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
@@ -98,6 +98,10 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
     let record_table = build_record_table(p)?;
     let adt_table = build_adt_table(p)?;
     let schema_table = build_schema_table(p)?;
+    // M9.2 Wave 3: trait coherence and impl conformance.
+    let trait_table = build_trait_table(p)?;
+    validate_trait_coherence(&p.impls, &p.arena)?;
+    validate_impl_conformance(&p.impls, &trait_table, &p.arena)?;
     validate_top_level_name_collisions(p, &table, &record_table, &adt_table, &schema_table)?;
     validate_record_declarations(p, &record_table, &adt_table)?;
     validate_adt_declarations(p, &record_table, &adt_table)?;
@@ -122,7 +126,7 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
         });
     }
     for f in &p.functions {
-        type_check_function_with_tables(f, &p.arena, &table, &record_table, &adt_table)?;
+        type_check_function_with_tables(f, &p.arena, &table, &record_table, &adt_table, &p.impls)?;
     }
     Ok(())
 }
@@ -196,7 +200,7 @@ pub fn type_check_function_with_table(
 ) -> Result<(), FrontendError> {
     let empty_records = RecordTable::new();
     let empty_adts = AdtTable::new();
-    type_check_function_with_tables(func, arena, table, &empty_records, &empty_adts)
+    type_check_function_with_tables(func, arena, table, &empty_records, &empty_adts, &[])
 }
 
 fn type_check_function_with_tables(
@@ -205,6 +209,7 @@ fn type_check_function_with_tables(
     table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.params.len() != func.param_defaults.len() {
         return Err(FrontendError {
@@ -279,6 +284,7 @@ fn type_check_function_with_tables(
                 adt_table,
                 Type::Unit,
                 &mut default_loop_stack,
+            impl_list,
             )?;
             if let Err(err) = ensure_const_initializer_safe(*default_expr, arena, &empty_env) {
                 return Err(FrontendError {
@@ -299,9 +305,9 @@ fn type_check_function_with_tables(
             )?;
         }
     }
-    check_requires_clauses(func, arena, table, record_table, adt_table)?;
-    check_ensures_clauses(func, arena, table, record_table, adt_table, &canonical_ret)?;
-    check_invariant_clauses(func, arena, table, record_table, adt_table, &canonical_ret)?;
+    check_requires_clauses(func, arena, table, record_table, adt_table, impl_list)?;
+    check_ensures_clauses(func, arena, table, record_table, adt_table, &canonical_ret, impl_list)?;
+    check_invariant_clauses(func, arena, table, record_table, adt_table, &canonical_ret, impl_list)?;
     let mut env = ScopeEnv::with_params(&canonical_params);
     let mut loop_stack = Vec::new();
     for stmt in &func.body {
@@ -314,6 +320,7 @@ fn type_check_function_with_tables(
             record_table,
             adt_table,
             &mut loop_stack,
+        impl_list,
         )?;
     }
     Ok(())
@@ -325,6 +332,7 @@ fn check_requires_clauses(
     table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.requires.is_empty() {
         return Ok(());
@@ -352,6 +360,7 @@ fn check_requires_clauses(
             adt_table,
             canonicalize_declared_type_generic(&func.ret, record_table, adt_table, arena, &func.type_params)?,
             &mut loop_stack,
+        impl_list,
         )?;
         if condition_ty != Type::Bool {
             return Err(FrontendError {
@@ -373,6 +382,7 @@ fn check_ensures_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     canonical_ret: &Type,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.ensures.is_empty() {
         return Ok(());
@@ -406,6 +416,7 @@ fn check_ensures_clauses(
             adt_table,
             canonical_ret.clone(),
             &mut loop_stack,
+        impl_list,
         )?;
         if condition_ty != Type::Bool {
             return Err(FrontendError {
@@ -427,6 +438,7 @@ fn check_invariant_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     canonical_ret: &Type,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.invariants.is_empty() {
         return Ok(());
@@ -461,6 +473,7 @@ fn check_invariant_clauses(
             adt_table,
             canonical_ret.clone(),
             &mut loop_stack,
+        impl_list,
         )?;
         if condition_ty != Type::Bool {
             return Err(FrontendError {
@@ -536,6 +549,7 @@ fn check_stmt(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
@@ -567,6 +581,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
@@ -586,6 +601,7 @@ fn check_stmt(
                     adt_table,
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 vt
             };
@@ -619,6 +635,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
@@ -638,6 +655,7 @@ fn check_stmt(
                     adt_table,
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 vt
             };
@@ -671,6 +689,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
@@ -690,6 +709,7 @@ fn check_stmt(
                     adt_table,
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 vt
             };
@@ -737,6 +757,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if value_ty != Type::Record(*record_name) {
                 return Err(FrontendError {
@@ -803,6 +824,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if value_ty != Type::Record(*record_name) {
                 return Err(FrontendError {
@@ -823,6 +845,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             let mut saw_refutable_item = false;
             for item in items {
@@ -906,6 +929,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let final_ty = if let Some(ann) = ty {
                 let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
@@ -945,6 +969,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
                 match item {
@@ -992,6 +1017,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty,
@@ -1030,6 +1056,7 @@ fn check_stmt(
                 Some(target_ty.clone()),
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             ensure_binding_value_type(
                 target_ty,
@@ -1049,6 +1076,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let Type::Tuple(item_tys) = value_ty else {
                 return Err(FrontendError {
@@ -1109,6 +1137,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if range_ty != Type::RangeI32 {
                 return Err(FrontendError {
@@ -1129,6 +1158,7 @@ fn check_stmt(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             body_env.pop_scope();
@@ -1144,6 +1174,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             let frame = loop_stack.last_mut().ok_or(FrontendError {
                 pos: 0,
@@ -1177,6 +1208,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if condition_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1195,6 +1227,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )
         }
         Stmt::If {
@@ -1211,6 +1244,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if ct != Type::Bool {
                 return Err(FrontendError {
@@ -1232,6 +1266,7 @@ fn check_stmt(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             then_env.pop_scope();
@@ -1248,6 +1283,7 @@ fn check_stmt(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             else_env.pop_scope();
@@ -1267,6 +1303,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if !matches!(
                 st,
@@ -1296,6 +1333,7 @@ fn check_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 for s in &arm.block {
                     check_stmt(
@@ -1307,6 +1345,7 @@ fn check_stmt(
                         record_table,
                         adt_table,
                         loop_stack,
+                    impl_list,
                     )?;
                 }
                 arm_env.pop_scope();
@@ -1343,6 +1382,7 @@ fn check_stmt(
                         record_table,
                         adt_table,
                         loop_stack,
+                    impl_list,
                     )?;
                 }
                 def_env.pop_scope();
@@ -1358,6 +1398,7 @@ fn check_stmt(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Stmt::Expr(e) => {
             if check_builtin_assert_stmt(
@@ -1369,6 +1410,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )? {
                 return Ok(());
             }
@@ -1381,6 +1423,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             Ok(())
         }
@@ -1398,6 +1441,15 @@ fn subst_apply(ty: &Type, subst: &BTreeMap<SymbolId, Type>) -> Type {
     }
 }
 
+/// Returns true if `concrete_ty` matches the `for_type` nominal name of an
+/// impl block. Used by the M9.2 Wave 3 trait bound satisfaction check.
+fn concrete_type_matches_impl_for(concrete_ty: &Type, for_type: SymbolId) -> bool {
+    match concrete_ty {
+        Type::Record(id) | Type::Adt(id) => *id == for_type,
+        _ => false,
+    }
+}
+
 fn infer_expr_type(
     expr_id: ExprId,
     arena: &AstArena,
@@ -1407,6 +1459,7 @@ fn infer_expr_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let expr = arena.expr(expr_id);
     match expr {
@@ -1423,6 +1476,7 @@ fn infer_expr_type(
             None,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::Closure(closure) => infer_closure_literal_type(
             closure,
@@ -1434,6 +1488,7 @@ fn infer_expr_type(
             None,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
@@ -1451,6 +1506,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let end_ty = infer_expr_type(
                 range_expr.end,
@@ -1461,6 +1517,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             if start_ty != Type::I32 || end_ty != Type::I32 {
                 return Err(FrontendError {
@@ -1485,6 +1542,7 @@ fn infer_expr_type(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 if item_ty == Type::RangeI32 {
                     return Err(FrontendError {
@@ -1507,6 +1565,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::RecordField(field_expr) => infer_record_field_access_type(
             field_expr,
@@ -1517,6 +1576,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::SequenceIndex(index_expr) => infer_sequence_index_type(
             index_expr,
@@ -1527,6 +1587,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::RecordUpdate(update_expr) => infer_record_update_type(
             update_expr,
@@ -1537,6 +1598,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
@@ -1548,6 +1610,7 @@ fn infer_expr_type(
             None,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::Var(v) => env.get(*v).ok_or(FrontendError {
             pos: 0,
@@ -1562,6 +1625,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::If(if_expr) => {
             let cond_ty = infer_expr_type(
@@ -1573,6 +1637,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1591,6 +1656,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let else_ty = infer_value_block_type(
                 &if_expr.else_block,
@@ -1601,6 +1667,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if then_ty != else_ty {
                 return Err(FrontendError {
@@ -1622,6 +1689,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::Loop(loop_expr) => infer_loop_expr_type(
             loop_expr,
@@ -1632,6 +1700,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
@@ -1675,6 +1744,7 @@ fn infer_expr_type(
                     Some(closure_ty.param.as_ref().clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     closure_ty.param.as_ref().clone(),
@@ -1718,6 +1788,7 @@ fn infer_expr_type(
                             adt_table,
                             ret_ty.clone(),
                             loop_stack,
+                        impl_list,
                         )?;
                         subst.insert(*tid, at);
                     }
@@ -1733,6 +1804,28 @@ fn infer_expr_type(
                                 fn_name,
                             ),
                         });
+                    }
+                }
+                // M9.2 Wave 3: trait bound satisfaction check.
+                // After substitution is fully inferred, verify that each bound
+                // T: TraitName is satisfied by the concrete type substituted for T.
+                for bound in &sig.trait_bounds {
+                    if let Some(concrete_ty) = subst.get(&bound.param) {
+                        let satisfied = impl_list.iter().any(|imp| {
+                            imp.trait_name == bound.bound
+                                && concrete_type_matches_impl_for(concrete_ty, imp.for_type)
+                        });
+                        if !satisfied {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "type {:?} does not implement trait '{}' required by '{}'",
+                                    concrete_ty,
+                                    resolve_symbol_name(arena, bound.bound)?,
+                                    fn_name,
+                                ),
+                            });
+                        }
                     }
                 }
                 // Substitute TypeVar → concrete in all param types and ret.
@@ -1753,6 +1846,7 @@ fn infer_expr_type(
                         Some(expected_ty.clone()),
                         ret_ty.clone(),
                         loop_stack,
+                    impl_list,
                     )?;
                     if at != expected_ty {
                         if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
@@ -1792,6 +1886,7 @@ fn infer_expr_type(
                     Some(expected_ty.clone()),
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 if at != expected_ty {
                     if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
@@ -1832,6 +1927,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let measured = measured_numeric_parts(&t);
             match op {
@@ -1880,6 +1976,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let rt = infer_expr_type(
                 *r,
@@ -1890,6 +1987,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             match op {
                 BinaryOp::Eq | BinaryOp::Ne => {
@@ -4841,6 +4939,157 @@ mod tests {
             err.message
         );
     }
+
+    // M9.2 Wave 3 — trait coherence, conformance, and bound satisfaction
+
+    #[test]
+    fn duplicate_impl_same_trait_and_type_is_rejected() {
+        let src = r#"
+            trait Display {
+                fn show(self: MyType) -> i32;
+            }
+
+            record MyType { x: i32 }
+
+            impl Display for MyType {
+                fn show(self: MyType) -> i32 {
+                    return 0;
+                }
+            }
+
+            impl Display for MyType {
+                fn show(self: MyType) -> i32 {
+                    return 1;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("duplicate impl must be rejected by coherence check");
+        assert!(
+            err.message.contains("duplicate") || err.message.contains("impl"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_missing_required_method_is_rejected() {
+        let src = r#"
+            trait Greet {
+                fn hello(self: Greeter) -> i32;
+                fn bye(self: Greeter) -> i32;
+            }
+
+            record Greeter { x: i32 }
+
+            impl Greet for Greeter {
+                fn hello(self: Greeter) -> i32 {
+                    return 1;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("impl missing required method must be rejected");
+        assert!(
+            err.message.contains("bye") || err.message.contains("missing") || err.message.contains("method"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_method_wrong_return_type_is_rejected() {
+        let src = r#"
+            trait Counter {
+                fn count(self: Cnt) -> i32;
+            }
+
+            record Cnt { n: i32 }
+
+            impl Counter for Cnt {
+                fn count(self: Cnt) -> bool {
+                    return true;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("impl method with wrong return type must be rejected");
+        assert!(
+            err.message.contains("count") || err.message.contains("return type") || err.message.contains("mismatch"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn generic_fn_with_bound_and_satisfying_impl_typechecks() {
+        let src = r#"
+            trait Zeroable {
+                fn zero(v: ZeroInt) -> i32;
+            }
+
+            record ZeroInt { n: i32 }
+
+            impl Zeroable for ZeroInt {
+                fn zero(v: ZeroInt) -> i32 {
+                    return 0;
+                }
+            }
+
+            fn make_zero<T: Zeroable>(v: T) -> T {
+                return v;
+            }
+
+            fn main() {
+                let z: ZeroInt = ZeroInt { n: 0 };
+                let r: ZeroInt = make_zero(z);
+                let _ = r;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("bound satisfied by impl should typecheck");
+    }
+
+    #[test]
+    fn generic_fn_with_bound_and_missing_impl_rejects() {
+        let src = r#"
+            trait Printable {
+                fn print(v: NoPrint) -> i32;
+            }
+
+            record NoPrint { x: i32 }
+
+            fn show<T: Printable>(v: T) -> T {
+                return v;
+            }
+
+            fn main() {
+                let p: NoPrint = NoPrint { x: 1 };
+                let r: NoPrint = show(p);
+                let _ = r;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("call with unsatisfied trait bound must be rejected");
+        assert!(
+            err.message.contains("Printable") || err.message.contains("implement") || err.message.contains("trait"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
 }
 
 fn is_builtin_assert_name(
@@ -4860,6 +5109,7 @@ fn check_builtin_assert_stmt(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<bool, FrontendError> {
     let Expr::Call(name, args) = arena.expr(expr_id) else {
         return Ok(false);
@@ -4882,6 +5132,7 @@ fn check_builtin_assert_stmt(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     if cond_ty != Type::Bool {
         return Err(FrontendError {
@@ -4901,6 +5152,7 @@ fn infer_value_block_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let mut block_env = env.clone();
     block_env.push_scope();
@@ -4920,6 +5172,7 @@ fn infer_value_block_type(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             _ => {
@@ -4939,6 +5192,7 @@ fn infer_value_block_type(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     block_env.pop_scope();
     Ok(tail_ty)
@@ -4953,6 +5207,7 @@ fn infer_match_expr_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let scrutinee_ty = infer_expr_type(
         match_expr.scrutinee,
@@ -4963,6 +5218,7 @@ fn infer_match_expr_type(
         adt_table,
         ret_ty.clone(),
         loop_stack,
+    impl_list,
     )?;
     if !matches!(
         scrutinee_ty,
@@ -4994,6 +5250,7 @@ fn infer_match_expr_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         let arm_ty = infer_value_block_type(
             &arm.block,
@@ -5004,6 +5261,7 @@ fn infer_match_expr_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         if let Some(ref expected) = result_ty {
             if *expected != arm_ty {
@@ -5030,6 +5288,7 @@ fn infer_match_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         )?;
         if let Some(expected) = result_ty {
             if expected != default_ty {
@@ -5076,6 +5335,7 @@ fn infer_loop_expr_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let mut body_env = env.clone();
     body_env.push_scope();
@@ -5090,6 +5350,7 @@ fn infer_loop_expr_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
     }
     body_env.pop_scope();
@@ -5109,6 +5370,7 @@ fn check_loop_expr_stmt(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
         Stmt::LetElseTuple { .. } | Stmt::LetElseRecord { .. } => Err(FrontendError {
@@ -5138,6 +5400,7 @@ fn check_loop_expr_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -5159,6 +5422,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
             }
             then_env.pop_scope();
@@ -5175,6 +5439,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
             }
             else_env.pop_scope();
@@ -5194,6 +5459,7 @@ fn check_loop_expr_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if !matches!(
                 st,
@@ -5229,6 +5495,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 for stmt in &arm.block {
                     check_loop_expr_stmt(
@@ -5240,6 +5507,7 @@ fn check_loop_expr_stmt(
                         adt_table,
                         ret_ty.clone(),
                         loop_stack,
+                    impl_list,
                     )?;
                 }
                 arm_env.pop_scope();
@@ -5257,6 +5525,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
             }
             def_env.pop_scope();
@@ -5271,8 +5540,84 @@ fn check_loop_expr_stmt(
             record_table,
             adt_table,
             loop_stack,
+        impl_list,
         ),
     }
+}
+
+/// Coherence check: at most one impl per (trait_name, for_type) pair.
+fn validate_trait_coherence(
+    impls: &[ImplDecl],
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    let mut seen: BTreeSet<(SymbolId, SymbolId)> = BTreeSet::new();
+    for imp in impls {
+        let key = (imp.trait_name, imp.for_type);
+        if !seen.insert(key) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "duplicate impl of trait '{}' for type '{}'",
+                    resolve_symbol_name(arena, imp.trait_name)?,
+                    resolve_symbol_name(arena, imp.for_type)?,
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Conformance check: each impl provides every method declared in its trait
+/// with a matching return type.
+fn validate_impl_conformance(
+    impls: &[ImplDecl],
+    trait_table: &TraitTable,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    for imp in impls {
+        let trait_decl = match trait_table.get(&imp.trait_name) {
+            Some(t) => t,
+            None => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "impl references unknown trait '{}'",
+                        resolve_symbol_name(arena, imp.trait_name)?,
+                    ),
+                });
+            }
+        };
+        for trait_method in &trait_decl.methods {
+            match imp.methods.iter().find(|m| m.name == trait_method.name) {
+                None => {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "impl of '{}' for '{}' is missing method '{}'",
+                            resolve_symbol_name(arena, imp.trait_name)?,
+                            resolve_symbol_name(arena, imp.for_type)?,
+                            resolve_symbol_name(arena, trait_method.name)?,
+                        ),
+                    });
+                }
+                Some(m) => {
+                    if m.ret != trait_method.ret {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "impl method '{}' has return type {:?}, expected {:?} from trait '{}'",
+                                resolve_symbol_name(arena, trait_method.name)?,
+                                m.ret,
+                                trait_method.ret,
+                                resolve_symbol_name(arena, imp.trait_name)?,
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_top_level_name_collisions(
@@ -6147,6 +6492,7 @@ fn infer_record_literal_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let record = record_table
         .get(&record_literal.name)
@@ -6195,6 +6541,7 @@ fn infer_record_literal_type(
             Some(expected_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             expected_ty.clone(),
@@ -6232,6 +6579,7 @@ fn infer_record_field_access_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let base_ty = infer_expr_type(
         field_expr.base,
@@ -6242,6 +6590,7 @@ fn infer_record_field_access_type(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     let Type::Record(record_name) = base_ty else {
         return Err(FrontendError {
@@ -6284,6 +6633,7 @@ fn infer_sequence_index_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let base_ty = infer_expr_type(
         index_expr.base,
@@ -6294,6 +6644,7 @@ fn infer_sequence_index_type(
         adt_table,
         ret_ty.clone(),
         loop_stack,
+    impl_list,
     )?;
     let Type::Sequence(sequence_ty) = base_ty else {
         return Err(FrontendError {
@@ -6313,6 +6664,7 @@ fn infer_sequence_index_type(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     if index_ty != Type::I32 {
         return Err(FrontendError {
@@ -6335,6 +6687,7 @@ fn infer_record_update_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let base_ty = infer_expr_type(
         update_expr.base,
@@ -6345,6 +6698,7 @@ fn infer_record_update_type(
         adt_table,
         ret_ty.clone(),
         loop_stack,
+    impl_list,
     )?;
     let Type::Record(record_name) = base_ty else {
         return Err(FrontendError {
@@ -6406,6 +6760,7 @@ fn infer_record_update_type(
             Some(expected_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             expected_ty.clone(),
@@ -6432,6 +6787,7 @@ fn infer_adt_ctor_type(
     expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     if let Some(ty) = infer_std_form_ctor_type(
         ctor_expr,
@@ -6443,6 +6799,7 @@ fn infer_adt_ctor_type(
         expected,
         ret_ty.clone(),
         loop_stack,
+    impl_list,
     )? {
         return Ok(ty);
     }
@@ -6495,6 +6852,7 @@ fn infer_adt_ctor_type(
             Some(canonical_expected.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             canonical_expected,
@@ -6522,6 +6880,7 @@ fn infer_expr_type_with_expected(
     expected: Option<Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     match arena.expr(expr_id) {
         Expr::Tuple(items) => {
@@ -6554,6 +6913,7 @@ fn infer_expr_type_with_expected(
                     item_expected,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 if item_ty == Type::RangeI32 {
                     return Err(FrontendError {
@@ -6577,6 +6937,7 @@ fn infer_expr_type_with_expected(
             expected.as_ref(),
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::SequenceIndex(index_expr) => infer_sequence_index_type(
             index_expr,
@@ -6587,6 +6948,7 @@ fn infer_expr_type_with_expected(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::Closure(closure) => infer_closure_literal_type(
             closure,
@@ -6598,6 +6960,7 @@ fn infer_expr_type_with_expected(
             expected.as_ref(),
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
@@ -6609,6 +6972,7 @@ fn infer_expr_type_with_expected(
             expected.as_ref(),
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         _ => {
             let actual = infer_expr_type(
@@ -6620,6 +6984,7 @@ fn infer_expr_type_with_expected(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             Ok(
                 lift_literal_to_expected_type(expected.as_ref(), &actual, expr_id, arena)
@@ -6639,6 +7004,7 @@ fn infer_sequence_literal_type(
     expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let expected_item = match expected {
         Some(Type::Sequence(sequence_ty))
@@ -6675,6 +7041,7 @@ fn infer_sequence_literal_type(
             Some(expected_item.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             expected_item.clone(),
@@ -6694,6 +7061,7 @@ fn infer_sequence_literal_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?
     };
 
@@ -6708,6 +7076,7 @@ fn infer_sequence_literal_type(
             Some(first_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             first_ty.clone(),
@@ -6734,6 +7103,7 @@ fn infer_closure_literal_type(
     expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let Some(Type::Closure(expected_closure)) = expected else {
         return Err(FrontendError {
@@ -6778,6 +7148,7 @@ fn infer_closure_literal_type(
         Some(expected_closure.ret.as_ref().clone()),
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     ensure_binding_value_type(
         expected_closure.ret.as_ref().clone(),
@@ -6799,6 +7170,7 @@ fn infer_std_form_ctor_type(
     expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Option<Type>, FrontendError> {
     let type_name = resolve_symbol_name(arena, ctor_expr.adt_name)?;
     let variant_name = resolve_symbol_name(arena, ctor_expr.variant_name)?;
@@ -6824,6 +7196,7 @@ fn infer_std_form_ctor_type(
                         Some(expected_item.clone()),
                         ret_ty,
                         loop_stack,
+                    impl_list,
                     )?;
                     ensure_binding_value_type(
                         expected_item.clone(),
@@ -6843,6 +7216,7 @@ fn infer_std_form_ctor_type(
                         adt_table,
                         ret_ty,
                         loop_stack,
+                    impl_list,
                     )?
                 };
                 Ok(Some(Type::Option(Box::new(item_ty))))
@@ -6908,6 +7282,7 @@ fn infer_std_form_ctor_type(
                     Some(expected_payload.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_payload,
@@ -7162,6 +7537,7 @@ fn check_match_guard(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if let Some(expr_id) = guard {
         let guard_ty = infer_expr_type(
@@ -7173,6 +7549,7 @@ fn check_match_guard(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         )?;
         if guard_ty != Type::Bool {
             return Err(FrontendError {
@@ -7195,6 +7572,7 @@ fn check_return_payload(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     let got = if let Some(expr_id) = value {
         infer_expr_type_with_expected(
@@ -7207,6 +7585,7 @@ fn check_return_payload(
             Some(ret_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?
     } else {
         Type::Unit
