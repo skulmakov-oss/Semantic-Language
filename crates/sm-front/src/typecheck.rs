@@ -1,7 +1,7 @@
 use crate::types::{
     AccessKind, AdtCtorExpr, AdtMatchPattern, AdtPatternItem, BindingPlan, BindingPlanItem,
-    CaptureMode, MatchPattern, NumericLiteral, PatternPath, RecordPatternTarget, ScrutineeUse,
-    ValueAvailability,
+    CaptureMode, MatchPattern, NumericLiteral, PathAvailability, PatternPath, RecordPatternTarget,
+    ScrutineeUse, ValueAvailability,
 };
 use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -1325,14 +1325,12 @@ fn check_stmt(
                 });
             }
 
-            // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
-            let mut any_arm_moves = false;
+            // M9.5 Wave D / M9.7: BindingPlan pipeline + path-based ownership.
+            let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
                 let (plan, mut arm_env) =
                     build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
-                if scrutinee_use_from_plan(&plan) == ScrutineeUse::Consumed {
-                    any_arm_moves = true;
-                }
+                arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -1359,12 +1357,9 @@ fn check_stmt(
                 }
                 arm_env.pop_scope();
             }
-            // Conservative: if any reachable arm moved from scrutinee variable → consumed.
-            if any_arm_moves {
-                if let Expr::Var(name) = arena.expr(*scrutinee) {
-                    env.mark_consumed(*name);
-                }
-            }
+            // M9.7: apply path-based state for each arm's moves/borrows to scrutinee.
+            // Conservative: if any arm moves/borrows a path, record it on the variable.
+            apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             if default.is_empty() {
                 match missing_exhaustive_sum_variants(
@@ -1628,8 +1623,8 @@ fn infer_expr_type(
         impl_list,
         ),
         Expr::Var(v) => {
-            // M9.5 Wave C: reject use of moved values.
-            check_var_not_consumed(*v, env, arena)?;
+            // M9.7: path-based availability check (root = whole variable).
+            env.check_path_available(*v, &PatternPath::root())?;
             env.get(*v).ok_or(FrontendError {
                 pos: 0,
                 message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
@@ -5600,6 +5595,80 @@ mod tests {
         validate_binding_plan_conflicts(&plan).expect("double-borrow same path must not conflict");
     }
 
+    // M9.7 — partial move: path-based availability in ScopeEnv
+
+    #[test]
+    fn partial_move_sibling_path_still_usable() {
+        // Move root.0 (first element), then use root.1 (second element) — ok.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(1);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        // Accessing root.1 (different sibling) should be allowed.
+        env.check_path_available(sym, &PatternPath::root().tuple_index(1))
+            .expect("sibling path of moved path should remain available");
+    }
+
+    #[test]
+    fn partial_move_root_blocks_whole_var_use() {
+        // Move root.0, then try to use the whole variable (root) — must reject.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(2);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        // Accessing root (the whole variable) overlaps with root.0 that was moved → reject.
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("use of whole var after partial move must reject");
+        assert!(
+            err.message.contains("partially moved") || err.message.contains("moved"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn partial_move_child_blocks_child_use() {
+        // Move root.0, then try to use root.0 again — must reject.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(3);
+        env.insert(sym, Type::I32);
+        let path = PatternPath::root().tuple_index(0);
+        env.mark_path_state(sym, path.clone(), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &path)
+            .expect_err("re-use of moved child path must reject");
+        assert!(
+            err.message.contains("moved"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn whole_var_consumed_still_blocks() {
+        // mark_consumed (whole-var) still blocks root access.
+        use crate::types::PatternPath;
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(4);
+        env.insert(sym, Type::I32);
+        env.mark_consumed(sym);
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("whole-consumed var must be blocked");
+        assert!(err.message.contains("moved"), "unexpected: {}", err.message);
+    }
+
+    #[test]
+    fn borrow_path_does_not_block_read() {
+        // Borrow only — read should still be allowed (conservative: borrows don't block reads).
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(5);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_path_available(sym, &PatternPath::root().tuple_index(0))
+            .expect("borrow-only path should not block reads");
+    }
+
     // M9.6 — prefix-overlap conflict detection
 
     #[test]
@@ -6072,14 +6141,12 @@ fn check_loop_expr_stmt(
                 });
             }
 
-            // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
-            let mut any_arm_moves = false;
+            // M9.5 Wave D / M9.7: BindingPlan pipeline + path-based ownership.
+            let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
                 let (plan, mut arm_env) =
                     build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
-                if scrutinee_use_from_plan(&plan) == ScrutineeUse::Consumed {
-                    any_arm_moves = true;
-                }
+                arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -6106,11 +6173,7 @@ fn check_loop_expr_stmt(
                 }
                 arm_env.pop_scope();
             }
-            if any_arm_moves {
-                if let Expr::Var(name) = arena.expr(*scrutinee) {
-                    env.mark_consumed(*name);
-                }
-            }
+            apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             let mut def_env = env.clone();
             def_env.push_scope();
@@ -8739,6 +8802,29 @@ pub(crate) fn mark_scrutinee_if_moved(
     if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
         if let Expr::Var(name) = arena.expr(scrutinee_expr) {
             env.mark_consumed(*name);
+        }
+    }
+}
+
+/// M9.7: For each arm plan, record the capture state of every binding path
+/// onto the scrutinee variable (if it is a plain Expr::Var).
+///
+/// Conservative: we union the paths across all arms. A path moved in any arm
+/// is considered moved after the match.
+pub(crate) fn apply_plans_to_scrutinee(
+    scrutinee_expr: ExprId,
+    plans: &[BindingPlan],
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    let Expr::Var(var_name) = arena.expr(scrutinee_expr) else { return; };
+    for plan in plans {
+        for item in &plan.items {
+            let avail = match item.capture {
+                CaptureMode::Move   => PathAvailability::Moved,
+                CaptureMode::Borrow => PathAvailability::Borrowed,
+            };
+            env.mark_path_state(*var_name, item.path.clone(), avail);
         }
     }
 }
