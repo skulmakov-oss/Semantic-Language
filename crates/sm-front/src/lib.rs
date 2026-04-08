@@ -230,6 +230,58 @@ impl ScopeEnv {
         Ok(())
     }
 
+    /// M9.8: Check that a new capture of `path` with `capture` mode is compatible
+    /// with the existing path-state of variable `name`.
+    ///
+    /// Rules:
+    ///   prior Borrowed + new Move   → error ("cannot move from borrowed value")
+    ///   prior Moved   + new Borrow  → error ("cannot borrow from moved value")
+    ///   prior Moved   + new Move    → error ("cannot move from moved value")
+    ///   prior Borrowed + new Borrow → ok
+    ///   prior Available + anything  → ok
+    pub fn check_capture_allowed(
+        &self,
+        name: SymbolId,
+        path: &crate::types::PatternPath,
+        capture: crate::types::CaptureMode,
+    ) -> Result<(), crate::types::FrontendError> {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+
+        fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+            if a.elems.len() > b.elems.len() { return false; }
+            a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+        }
+        fn paths_overlap(a: &PatternPath, b: &PatternPath) -> bool {
+            path_is_prefix(a, b) || path_is_prefix(b, a)
+        }
+
+        let Some(binding) = self.binding(name) else { return Ok(()); };
+
+        if binding.consumed {
+            return Err(crate::types::FrontendError {
+                pos: 0,
+                message: format!("cannot capture moved value '{}'", name.0),
+            });
+        }
+
+        for (stored_path, stored_state) in &binding.path_state {
+            if !paths_overlap(stored_path, path) { continue; }
+            let msg: Option<&str> = match (stored_state, capture) {
+                (PathAvailability::Borrowed, CaptureMode::Move) =>
+                    Some("cannot move from borrowed path"),
+                (PathAvailability::Moved, CaptureMode::Borrow) =>
+                    Some("cannot borrow from moved path"),
+                (PathAvailability::Moved, CaptureMode::Move) =>
+                    Some("cannot move from already-moved path"),
+                _ => None,
+            };
+            if let Some(m) = msg {
+                return Err(crate::types::FrontendError { pos: 0, message: m.to_string() });
+            }
+        }
+        Ok(())
+    }
+
     fn insert_binding(&mut self, name: SymbolId, binding: ScopeBinding) {
         if let Some(last) = self.scopes.last_mut() {
             last.insert(name, binding);

@@ -1325,11 +1325,13 @@ fn check_stmt(
                 });
             }
 
-            // M9.5 Wave D / M9.7: BindingPlan pipeline + path-based ownership.
+            // M9.5 Wave D / M9.7 / M9.8: BindingPlan pipeline + path-based ownership.
             let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
                 let (plan, mut arm_env) =
                     build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+                validate_plan_against_scrutinee_state(env, *scrutinee, arena, &plan)?;
                 arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
@@ -1358,7 +1360,6 @@ fn check_stmt(
                 arm_env.pop_scope();
             }
             // M9.7: apply path-based state for each arm's moves/borrows to scrutinee.
-            // Conservative: if any arm moves/borrows a path, record it on the variable.
             apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             if default.is_empty() {
@@ -1739,6 +1740,8 @@ fn infer_expr_type(
                 &mut plan, arena, adt_table,
             )?;
             validate_binding_plan_conflicts(&plan)?;
+            // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+            validate_plan_against_scrutinee_state(env, if_let.value, arena, &plan)?;
             // then-block sees the bindings.
             let mut then_env = env.clone();
             then_env.push_scope();
@@ -5669,6 +5672,63 @@ mod tests {
             .expect("borrow-only path should not block reads");
     }
 
+    // M9.8 — borrow enforcement against prior path-state
+
+    #[test]
+    fn check_capture_allowed_borrow_then_move_rejects() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(10);
+        env.insert(sym, Type::I32);
+        // Borrow root.0
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        // Now try to move root.0 — must reject
+        let err = env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Move)
+            .expect_err("move after borrow of same path must reject");
+        assert!(
+            err.message.contains("borrow") || err.message.contains("cannot move"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn check_capture_allowed_move_then_borrow_rejects() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(11);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Borrow)
+            .expect_err("borrow after move of same path must reject");
+        assert!(
+            err.message.contains("moved") || err.message.contains("cannot borrow"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn check_capture_allowed_borrow_then_borrow_ok() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(12);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Borrow)
+            .expect("borrow after borrow of same path must be ok");
+    }
+
+    #[test]
+    fn check_capture_allowed_borrow_then_move_sibling_ok() {
+        // Borrow root.0, then move root.1 — different sibling, no overlap, ok.
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(13);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_capture_allowed(sym, &PatternPath::root().tuple_index(1), CaptureMode::Move)
+            .expect("move of sibling of borrowed path must be ok");
+    }
+
     // M9.6 — prefix-overlap conflict detection
 
     #[test]
@@ -6141,11 +6201,13 @@ fn check_loop_expr_stmt(
                 });
             }
 
-            // M9.5 Wave D / M9.7: BindingPlan pipeline + path-based ownership.
+            // M9.5 Wave D / M9.7 / M9.8: BindingPlan pipeline + path-based ownership.
             let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
                 let (plan, mut arm_env) =
                     build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+                validate_plan_against_scrutinee_state(env, *scrutinee, arena, &plan)?;
                 arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
@@ -8804,6 +8866,23 @@ pub(crate) fn mark_scrutinee_if_moved(
             env.mark_consumed(*name);
         }
     }
+}
+
+/// M9.8: Validate that all items in `plan` are capture-compatible with the
+/// existing path-state of the scrutinee variable (if it is a plain Expr::Var).
+///
+/// Prevents: move after borrow, borrow after move, move after move on same/overlapping path.
+pub(crate) fn validate_plan_against_scrutinee_state(
+    env: &ScopeEnv,
+    scrutinee_expr: ExprId,
+    arena: &AstArena,
+    plan: &BindingPlan,
+) -> Result<(), FrontendError> {
+    let Expr::Var(name) = arena.expr(scrutinee_expr) else { return Ok(()); };
+    for item in &plan.items {
+        env.check_capture_allowed(*name, &item.path, item.capture)?;
+    }
+    Ok(())
 }
 
 /// M9.7: For each arm plan, record the capture state of every binding path
