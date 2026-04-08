@@ -946,6 +946,14 @@ impl<'a> Parser<'a> {
                                 .to_string(),
                     })
                 }
+                TuplePatternItem::Nested(_) => {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "nested tuple patterns are not yet supported in plain let bindings; use let-else form"
+                                .to_string(),
+                    })
+                }
             }
         }
         Ok(bind_items)
@@ -1804,6 +1812,12 @@ impl<'a> Parser<'a> {
                 }
                 Ok(())
             }
+            Expr::IfLet(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "first-class closure literals do not yet admit if-let expressions in the closure body"
+                        .to_string(),
+            }),
             Expr::Loop(_) => Err(FrontendError {
                 pos: self.pos(),
                 message:
@@ -1981,6 +1995,12 @@ impl<'a> Parser<'a> {
                 }
                 Ok(())
             }
+            Expr::IfLet(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "short lambda v0 does not currently allow if-let expressions in the lambda body"
+                        .to_string(),
+            }),
             Expr::Loop(_) => Err(FrontendError {
                 pos: self.pos(),
                 message:
@@ -1992,7 +2012,9 @@ impl<'a> Parser<'a> {
 
     fn short_lambda_match_pattern_bindings(&self, pat: &MatchPattern) -> Vec<SymbolId> {
         match pat {
-            MatchPattern::Quad(_) => Vec::new(),
+            MatchPattern::Quad(_) | MatchPattern::Wildcard | MatchPattern::IntRange(_) => {
+                Vec::new()
+            }
             MatchPattern::Adt(adt_pat) => adt_pat
                 .items
                 .iter()
@@ -2001,6 +2023,12 @@ impl<'a> Parser<'a> {
                     AdtPatternItem::Discard => None,
                 })
                 .collect(),
+            MatchPattern::Or(alts) => {
+                // Bindings from the first alternative (Wave 2/3 will enforce same names across alts).
+                alts.first()
+                    .map(|p| self.short_lambda_match_pattern_bindings(p))
+                    .unwrap_or_default()
+            }
         }
     }
 

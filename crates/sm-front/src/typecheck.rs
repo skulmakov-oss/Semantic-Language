@@ -986,6 +986,12 @@ fn check_stmt(
                             });
                         }
                     }
+                    TuplePatternItem::Nested(_) => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "nested tuple patterns are not yet supported in typecheck; Wave 3 will add full support".to_string(),
+                        });
+                    }
                 }
             }
             Ok(())
@@ -1702,6 +1708,10 @@ fn infer_expr_type(
             loop_stack,
         impl_list,
         ),
+        Expr::IfLet(_) => Err(FrontendError {
+            pos: 0,
+            message: "if-let expressions are not yet supported in typecheck; Wave 3 will add full support".to_string(),
+        }),
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
                 return Err(FrontendError {
@@ -7476,6 +7486,16 @@ fn bind_match_pattern(
             }
             Ok(bindings)
         }
+        // M9.4 Wave 1: stubs — Wave 3 will add full typecheck support.
+        (_, MatchPattern::Wildcard) => Ok(Vec::new()),
+        (_, MatchPattern::Or(_)) => Err(FrontendError {
+            pos: 0,
+            message: "or-patterns are not yet supported in typecheck; Wave 3 will add full support".to_string(),
+        }),
+        (_, MatchPattern::IntRange(_)) => Err(FrontendError {
+            pos: 0,
+            message: "integer range patterns are not yet supported in typecheck; Wave 3 will add full support".to_string(),
+        }),
     }
 }
 
@@ -7493,6 +7513,10 @@ fn missing_exhaustive_sum_variants<'a>(
     for (pat, guard) in patterns {
         if guard.is_some() {
             continue;
+        }
+        // M9.4 Wave 1: wildcard covers all variants.
+        if matches!(pat, MatchPattern::Wildcard) {
+            return Ok(Some((family.display_label, Vec::new())));
         }
         if let MatchPattern::Adt(adt_pat) = pat {
             if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {

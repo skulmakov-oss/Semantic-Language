@@ -253,6 +253,10 @@ pub enum Expr {
     Binary(ExprId, BinaryOp, ExprId),
     Block(BlockExpr),
     If(IfExpr),
+    /// M9.4 Wave 1: `if let Pattern = expr { ... } else { ... }` binding guard desugaring.
+    ///
+    /// Admitted at the owner layer. Parser and typecheck admission in Wave 2/3.
+    IfLet(IfLetExpr),
     Match(MatchExpr),
     Loop(LoopExpr),
 }
@@ -340,6 +344,18 @@ pub struct IfExpr {
     pub else_block: BlockExpr,
 }
 
+/// M9.4 Wave 1: `if let Pattern = value { then } else { otherwise }` form.
+///
+/// Binds names from `pattern` into `then_block` only. The `else_block` sees
+/// the pre-binding scope. Parser and typecheck admission in Wave 2/3.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfLetExpr {
+    pub pattern: MatchPattern,
+    pub value: ExprId,
+    pub then_block: BlockExpr,
+    pub else_block: BlockExpr,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchExpr {
     pub scrutinee: ExprId,
@@ -371,12 +387,31 @@ pub enum TuplePatternItem {
     Bind(SymbolId),
     Discard,
     QuadLiteral(QuadVal),
+    /// M9.4 Wave 1: nested tuple destructuring — `(a, (b, c))` beyond one level.
+    Nested(Vec<TuplePatternItem>),
+}
+
+/// An integer range used as a match pattern, e.g. `1..=5 =>` or `0..10 =>`.
+///
+/// M9.4 Wave 1 owner layer. Parser and typecheck admission in Wave 2/3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntRangePattern {
+    pub start: i64,
+    pub end: i64,
+    pub inclusive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchPattern {
     Quad(QuadVal),
     Adt(AdtMatchPattern),
+    /// M9.4 Wave 1: `_` wildcard in match arms.
+    Wildcard,
+    /// M9.4 Wave 1: or-pattern — `Variant::A | Variant::B =>`.
+    /// At least two alternatives; alternatives are matched left-to-right.
+    Or(Vec<MatchPattern>),
+    /// M9.4 Wave 1: integer range pattern — `1..=5 =>` or `0..10 =>`.
+    IntRange(IntRangePattern),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1103,5 +1138,60 @@ mod tests {
             "expected KwImpl token from 'impl'");
         assert!(tokens2.iter().any(|t| t.kind == TokenKind::KwFor),
             "expected KwFor token from 'for'");
+    }
+
+    // M9.4 Wave 1 — richer pattern surface owner layer
+
+    #[test]
+    fn nested_tuple_pattern_item_owner_layer_is_stable() {
+        let inner = vec![TuplePatternItem::Bind(SymbolId(0)), TuplePatternItem::Discard];
+        let nested = TuplePatternItem::Nested(inner);
+        assert!(matches!(nested, TuplePatternItem::Nested(ref items) if items.len() == 2));
+    }
+
+    #[test]
+    fn wildcard_match_pattern_owner_layer_is_stable() {
+        let pat = MatchPattern::Wildcard;
+        assert!(matches!(pat, MatchPattern::Wildcard));
+    }
+
+    #[test]
+    fn or_pattern_owner_layer_is_stable() {
+        let mut arena = AstArena::default();
+        let adt_a = AdtMatchPattern {
+            adt_name: arena.intern_symbol("Color"),
+            variant_name: arena.intern_symbol("Red"),
+            items: vec![],
+        };
+        let adt_b = AdtMatchPattern {
+            adt_name: arena.intern_symbol("Color"),
+            variant_name: arena.intern_symbol("Blue"),
+            items: vec![],
+        };
+        let or_pat = MatchPattern::Or(vec![MatchPattern::Adt(adt_a), MatchPattern::Adt(adt_b)]);
+        assert!(matches!(&or_pat, MatchPattern::Or(alts) if alts.len() == 2));
+    }
+
+    #[test]
+    fn int_range_pattern_owner_layer_is_stable() {
+        let range_pat = MatchPattern::IntRange(IntRangePattern { start: 1, end: 5, inclusive: true });
+        assert!(matches!(&range_pat, MatchPattern::IntRange(r) if r.start == 1 && r.end == 5 && r.inclusive));
+    }
+
+    #[test]
+    fn if_let_expr_owner_layer_is_stable() {
+        let mut arena = AstArena::default();
+        let value_id = arena.alloc_expr(Expr::BoolLiteral(true));
+        let unit_id = arena.alloc_expr(Expr::QuadLiteral(QuadVal::N));
+        let then_block = BlockExpr { statements: vec![], tail: unit_id };
+        let else_block = BlockExpr { statements: vec![], tail: unit_id };
+        let if_let = IfLetExpr {
+            pattern: MatchPattern::Wildcard,
+            value: value_id,
+            then_block,
+            else_block,
+        };
+        assert!(matches!(if_let.pattern, MatchPattern::Wildcard));
+        assert_eq!(if_let.value, value_id);
     }
 }
