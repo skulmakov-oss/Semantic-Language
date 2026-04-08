@@ -296,6 +296,31 @@ pub enum ScrutineeUse {
     Consumed,
 }
 
+// ──────────────────────────────────────────────────────────────
+// M9.7: per-path availability state for partial move
+// ──────────────────────────────────────────────────────────────
+
+/// Availability of a single path within a bound variable.
+///
+/// Used for partial-move tracking: moving `x.0` marks `root.0` as `Moved`
+/// without invalidating `root.1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathAvailability {
+    Available,
+    Borrowed,
+    Moved,
+}
+
+/// Per-variable path availability table.
+///
+/// Stores the set of `(PatternPath, PathAvailability)` entries recorded
+/// by pattern-binding operations.  An empty table means the variable is
+/// fully available.
+#[derive(Debug, Clone, Default)]
+pub struct ValuePathState {
+    pub paths: Vec<(PatternPath, PathAvailability)>,
+}
+
 /// Availability of a local variable in scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueAvailability {
@@ -1377,6 +1402,21 @@ mod tests {
     fn binding_plan_default_is_empty() {
         let plan = BindingPlan::default();
         assert!(plan.items.is_empty());
+    }
+
+    // M9.7 — PathAvailability / ValuePathState owner layer
+
+    #[test]
+    fn path_availability_variants_distinct() {
+        assert_ne!(PathAvailability::Available, PathAvailability::Moved);
+        assert_ne!(PathAvailability::Available, PathAvailability::Borrowed);
+        assert_ne!(PathAvailability::Moved, PathAvailability::Borrowed);
+    }
+
+    #[test]
+    fn value_path_state_default_is_empty() {
+        let s = crate::types::ValuePathState::default();
+        assert!(s.paths.is_empty());
     }
 
     #[test]
