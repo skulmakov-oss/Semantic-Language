@@ -22,6 +22,7 @@ Current documents in this PR:
 - `capabilities.md` - capability manifest and denial contract
 - `gates.md` - gate registry and binding contract
 - `runtime.md` - runtime orchestration session contract
+- `runtime_ownership.md` - execution-layer ownership path contract
 - `state.md` - semantic state model and invariants
 - `rules.md` - deterministic rule and agenda contract
 - `audit.md` - audit trail and replay metadata contract
