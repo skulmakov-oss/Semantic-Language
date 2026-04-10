@@ -178,9 +178,31 @@ impl ScopeEnv {
         path: crate::types::PatternPath,
         state: crate::types::PathAvailability,
     ) {
+        use crate::types::PatternPath;
+
+        fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+            if a.elems.len() > b.elems.len() { return false; }
+            a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+        }
+
         for scope in self.scopes.iter_mut().rev() {
             if let Some(binding) = scope.get_mut(&name) {
-                binding.path_state.push((path, state));
+                // M9.9 Wave C: normalise path-state to keep it compact.
+                //
+                // Rule 1 — new path subsumes longer existing entries of the same state:
+                //   e.g. adding Moved(root) while Moved(root.0) exists → drop root.0.
+                binding.path_state.retain(|(existing, existing_state)| {
+                    if *existing_state != state { return true; }
+                    !path_is_prefix(&path, existing)
+                });
+                // Rule 2 — if an existing entry already covers the new path (same state,
+                //   existing is a prefix of new path), the new entry is redundant.
+                let redundant = binding.path_state.iter().any(|(existing, existing_state)| {
+                    *existing_state == state && path_is_prefix(existing, &path)
+                });
+                if !redundant {
+                    binding.path_state.push((path, state));
+                }
                 return;
             }
         }

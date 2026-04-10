@@ -1472,6 +1472,13 @@ fn infer_expr_type(
     loop_stack: &mut Vec<LoopTypeFrame>,
     impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
+    // M9.9: path-aware read check. Extract the most specific path reachable
+    // from this expression and verify it is available. Base expressions used
+    // inside field/index helpers go through infer_expr_type_no_check, which
+    // skips this guard for intermediate Var nodes.
+    if let Some((name, path)) = expr_access_path(expr_id, arena) {
+        env.check_path_available(name, &path)?;
+    }
     let expr = arena.expr(expr_id);
     match expr {
         Expr::QuadLiteral(_) => Ok(Type::Quad),
@@ -1624,8 +1631,7 @@ fn infer_expr_type(
         impl_list,
         ),
         Expr::Var(v) => {
-            // M9.7: path-based availability check (root = whole variable).
-            env.check_path_available(*v, &PatternPath::root())?;
+            // M9.9: path check moved to top of infer_expr_type via expr_access_path.
             env.get(*v).ok_or(FrontendError {
                 pos: 0,
                 message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
@@ -5729,6 +5735,117 @@ mod tests {
             .expect("move of sibling of borrowed path must be ok");
     }
 
+    // M9.9 — expr_access_path + path-state normalization
+
+    #[test]
+    fn expr_access_path_var_is_root() {
+        use crate::types::PatternPath;
+        let mut arena = AstArena::default();
+        let sym = SymbolId(99);
+        let var_id = arena.alloc_expr(Expr::Var(sym));
+        let result = expr_access_path(var_id, &arena);
+        assert_eq!(result, Some((sym, PatternPath::root())));
+    }
+
+    #[test]
+    fn expr_access_path_literal_is_none() {
+        let mut arena = AstArena::default();
+        let lit_id = arena.alloc_expr(Expr::BoolLiteral(true));
+        assert_eq!(expr_access_path(lit_id, &arena), None);
+    }
+
+    #[test]
+    fn expr_access_path_sequence_index_literal() {
+        use crate::types::{NumericLiteral, PatternPath, SequenceIndexExpr};
+        let mut arena = AstArena::default();
+        let sym = SymbolId(7);
+        let base = arena.alloc_expr(Expr::Var(sym));
+        let idx  = arena.alloc_expr(Expr::NumericLiteral(NumericLiteral::I32(2)));
+        let expr = arena.alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base, index: idx }));
+        let result = expr_access_path(expr, &arena);
+        assert_eq!(result, Some((sym, PatternPath::root().tuple_index(2))));
+    }
+
+    #[test]
+    fn expr_access_path_sequence_index_non_literal_is_none() {
+        use crate::types::{SequenceIndexExpr};
+        let mut arena = AstArena::default();
+        let sym = SymbolId(7);
+        let base     = arena.alloc_expr(Expr::Var(sym));
+        let dyn_idx  = arena.alloc_expr(Expr::Var(SymbolId(8)));
+        let expr = arena.alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base, index: dyn_idx }));
+        // dynamic index → cannot determine path statically
+        assert_eq!(expr_access_path(expr, &arena), None);
+    }
+
+    #[test]
+    fn path_state_normalization_root_subsumes_children() {
+        // Adding Moved(root) when Moved(root.0) already exists → root.0 is dropped.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(50);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(1), PathAvailability::Moved);
+        // Now add root — should subsume both children.
+        env.mark_path_state(sym, PatternPath::root(), PathAvailability::Moved);
+        // Only one entry should remain: root.
+        let binding = env.binding(sym).expect("binding must exist");
+        assert_eq!(binding.path_state.len(), 1, "root should subsume child entries");
+        assert_eq!(binding.path_state[0].0, PatternPath::root());
+    }
+
+    #[test]
+    fn path_state_normalization_child_redundant_if_parent_present() {
+        // If Moved(root) exists, adding Moved(root.0) should be a no-op.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(51);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root(), PathAvailability::Moved);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let binding = env.binding(sym).expect("binding must exist");
+        assert_eq!(binding.path_state.len(), 1, "child must be suppressed when parent already present");
+    }
+
+    #[test]
+    fn check_path_available_sibling_of_moved_is_ok() {
+        // After moving root.0, accessing root.1 must succeed.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(60);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        env.check_path_available(sym, &PatternPath::root().tuple_index(1))
+            .expect("sibling of moved path must be accessible");
+    }
+
+    #[test]
+    fn check_path_available_whole_var_blocked_after_child_move() {
+        // After moving root.0, accessing root (whole var) must fail.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(61);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("whole-var access after child move must be blocked");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    #[test]
+    fn check_path_available_moved_child_blocked() {
+        // After moving root.0, accessing root.0 itself must fail.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(62);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &PatternPath::root().tuple_index(0))
+            .expect_err("access of moved path must be blocked");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
     // M9.6 — prefix-overlap conflict detection
 
     #[test]
@@ -7305,7 +7422,8 @@ fn infer_record_field_access_type(
     loop_stack: &mut Vec<LoopTypeFrame>,
     impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let base_ty = infer_expr_type(
+    // M9.9: use no-check variant for the base; caller already verified full path.
+    let base_ty = infer_expr_type_no_check(
         field_expr.base,
         arena,
         env,
@@ -7359,7 +7477,8 @@ fn infer_sequence_index_type(
     loop_stack: &mut Vec<LoopTypeFrame>,
     impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let base_ty = infer_expr_type(
+    // M9.9: use no-check variant for the base; caller already verified full path.
+    let base_ty = infer_expr_type_no_check(
         index_expr.base,
         arena,
         env,
@@ -8889,6 +9008,99 @@ pub(crate) fn validate_plan_against_scrutinee_state(
 /// onto the scrutinee variable (if it is a plain Expr::Var).
 ///
 /// Conservative: we union the paths across all arms. A path moved in any arm
+// ──────────────────────────────────────────────────────────────
+// M9.9 Wave A: path-aware expression access helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Attempt to extract a `(base_variable, PatternPath)` pair from an expression.
+///
+/// Returns `Some` for:
+///   * `Expr::Var(x)`                          → `(x, root)`
+///   * `Expr::RecordField { base, field }`      → recurse + `RecordField(field)`
+///   * `Expr::SequenceIndex { base, index }`    → recurse + `TupleIndex(n)` for
+///                                                 literal `i32` index only
+///
+/// Returns `None` for calls, computed indices, closures, and anything not
+/// expressible as a single static path from a local variable.
+pub(crate) fn expr_access_path(
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Option<(SymbolId, PatternPath)> {
+    match arena.expr(expr_id) {
+        Expr::Var(name) => Some((*name, PatternPath::root())),
+        Expr::RecordField(field_expr) => {
+            let (base_sym, base_path) = expr_access_path(field_expr.base, arena)?;
+            Some((base_sym, base_path.record_field(field_expr.field)))
+        }
+        Expr::SequenceIndex(index_expr) => {
+            if let Expr::NumericLiteral(crate::types::NumericLiteral::I32(idx)) =
+                arena.expr(index_expr.index)
+            {
+                if *idx >= 0 {
+                    let (base_sym, base_path) = expr_access_path(index_expr.base, arena)?;
+                    return Some((base_sym, base_path.tuple_index(*idx as usize)));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Format a path as a human-readable access string (e.g. `"v"`, `"v.0"`, `"v.field"`).
+///
+/// Field name symbols are rendered as `.<numeric_id>` since this layer has no
+/// arena access. Pass `arena` at a higher level if readable names are needed.
+pub(crate) fn path_to_string(base_name: &str, path: &PatternPath) -> String {
+    use crate::types::PatternPathElem;
+    let mut s = alloc::string::String::from(base_name);
+    for elem in &path.elems {
+        match elem {
+            PatternPathElem::TupleIndex(i) | PatternPathElem::VariantField(i) => {
+                s.push('.');
+                s.push_str(&i.to_string());
+            }
+            PatternPathElem::RecordField(sym) | PatternPathElem::Variant(sym) => {
+                s.push('.');
+                s.push_str(&sym.0.to_string());
+            }
+        }
+    }
+    s
+}
+
+/// Infer the type of `expr_id` **without** running the top-level path-availability
+/// check from M9.9.  Used internally when `expr_id` is the *base* of a field or
+/// index access whose **caller** has already verified the full access path.
+///
+/// Only skips the path check for `Expr::Var`; all other expressions fall through
+/// to the normal `infer_expr_type` (which includes their own path check).
+fn infer_expr_type_no_check(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
+) -> Result<Type, FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::Var(v) => {
+            // No path check here; the outer infer_expr_type call for the full
+            // field/index expression already checked the correct sub-path.
+            env.get(*v).ok_or(FrontendError {
+                pos: 0,
+                message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+            })
+        }
+        _ => infer_expr_type(
+            expr_id, arena, env, table, record_table, adt_table, ret_ty, loop_stack, impl_list,
+        ),
+    }
+}
+
 /// is considered moved after the match.
 pub(crate) fn apply_plans_to_scrutinee(
     scrutinee_expr: ExprId,
