@@ -37,6 +37,8 @@ pub type ImplTable = Vec<ImplDecl>;
 pub struct ScopeBinding {
 pub ty: Type,
 pub is_const: bool,
+pub consumed: bool,
+pub path_state: Vec<(crate::types::PatternPath, crate::types::PathAvailability)>,
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeEnv {
@@ -46,6 +48,11 @@ pub fn push_scope(&mut self) {
 pub fn pop_scope(&mut self) {
 pub fn insert(&mut self, name: SymbolId, ty: Type) {
 pub fn insert_const(&mut self, name: SymbolId, ty: Type) {
+pub fn mark_consumed(&mut self, name: SymbolId) {
+pub fn is_consumed(&self, name: SymbolId) -> bool {
+pub fn mark_path_state(
+pub fn check_path_available(
+pub fn check_capture_allowed(
 pub fn get(&self, name: SymbolId) -> Option<Type> {
 pub fn is_const(&self, name: SymbolId) -> bool {
 #[cfg(any(feature = "alloc", feature = "std"))]
