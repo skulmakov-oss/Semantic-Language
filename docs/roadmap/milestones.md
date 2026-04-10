@@ -128,6 +128,7 @@
   - completed subtracks:
     - M9.1: `docs/roadmap/language_maturity/generics_full_scope.md`
     - M9.2: `docs/roadmap/language_maturity/traits_full_scope.md`
+    - M9.4: richer pattern surface (Wildcard, Or, IntRange, nested tuple, if-let)
   - planning rule:
     - keep one active stream at a time
     - keep UI/platform expansion separate from language-maturity work

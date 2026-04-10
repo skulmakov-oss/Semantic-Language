@@ -27,6 +27,8 @@ pub use types::{
     TokenKind, TraitBound, TraitDecl, TraitMethodSig, TuplePatternItem, Type,
     UnaryOp, ValidationCheck, ValidationFieldPlan, ValidationPlan, ValidationShapePlan,
     ValidationVariantPlan,
+    // M9.7
+    PathAvailability, PatternPath,
 };
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use sm_profile::{CompatibilityMode, ParserProfile};
@@ -97,6 +99,11 @@ pub type ImplTable = Vec<ImplDecl>;
 pub struct ScopeBinding {
     pub ty: Type,
     pub is_const: bool,
+    /// M9.5 Wave C: true after the binding's value has been moved out (whole-variable).
+    pub consumed: bool,
+    /// M9.7: per-path availability for partial-move tracking.
+    /// Empty means the whole variable is fully available.
+    pub path_state: Vec<(crate::types::PatternPath, crate::types::PathAvailability)>,
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
@@ -137,12 +144,174 @@ impl ScopeEnv {
             ScopeBinding {
                 ty,
                 is_const: false,
+                consumed: false,
+                path_state: Vec::new(),
             },
         );
     }
 
     pub fn insert_const(&mut self, name: SymbolId, ty: Type) {
-        self.insert_binding(name, ScopeBinding { ty, is_const: true });
+        self.insert_binding(name, ScopeBinding {
+            ty, is_const: true, consumed: false, path_state: Vec::new(),
+        });
+    }
+
+    /// Mark a variable as consumed (moved out). Subsequent reads will be rejected.
+    pub fn mark_consumed(&mut self, name: SymbolId) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(binding) = scope.get_mut(&name) {
+                binding.consumed = true;
+                return;
+            }
+        }
+    }
+
+    /// Returns true if the variable has been moved and is no longer available.
+    pub fn is_consumed(&self, name: SymbolId) -> bool {
+        self.binding(name).map(|b| b.consumed).unwrap_or(false)
+    }
+
+    /// M9.7: Record that `path` within variable `name` has been moved or borrowed.
+    pub fn mark_path_state(
+        &mut self,
+        name: SymbolId,
+        path: crate::types::PatternPath,
+        state: crate::types::PathAvailability,
+    ) {
+        use crate::types::PatternPath;
+
+        fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+            if a.elems.len() > b.elems.len() { return false; }
+            a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+        }
+
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(binding) = scope.get_mut(&name) {
+                // M9.9 Wave C: normalise path-state to keep it compact.
+                //
+                // Rule 1 — new path subsumes longer existing entries of the same state:
+                //   e.g. adding Moved(root) while Moved(root.0) exists → drop root.0.
+                binding.path_state.retain(|(existing, existing_state)| {
+                    if *existing_state != state { return true; }
+                    !path_is_prefix(&path, existing)
+                });
+                // Rule 2 — if an existing entry already covers the new path (same state,
+                //   existing is a prefix of new path), the new entry is redundant.
+                let redundant = binding.path_state.iter().any(|(existing, existing_state)| {
+                    *existing_state == state && path_is_prefix(existing, &path)
+                });
+                if !redundant {
+                    binding.path_state.push((path, state));
+                }
+                return;
+            }
+        }
+    }
+
+    /// M9.7: Check that accessing `access_path` within `name` is allowed.
+    ///
+    /// Rejects if any stored path overlaps `access_path` with state `Moved`.
+    /// Conservative: borrows are not currently enforced as blocking reads.
+    pub fn check_path_available(
+        &self,
+        name: SymbolId,
+        access_path: &crate::types::PatternPath,
+    ) -> Result<(), crate::types::FrontendError> {
+        use crate::types::{PathAvailability, PatternPath};
+
+        fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+            if a.elems.len() > b.elems.len() { return false; }
+            a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+        }
+        fn paths_overlap(a: &PatternPath, b: &PatternPath) -> bool {
+            path_is_prefix(a, b) || path_is_prefix(b, a)
+        }
+
+        if let Some(binding) = self.binding(name) {
+            // Whole-variable consumed takes priority.
+            if binding.consumed {
+                return Err(crate::types::FrontendError {
+                    pos: 0,
+                    message: format!("use of moved value '{}'", name.0),
+                });
+            }
+            for (stored_path, avail) in &binding.path_state {
+                if paths_overlap(stored_path, access_path) {
+                    if *avail == PathAvailability::Moved {
+                        // M9.9 Wave D: more precise diagnostic.
+                        // Distinguish "accessing moved path" from "accessing parent of moved child".
+                        let msg = if path_is_prefix(stored_path, access_path) {
+                            // stored = root.0, access = root.0 or root.0.x → moved path
+                            format!(
+                                "use of moved value: path was moved earlier (moved path {:?})",
+                                stored_path.elems
+                            )
+                        } else {
+                            // stored = root.0, access = root → whole-var after partial move
+                            format!(
+                                "use of partially moved value: cannot use whole variable because \
+                                 child path {:?} was moved",
+                                stored_path.elems
+                            )
+                        };
+                        return Err(crate::types::FrontendError { pos: 0, message: msg });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// M9.8: Check that a new capture of `path` with `capture` mode is compatible
+    /// with the existing path-state of variable `name`.
+    ///
+    /// Rules:
+    ///   prior Borrowed + new Move   → error ("cannot move from borrowed value")
+    ///   prior Moved   + new Borrow  → error ("cannot borrow from moved value")
+    ///   prior Moved   + new Move    → error ("cannot move from moved value")
+    ///   prior Borrowed + new Borrow → ok
+    ///   prior Available + anything  → ok
+    pub fn check_capture_allowed(
+        &self,
+        name: SymbolId,
+        path: &crate::types::PatternPath,
+        capture: crate::types::CaptureMode,
+    ) -> Result<(), crate::types::FrontendError> {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+
+        fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+            if a.elems.len() > b.elems.len() { return false; }
+            a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+        }
+        fn paths_overlap(a: &PatternPath, b: &PatternPath) -> bool {
+            path_is_prefix(a, b) || path_is_prefix(b, a)
+        }
+
+        let Some(binding) = self.binding(name) else { return Ok(()); };
+
+        if binding.consumed {
+            return Err(crate::types::FrontendError {
+                pos: 0,
+                message: format!("cannot capture moved value '{}'", name.0),
+            });
+        }
+
+        for (stored_path, stored_state) in &binding.path_state {
+            if !paths_overlap(stored_path, path) { continue; }
+            let msg: Option<&str> = match (stored_state, capture) {
+                (PathAvailability::Borrowed, CaptureMode::Move) =>
+                    Some("cannot move from borrowed path"),
+                (PathAvailability::Moved, CaptureMode::Borrow) =>
+                    Some("cannot borrow from moved path"),
+                (PathAvailability::Moved, CaptureMode::Move) =>
+                    Some("cannot move from already-moved path"),
+                _ => None,
+            };
+            if let Some(m) = msg {
+                return Err(crate::types::FrontendError { pos: 0, message: m.to_string() });
+            }
+        }
+        Ok(())
     }
 
     fn insert_binding(&mut self, name: SymbolId, binding: ScopeBinding) {

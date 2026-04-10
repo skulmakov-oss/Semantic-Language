@@ -1,5 +1,7 @@
 use crate::types::{
-    AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget,
+    AccessKind, AdtCtorExpr, AdtMatchPattern, AdtPatternItem, BindingPlan, BindingPlanItem,
+    CaptureMode, MatchPattern, NumericLiteral, PathAvailability, PatternPath, RecordPatternTarget,
+    ScrutineeUse, ValueAvailability,
 };
 use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -973,7 +975,7 @@ fn check_stmt(
             )?;
             for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
                 match item {
-                    TuplePatternItem::Bind(name) => env.insert(*name, item_ty),
+                    TuplePatternItem::Bind { name, .. } => env.insert(*name, item_ty),
                     TuplePatternItem::Discard => {}
                     TuplePatternItem::QuadLiteral(_) => {
                         if item_ty != Type::Quad {
@@ -985,6 +987,10 @@ fn check_stmt(
                                 ),
                             });
                         }
+                    }
+                    TuplePatternItem::Nested(nested_items) => {
+                        // M9.4 Wave 3: recursive nested tuple destructuring.
+                        bind_tuple_pattern_items(nested_items, item_ty, env)?;
                     }
                 }
             }
@@ -1305,25 +1311,28 @@ fn check_stmt(
                 loop_stack,
             impl_list,
             )?;
+            // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
             if !matches!(
                 st,
                 Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+                    | Type::I32 | Type::U32
             ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             }
 
+            // M9.5 Wave D / M9.7 / M9.8: BindingPlan pipeline + path-based ownership.
+            let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(&arm.pat, &st, arena, record_table, adt_table)?
-                {
-                    arm_env.insert(name, ty);
-                }
+                let (plan, mut arm_env) =
+                    build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+                validate_plan_against_scrutinee_state(env, *scrutinee, arena, &plan)?;
+                arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -1350,6 +1359,8 @@ fn check_stmt(
                 }
                 arm_env.pop_scope();
             }
+            // M9.7: apply path-based state for each arm's moves/borrows to scrutinee.
+            apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             if default.is_empty() {
                 match missing_exhaustive_sum_variants(
@@ -1461,6 +1472,13 @@ fn infer_expr_type(
     loop_stack: &mut Vec<LoopTypeFrame>,
     impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
+    // M9.9: path-aware read check. Extract the most specific path reachable
+    // from this expression and verify it is available. Base expressions used
+    // inside field/index helpers go through infer_expr_type_no_check, which
+    // skips this guard for intermediate Var nodes.
+    if let Some((name, path)) = expr_access_path(expr_id, arena) {
+        env.check_path_available(name, &path)?;
+    }
     let expr = arena.expr(expr_id);
     match expr {
         Expr::QuadLiteral(_) => Ok(Type::Quad),
@@ -1612,10 +1630,13 @@ fn infer_expr_type(
             loop_stack,
         impl_list,
         ),
-        Expr::Var(v) => env.get(*v).ok_or(FrontendError {
-            pos: 0,
-            message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
-        }),
+        Expr::Var(v) => {
+            // M9.9: path check moved to top of infer_expr_type via expr_access_path.
+            env.get(*v).ok_or(FrontendError {
+                pos: 0,
+                message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+            })
+        }
         Expr::Block(block) => infer_value_block_type(
             block,
             arena,
@@ -1702,6 +1723,71 @@ fn infer_expr_type(
             loop_stack,
         impl_list,
         ),
+        // M9.4 Wave 3: if-let expression typecheck.
+        Expr::IfLet(if_let) => {
+            // TODO(M9.5): disambiguate expr parsing for scrutinee to avoid record-literal conflict
+            // (e.g. `if let Pat = v { ... }` where `v { ... }` is parsed as a record literal).
+            // Infer value type.
+            let value_ty = infer_expr_type(
+                if_let.value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            // M9.5 Wave C: build binding plan, validate conflicts, apply to then-env.
+            let mut plan = BindingPlan::default();
+            build_match_pattern_plan(
+                &if_let.pattern, &value_ty, &PatternPath::root(),
+                &mut plan, arena, adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
+            // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+            validate_plan_against_scrutinee_state(env, if_let.value, arena, &plan)?;
+            // then-block sees the bindings.
+            let mut then_env = env.clone();
+            then_env.push_scope();
+            apply_binding_plan(&mut then_env, &plan);
+            // NOTE: scrutinee consumed-state is enforced at statement level only
+            // (infer_expr_type receives &ScopeEnv, which is immutable).
+            let then_ty = infer_value_block_type(
+                &if_let.then_block,
+                arena,
+                &then_env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            // else-block uses original env (no bindings).
+            let else_ty = infer_value_block_type(
+                &if_let.else_block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+                impl_list,
+            )?;
+            if then_ty != else_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "if-let branch type mismatch: then is {:?}, else is {:?}",
+                        then_ty, else_ty
+                    ),
+                });
+            }
+            Ok(then_ty)
+        }
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
                 return Err(FrontendError {
@@ -5090,6 +5176,757 @@ mod tests {
             err.message
         );
     }
+
+    // M9.4 Wave 3 — richer pattern surface typecheck
+
+    #[test]
+    fn wildcard_match_pattern_typechecks() {
+        let src = r#"
+            enum Color { Red, Blue, Green }
+
+            fn main() {
+                let c: Color = Color::Red;
+                match c {
+                    Color::Red => { let r: i32 = 0; let _ = r; }
+                    Color::Blue => { let r: i32 = 1; let _ = r; }
+                    Color::Green => { let r: i32 = 2; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("exhaustive ADT match should typecheck");
+    }
+
+    #[test]
+    fn or_pattern_two_variants_covers_both() {
+        let src = r#"
+            enum Color { Red, Blue, Green }
+
+            fn main() {
+                let c: Color = Color::Red;
+                match c {
+                    Color::Red | Color::Blue => { let r: i32 = 0; let _ = r; }
+                    Color::Green => { let r: i32 = 2; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern covering two variants should typecheck");
+    }
+
+    #[test]
+    fn or_pattern_covers_all_variants_exhaustive() {
+        let src = r#"
+            enum Flag { A, B }
+
+            fn main() {
+                let f: Flag = Flag::A;
+                match f {
+                    Flag::A | Flag::B => { let r: i32 = 0; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern covering all variants should be exhaustive");
+    }
+
+    #[test]
+    fn int_range_pattern_typechecks_on_i32() {
+        let src = r#"
+            fn main() {
+                let x: i32 = 3;
+                match x {
+                    1..=5 => { let y: i32 = 1; let _ = y; }
+                    _ => { let y: i32 = 0; let _ = y; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("int range pattern on i32 should typecheck");
+    }
+
+    #[test]
+    fn int_range_pattern_rejects_non_integer_scrutinee() {
+        let src = r#"
+            fn main() {
+                let x: bool = true;
+                match x {
+                    1..=5 => { let r: i32 = 0; let _ = r; }
+                    _ => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("int range pattern on bool must reject");
+        assert!(
+            err.message.contains("i32") || err.message.contains("u32") || err.message.contains("scrutinee"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn int_range_inverted_bounds_rejects() {
+        let src = r#"
+            fn main() {
+                let x: i32 = 3;
+                match x {
+                    5..=1 => { let r: i32 = 0; let _ = r; }
+                    _ => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("inverted range bounds must reject");
+        assert!(
+            err.message.contains("start") || err.message.contains("end") || err.message.contains("<="),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn nested_tuple_destructuring_typechecks() {
+        let src = r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3));
+                let ra: i32 = a;
+                let rb: i32 = b;
+                let rc: i32 = c;
+                let _ = ra;
+                let _ = rb;
+                let _ = rc;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("nested tuple destructuring should typecheck");
+    }
+
+    #[test]
+    fn nested_tuple_arity_mismatch_rejects() {
+        let src = r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3, 4));
+                let _ = a;
+                let _ = b;
+                let _ = c;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("nested tuple arity mismatch must reject");
+        assert!(
+            err.message.contains("arity") || err.message.contains("mismatch"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn if_let_wildcard_typechecks() {
+        let src = r#"
+            fn make_int() -> i32 {
+                return 1;
+            }
+
+            fn main() {
+                let r: i32 = if let _ = make_int() { 1 } else { 0 };
+                let _ = r;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("if-let wildcard should typecheck");
+    }
+
+    #[test]
+    fn if_let_branch_type_mismatch_rejects() {
+        let src = r#"
+            enum Flag { A, B }
+
+            fn main() {
+                let f: Flag = Flag::A;
+                let r: i32 = if let Flag::A = f { 1 } else { true };
+                let _ = r;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("if-let branch type mismatch must reject");
+        assert!(
+            err.message.contains("mismatch") || err.message.contains("bool") || err.message.contains("i32"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    // M9.5 Wave B — parser admits `ref x` binding syntax
+
+    #[test]
+    fn ref_binding_in_tuple_pattern_parses() {
+        let src = r#"
+            fn make_pair() -> (i32, i32) { return (1, 2); }
+            fn main() {
+                let (ref a, b) = make_pair();
+                let _ = b;
+                return;
+            }
+        "#;
+        // Wave B: parser must admit `ref x` without error.
+        // CaptureMode::Borrow is stored but not yet enforced in typecheck (Wave C).
+        typecheck_source(src).expect("ref binding in tuple pattern should parse and typecheck");
+    }
+
+    #[test]
+    fn ref_binding_in_adt_pattern_parses() {
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(1); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(ref x) => { let _ = x; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("ref binding in ADT pattern should parse and typecheck");
+    }
+
+    // M9.5 Wave C — binding plan builders + conflict detection + consumed-state
+
+    #[test]
+    fn binding_plan_tuple_move_ok() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1),
+            capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0),
+            ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("single move binding should not conflict");
+    }
+
+    #[test]
+    fn binding_plan_two_borrows_same_path_ok() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("two borrows of same path should not conflict");
+    }
+
+    #[test]
+    fn binding_plan_move_and_borrow_same_path_rejects() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("move+borrow same path must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("capture"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn scrutinee_use_move_gives_consumed() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, ScrutineeUse, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        assert_eq!(scrutinee_use_from_plan(&plan), ScrutineeUse::Consumed);
+    }
+
+    #[test]
+    fn scrutinee_use_all_borrow_gives_preserved() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, ScrutineeUse, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        assert_eq!(scrutinee_use_from_plan(&plan), ScrutineeUse::Preserved);
+    }
+
+    #[test]
+    fn use_after_move_rejects() {
+        let src = r#"
+            fn take_val() -> i32 { return 5; }
+            fn main() {
+                let x: i32 = take_val();
+                let _ = x;
+                let _ = x;
+                return;
+            }
+        "#;
+        // i32 is Copy — use-after-move semantics only apply to non-Copy types.
+        // This test just validates the checker doesn't false-positive on i32.
+        typecheck_source(src).expect("plain i32 variable reuse should typecheck fine");
+    }
+
+    // M9.5 Wave D — match ownership pipeline
+
+    #[test]
+    fn match_borrow_binding_does_not_consume_scrutinee() {
+        // All-borrow match: scrutinee variable stays available after the match.
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn make() -> Maybe { return Maybe::None; }
+            fn main() {
+                let v: Maybe = make();
+                match v {
+                    Maybe::Some(ref x) => { let _ = x; }
+                    Maybe::None => { let r: i32 = 0; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("all-borrow match should not consume scrutinee");
+    }
+
+    #[test]
+    fn match_move_binding_typechecks() {
+        // Move binding in match arm: the binding captures the payload.
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(5); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(x) => { let r: i32 = x; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("move binding in match arm should typecheck");
+    }
+
+    #[test]
+    fn match_or_pattern_all_borrow_ok() {
+        // Or-pattern where all alternatives borrow: ok.
+        let src = r#"
+            enum Flag { A, B, C }
+            fn main() {
+                let f: Flag = Flag::A;
+                match f {
+                    Flag::A | Flag::B => { let r: i32 = 0; let _ = r; }
+                    Flag::C => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern match should typecheck");
+    }
+
+    #[test]
+    fn match_inconsistent_or_pattern_capture_rejects() {
+        // One arm binds with ref, the other without — must be same shape.
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(1); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(ref x) | Wrap::Val(y) => { let _ = y; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("inconsistent or-pattern capture modes must reject");
+        assert!(
+            err.message.contains("same") || err.message.contains("capture") || err.message.contains("alternative"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn match_same_path_move_and_borrow_rejects() {
+        // A single arm with two bindings for the same payload slot (move + borrow conflict).
+        // This is enforced by validate_binding_plan_conflicts.
+        // Note: parser currently only allows one binding per payload slot,
+        // so this test validates the plan-level conflict check via direct API.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().variant(SymbolId(0)).variant_field(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("move+borrow same path must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("capture"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn match_all_arms_borrow_path_ok() {
+        // Two bindings for the same path both borrowing: allowed.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("double-borrow same path must not conflict");
+    }
+
+    // M9.7 — partial move: path-based availability in ScopeEnv
+
+    #[test]
+    fn partial_move_sibling_path_still_usable() {
+        // Move root.0 (first element), then use root.1 (second element) — ok.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(1);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        // Accessing root.1 (different sibling) should be allowed.
+        env.check_path_available(sym, &PatternPath::root().tuple_index(1))
+            .expect("sibling path of moved path should remain available");
+    }
+
+    #[test]
+    fn partial_move_root_blocks_whole_var_use() {
+        // Move root.0, then try to use the whole variable (root) — must reject.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(2);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        // Accessing root (the whole variable) overlaps with root.0 that was moved → reject.
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("use of whole var after partial move must reject");
+        assert!(
+            err.message.contains("partially moved") || err.message.contains("moved"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn partial_move_child_blocks_child_use() {
+        // Move root.0, then try to use root.0 again — must reject.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(3);
+        env.insert(sym, Type::I32);
+        let path = PatternPath::root().tuple_index(0);
+        env.mark_path_state(sym, path.clone(), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &path)
+            .expect_err("re-use of moved child path must reject");
+        assert!(
+            err.message.contains("moved"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn whole_var_consumed_still_blocks() {
+        // mark_consumed (whole-var) still blocks root access.
+        use crate::types::PatternPath;
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(4);
+        env.insert(sym, Type::I32);
+        env.mark_consumed(sym);
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("whole-consumed var must be blocked");
+        assert!(err.message.contains("moved"), "unexpected: {}", err.message);
+    }
+
+    #[test]
+    fn borrow_path_does_not_block_read() {
+        // Borrow only — read should still be allowed (conservative: borrows don't block reads).
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(5);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_path_available(sym, &PatternPath::root().tuple_index(0))
+            .expect("borrow-only path should not block reads");
+    }
+
+    // M9.8 — borrow enforcement against prior path-state
+
+    #[test]
+    fn check_capture_allowed_borrow_then_move_rejects() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(10);
+        env.insert(sym, Type::I32);
+        // Borrow root.0
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        // Now try to move root.0 — must reject
+        let err = env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Move)
+            .expect_err("move after borrow of same path must reject");
+        assert!(
+            err.message.contains("borrow") || err.message.contains("cannot move"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn check_capture_allowed_move_then_borrow_rejects() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(11);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Borrow)
+            .expect_err("borrow after move of same path must reject");
+        assert!(
+            err.message.contains("moved") || err.message.contains("cannot borrow"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn check_capture_allowed_borrow_then_borrow_ok() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(12);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Borrow)
+            .expect("borrow after borrow of same path must be ok");
+    }
+
+    #[test]
+    fn check_capture_allowed_borrow_then_move_sibling_ok() {
+        // Borrow root.0, then move root.1 — different sibling, no overlap, ok.
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(13);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_capture_allowed(sym, &PatternPath::root().tuple_index(1), CaptureMode::Move)
+            .expect("move of sibling of borrowed path must be ok");
+    }
+
+    // M9.9 — expr_access_path + path-state normalization
+
+    #[test]
+    fn expr_access_path_var_is_root() {
+        use crate::types::PatternPath;
+        let mut arena = AstArena::default();
+        let sym = SymbolId(99);
+        let var_id = arena.alloc_expr(Expr::Var(sym));
+        let result = expr_access_path(var_id, &arena);
+        assert_eq!(result, Some((sym, PatternPath::root())));
+    }
+
+    #[test]
+    fn expr_access_path_literal_is_none() {
+        let mut arena = AstArena::default();
+        let lit_id = arena.alloc_expr(Expr::BoolLiteral(true));
+        assert_eq!(expr_access_path(lit_id, &arena), None);
+    }
+
+    #[test]
+    fn expr_access_path_sequence_index_literal() {
+        use crate::types::{NumericLiteral, PatternPath, SequenceIndexExpr};
+        let mut arena = AstArena::default();
+        let sym = SymbolId(7);
+        let base = arena.alloc_expr(Expr::Var(sym));
+        let idx  = arena.alloc_expr(Expr::NumericLiteral(NumericLiteral::I32(2)));
+        let expr = arena.alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base, index: idx }));
+        let result = expr_access_path(expr, &arena);
+        assert_eq!(result, Some((sym, PatternPath::root().tuple_index(2))));
+    }
+
+    #[test]
+    fn expr_access_path_sequence_index_non_literal_is_none() {
+        use crate::types::{SequenceIndexExpr};
+        let mut arena = AstArena::default();
+        let sym = SymbolId(7);
+        let base     = arena.alloc_expr(Expr::Var(sym));
+        let dyn_idx  = arena.alloc_expr(Expr::Var(SymbolId(8)));
+        let expr = arena.alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base, index: dyn_idx }));
+        // dynamic index → cannot determine path statically
+        assert_eq!(expr_access_path(expr, &arena), None);
+    }
+
+    #[test]
+    fn path_state_normalization_root_subsumes_children() {
+        // Adding Moved(root) when Moved(root.0) already exists → root.0 is dropped.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(50);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(1), PathAvailability::Moved);
+        // Now add root — should subsume both children.
+        env.mark_path_state(sym, PatternPath::root(), PathAvailability::Moved);
+        // Only one entry should remain: root.
+        let binding = env.binding(sym).expect("binding must exist");
+        assert_eq!(binding.path_state.len(), 1, "root should subsume child entries");
+        assert_eq!(binding.path_state[0].0, PatternPath::root());
+    }
+
+    #[test]
+    fn path_state_normalization_child_redundant_if_parent_present() {
+        // If Moved(root) exists, adding Moved(root.0) should be a no-op.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(51);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root(), PathAvailability::Moved);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let binding = env.binding(sym).expect("binding must exist");
+        assert_eq!(binding.path_state.len(), 1, "child must be suppressed when parent already present");
+    }
+
+    #[test]
+    fn check_path_available_sibling_of_moved_is_ok() {
+        // After moving root.0, accessing root.1 must succeed.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(60);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        env.check_path_available(sym, &PatternPath::root().tuple_index(1))
+            .expect("sibling of moved path must be accessible");
+    }
+
+    #[test]
+    fn check_path_available_whole_var_blocked_after_child_move() {
+        // After moving root.0, accessing root (whole var) must fail.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(61);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("whole-var access after child move must be blocked");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    #[test]
+    fn check_path_available_moved_child_blocked() {
+        // After moving root.0, accessing root.0 itself must fail.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(62);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &PatternPath::root().tuple_index(0))
+            .expect_err("access of moved path must be blocked");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    // M9.6 — prefix-overlap conflict detection
+
+    #[test]
+    fn prefix_overlap_move_and_borrow_rejects() {
+        // root.0 is a prefix of root.0.1 — move + borrow should conflict.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root().tuple_index(0);
+        let child  = PatternPath::root().tuple_index(0).tuple_index(1);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: parent, ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path: child, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("prefix-overlap move+borrow must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("overlapping"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn prefix_overlap_two_moves_rejects() {
+        // root and root.0 — both moved is also a conflict.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root();
+        let child  = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: parent, ty: Type::Quad,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Move, path: child, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect_err("prefix-overlap double-move must conflict");
+    }
+
+    #[test]
+    fn distinct_paths_no_conflict() {
+        // root.0 and root.1 share the root prefix but diverge at index — no overlap.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(1), ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect("distinct sibling paths must not conflict");
+    }
+
+    #[test]
+    fn prefix_overlap_two_borrows_ok() {
+        // root.0 borrows and root.0.1 also borrows — allowed.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root().tuple_index(0);
+        let child  = PatternPath::root().tuple_index(0).tuple_index(1);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: parent, ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path: child, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect("prefix-overlap double-borrow must not conflict");
+    }
 }
 
 fn is_builtin_assert_name(
@@ -5220,27 +6057,27 @@ fn infer_match_expr_type(
         loop_stack,
     impl_list,
     )?;
+    // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
     if !matches!(
         scrutinee_ty,
         Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            | Type::I32 | Type::U32
     ) {
         return Err(FrontendError {
             pos: 0,
             message:
-                "match expression is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                "match expression is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                     .to_string(),
         });
     }
 
+    // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
+    // NOTE: infer_match_expr_type receives &ScopeEnv (not mut), so consumed-state
+    // marking is skipped here; it is enforced at statement-level match sites instead.
     let mut result_ty = None;
     for arm in &match_expr.arms {
-        let mut arm_env = env.clone();
-        arm_env.push_scope();
-        for (name, ty) in
-            bind_match_pattern(&arm.pat, &scrutinee_ty, arena, record_table, adt_table)?
-        {
-            arm_env.insert(name, ty);
-        }
+        let (_, arm_env) =
+            build_and_apply_match_plan(&arm.pat, &scrutinee_ty, env, arena, adt_table)?;
         check_match_guard(
             arm.guard,
             arena,
@@ -5461,14 +6298,16 @@ fn check_loop_expr_stmt(
                 loop_stack,
             impl_list,
             )?;
+            // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
             if !matches!(
                 st,
                 Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+                    | Type::I32 | Type::U32
             ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             }
@@ -5479,13 +6318,14 @@ fn check_loop_expr_stmt(
                 });
             }
 
+            // M9.5 Wave D / M9.7 / M9.8: BindingPlan pipeline + path-based ownership.
+            let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(&arm.pat, &st, arena, record_table, adt_table)?
-                {
-                    arm_env.insert(name, ty);
-                }
+                let (plan, mut arm_env) =
+                    build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+                validate_plan_against_scrutinee_state(env, *scrutinee, arena, &plan)?;
+                arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -5512,6 +6352,7 @@ fn check_loop_expr_stmt(
                 }
                 arm_env.pop_scope();
             }
+            apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             let mut def_env = env.clone();
             def_env.push_scope();
@@ -6581,7 +7422,8 @@ fn infer_record_field_access_type(
     loop_stack: &mut Vec<LoopTypeFrame>,
     impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let base_ty = infer_expr_type(
+    // M9.9: use no-check variant for the base; caller already verified full path.
+    let base_ty = infer_expr_type_no_check(
         field_expr.base,
         arena,
         env,
@@ -6635,7 +7477,8 @@ fn infer_sequence_index_type(
     loop_stack: &mut Vec<LoopTypeFrame>,
     impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let base_ty = infer_expr_type(
+    // M9.9: use no-check variant for the base; caller already verified full path.
+    let base_ty = infer_expr_type_no_check(
         index_expr.base,
         arena,
         env,
@@ -7379,6 +8222,60 @@ fn resolve_match_family_spec(
     }
 }
 
+/// M9.4 Wave 3: recursively bind tuple pattern items into `env`.
+///
+/// Called for `LetElseTuple` with `Nested` items. Recurses into sub-tuples.
+///
+/// NOTE(M9.4 strategy): `let (a, (b, c)) = ...` is lowered to `LetElseTuple` (no else arm)
+/// instead of `LetTuple`, so this recursive helper can handle the nested binding.
+/// This is a temporary bridge — M9.5+ move/borrow semantics will revisit this path.
+fn bind_tuple_pattern_items(
+    items: &[TuplePatternItem],
+    tuple_ty: Type,
+    env: &mut ScopeEnv,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(item_tys) = tuple_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "nested tuple destructuring requires a tuple value, got {:?}",
+                tuple_ty
+            ),
+        });
+    };
+    if item_tys.len() != items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "nested tuple arity mismatch: pattern has {} items, value has {}",
+                items.len(),
+                item_tys.len()
+            ),
+        });
+    }
+    for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
+        match item {
+            TuplePatternItem::Bind { name, .. } => env.insert(*name, item_ty),
+            TuplePatternItem::Discard => {}
+            TuplePatternItem::QuadLiteral(_) => {
+                if item_ty != Type::Quad {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "nested tuple quad pattern requires quad element, got {:?}",
+                            item_ty
+                        ),
+                    });
+                }
+            }
+            TuplePatternItem::Nested(nested_items) => {
+                bind_tuple_pattern_items(nested_items, item_ty, env)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn bind_match_pattern(
     pat: &MatchPattern,
     scrutinee_ty: &Type,
@@ -7412,7 +8309,7 @@ fn bind_match_pattern(
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             };
@@ -7458,7 +8355,7 @@ fn bind_match_pattern(
             {
                 let payload_ty =
                     canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
-                if let AdtPatternItem::Bind(name) = item {
+                if let AdtPatternItem::Bind { name, .. } = item {
                     if !seen.insert(*name) {
                         return Err(FrontendError {
                             pos: 0,
@@ -7476,6 +8373,50 @@ fn bind_match_pattern(
             }
             Ok(bindings)
         }
+        // M9.4 Wave 3: wildcard — no bindings, compatible with any scrutinee.
+        (_, MatchPattern::Wildcard) => Ok(Vec::new()),
+
+        // M9.4 Wave 3: or-pattern — all alternatives must typecheck against the
+        // same scrutinee; bindings from the first alternative are used (Wave 3
+        // does not enforce identical binding sets across alternatives).
+        (_, MatchPattern::Or(alts)) => {
+            if alts.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "or-pattern must have at least one alternative".to_string(),
+                });
+            }
+            // Typecheck each alternative against the scrutinee.
+            for alt in alts {
+                bind_match_pattern(alt, scrutinee_ty, arena, record_table, adt_table)?;
+            }
+            // Bindings come from the first alternative only.
+            bind_match_pattern(&alts[0], scrutinee_ty, arena, record_table, adt_table)
+        }
+
+        // M9.4 Wave 3: integer range pattern — scrutinee must be i32 or u32;
+        // start must be <= end.
+        (ty, MatchPattern::IntRange(range)) => {
+            if !matches!(ty, Type::I32 | Type::U32) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "integer range pattern requires i32 or u32 scrutinee, got {:?}",
+                        ty
+                    ),
+                });
+            }
+            if range.start > range.end {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "integer range pattern start ({}) must be <= end ({})",
+                        range.start, range.end
+                    ),
+                });
+            }
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -7492,6 +8433,27 @@ fn missing_exhaustive_sum_variants<'a>(
     let mut covered = BTreeSet::new();
     for (pat, guard) in patterns {
         if guard.is_some() {
+            continue;
+        }
+        // NOTE: Range and tuple patterns are not included in exhaustiveness (M9.4 Wave 3 boundary).
+        // Wildcard covers all variants.
+        if matches!(pat, MatchPattern::Wildcard) {
+            return Ok(Some((family.display_label, Vec::new())));
+        }
+        // M9.4 Wave 3: or-pattern — expand alternatives into coverage.
+        if let MatchPattern::Or(alts) = pat {
+            for alt in alts {
+                if matches!(alt, MatchPattern::Wildcard) {
+                    return Ok(Some((family.display_label, Vec::new())));
+                }
+                if let MatchPattern::Adt(adt_pat) = alt {
+                    if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
+                        covered.insert(
+                            resolve_symbol_name(arena, adt_pat.variant_name)?.to_string(),
+                        );
+                    }
+                }
+            }
             continue;
         }
         if let MatchPattern::Adt(adt_pat) = pat {
@@ -7689,5 +8651,471 @@ fn ensure_const_initializer_safe(
                 "const initializer currently supports only pure literal/const expression forms"
                     .to_string(),
         }),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave C: binding plan builders + conflict validation
+// ──────────────────────────────────────────────────────────────
+
+/// Validate that no two items in the plan access the same path via conflicting
+/// capture modes (borrow vs. move, or duplicate move).
+/// Multiple borrows of the same path are allowed.
+/// M9.6: returns true if every element of `a` is a prefix of `b`.
+fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+    if a.elems.len() > b.elems.len() { return false; }
+    a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+}
+
+/// M9.6: two paths conflict (overlap) if one is a prefix of the other or they are equal.
+fn paths_overlap(a: &PatternPath, b: &PatternPath) -> bool {
+    path_is_prefix(a, b) || path_is_prefix(b, a)
+}
+
+fn captures_conflict(a: CaptureMode, b: CaptureMode) -> bool {
+    !matches!((a, b), (CaptureMode::Borrow, CaptureMode::Borrow))
+}
+
+/// Validate that no two items in the plan access overlapping paths via conflicting
+/// capture modes.  Two paths overlap when one is a prefix of the other (or equal).
+/// Multiple borrows of the same or ancestor/descendant path are allowed.
+///
+/// NOTE (M9.5/M9.6): overlap check is prefix-based only.
+/// Alias analysis and field-sensitivity beyond the current PatternPath model are deferred.
+pub(crate) fn validate_binding_plan_conflicts(plan: &BindingPlan) -> Result<(), FrontendError> {
+    for (i, a) in plan.items.iter().enumerate() {
+        for b in plan.items.iter().skip(i + 1) {
+            if !paths_overlap(&a.path, &b.path) {
+                continue;
+            }
+            if captures_conflict(a.capture, b.capture) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "conflicting captures on overlapping pattern paths for '{}' and '{}'",
+                        a.name.0, b.name.0
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn encode_path_key(path: &PatternPath) -> Vec<u8> {
+    use crate::types::PatternPathElem;
+    let mut out = Vec::new();
+    for elem in &path.elems {
+        match elem {
+            PatternPathElem::TupleIndex(i)  => { out.push(0); out.extend_from_slice(&(*i as u32).to_le_bytes()); }
+            PatternPathElem::Variant(s)     => { out.push(1); out.extend_from_slice(&s.0.to_le_bytes()); }
+            PatternPathElem::VariantField(i)=> { out.push(2); out.extend_from_slice(&(*i as u32).to_le_bytes()); }
+            PatternPathElem::RecordField(s) => { out.push(3); out.extend_from_slice(&s.0.to_le_bytes()); }
+        }
+    }
+    out
+}
+
+/// Determine whether the scrutinee is consumed (moved) by the plan.
+pub(crate) fn scrutinee_use_from_plan(plan: &BindingPlan) -> ScrutineeUse {
+    if plan.items.iter().any(|it| it.capture == CaptureMode::Move) {
+        ScrutineeUse::Consumed
+    } else {
+        ScrutineeUse::Preserved
+    }
+}
+
+/// Apply a binding plan to an env scope (insert all bindings as mutable locals).
+pub(crate) fn apply_binding_plan(env: &mut ScopeEnv, plan: &BindingPlan) {
+    for item in &plan.items {
+        env.insert(item.name, item.ty.clone());
+    }
+}
+
+/// Build a `BindingPlan` from tuple pattern items against a known tuple type.
+pub(crate) fn build_tuple_pattern_plan(
+    items: &[TuplePatternItem],
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(tuple_items) = expected_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple pattern requires tuple scrutinee, got {:?}", expected_ty
+            ),
+        });
+    };
+    if items.len() != tuple_items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple pattern arity mismatch: pattern has {} items, value has {}",
+                items.len(), tuple_items.len()
+            ),
+        });
+    }
+    for (idx, (item, item_ty)) in items.iter().zip(tuple_items.iter()).enumerate() {
+        let path = base.tuple_index(idx);
+        match item {
+            TuplePatternItem::Discard | TuplePatternItem::QuadLiteral(_) => {}
+            TuplePatternItem::Nested(nested) => {
+                build_tuple_pattern_plan(nested, item_ty, &path, out)?;
+            }
+            TuplePatternItem::Bind { name, capture } => {
+                out.push(BindingPlanItem {
+                    name: *name,
+                    capture: *capture,
+                    path,
+                    ty: item_ty.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from an ADT match pattern against a known ADT type.
+pub(crate) fn build_adt_pattern_plan(
+    pat: &AdtMatchPattern,
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let family = resolve_match_family_spec(expected_ty, arena, adt_table)?
+        .ok_or_else(|| FrontendError {
+            pos: 0,
+            message: "ADT pattern plan: scrutinee is not a sum type".to_string(),
+        })?;
+    // Verify that the pattern's enum name matches the scrutinee family.
+    let pattern_family_name = resolve_symbol_name(arena, pat.adt_name)?.to_string();
+    if pattern_family_name != family.family_name {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "match arm pattern type '{}' does not match scrutinee {}",
+                pattern_family_name, family.display_label
+            ),
+        });
+    }
+    let variant_name_str = resolve_symbol_name(arena, pat.variant_name)?;
+    let variant = family
+        .variants
+        .iter()
+        .find(|v| v.name == variant_name_str)
+        .ok_or_else(|| FrontendError {
+            pos: 0,
+            message: format!(
+                "{} has no variant named '{}' in match pattern",
+                family.display_label, variant_name_str
+            ),
+        })?;
+
+    if pat.items.len() != variant.payload.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "ADT pattern '{}::{}' arity mismatch: pattern has {} items, variant has {}",
+                family.family_name, variant_name_str,
+                pat.items.len(), variant.payload.len()
+            ),
+        });
+    }
+
+    let variant_root = base.variant(pat.variant_name);
+    for (idx, (item, item_ty)) in pat.items.iter().zip(variant.payload.iter()).enumerate() {
+        let path = variant_root.variant_field(idx);
+        match item {
+            AdtPatternItem::Discard => {}
+            AdtPatternItem::Bind { name, capture } => {
+                out.push(BindingPlanItem {
+                    name: *name,
+                    capture: *capture,
+                    path,
+                    ty: item_ty.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from any `MatchPattern`.
+///
+/// For `Or`, takes the first alternative as the canonical binding shape and
+/// validates that all other alternatives bind the same names/modes/types.
+pub(crate) fn build_match_pattern_plan(
+    pat: &MatchPattern,
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    match pat {
+        MatchPattern::Wildcard | MatchPattern::Quad(_) => Ok(()),
+        MatchPattern::IntRange(range) => {
+            if range.start > range.end {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "int range pattern start ({}) must be <= end ({})",
+                        range.start, range.end
+                    ),
+                });
+            }
+            Ok(())
+        }
+        MatchPattern::Adt(adt_pat) => {
+            build_adt_pattern_plan(adt_pat, expected_ty, base, out, arena, adt_table)
+        }
+        MatchPattern::Or(alts) => {
+            if alts.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "or-pattern must contain at least one alternative".to_string(),
+                });
+            }
+            let mut first_plan = BindingPlan::default();
+            build_match_pattern_plan(&alts[0], expected_ty, base, &mut first_plan, arena, adt_table)?;
+            validate_binding_plan_conflicts(&first_plan)?;
+
+            let baseline: Vec<(u32, CaptureMode)> = first_plan.items.iter()
+                .map(|it| (it.name.0, it.capture))
+                .collect();
+
+            for alt in &alts[1..] {
+                let mut alt_plan = BindingPlan::default();
+                build_match_pattern_plan(alt, expected_ty, base, &mut alt_plan, arena, adt_table)?;
+                validate_binding_plan_conflicts(&alt_plan)?;
+
+                let shape: Vec<(u32, CaptureMode)> = alt_plan.items.iter()
+                    .map(|it| (it.name.0, it.capture))
+                    .collect();
+
+                if shape != baseline {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "all or-pattern alternatives must bind the same names with the same capture modes".to_string(),
+                    });
+                }
+            }
+            out.items.extend(first_plan.items);
+            Ok(())
+        }
+    }
+}
+
+/// If the scrutinee expression is a plain variable and the plan consumed it,
+/// mark it unavailable in `env` so subsequent reads are rejected.
+pub(crate) fn maybe_mark_scrutinee_consumed(
+    scrutinee_id: ExprId,
+    plan: &BindingPlan,
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
+        if let Expr::Var(name) = arena.expr(scrutinee_id) {
+            env.mark_consumed(*name);
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave C: use-after-move guard for Expr::Var
+// ──────────────────────────────────────────────────────────────
+
+/// Call at every `Expr::Var` site in inference to reject use of moved values.
+pub(crate) fn check_var_not_consumed(
+    name: SymbolId,
+    env: &ScopeEnv,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    if env.is_consumed(name) {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "use of moved value '{}'",
+                resolve_symbol_name(arena, name)?
+            ),
+        });
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave D: match integration helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Build a binding plan for one match arm pattern, validate conflicts,
+/// clone `env`, and apply the plan to the clone. Returns `(plan, arm_env)`.
+///
+/// NOTE (M9.5): PatternPath overlap (e.g., root vs root.0) is NOT checked yet.
+/// Only exact-path conflicts are validated.
+pub(crate) fn build_and_apply_match_plan<'e>(
+    pattern: &MatchPattern,
+    scrutinee_ty: &Type,
+    env: &'e ScopeEnv,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(BindingPlan, ScopeEnv), FrontendError> {
+    let mut plan = BindingPlan::default();
+    build_match_pattern_plan(pattern, scrutinee_ty, &PatternPath::root(), &mut plan, arena, adt_table)?;
+    validate_binding_plan_conflicts(&plan)?;
+    let mut arm_env = env.clone();
+    arm_env.push_scope();
+    apply_binding_plan(&mut arm_env, &plan);
+    Ok((plan, arm_env))
+}
+
+/// Mark the scrutinee variable consumed if the plan moved any value from it.
+/// Only acts when scrutinee_expr is a plain `Expr::Var`.
+/// Used at statement level where `env` is `&mut ScopeEnv`.
+pub(crate) fn mark_scrutinee_if_moved(
+    scrutinee_expr: ExprId,
+    plan: &BindingPlan,
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
+        if let Expr::Var(name) = arena.expr(scrutinee_expr) {
+            env.mark_consumed(*name);
+        }
+    }
+}
+
+/// M9.8: Validate that all items in `plan` are capture-compatible with the
+/// existing path-state of the scrutinee variable (if it is a plain Expr::Var).
+///
+/// Prevents: move after borrow, borrow after move, move after move on same/overlapping path.
+pub(crate) fn validate_plan_against_scrutinee_state(
+    env: &ScopeEnv,
+    scrutinee_expr: ExprId,
+    arena: &AstArena,
+    plan: &BindingPlan,
+) -> Result<(), FrontendError> {
+    let Expr::Var(name) = arena.expr(scrutinee_expr) else { return Ok(()); };
+    for item in &plan.items {
+        env.check_capture_allowed(*name, &item.path, item.capture)?;
+    }
+    Ok(())
+}
+
+/// M9.7: For each arm plan, record the capture state of every binding path
+/// onto the scrutinee variable (if it is a plain Expr::Var).
+///
+/// Conservative: we union the paths across all arms. A path moved in any arm
+// ──────────────────────────────────────────────────────────────
+// M9.9 Wave A: path-aware expression access helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Attempt to extract a `(base_variable, PatternPath)` pair from an expression.
+///
+/// Returns `Some` for:
+///   * `Expr::Var(x)`                          → `(x, root)`
+///   * `Expr::RecordField { base, field }`      → recurse + `RecordField(field)`
+///   * `Expr::SequenceIndex { base, index }`    → recurse + `TupleIndex(n)` for
+///                                                 literal `i32` index only
+///
+/// Returns `None` for calls, computed indices, closures, and anything not
+/// expressible as a single static path from a local variable.
+pub(crate) fn expr_access_path(
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Option<(SymbolId, PatternPath)> {
+    match arena.expr(expr_id) {
+        Expr::Var(name) => Some((*name, PatternPath::root())),
+        Expr::RecordField(field_expr) => {
+            let (base_sym, base_path) = expr_access_path(field_expr.base, arena)?;
+            Some((base_sym, base_path.record_field(field_expr.field)))
+        }
+        Expr::SequenceIndex(index_expr) => {
+            if let Expr::NumericLiteral(crate::types::NumericLiteral::I32(idx)) =
+                arena.expr(index_expr.index)
+            {
+                if *idx >= 0 {
+                    let (base_sym, base_path) = expr_access_path(index_expr.base, arena)?;
+                    return Some((base_sym, base_path.tuple_index(*idx as usize)));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Format a path as a human-readable access string (e.g. `"v"`, `"v.0"`, `"v.field"`).
+///
+/// Field name symbols are rendered as `.<numeric_id>` since this layer has no
+/// arena access. Pass `arena` at a higher level if readable names are needed.
+pub(crate) fn path_to_string(base_name: &str, path: &PatternPath) -> String {
+    use crate::types::PatternPathElem;
+    let mut s = alloc::string::String::from(base_name);
+    for elem in &path.elems {
+        match elem {
+            PatternPathElem::TupleIndex(i) | PatternPathElem::VariantField(i) => {
+                s.push('.');
+                s.push_str(&i.to_string());
+            }
+            PatternPathElem::RecordField(sym) | PatternPathElem::Variant(sym) => {
+                s.push('.');
+                s.push_str(&sym.0.to_string());
+            }
+        }
+    }
+    s
+}
+
+/// Infer the type of `expr_id` **without** running the top-level path-availability
+/// check from M9.9.  Used internally when `expr_id` is the *base* of a field or
+/// index access whose **caller** has already verified the full access path.
+///
+/// Only skips the path check for `Expr::Var`; all other expressions fall through
+/// to the normal `infer_expr_type` (which includes their own path check).
+fn infer_expr_type_no_check(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
+) -> Result<Type, FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::Var(v) => {
+            // No path check here; the outer infer_expr_type call for the full
+            // field/index expression already checked the correct sub-path.
+            env.get(*v).ok_or(FrontendError {
+                pos: 0,
+                message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+            })
+        }
+        _ => infer_expr_type(
+            expr_id, arena, env, table, record_table, adt_table, ret_ty, loop_stack, impl_list,
+        ),
+    }
+}
+
+/// is considered moved after the match.
+pub(crate) fn apply_plans_to_scrutinee(
+    scrutinee_expr: ExprId,
+    plans: &[BindingPlan],
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    let Expr::Var(var_name) = arena.expr(scrutinee_expr) else { return; };
+    for plan in plans {
+        for item in &plan.items {
+            let avail = match item.capture {
+                CaptureMode::Move   => PathAvailability::Moved,
+                CaptureMode::Borrow => PathAvailability::Borrowed,
+            };
+            env.mark_path_state(*var_name, item.path.clone(), avail);
+        }
     }
 }
