@@ -1,7 +1,7 @@
 use crate::types::{
-    AccessKind, AdtCtorExpr, AdtMatchPattern, AdtPatternItem, BindingPlan, BindingPlanItem,
+    AdtCtorExpr, AdtMatchPattern, AdtPatternItem, BindingPlan, BindingPlanItem,
     CaptureMode, MatchPattern, NumericLiteral, PathAvailability, PatternPath, RecordPatternTarget,
-    ScrutineeUse, ValueAvailability,
+    ScrutineeUse,
 };
 use crate::*;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -731,11 +731,21 @@ fn check_stmt(
                     ),
                 });
             }
-            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
-                if let Some(name) = item {
-                    env.insert(*name, item_ty);
-                }
-            }
+            // M9.10 Wave B: build BindingPlan so path-state is tracked on the source variable.
+            let tuple_items: Vec<TuplePatternItem> = items
+                .iter()
+                .map(|opt| match opt {
+                    Some(name) => TuplePatternItem::Bind { name: *name, capture: CaptureMode::Move },
+                    None => TuplePatternItem::Discard,
+                })
+                .collect();
+            let tuple_ty = Type::Tuple(item_tys);
+            let mut plan = BindingPlan::default();
+            build_tuple_pattern_plan(&tuple_items, &tuple_ty, &PatternPath::root(), &mut plan)?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::LetRecord {
@@ -973,27 +983,28 @@ fn check_stmt(
                 loop_stack,
             impl_list,
             )?;
-            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
-                match item {
-                    TuplePatternItem::Bind { name, .. } => env.insert(*name, item_ty),
-                    TuplePatternItem::Discard => {}
-                    TuplePatternItem::QuadLiteral(_) => {
-                        if item_ty != Type::Quad {
-                            return Err(FrontendError {
-                                pos: 0,
-                                message: format!(
-                                    "let-else tuple literal pattern requires quad element, got {:?}",
-                                    item_ty
-                                ),
-                            });
-                        }
-                    }
-                    TuplePatternItem::Nested(nested_items) => {
-                        // M9.4 Wave 3: recursive nested tuple destructuring.
-                        bind_tuple_pattern_items(nested_items, item_ty, env)?;
+            // M9.10 Wave B: validate QuadLiteral items before building plan.
+            for (item, item_ty) in items.iter().zip(item_tys.iter()) {
+                if let TuplePatternItem::QuadLiteral(_) = item {
+                    if *item_ty != Type::Quad {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "let-else tuple literal pattern requires quad element, got {:?}",
+                                item_ty
+                            ),
+                        });
                     }
                 }
             }
+            // M9.10 Wave B: build BindingPlan so path-state is tracked on the source variable.
+            let tuple_ty = Type::Tuple(item_tys);
+            let mut plan = BindingPlan::default();
+            build_tuple_pattern_plan(items, &tuple_ty, &PatternPath::root(), &mut plan)?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::Discard { ty, value } => {
@@ -5927,6 +5938,37 @@ mod tests {
         validate_binding_plan_conflicts(&plan)
             .expect("prefix-overlap double-borrow must not conflict");
     }
+
+    // M9.10 Wave B — LetTuple / LetElseTuple path-state tracking
+
+    #[test]
+    fn let_tuple_marks_moved_paths_on_source_var() {
+        // `let (a, b) = src;` should typecheck — both paths move from src.
+        typecheck_source(r#"
+            fn f(src: (i32, i32)) { let (a, b) = src; }
+            fn main() { return; }
+        "#).expect("let-tuple destructure must typecheck");
+    }
+
+    #[test]
+    fn let_tuple_rejects_second_destructure_of_same_source() {
+        // After `let (a, b) = src;` (move), `let (c, d) = src;` must be rejected.
+        let err = typecheck_source(r#"
+            fn f(src: (i32, i32)) { let (a, b) = src; let (c, d) = src; }
+            fn main() { return; }
+        "#).expect_err("second move-destructure of same source must fail");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    #[test]
+    fn let_tuple_partial_move_then_full_destructure_rejected() {
+        // After `let (a, _) = src;`, trying to destructure src again must fail.
+        let err = typecheck_source(r#"
+            fn f(src: (i32, i32)) { let (a, _) = src; let (b, c) = src; }
+            fn main() { return; }
+        "#).expect_err("second destructure after partial move must fail");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
 }
 
 fn is_builtin_assert_name(
@@ -8222,204 +8264,6 @@ fn resolve_match_family_spec(
     }
 }
 
-/// M9.4 Wave 3: recursively bind tuple pattern items into `env`.
-///
-/// Called for `LetElseTuple` with `Nested` items. Recurses into sub-tuples.
-///
-/// NOTE(M9.4 strategy): `let (a, (b, c)) = ...` is lowered to `LetElseTuple` (no else arm)
-/// instead of `LetTuple`, so this recursive helper can handle the nested binding.
-/// This is a temporary bridge — M9.5+ move/borrow semantics will revisit this path.
-fn bind_tuple_pattern_items(
-    items: &[TuplePatternItem],
-    tuple_ty: Type,
-    env: &mut ScopeEnv,
-) -> Result<(), FrontendError> {
-    let Type::Tuple(item_tys) = tuple_ty else {
-        return Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "nested tuple destructuring requires a tuple value, got {:?}",
-                tuple_ty
-            ),
-        });
-    };
-    if item_tys.len() != items.len() {
-        return Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "nested tuple arity mismatch: pattern has {} items, value has {}",
-                items.len(),
-                item_tys.len()
-            ),
-        });
-    }
-    for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
-        match item {
-            TuplePatternItem::Bind { name, .. } => env.insert(*name, item_ty),
-            TuplePatternItem::Discard => {}
-            TuplePatternItem::QuadLiteral(_) => {
-                if item_ty != Type::Quad {
-                    return Err(FrontendError {
-                        pos: 0,
-                        message: format!(
-                            "nested tuple quad pattern requires quad element, got {:?}",
-                            item_ty
-                        ),
-                    });
-                }
-            }
-            TuplePatternItem::Nested(nested_items) => {
-                bind_tuple_pattern_items(nested_items, item_ty, env)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn bind_match_pattern(
-    pat: &MatchPattern,
-    scrutinee_ty: &Type,
-    arena: &AstArena,
-    record_table: &RecordTable,
-    adt_table: &AdtTable,
-) -> Result<Vec<(SymbolId, Type)>, FrontendError> {
-    match (scrutinee_ty, pat) {
-        (Type::Quad, MatchPattern::Quad(_)) => Ok(Vec::new()),
-        (Type::Quad, MatchPattern::Adt(adt_pat)) => Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "sum match pattern '{}::{}' can be used only with sum scrutinee",
-                resolve_symbol_name(arena, adt_pat.adt_name)?,
-                resolve_symbol_name(arena, adt_pat.variant_name)?,
-            ),
-        }),
-        (_, MatchPattern::Quad(pat)) => {
-            let family = resolve_match_family_spec(scrutinee_ty, arena, adt_table)?
-                .expect("non-quad matchable family should resolve");
-            Err(FrontendError {
-                pos: 0,
-                message: format!(
-                    "quad match pattern '{:?}' can be used only with quad scrutinee, not {}",
-                    pat, family.display_label
-                ),
-            })
-        }
-        (_, MatchPattern::Adt(adt_pat)) => {
-            let Some(family) = resolve_match_family_spec(scrutinee_ty, arena, adt_table)? else {
-                return Err(FrontendError {
-                    pos: 0,
-                    message:
-                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
-                            .to_string(),
-                });
-            };
-            let pattern_family = resolve_symbol_name(arena, adt_pat.adt_name)?.to_string();
-            if pattern_family != family.family_name {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "match arm pattern type '{}' does not match scrutinee {}",
-                        pattern_family, family.display_label
-                    ),
-                });
-            }
-            let pattern_variant = resolve_symbol_name(arena, adt_pat.variant_name)?.to_string();
-            let variant = family
-                .variants
-                .iter()
-                .find(|variant| variant.name == pattern_variant)
-                .ok_or(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "{} has no variant named '{}' in match pattern",
-                        family.display_label, pattern_variant,
-                    ),
-                })?;
-            if variant.payload.len() != adt_pat.items.len() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "match pattern '{}::{}' expects {} payload items, got {}",
-                        family.family_name,
-                        pattern_variant,
-                        variant.payload.len(),
-                        adt_pat.items.len(),
-                    ),
-                });
-            }
-
-            let mut seen = BTreeSet::new();
-            let mut bindings = Vec::new();
-            for (index, (item, declared_ty)) in
-                adt_pat.items.iter().zip(variant.payload.iter()).enumerate()
-            {
-                let payload_ty =
-                    canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
-                if let AdtPatternItem::Bind { name, .. } = item {
-                    if !seen.insert(*name) {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: format!(
-                                "match pattern '{}::{}' repeats binding '{}' at payload item {}",
-                                family.family_name,
-                                pattern_variant,
-                                resolve_symbol_name(arena, *name)?,
-                                index,
-                            ),
-                        });
-                    }
-                    bindings.push((*name, payload_ty));
-                }
-            }
-            Ok(bindings)
-        }
-        // M9.4 Wave 3: wildcard — no bindings, compatible with any scrutinee.
-        (_, MatchPattern::Wildcard) => Ok(Vec::new()),
-
-        // M9.4 Wave 3: or-pattern — all alternatives must typecheck against the
-        // same scrutinee; bindings from the first alternative are used (Wave 3
-        // does not enforce identical binding sets across alternatives).
-        (_, MatchPattern::Or(alts)) => {
-            if alts.is_empty() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: "or-pattern must have at least one alternative".to_string(),
-                });
-            }
-            // Typecheck each alternative against the scrutinee.
-            for alt in alts {
-                bind_match_pattern(alt, scrutinee_ty, arena, record_table, adt_table)?;
-            }
-            // Bindings come from the first alternative only.
-            bind_match_pattern(&alts[0], scrutinee_ty, arena, record_table, adt_table)
-        }
-
-        // M9.4 Wave 3: integer range pattern — scrutinee must be i32 or u32;
-        // start must be <= end.
-        (ty, MatchPattern::IntRange(range)) => {
-            if !matches!(ty, Type::I32 | Type::U32) {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "integer range pattern requires i32 or u32 scrutinee, got {:?}",
-                        ty
-                    ),
-                });
-            }
-            if range.start > range.end {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "integer range pattern start ({}) must be <= end ({})",
-                        range.start, range.end
-                    ),
-                });
-            }
-            Ok(Vec::new())
-        }
-    }
-}
-
 fn missing_exhaustive_sum_variants<'a>(
     scrutinee_ty: &Type,
     patterns: impl IntoIterator<Item = (&'a MatchPattern, Option<ExprId>)>,
@@ -8702,20 +8546,6 @@ pub(crate) fn validate_binding_plan_conflicts(plan: &BindingPlan) -> Result<(), 
     Ok(())
 }
 
-fn encode_path_key(path: &PatternPath) -> Vec<u8> {
-    use crate::types::PatternPathElem;
-    let mut out = Vec::new();
-    for elem in &path.elems {
-        match elem {
-            PatternPathElem::TupleIndex(i)  => { out.push(0); out.extend_from_slice(&(*i as u32).to_le_bytes()); }
-            PatternPathElem::Variant(s)     => { out.push(1); out.extend_from_slice(&s.0.to_le_bytes()); }
-            PatternPathElem::VariantField(i)=> { out.push(2); out.extend_from_slice(&(*i as u32).to_le_bytes()); }
-            PatternPathElem::RecordField(s) => { out.push(3); out.extend_from_slice(&s.0.to_le_bytes()); }
-        }
-    }
-    out
-}
-
 /// Determine whether the scrutinee is consumed (moved) by the plan.
 pub(crate) fn scrutinee_use_from_plan(plan: &BindingPlan) -> ScrutineeUse {
     if plan.items.iter().any(|it| it.capture == CaptureMode::Move) {
@@ -8908,44 +8738,6 @@ pub(crate) fn build_match_pattern_plan(
         }
     }
 }
-
-/// If the scrutinee expression is a plain variable and the plan consumed it,
-/// mark it unavailable in `env` so subsequent reads are rejected.
-pub(crate) fn maybe_mark_scrutinee_consumed(
-    scrutinee_id: ExprId,
-    plan: &BindingPlan,
-    arena: &AstArena,
-    env: &mut ScopeEnv,
-) {
-    if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
-        if let Expr::Var(name) = arena.expr(scrutinee_id) {
-            env.mark_consumed(*name);
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────
-// M9.5 Wave C: use-after-move guard for Expr::Var
-// ──────────────────────────────────────────────────────────────
-
-/// Call at every `Expr::Var` site in inference to reject use of moved values.
-pub(crate) fn check_var_not_consumed(
-    name: SymbolId,
-    env: &ScopeEnv,
-    arena: &AstArena,
-) -> Result<(), FrontendError> {
-    if env.is_consumed(name) {
-        return Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "use of moved value '{}'",
-                resolve_symbol_name(arena, name)?
-            ),
-        });
-    }
-    Ok(())
-}
-
 // ──────────────────────────────────────────────────────────────
 // M9.5 Wave D: match integration helpers
 // ──────────────────────────────────────────────────────────────
@@ -8969,22 +8761,6 @@ pub(crate) fn build_and_apply_match_plan<'e>(
     arm_env.push_scope();
     apply_binding_plan(&mut arm_env, &plan);
     Ok((plan, arm_env))
-}
-
-/// Mark the scrutinee variable consumed if the plan moved any value from it.
-/// Only acts when scrutinee_expr is a plain `Expr::Var`.
-/// Used at statement level where `env` is `&mut ScopeEnv`.
-pub(crate) fn mark_scrutinee_if_moved(
-    scrutinee_expr: ExprId,
-    plan: &BindingPlan,
-    arena: &AstArena,
-    env: &mut ScopeEnv,
-) {
-    if scrutinee_use_from_plan(plan) == ScrutineeUse::Consumed {
-        if let Expr::Var(name) = arena.expr(scrutinee_expr) {
-            env.mark_consumed(*name);
-        }
-    }
 }
 
 /// M9.8: Validate that all items in `plan` are capture-compatible with the
@@ -9050,24 +8826,6 @@ pub(crate) fn expr_access_path(
 /// Format a path as a human-readable access string (e.g. `"v"`, `"v.0"`, `"v.field"`).
 ///
 /// Field name symbols are rendered as `.<numeric_id>` since this layer has no
-/// arena access. Pass `arena` at a higher level if readable names are needed.
-pub(crate) fn path_to_string(base_name: &str, path: &PatternPath) -> String {
-    use crate::types::PatternPathElem;
-    let mut s = alloc::string::String::from(base_name);
-    for elem in &path.elems {
-        match elem {
-            PatternPathElem::TupleIndex(i) | PatternPathElem::VariantField(i) => {
-                s.push('.');
-                s.push_str(&i.to_string());
-            }
-            PatternPathElem::RecordField(sym) | PatternPathElem::Variant(sym) => {
-                s.push('.');
-                s.push_str(&sym.0.to_string());
-            }
-        }
-    }
-    s
-}
 
 /// Infer the type of `expr_id` **without** running the top-level path-availability
 /// check from M9.9.  Used internally when `expr_id` is the *base* of a field or
