@@ -238,13 +238,23 @@ impl ScopeEnv {
             for (stored_path, avail) in &binding.path_state {
                 if paths_overlap(stored_path, access_path) {
                     if *avail == PathAvailability::Moved {
-                        return Err(crate::types::FrontendError {
-                            pos: 0,
-                            message: format!(
-                                "use of partially moved value (path {:?} was moved)",
+                        // M9.9 Wave D: more precise diagnostic.
+                        // Distinguish "accessing moved path" from "accessing parent of moved child".
+                        let msg = if path_is_prefix(stored_path, access_path) {
+                            // stored = root.0, access = root.0 or root.0.x → moved path
+                            format!(
+                                "use of moved value: path was moved earlier (moved path {:?})",
                                 stored_path.elems
-                            ),
-                        });
+                            )
+                        } else {
+                            // stored = root.0, access = root → whole-var after partial move
+                            format!(
+                                "use of partially moved value: cannot use whole variable because \
+                                 child path {:?} was moved",
+                                stored_path.elems
+                            )
+                        };
+                        return Err(crate::types::FrontendError { pos: 0, message: msg });
                     }
                 }
             }
