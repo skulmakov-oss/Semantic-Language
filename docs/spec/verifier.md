@@ -35,6 +35,13 @@ Current SemCode verification checks include:
 - call-target validity
 - capability consistency with actual opcode usage
 
+Current ownership-specific structural checks for `SEMCOD11` include:
+
+- `OWN0` section presence and layout validity when ownership transport is used
+- admitted ownership event kind validity
+- tuple-only `AccessPath` payload validity
+- header/capability consistency for ownership transport
+
 ## Contract Rule
 
 Standard execution uses the chain:
@@ -56,6 +63,12 @@ Important rule:
 - a general optimizer
 
 It is allowed to reject malformed or contract-inconsistent bytecode only.
+
+Current ownership rule:
+
+- verifier admits ownership payload structurally only
+- verifier does not evaluate borrow overlap, release timing, or runtime alias
+  policy
 
 ## Reject Model
 
