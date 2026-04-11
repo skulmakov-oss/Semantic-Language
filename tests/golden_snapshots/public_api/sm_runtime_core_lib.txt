@@ -15,6 +15,15 @@ pub payload: Vec<T>,
 pub struct SymbolId(pub u32);
 pub const fn new(raw: u32) -> Self {
 pub const fn raw(self) -> u32 {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AccessPath {
+pub root: SymbolId,
+pub components: Vec<PathComponent>,
+pub fn new(root: SymbolId) -> Self {
+pub fn tuple_index(&self, index: u16) -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PathComponent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
