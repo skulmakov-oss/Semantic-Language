@@ -287,10 +287,23 @@ pub enum PathComponent {
     TupleIndex(u16),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnershipPathEventKind {
+    Borrow,
+    Write,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnershipPathEvent {
+    pub kind: OwnershipPathEventKind,
+    pub path: AccessPath,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrFunction {
     pub name: String,
     pub instrs: Vec<IrInstr>,
+    pub ownership_events: Vec<OwnershipPathEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -597,6 +610,7 @@ fn lower_function_to_ir_with_tables(
         primary: IrFunction {
             name: parent_fn_name,
             instrs: ctx.instrs,
+            ownership_events: ctx.ownership_events,
         },
         lifted: ctx.closure_state.lifted_funcs,
     })
@@ -1656,6 +1670,7 @@ fn lower_closure_literal_expr(
     closure_state.lifted_funcs.push(IrFunction {
         name: helper_name.clone(),
         instrs: lifted_instrs,
+        ownership_events: Vec::new(),
     });
 
     let mut capture_regs = Vec::with_capacity(closure.captures.len());
@@ -3005,9 +3020,11 @@ fn bind_tuple_items(
     items: &[TuplePatternItem],
     tuple_reg: u16,
     tuple_ty: &Type,
+    tuple_path: Option<&AccessPath>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
+    ownership_events: &mut Vec<OwnershipPathEvent>,
     env: &mut ScopeEnv,
 ) -> Result<(), FrontendError> {
     let Type::Tuple(item_tys) = tuple_ty else {
@@ -3027,8 +3044,8 @@ fn bind_tuple_items(
         });
     }
     for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
-        let name = match item {
-            TuplePatternItem::Bind { name, .. } => *name,
+        let (name, capture) = match item {
+            TuplePatternItem::Bind { name, capture } => (*name, *capture),
             TuplePatternItem::Discard => continue,
             TuplePatternItem::QuadLiteral(_) => {
                 return Err(FrontendError {
@@ -3062,6 +3079,14 @@ fn bind_tuple_items(
             name: resolve_symbol_name(arena, name)?.to_string(),
             src: reg,
         });
+        if capture == sm_front::types::CaptureMode::Borrow {
+            if let Some(tuple_path) = tuple_path {
+                ownership_events.push(OwnershipPathEvent {
+                    kind: OwnershipPathEventKind::Borrow,
+                    path: tuple_path.tuple_index(index),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -3287,6 +3312,7 @@ fn assign_tuple_items(
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
+    ownership_events: &mut Vec<OwnershipPathEvent>,
     env: &ScopeEnv,
 ) -> Result<(), FrontendError> {
     let Type::Tuple(item_tys) = tuple_ty else {
@@ -3349,6 +3375,10 @@ fn assign_tuple_items(
         out.push(IrInstr::StoreVar {
             name: resolve_symbol_name(arena, *name)?.to_string(),
             src: reg,
+        });
+        ownership_events.push(OwnershipPathEvent {
+            kind: OwnershipPathEventKind::Write,
+            path: AccessPath::new(*name),
         });
     }
     Ok(())
@@ -3536,6 +3566,7 @@ fn bind_let_else_tuple_items(
     items: &[TuplePatternItem],
     tuple_reg: u16,
     tuple_ty: &Type,
+    tuple_path: Option<&AccessPath>,
     else_return: Option<ExprId>,
     contract_ensures: &[ExprId],
     contract_result_symbol: Option<SymbolId>,
@@ -3544,6 +3575,7 @@ fn bind_let_else_tuple_items(
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
+    ownership_events: &mut Vec<OwnershipPathEvent>,
     env: &mut ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
@@ -3583,7 +3615,9 @@ fn bind_let_else_tuple_items(
             index,
         });
         match item {
-            TuplePatternItem::Bind { name, .. } => deferred_binds.push((*name, reg, item_ty.clone())),
+            TuplePatternItem::Bind { name, capture } => {
+                deferred_binds.push((*name, *capture, reg, item_ty.clone(), index))
+            }
             TuplePatternItem::Discard => {}
             TuplePatternItem::QuadLiteral(pat) => {
                 if *item_ty != Type::Quad {
@@ -3640,12 +3674,20 @@ fn bind_let_else_tuple_items(
         }
     }
 
-    for (name, reg, item_ty) in deferred_binds {
+    for (name, capture, reg, item_ty, index) in deferred_binds {
         env.insert(name, item_ty);
         out.push(IrInstr::StoreVar {
             name: resolve_symbol_name(arena, name)?.to_string(),
             src: reg,
         });
+        if capture == sm_front::types::CaptureMode::Borrow {
+            if let Some(tuple_path) = tuple_path {
+                ownership_events.push(OwnershipPathEvent {
+                    kind: OwnershipPathEventKind::Borrow,
+                    path: tuple_path.tuple_index(index),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -3709,6 +3751,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::LetTuple { items, ty, value } => {
+            let tuple_path = tuple_access_path_from_expr(*value, arena);
             let (tuple_reg, vty) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -3728,9 +3771,11 @@ fn lower_stmt(
                 items,
                 tuple_reg,
                 &final_ty,
+                tuple_path.as_ref(),
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
+                &mut ctx.ownership_events,
                 env,
             )
         }
@@ -3814,6 +3859,7 @@ fn lower_stmt(
             value,
             else_return,
         } => {
+            let tuple_path = tuple_access_path_from_expr(*value, arena);
             let (tuple_reg, vty) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -3833,6 +3879,7 @@ fn lower_stmt(
                 items,
                 tuple_reg,
                 &final_ty,
+                tuple_path.as_ref(),
                 *else_return,
                 &ctx.ensures,
                 ctx.ensures_result_symbol,
@@ -3841,6 +3888,7 @@ fn lower_stmt(
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
+                &mut ctx.ownership_events,
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
@@ -3902,6 +3950,10 @@ fn lower_stmt(
                 name: resolve_symbol_name(arena, *name)?.to_string(),
                 src: reg,
             });
+            ctx.ownership_events.push(OwnershipPathEvent {
+                kind: OwnershipPathEventKind::Write,
+                path: AccessPath::new(*name),
+            });
             Ok(())
         }
         Stmt::AssignTuple { items, value } => {
@@ -3925,6 +3977,7 @@ fn lower_stmt(
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
+                &mut ctx.ownership_events,
                 env,
             )
         }
@@ -4564,9 +4617,11 @@ fn lower_value_block_expr(
                     items,
                     tuple_reg,
                     &final_ty,
+                    None,
                     arena,
                     next,
                     out,
+                    &mut Vec::new(),
                     &mut block_env,
                 )?;
             }
@@ -6006,6 +6061,7 @@ fn lower_loop_expr_stmt(
                 invariants: Vec::new(),
                 invariants_result_symbol: None,
                 instrs: core::mem::take(out),
+                ownership_events: Vec::new(),
             };
             let result = lower_stmt(
                 stmt_id,
@@ -6570,6 +6626,7 @@ struct LoweringCtx {
     invariants: Vec<ExprId>,
     invariants_result_symbol: Option<SymbolId>,
     instrs: Vec<IrInstr>,
+    ownership_events: Vec<OwnershipPathEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -6602,6 +6659,7 @@ impl LoweringCtx {
             invariants,
             invariants_result_symbol,
             instrs: Vec::new(),
+            ownership_events: Vec::new(),
         }
     }
 
@@ -6668,6 +6726,24 @@ fn find_named_var_symbol(
     }
 }
 
+fn tuple_access_path_from_expr(expr_id: ExprId, arena: &AstArena) -> Option<AccessPath> {
+    match arena.expr(expr_id) {
+        Expr::Var(name) => Some(AccessPath::new(*name)),
+        Expr::SequenceIndex(index_expr) => {
+            let Expr::NumericLiteral(NumericLiteral::I32(index)) = arena.expr(index_expr.index) else {
+                return None;
+            };
+            if *index < 0 {
+                return None;
+            }
+            let index = u16::try_from(*index).ok()?;
+            let base = tuple_access_path_from_expr(index_expr.base, arena)?;
+            Some(base.tuple_index(index))
+        }
+        _ => None,
+    }
+}
+
 #[inline]
 fn alloc(next: &mut u16) -> u16 {
     let out = *next;
@@ -6679,6 +6755,7 @@ fn alloc(next: &mut u16) -> u16 {
 mod opt_tests {
     use super::*;
     use crate::passes::run_default_opt_passes;
+    use sm_front::parse_program;
 
     #[test]
     fn access_path_root_starts_with_empty_component_list() {
@@ -6704,6 +6781,31 @@ mod opt_tests {
         let different = AccessPath::new(SymbolId(9)).tuple_index(2).tuple_index(0);
         assert_eq!(left, right);
         assert_ne!(left, different);
+    }
+
+    fn lower_single_function_with_program(
+        src: &str,
+        fn_name: &str,
+    ) -> (sm_front::Program, IrFunction) {
+        let program = parse_program(src).expect("program should parse");
+        let fn_table = build_fn_table(&program).expect("function table should build");
+        let record_table = build_record_table(&program).expect("record table should build");
+        let adt_table = build_adt_table(&program).expect("adt table should build");
+        type_check_program(&program).expect("program should type-check");
+        let func = program
+            .functions
+            .iter()
+            .find(|func| program.arena.symbol_name(func.name) == fn_name)
+            .expect("function should exist");
+        let lowered = lower_function_to_ir_with_tables(
+            func,
+            &program.arena,
+            &fn_table,
+            &record_table,
+            &adt_table,
+        )
+        .expect("function should lower");
+        (program, lowered.primary)
     }
 
     #[test]
@@ -7510,6 +7612,36 @@ mod opt_tests {
     }
 
     #[test]
+    fn lower_tuple_borrow_capture_records_borrow_path_event() {
+        let src = r#"
+            fn pair() -> (i32, i32) = (1, 2);
+
+            fn main() {
+                let pair: (i32, i32) = pair();
+                let (ref left, _): (i32, i32) = pair;
+                return;
+            }
+        "#;
+
+        let (program, main) = lower_single_function_with_program(src, "main");
+        let main_fn = program
+            .functions
+            .iter()
+            .find(|func| program.arena.symbol_name(func.name) == "main")
+            .expect("main fn");
+        let Stmt::Let { name: pair_name, .. } = program.arena.stmt(main_fn.body[0]) else {
+            panic!("expected pair binding");
+        };
+        assert_eq!(
+            main.ownership_events,
+            vec![OwnershipPathEvent {
+                kind: OwnershipPathEventKind::Borrow,
+                path: AccessPath::new(*pair_name).tuple_index(0),
+            }]
+        );
+    }
+
+    #[test]
     fn lower_tuple_destructuring_assignment_to_tuple_get_ir() {
         let src = r#"
             fn pair(flag: bool) -> (i32, bool) = (1, flag);
@@ -7532,6 +7664,46 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::TupleGet { index: 1, .. })));
+    }
+
+    #[test]
+    fn lower_tuple_assignment_records_write_path_events() {
+        let src = r#"
+            fn pair() -> (i32, bool) = (1, true);
+
+            fn main() {
+                let count: i32 = 0;
+                let ready: bool = false;
+                (count, ready) = pair();
+                return;
+            }
+        "#;
+
+        let (program, main) = lower_single_function_with_program(src, "main");
+        let main_fn = program
+            .functions
+            .iter()
+            .find(|func| program.arena.symbol_name(func.name) == "main")
+            .expect("main fn");
+        let Stmt::Let { name: count_name, .. } = program.arena.stmt(main_fn.body[0]) else {
+            panic!("expected count binding");
+        };
+        let Stmt::Let { name: ready_name, .. } = program.arena.stmt(main_fn.body[1]) else {
+            panic!("expected ready binding");
+        };
+        assert_eq!(
+            main.ownership_events,
+            vec![
+                OwnershipPathEvent {
+                    kind: OwnershipPathEventKind::Write,
+                    path: AccessPath::new(*count_name),
+                },
+                OwnershipPathEvent {
+                    kind: OwnershipPathEventKind::Write,
+                    path: AccessPath::new(*ready_name),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -8245,6 +8417,7 @@ mod opt_tests {
                 },
                 IrInstr::Ret { src: None },
             ],
+            ownership_events: Vec::new(),
         }];
         let report = run_default_opt_passes(&mut ir);
         assert!(report.changed);
@@ -8264,6 +8437,7 @@ mod opt_tests {
                 IrInstr::LoadI32 { dst: 1, val: 11 },
                 IrInstr::Ret { src: Some(1) },
             ],
+            ownership_events: Vec::new(),
         }];
         let report = run_default_opt_passes(&mut ir);
         assert!(report.changed);
@@ -8300,6 +8474,7 @@ mod opt_tests {
                 },
                 IrInstr::Ret { src: Some(5) },
             ],
+            ownership_events: Vec::new(),
         };
         let mut ir = vec![f];
         let report = crate::passes::run_default_opt_passes(&mut ir);

@@ -160,6 +160,7 @@ mod tests {
                     },
                     IrInstr::Ret { src: None },
                 ],
+                ownership_events: Vec::new(),
             }],
         };
 
@@ -185,6 +186,7 @@ mod tests {
                     IrInstr::LoadI32 { dst: 1, val: 11 },
                     IrInstr::Ret { src: Some(1) },
                 ],
+                ownership_events: Vec::new(),
             }],
         };
 
@@ -216,6 +218,7 @@ mod tests {
                     },
                     IrInstr::Ret { src: None },
                 ],
+                ownership_events: Vec::new(),
             }],
         };
 
