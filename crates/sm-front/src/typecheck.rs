@@ -732,16 +732,9 @@ fn check_stmt(
                 });
             }
             // M9.10 Wave B: build BindingPlan so path-state is tracked on the source variable.
-            let tuple_items: Vec<TuplePatternItem> = items
-                .iter()
-                .map(|opt| match opt {
-                    Some(name) => TuplePatternItem::Bind { name: *name, capture: CaptureMode::Move },
-                    None => TuplePatternItem::Discard,
-                })
-                .collect();
             let tuple_ty = Type::Tuple(item_tys);
             let mut plan = BindingPlan::default();
-            build_tuple_pattern_plan(&tuple_items, &tuple_ty, &PatternPath::root(), &mut plan)?;
+            build_tuple_pattern_plan(items, &tuple_ty, &PatternPath::root(), &mut plan)?;
             validate_binding_plan_conflicts(&plan)?;
             validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
             apply_binding_plan(env, &plan);
@@ -5380,9 +5373,64 @@ mod tests {
                 return;
             }
         "#;
-        // Wave B: parser must admit `ref x` without error.
-        // CaptureMode::Borrow is stored but not yet enforced in typecheck (Wave C).
+        // Plain tuple binds must preserve borrow capture instead of rewriting
+        // every bind to Move before the ownership pipeline runs.
         typecheck_source(src).expect("ref binding in tuple pattern should parse and typecheck");
+    }
+
+    #[test]
+    fn plain_tuple_ref_binding_preserves_borrow_path_state() {
+        use crate::types::{PathAvailability, PatternPath};
+
+        let mut arena = AstArena::default();
+        let source = arena.intern_symbol("source");
+        let borrowed = arena.intern_symbol("borrowed");
+        let moved = arena.intern_symbol("moved");
+        let value = arena.alloc_expr(Expr::Var(source));
+        let stmt = arena.alloc_stmt(Stmt::LetTuple {
+            items: vec![
+                TuplePatternItem::Bind {
+                    name: borrowed,
+                    capture: CaptureMode::Borrow,
+                },
+                TuplePatternItem::Bind {
+                    name: moved,
+                    capture: CaptureMode::Move,
+                },
+            ],
+            ty: None,
+            value,
+        });
+
+        let mut env = ScopeEnv::new();
+        env.insert(source, Type::Tuple(vec![Type::I32, Type::I32]));
+
+        let table = FnTable::new();
+        let record_table = RecordTable::new();
+        let adt_table = AdtTable::new();
+        let mut loop_stack = Vec::new();
+        check_stmt(
+            stmt,
+            &arena,
+            &mut env,
+            Type::Unit,
+            &table,
+            &record_table,
+            &adt_table,
+            &mut loop_stack,
+            &[],
+        )
+        .expect("tuple ref bind should typecheck");
+
+        let binding = env.binding(source).expect("source binding must exist");
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Borrowed
+                && *path == PatternPath::root().tuple_index(0)
+        }));
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Moved
+                && *path == PatternPath::root().tuple_index(1)
+        }));
     }
 
     #[test]
