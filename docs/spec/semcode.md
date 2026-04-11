@@ -39,6 +39,7 @@ Current supported header family:
 - `SEMCODE8`
 - `SEMCODE9`
 - `SEMCOD10`
+- `SEMCOD11`
 
 Observed runtime support in the current toolchain:
 
@@ -53,6 +54,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE8`: epoch `0`, revision `9`
 - `SEMCODE9`: epoch `0`, revision `10`
 - `SEMCOD10`: epoch `0`, revision `11`
+- `SEMCOD11`: epoch `0`, revision `12`
 
 Header responsibilities:
 
@@ -148,6 +150,20 @@ Compatibility rules:
 - uses the fixed-width 8-byte header magic form `SEMCOD10` rather than
   `SEMCODE10`
 
+`SEMCOD11`
+
+- promoted contract used when emitted program usage requires tuple-only
+  ownership path metadata transport for lowered borrow/write events
+- keeps `SEMCODE0..10` fixed for older artifacts that do not use executable
+  ownership-path metadata
+- uses the fixed-width 8-byte header magic form `SEMCOD11`
+- adds the tagged function-local ownership section `OWN0` after the optional
+  `DBG0` section and before the instruction stream
+- encodes each ownership event deterministically as:
+  - event kind (`Borrow` or `Write`)
+  - root `SymbolId` as little-endian `u32`
+  - ordered tuple-only path components as `TupleIndex(u16)`
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -177,6 +193,7 @@ Current canonical capability families:
 - `CAP_TEXT_VALUES`
 - `CAP_SEQUENCE_VALUES`
 - `CAP_CLOSURE_VALUES`
+- `CAP_OWNERSHIP_PATHS`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:

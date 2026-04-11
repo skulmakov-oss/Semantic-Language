@@ -9,6 +9,7 @@ pub const MAGIC7: [u8; 8] = *b"SEMCODE7";
 pub const MAGIC8: [u8; 8] = *b"SEMCODE8";
 pub const MAGIC9: [u8; 8] = *b"SEMCODE9";
 pub const MAGIC10: [u8; 8] = *b"SEMCOD10";
+pub const MAGIC11: [u8; 8] = *b"SEMCOD11";
 
 pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
 pub const CAP_F64_MATH: u32 = 1 << 1;
@@ -22,6 +23,12 @@ pub const CAP_CLOCK_READ: u32 = 1 << 8;
 pub const CAP_TEXT_VALUES: u32 = 1 << 9;
 pub const CAP_SEQUENCE_VALUES: u32 = 1 << 10;
 pub const CAP_CLOSURE_VALUES: u32 = 1 << 11;
+pub const CAP_OWNERSHIP_PATHS: u32 = 1 << 12;
+
+pub const OWNERSHIP_SECTION_TAG: [u8; 4] = *b"OWN0";
+pub const OWNERSHIP_EVENT_KIND_BORROW: u8 = 0;
+pub const OWNERSHIP_EVENT_KIND_WRITE: u8 = 1;
+pub const OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX: u8 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SemcodeHeaderSpec {
@@ -164,10 +171,29 @@ pub const HEADER_V10: SemcodeHeaderSpec = SemcodeHeaderSpec {
         | CAP_CLOSURE_VALUES,
 };
 
+pub const HEADER_V11: SemcodeHeaderSpec = SemcodeHeaderSpec {
+    magic: MAGIC11,
+    epoch: 0,
+    rev: 12,
+    capabilities: CAP_DEBUG_SYMBOLS
+        | CAP_F64_MATH
+        | CAP_GATE_SURFACE
+        | CAP_FX_VALUES
+        | CAP_FX_MATH
+        | CAP_STATE_QUERY
+        | CAP_STATE_UPDATE
+        | CAP_EVENT_POST
+        | CAP_CLOCK_READ
+        | CAP_TEXT_VALUES
+        | CAP_SEQUENCE_VALUES
+        | CAP_CLOSURE_VALUES
+        | CAP_OWNERSHIP_PATHS,
+};
+
 pub fn supported_headers() -> &'static [SemcodeHeaderSpec] {
     &[
         HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7,
-        HEADER_V8, HEADER_V9, HEADER_V10,
+        HEADER_V8, HEADER_V9, HEADER_V10, HEADER_V11,
     ]
 }
 
