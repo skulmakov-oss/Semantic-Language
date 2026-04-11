@@ -1,14 +1,16 @@
 use crate::semcode_format::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     supported_headers, Opcode, SemcodeFormatError, SemcodeHeaderSpec,
+    OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
+    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
 };
 use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
 use prom_cap::{CapabilityChecker, CapabilityDenied, UiCapabilityChecker, UiCapabilityDenied};
 use prom_ui::UiOperationId;
 use sm_runtime_core::{
-    AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier,
-    RuntimeQuotas, RuntimeSymbolTable, RuntimeTrap, SymbolId,
+    AccessPath, AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind,
+    RecordCarrier, RuntimeQuotas, RuntimeSymbolTable, RuntimeTrap, SymbolId,
 };
 use sm_verify::verify_semcode;
 use sm_verify::RejectReport;
@@ -47,6 +49,7 @@ pub struct Frame {
     pub pc: usize,
     pub regs: Vec<Value>,
     pub locals: HashMap<SymbolId, Value>,
+    pub borrowed_paths: Vec<AccessPath>,
     pub func: String,
     pub return_dst: Option<u16>,
 }
@@ -57,6 +60,7 @@ pub struct FunctionBytecode {
     pub strings: Vec<String>,
     pub symbol_ids: Vec<SymbolId>,
     pub debug_symbols: Vec<DebugSymbol>,
+    pub borrowed_paths: Vec<AccessPath>,
     pub code: Vec<u8>,
     pub instr_start: usize,
 }
@@ -361,16 +365,35 @@ fn parse_semcode(
         let code = bytes[i..i + code_len].to_vec();
         i += code_len;
 
-        let (strings, debug_symbols, instr_start) = parse_string_table_and_debug(&code)?;
+        let (strings, debug_symbols, borrowed_paths, instr_start) =
+            parse_string_table_debug_and_ownership(&code)?;
         let symbol_ids = strings
             .iter()
             .map(|name| runtime_symbols.intern(name))
             .collect::<Vec<_>>();
+        let borrowed_paths = borrowed_paths
+            .into_iter()
+            .map(|path| {
+                let local_root = path.root.raw() as usize;
+                let root = symbol_ids.get(local_root).copied().ok_or_else(|| {
+                    RuntimeError::BadFormat(format!(
+                        "ownership path root out of bounds in '{}': {}",
+                        name,
+                        path.root.raw()
+                    ))
+                })?;
+                Ok(AccessPath {
+                    root,
+                    components: path.components,
+                })
+            })
+            .collect::<Result<Vec<_>, RuntimeError>>()?;
         let f = FunctionBytecode {
             name: name.clone(),
             strings,
             symbol_ids,
             debug_symbols,
+            borrowed_paths,
             code,
             instr_start,
         };
@@ -385,9 +408,9 @@ fn parse_semcode(
     Ok((header, runtime_symbols, out))
 }
 
-fn parse_string_table_and_debug(
+fn parse_string_table_debug_and_ownership(
     code: &[u8],
-) -> Result<(Vec<String>, Vec<DebugSymbol>, usize), RuntimeError> {
+) -> Result<(Vec<String>, Vec<DebugSymbol>, Vec<AccessPath>, usize), RuntimeError> {
     let mut i = 0usize;
     let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
     if count > MAX_STRINGS_PER_FUNCTION {
@@ -425,7 +448,38 @@ fn parse_string_table_and_debug(
             debug_symbols.push(DebugSymbol { pc, line, col });
         }
     }
-    Ok((strings, debug_symbols, i))
+    let mut borrowed_paths = Vec::new();
+    if i + 4 <= code.len() && &code[i..i + 4] == OWNERSHIP_SECTION_TAG {
+        i += OWNERSHIP_SECTION_TAG.len();
+        let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+        borrowed_paths.reserve(count);
+        for _ in 0..count {
+            let kind = read_u8(code, &mut i).map_err(map_format_err)?;
+            let root = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
+            let component_count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+            let mut path = AccessPath::new(root);
+            for _ in 0..component_count {
+                let component_kind = read_u8(code, &mut i).map_err(map_format_err)?;
+                if component_kind != OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX {
+                    return Err(RuntimeError::BadFormat(format!(
+                        "unsupported ownership path component kind 0x{component_kind:02x}"
+                    )));
+                }
+                let index = read_u16_le(code, &mut i).map_err(map_format_err)?;
+                path = path.tuple_index(index);
+            }
+            match kind {
+                OWNERSHIP_EVENT_KIND_BORROW => borrowed_paths.push(path),
+                OWNERSHIP_EVENT_KIND_WRITE => {}
+                _ => {
+                    return Err(RuntimeError::BadFormat(format!(
+                        "unsupported ownership event kind 0x{kind:02x}"
+                    )))
+                }
+            }
+        }
+    }
+    Ok((strings, debug_symbols, borrowed_paths, i))
 }
 
 fn map_format_err(err: SemcodeFormatError) -> RuntimeError {
@@ -1601,6 +1655,7 @@ fn push_frame(
         pc: 0,
         regs,
         locals: HashMap::new(),
+        borrowed_paths: f.borrowed_paths.clone(),
         func: f.name.clone(),
         return_dst,
     };
@@ -2195,7 +2250,7 @@ mod tests {
     use super::*;
     use sm_emit::compile_program_to_semcode;
     use sm_runtime_core::{
-        ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeTrap,
+        ExecutionConfig, ExecutionContext, PathComponent, QuotaExceeded, QuotaKind, RuntimeTrap,
     };
 
     #[test]
@@ -2585,6 +2640,60 @@ mod tests {
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("TUPLE_GET"));
         run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_tracks_borrowed_paths_on_frame_push() {
+        let bytes = ownership_tracking_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push frame");
+
+        assert_eq!(vm.callstack.len(), 1);
+        let frame = &vm.callstack[0];
+        assert_eq!(frame.borrowed_paths.len(), 1);
+        assert_eq!(
+            frame.borrowed_paths[0].components,
+            vec![PathComponent::TupleIndex(0)]
+        );
+        assert_eq!(vm.symbols.resolve(frame.borrowed_paths[0].root), Some("pair"));
+    }
+
+    #[test]
+    fn vm_clears_borrowed_paths_on_frame_exit() {
+        let bytes = helper_borrow_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push main");
+        push_frame(
+            &mut vm,
+            "helper",
+            vec![Value::Tuple(vec![Value::I32(1), Value::Bool(true)])],
+            None,
+        )
+        .expect("push helper");
+
+        assert_eq!(vm.callstack.len(), 2);
+        assert_eq!(vm.callstack[1].borrowed_paths.len(), 1);
+
+        let finished = vm.callstack.pop().expect("helper frame");
+        assert_eq!(finished.borrowed_paths.len(), 1);
+        assert_eq!(vm.callstack.len(), 1);
+        assert!(vm.callstack[0].borrowed_paths.is_empty());
     }
 
     #[test]
@@ -3074,5 +3183,34 @@ mod tests {
         bytes[opcode_pos] = 0xff;
         let err = run_verified_semcode(&bytes).expect_err("must fail");
         assert!(matches!(err, RuntimeError::VerifierRejected(_)));
+    }
+
+    fn ownership_tracking_bytes() -> Vec<u8> {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let pair: (i32, bool) = pair(true);
+                let (ref left, _): (i32, bool) = pair;
+                let _ = left;
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn helper_borrow_bytes() -> Vec<u8> {
+        let src = r#"
+            fn helper(pair: (i32, bool)) {
+                let (ref left, _): (i32, bool) = pair;
+                let _ = left;
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
     }
 }
