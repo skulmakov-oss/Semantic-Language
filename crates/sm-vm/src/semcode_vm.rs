@@ -134,6 +134,9 @@ impl core::fmt::Display for RuntimeError {
             RuntimeError::CapabilityDenied(err) => write!(f, "{err}"),
             RuntimeError::UiCapabilityDenied(err) => write!(f, "{err}"),
             RuntimeError::Trap(RuntimeTrap::AssertionFailed) => write!(f, "assertion failed"),
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict) => {
+                write!(f, "write path overlaps active borrow")
+            }
             RuntimeError::Trap(trap) => write!(f, "runtime trap: {:?}", trap),
         }
     }
@@ -1708,7 +1711,7 @@ fn access_paths_overlap(lhs: &AccessPath, rhs: &AccessPath) -> bool {
 }
 
 fn ensure_write_path_allowed(
-    symbol_name: &str,
+    _symbol_name: &str,
     write_path: &AccessPath,
     borrowed_paths: &[AccessPath],
 ) -> Result<(), RuntimeError> {
@@ -1716,10 +1719,7 @@ fn ensure_write_path_allowed(
         .iter()
         .any(|borrowed_path| access_paths_overlap(write_path, borrowed_path))
     {
-        return Err(RuntimeError::TypeMismatchRuntime(format!(
-            "write path overlaps active borrow for '{}'",
-            symbol_name
-        )));
+        return Err(RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict));
     }
     Ok(())
 }
@@ -2763,9 +2763,9 @@ mod tests {
         let err = run_semcode(&bytes).expect_err("overlapping write must fail");
         assert!(matches!(
             err,
-            RuntimeError::TypeMismatchRuntime(message)
-                if message.contains("write path overlaps active borrow")
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
         ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
     }
 
     #[test]
@@ -2774,9 +2774,9 @@ mod tests {
         let err = run_semcode(&bytes).expect_err("parent-child overlap must fail");
         assert!(matches!(
             err,
-            RuntimeError::TypeMismatchRuntime(message)
-                if message.contains("write path overlaps active borrow")
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
         ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
     }
 
     #[test]
@@ -2785,9 +2785,9 @@ mod tests {
         let err = run_semcode(&bytes).expect_err("child-parent overlap must fail");
         assert!(matches!(
             err,
-            RuntimeError::TypeMismatchRuntime(message)
-                if message.contains("write path overlaps active borrow")
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
         ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
     }
 
     #[test]
