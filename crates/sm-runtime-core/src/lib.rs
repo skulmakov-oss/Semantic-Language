@@ -101,6 +101,7 @@ pub struct QuotaExceeded {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeTrap {
     AssertionFailed,
+    BorrowWriteConflict,
     StackOverflow,
     StackUnderflow,
     TypeMismatch,

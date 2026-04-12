@@ -3,6 +3,7 @@ use sm_ir::semcode_format::{
     read_u16_le, read_u32_le, read_u8, read_utf8, MAGIC11, OWNERSHIP_EVENT_KIND_BORROW,
     OWNERSHIP_EVENT_KIND_WRITE, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
 };
+use sm_runtime_core::RuntimeTrap;
 use sm_verify::verify_semcode;
 use sm_vm::{run_verified_semcode, RuntimeError};
 
@@ -333,7 +334,7 @@ fn assert_repeated_verified_success(bytes: &[u8], runs: usize) {
     }
 }
 
-fn assert_repeated_write_overlap_rejects(bytes: &[u8], symbol_name: &str, runs: usize) {
+fn assert_repeated_write_overlap_rejects(bytes: &[u8], _symbol_name: &str, runs: usize) {
     verify_semcode(bytes).expect("verify");
 
     let mut observed = Vec::with_capacity(runs);
@@ -342,9 +343,9 @@ fn assert_repeated_write_overlap_rejects(bytes: &[u8], symbol_name: &str, runs: 
         let rendered = format!("{err}");
         assert!(matches!(
             err,
-            RuntimeError::TypeMismatchRuntime(message)
-                if message == format!("write path overlaps active borrow for '{symbol_name}'")
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
         ));
+        assert_eq!(rendered, "write path overlaps active borrow");
         observed.push(rendered);
     }
 
