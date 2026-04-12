@@ -2970,7 +2970,7 @@ fn lower_expr_with_expected(
 }
 
 fn bind_tuple_items(
-    items: &[Option<SymbolId>],
+    items: &[TuplePatternItem],
     tuple_reg: u16,
     tuple_ty: &Type,
     arena: &AstArena,
@@ -2995,8 +2995,25 @@ fn bind_tuple_items(
         });
     }
     for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
-        let Some(name) = item else {
-            continue;
+        let name = match item {
+            TuplePatternItem::Bind { name, .. } => *name,
+            TuplePatternItem::Discard => continue,
+            TuplePatternItem::QuadLiteral(_) => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "quad literal tuple patterns currently require let-else; plain tuple destructuring bind supports only name/_/ref items"
+                            .to_string(),
+                })
+            }
+            TuplePatternItem::Nested(_) => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message:
+                        "nested tuple patterns are not yet supported in plain let bindings; use let-else form"
+                            .to_string(),
+                })
+            }
         };
         let reg = alloc(next);
         let index = u16::try_from(index).map_err(|_| FrontendError {
@@ -3008,9 +3025,9 @@ fn bind_tuple_items(
             src: tuple_reg,
             index,
         });
-        env.insert(*name, item_ty.clone());
+        env.insert(name, item_ty.clone());
         out.push(IrInstr::StoreVar {
-            name: resolve_symbol_name(arena, *name)?.to_string(),
+            name: resolve_symbol_name(arena, name)?.to_string(),
             src: reg,
         });
     }

@@ -706,7 +706,17 @@ impl<'a> Parser<'a> {
                         else_return: None,
                     }));
                 }
-                let items = self.lower_tuple_pattern_items_to_bind(items)?;
+                if items
+                    .iter()
+                    .any(|item| matches!(item, TuplePatternItem::QuadLiteral(_)))
+                {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "quad literal tuple patterns currently require let-else; plain tuple destructuring bind supports only name/_/ref items"
+                                .to_string(),
+                    });
+                }
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::LetTuple { items, ty, value }));
             }
@@ -955,7 +965,7 @@ impl<'a> Parser<'a> {
                     return Err(FrontendError {
                         pos: self.pos(),
                         message:
-                            "quad literal tuple patterns currently require let-else; plain tuple destructuring bind supports only name/_ items"
+                            "quad literal tuple patterns currently require let-else; tuple assignment targets currently support only name/_ items"
                                 .to_string(),
                     })
                 }
@@ -963,7 +973,7 @@ impl<'a> Parser<'a> {
                     return Err(FrontendError {
                         pos: self.pos(),
                         message:
-                            "nested tuple patterns are not yet supported in plain let bindings; use let-else form"
+                            "nested tuple patterns are not supported in tuple assignment targets"
                                 .to_string(),
                     })
                 }
@@ -1879,7 +1889,10 @@ impl<'a> Parser<'a> {
             Stmt::LetTuple { items, value, .. } => {
                 self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
                 if let Some(scope) = scopes.last_mut() {
-                    scope.extend(items.iter().flatten().copied());
+                    scope.extend(items.iter().filter_map(|item| match item {
+                        TuplePatternItem::Bind { name, .. } => Some(*name),
+                        _ => None,
+                    }));
                 }
                 Ok(())
             }
@@ -2082,7 +2095,10 @@ impl<'a> Parser<'a> {
             Stmt::LetTuple { items, value, .. } => {
                 self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
                 if let Some(scope) = scopes.last_mut() {
-                    scope.extend(items.iter().flatten().copied());
+                    scope.extend(items.iter().filter_map(|item| match item {
+                        TuplePatternItem::Bind { name, .. } => Some(*name),
+                        _ => None,
+                    }));
                 }
                 Ok(())
             }
@@ -4396,17 +4412,53 @@ fn main() {
             panic!("expected tuple destructuring statement");
         };
         assert_eq!(items.len(), 2);
-        assert_eq!(
-            items[0].map(|name| program.arena.symbol_name(name)),
-            Some("count")
-        );
-        assert!(items[1].is_none());
+        assert!(matches!(
+            items[0],
+            TuplePatternItem::Bind {
+                name,
+                capture: CaptureMode::Move
+            } if program.arena.symbol_name(name) == "count"
+        ));
+        assert!(matches!(items[1], TuplePatternItem::Discard));
         assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Bool])));
         let Expr::Call(name, args) = program.arena.expr(*value) else {
             panic!("expected call expression");
         };
         assert_eq!(program.arena.symbol_name(*name), "pair");
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_preserves_borrow_capture_in_plain_tuple_bind() {
+        let src = r#"
+fn pair() -> (i32, bool) = (1, true);
+
+fn main() {
+    let (ref count, ready) = pair();
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tuple ref bind should parse");
+        let func = &program.functions[1];
+        let Stmt::LetTuple { items, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected tuple destructuring statement");
+        };
+        assert!(matches!(
+            items[0],
+            TuplePatternItem::Bind {
+                name,
+                capture: CaptureMode::Borrow
+            } if program.arena.symbol_name(name) == "count"
+        ));
+        assert!(matches!(
+            items[1],
+            TuplePatternItem::Bind {
+                name,
+                capture: CaptureMode::Move
+            } if program.arena.symbol_name(name) == "ready"
+        ));
     }
 
     #[test]

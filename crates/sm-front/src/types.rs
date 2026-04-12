@@ -397,7 +397,7 @@ pub enum Stmt {
         value: ExprId,
     },
     LetTuple {
-        items: Vec<Option<SymbolId>>,
+        items: Vec<TuplePatternItem>,
         ty: Option<Type>,
         value: ExprId,
     },
