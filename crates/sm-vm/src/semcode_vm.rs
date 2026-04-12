@@ -50,6 +50,7 @@ pub struct Frame {
     pub regs: Vec<Value>,
     pub locals: HashMap<SymbolId, Value>,
     pub borrowed_paths: Vec<AccessPath>,
+    next_write_path: usize,
     pub func: String,
     pub return_dst: Option<u16>,
 }
@@ -61,6 +62,7 @@ pub struct FunctionBytecode {
     pub symbol_ids: Vec<SymbolId>,
     pub debug_symbols: Vec<DebugSymbol>,
     pub borrowed_paths: Vec<AccessPath>,
+    write_paths: Vec<AccessPath>,
     pub code: Vec<u8>,
     pub instr_start: usize,
 }
@@ -365,35 +367,40 @@ fn parse_semcode(
         let code = bytes[i..i + code_len].to_vec();
         i += code_len;
 
-        let (strings, debug_symbols, borrowed_paths, instr_start) =
+        let (strings, debug_symbols, borrowed_paths, write_paths, instr_start) =
             parse_string_table_debug_and_ownership(&code)?;
         let symbol_ids = strings
             .iter()
             .map(|name| runtime_symbols.intern(name))
             .collect::<Vec<_>>();
-        let borrowed_paths = borrowed_paths
-            .into_iter()
-            .map(|path| {
-                let local_root = path.root.raw() as usize;
-                let root = symbol_ids.get(local_root).copied().ok_or_else(|| {
-                    RuntimeError::BadFormat(format!(
-                        "ownership path root out of bounds in '{}': {}",
-                        name,
-                        path.root.raw()
-                    ))
-                })?;
-                Ok(AccessPath {
-                    root,
-                    components: path.components,
+        let remap_paths = |paths: Vec<AccessPath>| {
+            paths
+                .into_iter()
+                .map(|path| {
+                    let local_root = path.root.raw() as usize;
+                    let root = symbol_ids.get(local_root).copied().ok_or_else(|| {
+                        RuntimeError::BadFormat(format!(
+                            "ownership path root out of bounds in '{}': {}",
+                            name,
+                            path.root.raw()
+                        ))
+                    })?;
+                    Ok(AccessPath {
+                        root,
+                        components: path.components,
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, RuntimeError>>()?;
+                .collect::<Result<Vec<_>, RuntimeError>>()
+        };
+        let borrowed_paths = remap_paths(borrowed_paths)?;
+        let write_paths = remap_paths(write_paths)?;
         let f = FunctionBytecode {
             name: name.clone(),
             strings,
             symbol_ids,
             debug_symbols,
             borrowed_paths,
+            write_paths,
             code,
             instr_start,
         };
@@ -410,7 +417,16 @@ fn parse_semcode(
 
 fn parse_string_table_debug_and_ownership(
     code: &[u8],
-) -> Result<(Vec<String>, Vec<DebugSymbol>, Vec<AccessPath>, usize), RuntimeError> {
+) -> Result<
+    (
+        Vec<String>,
+        Vec<DebugSymbol>,
+        Vec<AccessPath>,
+        Vec<AccessPath>,
+        usize,
+    ),
+    RuntimeError,
+> {
     let mut i = 0usize;
     let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
     if count > MAX_STRINGS_PER_FUNCTION {
@@ -449,10 +465,12 @@ fn parse_string_table_debug_and_ownership(
         }
     }
     let mut borrowed_paths = Vec::new();
+    let mut write_paths = Vec::new();
     if i + 4 <= code.len() && &code[i..i + 4] == OWNERSHIP_SECTION_TAG {
         i += OWNERSHIP_SECTION_TAG.len();
         let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
         borrowed_paths.reserve(count);
+        write_paths.reserve(count);
         for _ in 0..count {
             let kind = read_u8(code, &mut i).map_err(map_format_err)?;
             let root = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
@@ -470,7 +488,7 @@ fn parse_string_table_debug_and_ownership(
             }
             match kind {
                 OWNERSHIP_EVENT_KIND_BORROW => borrowed_paths.push(path),
-                OWNERSHIP_EVENT_KIND_WRITE => {}
+                OWNERSHIP_EVENT_KIND_WRITE => write_paths.push(path),
                 _ => {
                     return Err(RuntimeError::BadFormat(format!(
                         "unsupported ownership event kind 0x{kind:02x}"
@@ -479,7 +497,7 @@ fn parse_string_table_debug_and_ownership(
             }
         }
     }
-    Ok((strings, debug_symbols, borrowed_paths, i))
+    Ok((strings, debug_symbols, borrowed_paths, write_paths, i))
 }
 
 fn map_format_err(err: SemcodeFormatError) -> RuntimeError {
@@ -1310,6 +1328,23 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let symbol = lookup_symbol(&f, sid)?;
                 let val = get_reg(vm, frame_idx, src)?;
+                let next_write_path = {
+                    let frame = &vm.callstack[frame_idx];
+                    if frame.locals.contains_key(&symbol) {
+                        f.write_paths
+                            .get(frame.next_write_path)
+                            .filter(|path| path.root == symbol)
+                            .cloned()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(write_path) = next_write_path {
+                    let symbol_name = lookup_str(&f, sid).unwrap_or("<unknown>");
+                    let frame = &vm.callstack[frame_idx];
+                    ensure_write_path_allowed(symbol_name, &write_path, &frame.borrowed_paths)?;
+                    vm.callstack[frame_idx].next_write_path += 1;
+                }
                 vm.callstack[frame_idx].locals.insert(symbol, val);
                 next_pc = cur - f.instr_start;
             }
@@ -1656,10 +1691,36 @@ fn push_frame(
         regs,
         locals: HashMap::new(),
         borrowed_paths: f.borrowed_paths.clone(),
+        next_write_path: 0,
         func: f.name.clone(),
         return_dst,
     };
     vm.callstack.push(frame);
+    Ok(())
+}
+
+fn access_paths_overlap(lhs: &AccessPath, rhs: &AccessPath) -> bool {
+    if lhs.root != rhs.root {
+        return false;
+    }
+    let shared_len = lhs.components.len().min(rhs.components.len());
+    lhs.components[..shared_len] == rhs.components[..shared_len]
+}
+
+fn ensure_write_path_allowed(
+    symbol_name: &str,
+    write_path: &AccessPath,
+    borrowed_paths: &[AccessPath],
+) -> Result<(), RuntimeError> {
+    if borrowed_paths
+        .iter()
+        .any(|borrowed_path| access_paths_overlap(write_path, borrowed_path))
+    {
+        return Err(RuntimeError::TypeMismatchRuntime(format!(
+            "write path overlaps active borrow for '{}'",
+            symbol_name
+        )));
+    }
     Ok(())
 }
 
@@ -2697,6 +2758,45 @@ mod tests {
     }
 
     #[test]
+    fn vm_rejects_write_after_borrow_same_path() {
+        let bytes = ownership_write_overlap_bytes(&[0], &[0]);
+        let err = run_semcode(&bytes).expect_err("overlapping write must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::TypeMismatchRuntime(message)
+                if message.contains("write path overlaps active borrow")
+        ));
+    }
+
+    #[test]
+    fn vm_rejects_write_when_borrowed_parent_overlaps_child_path() {
+        let bytes = ownership_write_overlap_bytes(&[], &[0]);
+        let err = run_semcode(&bytes).expect_err("parent-child overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::TypeMismatchRuntime(message)
+                if message.contains("write path overlaps active borrow")
+        ));
+    }
+
+    #[test]
+    fn vm_rejects_write_when_borrowed_child_overlaps_parent_path() {
+        let bytes = ownership_write_overlap_bytes(&[0], &[]);
+        let err = run_semcode(&bytes).expect_err("child-parent overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::TypeMismatchRuntime(message)
+                if message.contains("write path overlaps active borrow")
+        ));
+    }
+
+    #[test]
+    fn vm_allows_write_to_sibling_path_with_active_borrow() {
+        let bytes = ownership_write_overlap_bytes(&[0], &[1]);
+        run_semcode(&bytes).expect("sibling write must stay allowed");
+    }
+
+    #[test]
     fn vm_runs_stage1_record_literal_path() {
         let src = r#"
             record DecisionContext {
@@ -3212,5 +3312,94 @@ mod tests {
             }
         "#;
         compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn ownership_write_overlap_bytes(
+        borrowed_components: &[u16],
+        write_components: &[u16],
+    ) -> Vec<u8> {
+        let src = r#"
+            fn main() {
+                let total: f64 = 1.0;
+                total += 2.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        rewrite_main_ownership_section(bytes, borrowed_components, write_components)
+    }
+
+    fn rewrite_main_ownership_section(
+        bytes: Vec<u8>,
+        borrowed_components: &[u16],
+        write_components: &[u16],
+    ) -> Vec<u8> {
+        let mut cursor = 8usize;
+        let name_len = read_u16_le(&bytes, &mut cursor).expect("name len") as usize;
+        let name = read_utf8(&bytes, &mut cursor, name_len).expect("name");
+        assert_eq!(name, "main");
+        let code_len_pos = cursor;
+        let code_len = read_u32_le(&bytes, &mut cursor).expect("code len") as usize;
+        let code_start = cursor;
+        let code_end = code_start + code_len;
+        let code = &bytes[code_start..code_end];
+        let (strings, _, _, _, instr_start) =
+            parse_string_table_debug_and_ownership(code).expect("parse");
+        let total_root = strings
+            .iter()
+            .position(|s| s == "total")
+            .expect("total root index") as u32;
+        let ownership_start = code[..instr_start]
+            .windows(OWNERSHIP_SECTION_TAG.len())
+            .position(|window| window == OWNERSHIP_SECTION_TAG)
+            .expect("OWN0 section");
+        let mut new_code = Vec::with_capacity(code.len());
+        new_code.extend_from_slice(&code[..ownership_start]);
+        new_code.extend_from_slice(&ownership_section_bytes(
+            total_root,
+            borrowed_components,
+            write_components,
+        ));
+        new_code.extend_from_slice(&code[instr_start..]);
+
+        let mut out = Vec::with_capacity(bytes.len() + new_code.len().saturating_sub(code.len()));
+        out.extend_from_slice(&bytes[..code_len_pos]);
+        out.extend_from_slice(&(new_code.len() as u32).to_le_bytes());
+        out.extend_from_slice(&new_code);
+        out.extend_from_slice(&bytes[code_end..]);
+        out
+    }
+
+    fn ownership_section_bytes(
+        root: u32,
+        borrowed_components: &[u16],
+        write_components: &[u16],
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&OWNERSHIP_SECTION_TAG);
+        out.extend_from_slice(&2u16.to_le_bytes());
+        append_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_BORROW,
+            root,
+            borrowed_components,
+        );
+        append_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_WRITE,
+            root,
+            write_components,
+        );
+        out
+    }
+
+    fn append_ownership_event(out: &mut Vec<u8>, kind: u8, root: u32, components: &[u16]) {
+        out.push(kind);
+        out.extend_from_slice(&root.to_le_bytes());
+        out.extend_from_slice(&(components.len() as u16).to_le_bytes());
+        for index in components {
+            out.push(OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX);
+            out.extend_from_slice(&index.to_le_bytes());
+        }
     }
 }
