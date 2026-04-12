@@ -1,7 +1,9 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11,
+    OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
+    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, ClosureCapturePolicy, ClosureLiteral, ClosureType,
@@ -842,7 +844,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v10_closure_instr(funcs) {
+    if has_v11_ownership_events(funcs) {
+        out.extend_from_slice(&MAGIC11);
+    } else if has_v10_closure_instr(funcs) {
         out.extend_from_slice(&MAGIC10);
     } else if has_v9_sequence_instr(funcs) {
         out.extend_from_slice(&MAGIC9);
@@ -1001,6 +1005,7 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             write_u16_le(&mut code, col);
         }
     }
+    emit_ownership_events(&f.ownership_events, &mut code)?;
     code.extend_from_slice(&instr_stream);
     Ok(code)
 }
@@ -1472,6 +1477,51 @@ fn has_v10_closure_instr(funcs: &[IrFunction]) -> bool {
             matches!(i, IrInstr::MakeClosure { .. } | IrInstr::ClosureCall { .. })
         })
     })
+}
+
+fn has_v11_ownership_events(funcs: &[IrFunction]) -> bool {
+    funcs.iter().any(|f| !f.ownership_events.is_empty())
+}
+
+fn emit_ownership_events(
+    ownership_events: &[OwnershipPathEvent],
+    out: &mut Vec<u8>,
+) -> Result<(), FrontendError> {
+    if ownership_events.is_empty() {
+        return Ok(());
+    }
+
+    out.extend_from_slice(&OWNERSHIP_SECTION_TAG);
+    write_u16_le(
+        out,
+        u16::try_from(ownership_events.len()).map_err(|_| FrontendError {
+            pos: 0,
+            message: "too many ownership path events".to_string(),
+        })?,
+    );
+    for event in ownership_events {
+        out.push(match event.kind {
+            OwnershipPathEventKind::Borrow => OWNERSHIP_EVENT_KIND_BORROW,
+            OwnershipPathEventKind::Write => OWNERSHIP_EVENT_KIND_WRITE,
+        });
+        write_u32_le(out, event.path.root.0);
+        write_u16_le(
+            out,
+            u16::try_from(event.path.components.len()).map_err(|_| FrontendError {
+                pos: 0,
+                message: "ownership path is too deep".to_string(),
+            })?,
+        );
+        for component in &event.path.components {
+            match component {
+                PathComponent::TupleIndex(index) => {
+                    out.push(OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX);
+                    write_u16_le(out, *index);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {

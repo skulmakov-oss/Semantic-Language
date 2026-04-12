@@ -5,11 +5,12 @@ pub use sm_ir::semcode_format::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode,
     SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS, CAP_EVENT_POST,
-    CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_SEQUENCE_VALUES,
-    CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES, CAP_CLOSURE_VALUES, HEADER_V0, HEADER_V1,
-    HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7, HEADER_V8, HEADER_V9,
-    HEADER_V10, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9,
-    MAGIC10,
+    CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_OWNERSHIP_PATHS,
+    CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES, CAP_CLOSURE_VALUES,
+    HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7,
+    HEADER_V8, HEADER_V9, HEADER_V10, HEADER_V11, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4,
+    MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11, OWNERSHIP_EVENT_KIND_BORROW,
+    OWNERSHIP_EVENT_KIND_WRITE, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
 };
 #[cfg(feature = "std")]
 pub use sm_ir::{
@@ -21,10 +22,82 @@ pub use sm_ir::{
 mod tests {
     use super::*;
 
+    fn function_code<'a>(bytes: &'a [u8], target: &str) -> &'a [u8] {
+        let mut cursor = 8usize;
+        while cursor < bytes.len() {
+            let name_len = read_u16_le(bytes, &mut cursor).expect("name length") as usize;
+            let name = std::str::from_utf8(&bytes[cursor..cursor + name_len]).expect("utf8 name");
+            cursor += name_len;
+            let code_len = read_u32_le(bytes, &mut cursor).expect("code length") as usize;
+            if name == target {
+                return &bytes[cursor..cursor + code_len];
+            }
+            cursor += code_len;
+        }
+        panic!("function '{target}' not found");
+    }
+
+    fn skip_string_table(code: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let count = read_u16_le(code, &mut cursor).expect("string count") as usize;
+        for _ in 0..count {
+            let len = read_u16_le(code, &mut cursor).expect("string length") as usize;
+            cursor += len;
+        }
+        cursor
+    }
+
     #[test]
     fn sm_emit_smoke_compile_to_semcode() {
         let src = "fn main() { return; }";
         let bytes = compile_program_to_semcode(src).expect("emit");
         assert_eq!(&bytes[0..8], &MAGIC0);
+    }
+
+    #[test]
+    fn sm_emit_promotes_header_and_encodes_ownership_events_deterministically() {
+        let src = r#"
+            fn pair() -> (i32, i32) = (1, 2);
+
+            fn main() {
+                let pair: (i32, i32) = pair();
+                let (ref left, _): (i32, i32) = pair;
+                let total: f64 = 0.0;
+                total += 1.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("emit");
+        let bytes_again = compile_program_to_semcode(src).expect("emit");
+
+        assert_eq!(bytes, bytes_again);
+        assert_eq!(&bytes[0..8], &MAGIC11);
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[0..8]);
+        let spec = header_spec_from_magic(&magic).expect("known header");
+        assert_eq!(spec.rev, 12);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_PATHS, 0);
+
+        let code = function_code(&bytes, "main");
+        let mut cursor = skip_string_table(code);
+        assert_eq!(&code[cursor..cursor + 4], &OWNERSHIP_SECTION_TAG);
+        cursor += 4;
+        assert_eq!(read_u16_le(code, &mut cursor).expect("event count"), 2);
+
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_BORROW);
+        let borrow_root = read_u32_le(code, &mut cursor).expect("root");
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 1);
+        assert_eq!(
+            read_u8(code, &mut cursor).expect("component kind"),
+            OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX
+        );
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component value"), 0);
+
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_WRITE);
+        let write_root = read_u32_le(code, &mut cursor).expect("root");
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 0);
+        assert_ne!(borrow_root, write_root);
+
+        assert!(code[cursor..].ends_with(&[Opcode::Ret.byte(), 0]));
     }
 }
