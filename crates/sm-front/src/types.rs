@@ -350,7 +350,7 @@ pub struct RecordPatternItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordPatternTarget {
-    Bind(SymbolId),
+    Bind { name: SymbolId, capture: CaptureMode },
     Discard,
     QuadLiteral(QuadVal),
 }
@@ -1366,6 +1366,36 @@ mod tests {
         assert_eq!(capture, CaptureMode::Move, "default ADT binding capture must be Move");
     }
 
+    #[test]
+    fn record_pattern_bind_carries_capture_mode() {
+        let item_move =
+            RecordPatternTarget::Bind { name: SymbolId(5), capture: CaptureMode::Move };
+        let item_borrow =
+            RecordPatternTarget::Bind { name: SymbolId(5), capture: CaptureMode::Borrow };
+        assert!(matches!(
+            item_move,
+            RecordPatternTarget::Bind {
+                capture: CaptureMode::Move,
+                ..
+            }
+        ));
+        assert!(matches!(
+            item_borrow,
+            RecordPatternTarget::Bind {
+                capture: CaptureMode::Borrow,
+                ..
+            }
+        ));
+        assert_ne!(item_move, item_borrow);
+    }
+
+    #[test]
+    fn record_pattern_default_is_move() {
+        let item = RecordPatternTarget::Bind { name: SymbolId(6), capture: CaptureMode::Move };
+        let RecordPatternTarget::Bind { capture, .. } = item else { panic!("expected Bind") };
+        assert_eq!(capture, CaptureMode::Move, "default record binding capture must be Move");
+    }
+
     // M9.5 Wave B — KwRef token owner layer
 
     #[test]
@@ -1396,6 +1426,13 @@ mod tests {
         assert_eq!(p.elems.len(), 2);
         assert!(matches!(p.elems[0], PatternPathElem::TupleIndex(1)));
         assert!(matches!(p.elems[1], PatternPathElem::VariantField(0)));
+    }
+
+    #[test]
+    fn pattern_path_record_field_appends() {
+        let field = SymbolId(7);
+        let p = PatternPath::root().record_field(field);
+        assert_eq!(p.elems, vec![PatternPathElem::RecordField(field)]);
     }
 
     #[test]
