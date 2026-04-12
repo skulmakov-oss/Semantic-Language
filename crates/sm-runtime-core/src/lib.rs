@@ -63,11 +63,21 @@ impl AccessPath {
             components,
         }
     }
+
+    pub fn field(&self, name: SymbolId) -> Self {
+        let mut components = self.components.clone();
+        components.push(PathComponent::Field(name));
+        Self {
+            root: self.root,
+            components,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PathComponent {
     TupleIndex(u16),
+    Field(SymbolId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,10 +316,19 @@ mod tests {
     }
 
     #[test]
+    fn access_path_record_field_can_be_represented() {
+        let camera = SymbolId(11);
+        let path = AccessPath::new(SymbolId(3)).field(camera);
+        assert_eq!(path.root, SymbolId(3));
+        assert_eq!(path.components, vec![PathComponent::Field(camera)]);
+    }
+
+    #[test]
     fn access_path_component_order_is_deterministic() {
-        let left = AccessPath::new(SymbolId(9)).tuple_index(0).tuple_index(2);
-        let right = AccessPath::new(SymbolId(9)).tuple_index(0).tuple_index(2);
-        let different = AccessPath::new(SymbolId(9)).tuple_index(2).tuple_index(0);
+        let field = SymbolId(12);
+        let left = AccessPath::new(SymbolId(9)).tuple_index(0).field(field);
+        let right = AccessPath::new(SymbolId(9)).tuple_index(0).field(field);
+        let different = AccessPath::new(SymbolId(9)).field(field).tuple_index(0);
         assert_eq!(left, right);
         assert_ne!(left, different);
     }
