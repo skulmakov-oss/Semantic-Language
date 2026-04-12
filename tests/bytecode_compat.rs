@@ -151,6 +151,7 @@ fn compat_v4_header_and_state_query_run() {
                 IrInstr::Assert { cond: 2 },
                 IrInstr::Ret { src: None },
             ],
+            ownership_events: Vec::new(),
         }],
         false,
     )
@@ -183,6 +184,7 @@ fn compat_v5_header_and_state_update_run() {
                 },
                 IrInstr::Ret { src: None },
             ],
+            ownership_events: Vec::new(),
         }],
         false,
     )
@@ -216,6 +218,7 @@ fn compat_v6_header_and_event_post_run() {
                 },
                 IrInstr::Ret { src: None },
             ],
+            ownership_events: Vec::new(),
         }],
         false,
     )
@@ -251,6 +254,7 @@ fn compat_v7_header_and_clock_read_run() {
                 IrInstr::Assert { cond: 2 },
                 IrInstr::Ret { src: None },
             ],
+            ownership_events: Vec::new(),
         }],
         false,
     )

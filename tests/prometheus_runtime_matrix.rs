@@ -28,6 +28,7 @@ fn gate_program() -> Vec<IrFunction> {
             },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 
