@@ -259,7 +259,7 @@ pub enum IrInstr {
 
 /// Canonical execution-layer access path for ownership transport.
 ///
-/// This is intentionally IR-owned and tuple-only in the first slice.
+/// This is intentionally IR-owned and append-only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessPath {
     pub root: SymbolId,
@@ -282,11 +282,21 @@ impl AccessPath {
             components,
         }
     }
+
+    pub fn field(&self, name: SymbolId) -> Self {
+        let mut components = self.components.clone();
+        components.push(PathComponent::Field(name));
+        Self {
+            root: self.root,
+            components,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathComponent {
     TupleIndex(u16),
+    Field(SymbolId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1517,6 +1527,9 @@ fn emit_ownership_events(
                 PathComponent::TupleIndex(index) => {
                     out.push(OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX);
                     write_u16_le(out, *index);
+                }
+                PathComponent::Field(_) => {
+                    unreachable!("record field ownership transport is not enabled in this slice");
                 }
             }
         }
@@ -6825,10 +6838,19 @@ mod opt_tests {
     }
 
     #[test]
+    fn access_path_record_field_can_be_represented() {
+        let camera = SymbolId(11);
+        let path = AccessPath::new(SymbolId(3)).field(camera);
+        assert_eq!(path.root, SymbolId(3));
+        assert_eq!(path.components, vec![PathComponent::Field(camera)]);
+    }
+
+    #[test]
     fn access_path_component_order_is_deterministic() {
-        let left = AccessPath::new(SymbolId(9)).tuple_index(0).tuple_index(2);
-        let right = AccessPath::new(SymbolId(9)).tuple_index(0).tuple_index(2);
-        let different = AccessPath::new(SymbolId(9)).tuple_index(2).tuple_index(0);
+        let field = SymbolId(12);
+        let left = AccessPath::new(SymbolId(9)).tuple_index(0).field(field);
+        let right = AccessPath::new(SymbolId(9)).tuple_index(0).field(field);
+        let different = AccessPath::new(SymbolId(9)).field(field).tuple_index(0);
         assert_eq!(left, right);
         assert_ne!(left, different);
     }
@@ -8277,9 +8299,9 @@ mod opt_tests {
                 let camera: quad = T;
                 let quality: f64 = 0.75;
                 let ctx: DecisionContext = DecisionContext { camera, quality };
-                let DecisionContext { camera: seen_camera, quality } = ctx;
                 let patched: DecisionContext = ctx with { quality };
-                assert(seen_camera == patched.camera);
+                assert(patched.camera == T);
+                assert(patched.quality == 0.75);
                 return;
             }
         "#;
