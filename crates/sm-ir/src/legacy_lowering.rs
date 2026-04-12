@@ -3159,9 +3159,11 @@ fn bind_record_items(
     items: &[RecordPatternItem],
     record_reg: u16,
     record_ty: &Type,
+    record_path: Option<&AccessPath>,
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
+    ownership_events: &mut Vec<OwnershipPathEvent>,
     env: &mut ScopeEnv,
     record_table: &RecordTable,
     _adt_table: &AdtTable,
@@ -3209,12 +3211,23 @@ fn bind_record_items(
             index,
         });
         match item.target {
-            RecordPatternTarget::Bind { name: target, .. } => {
+            RecordPatternTarget::Bind {
+                name: target,
+                capture,
+            } => {
                 env.insert(target, field.ty.clone());
                 out.push(IrInstr::StoreVar {
                     name: resolve_symbol_name(arena, target)?.to_string(),
                     src: reg,
                 });
+                if capture == sm_front::types::CaptureMode::Borrow {
+                    if let Some(record_path) = record_path {
+                        ownership_events.push(OwnershipPathEvent {
+                            kind: OwnershipPathEventKind::Borrow,
+                            path: record_path.field(item.field),
+                        });
+                    }
+                }
             }
             RecordPatternTarget::Discard => {}
             RecordPatternTarget::QuadLiteral(_) => {
@@ -3235,6 +3248,7 @@ fn bind_let_else_record_items(
     items: &[RecordPatternItem],
     record_reg: u16,
     record_ty: &Type,
+    record_path: Option<&AccessPath>,
     else_return: Option<ExprId>,
     contract_ensures: &[ExprId],
     contract_result_symbol: Option<SymbolId>,
@@ -3243,6 +3257,7 @@ fn bind_let_else_record_items(
     arena: &AstArena,
     next: &mut u16,
     out: &mut Vec<IrInstr>,
+    ownership_events: &mut Vec<OwnershipPathEvent>,
     env: &mut ScopeEnv,
     loop_stack: &mut Vec<LoopLoweringFrame>,
     fn_table: &FnTable,
@@ -3297,8 +3312,19 @@ fn bind_let_else_record_items(
             index,
         });
         match item.target {
-            RecordPatternTarget::Bind { name: target, .. } => {
+            RecordPatternTarget::Bind {
+                name: target,
+                capture,
+            } => {
                 deferred_binds.push((target, reg, field.ty.clone()));
+                if capture == sm_front::types::CaptureMode::Borrow {
+                    if let Some(record_path) = record_path {
+                        ownership_events.push(OwnershipPathEvent {
+                            kind: OwnershipPathEventKind::Borrow,
+                            path: record_path.field(item.field),
+                        });
+                    }
+                }
             }
             RecordPatternTarget::Discard => {}
             RecordPatternTarget::QuadLiteral(pat) => {
@@ -3847,6 +3873,7 @@ fn lower_stmt(
             items,
             value,
         } => {
+            let record_path = direct_record_access_path_from_expr(*value, arena);
             let (record_reg, record_ty) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -3866,9 +3893,11 @@ fn lower_stmt(
                 items,
                 record_reg,
                 &record_ty,
+                record_path.as_ref(),
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
+                &mut ctx.ownership_events,
                 env,
                 record_table,
                 adt_table,
@@ -3880,6 +3909,7 @@ fn lower_stmt(
             value,
             else_return,
         } => {
+            let record_path = direct_record_access_path_from_expr(*value, arena);
             let (record_reg, record_ty) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -3899,6 +3929,7 @@ fn lower_stmt(
                 items,
                 record_reg,
                 &record_ty,
+                record_path.as_ref(),
                 *else_return,
                 &ctx.ensures,
                 ctx.ensures_result_symbol,
@@ -3907,6 +3938,7 @@ fn lower_stmt(
                 arena,
                 &mut ctx.next_reg,
                 &mut ctx.instrs,
+                &mut ctx.ownership_events,
                 env,
                 &mut ctx.loop_stack,
                 fn_table,
@@ -4712,9 +4744,11 @@ fn lower_value_block_expr(
                     items,
                     record_reg,
                     &record_ty,
+                    None,
                     arena,
                     next,
                     out,
+                    &mut Vec::new(),
                     &mut block_env,
                     record_table,
                     adt_table,
@@ -6807,6 +6841,13 @@ fn tuple_access_path_from_expr(expr_id: ExprId, arena: &AstArena) -> Option<Acce
     }
 }
 
+fn direct_record_access_path_from_expr(expr_id: ExprId, arena: &AstArena) -> Option<AccessPath> {
+    match arena.expr(expr_id) {
+        Expr::Var(name) => Some(AccessPath::new(*name)),
+        _ => None,
+    }
+}
+
 #[inline]
 fn alloc(next: &mut u16) -> u16 {
     let out = *next;
@@ -8347,6 +8388,60 @@ mod opt_tests {
             instr,
             IrInstr::StoreVar { name, .. } if name == "seen_camera"
         )));
+    }
+
+    #[test]
+    fn lower_record_borrow_capture_records_borrow_path_event() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                return;
+            }
+        "#;
+
+        let (program, main) = lower_single_function_with_program(src, "main");
+        let main_fn = program
+            .functions
+            .iter()
+            .find(|func| program.arena.symbol_name(func.name) == "main")
+            .expect("main fn");
+        let Stmt::Let { name: ctx_name, .. } = program.arena.stmt(main_fn.body[0]) else {
+            panic!("expected ctx binding");
+        };
+        let camera_field = program.records[0].fields[0].name;
+        assert_eq!(
+            main.ownership_events,
+            vec![OwnershipPathEvent {
+                kind: OwnershipPathEventKind::Borrow,
+                path: AccessPath::new(*ctx_name).field(camera_field),
+            }]
+        );
+    }
+
+    #[test]
+    fn lower_record_copy_with_emits_no_field_write_events() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { quality: 0.75, camera: T };
+                let patched: DecisionContext = ctx with { quality: 1.0 };
+                assert(patched.camera == T);
+                return;
+            }
+        "#;
+
+        let (_program, main) = lower_single_function_with_program(src, "main");
+        assert!(main.ownership_events.is_empty());
     }
 
     #[test]
