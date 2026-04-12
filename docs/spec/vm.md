@@ -131,6 +131,7 @@ Current frame model includes:
 - program counter
 - register vector
 - `SymbolId` local map
+- frame-local borrowed tuple paths
 - function identity
 - optional return destination
 
@@ -140,8 +141,30 @@ Current function-bytecode model includes:
 - string table
 - runtime symbol ids
 - optional debug symbols
+- tuple-only ownership path metadata admitted from `OWN0`
 - instruction stream
 - instruction start offset
+
+## Runtime Ownership Slice
+
+Current supported runtime ownership slice is narrow:
+
+- tuple-only `AccessPath`
+- frame-local borrow lifetime
+- runtime write rejection on overlapping borrowed tuple paths
+
+Current overlap cases that reject:
+
+- exact path equality
+- borrowed parent, written child
+- borrowed child, written parent
+
+Current allowed case:
+
+- sibling tuple paths
+
+Unsupported ownership behavior remains outside the VM contract here and is
+specified explicitly in `runtime_ownership.md`.
 
 ## Effect Opcode Boundary
 

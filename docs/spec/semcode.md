@@ -163,6 +163,8 @@ Compatibility rules:
   - event kind (`Borrow` or `Write`)
   - root `SymbolId` as little-endian `u32`
   - ordered tuple-only path components as `TupleIndex(u16)`
+- does not claim record, ADT payload, schema, or release/lifetime transport
+  beyond the current frame-local tuple slice
 
 Important rule:
 
@@ -215,6 +217,17 @@ Current SemCode admission validates:
 - register-budget validity against the runtime contract
 - string and debug reference validity
 - capability consistency between actual usage and emitted contract
+
+Current ownership-specific structural admission for `SEMCOD11` validates:
+
+- `OWN0` section layout
+- admitted ownership event kinds
+- tuple-only path component kinds
+- deterministic root/component payload shape
+- capability/header consistency for ownership transport
+
+Execution semantics for admitted ownership payload are specified separately in
+`runtime_ownership.md`.
 
 ## Backward Compatibility Rule
 
