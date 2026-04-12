@@ -17,7 +17,7 @@ Current documents in this PR:
 - `profile.md` - `ParserProfile` policy contract
 - `verifier.md` - SemCode admission verification contract
 - `vm.md` - Semantic VM public execution contract
-- `runtime_ownership.md` - tuple-only runtime ownership transport and enforcement contract
+- `runtime_ownership.md` - current tuple-only runtime ownership contract plus the approved direct record-field extension scope
 - `quotas.md` - runtime quota taxonomy and enforcement contract
 - `abi.md` - PROMETHEUS host ABI boundary contract
 - `capabilities.md` - capability manifest and denial contract
