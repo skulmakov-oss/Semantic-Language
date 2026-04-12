@@ -1011,15 +1011,30 @@ impl<'a> Parser<'a> {
                     RecordPatternTarget::QuadLiteral(QuadVal::T)
                 } else if self.eat(TokenKind::QuadS) {
                     RecordPatternTarget::QuadLiteral(QuadVal::S)
+                } else if self.eat(TokenKind::KwRef) {
+                    RecordPatternTarget::Bind {
+                        name: self.expect_symbol()?,
+                        capture: CaptureMode::Borrow,
+                    }
                 } else {
-                    RecordPatternTarget::Bind(self.expect_symbol()?)
+                    RecordPatternTarget::Bind {
+                        name: self.expect_symbol()?,
+                        capture: CaptureMode::Move,
+                    }
                 }
             } else {
-                RecordPatternTarget::Bind(field)
+                RecordPatternTarget::Bind {
+                    name: field,
+                    capture: CaptureMode::Move,
+                }
             };
-            if let RecordPatternTarget::Bind(target_name) = target {
+            if let RecordPatternTarget::Bind { name: target_name, .. } = target {
                 if items.iter().any(|existing| {
-                    matches!(existing.target, RecordPatternTarget::Bind(existing_name) if existing_name == target_name)
+                    matches!(
+                        existing.target,
+                        RecordPatternTarget::Bind { name: existing_name, .. }
+                            if existing_name == target_name
+                    )
                 }) {
                     return Err(FrontendError {
                         pos: self.pos(),
@@ -5182,7 +5197,13 @@ fn main() {
         assert_eq!(items.len(), 2);
         assert_eq!(program.arena.symbol_name(items[0].field), "camera");
         assert!(
-            matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "seen_camera")
+            matches!(
+                items[0].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "seen_camera"
+            )
         );
         assert_eq!(program.arena.symbol_name(items[1].field), "quality");
         assert!(matches!(items[1].target, RecordPatternTarget::Discard));
@@ -5258,7 +5279,13 @@ fn main() {
             panic!("expected record destructuring bind");
         };
         assert!(
-            matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "camera")
+            matches!(
+                items[0].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "camera"
+            )
         );
         assert!(matches!(items[1].target, RecordPatternTarget::Discard));
 
@@ -5270,8 +5297,51 @@ fn main() {
             RecordPatternTarget::QuadLiteral(QuadVal::T)
         ));
         assert!(
-            matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "quality")
+            matches!(
+                items[1].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "quality"
+            )
         );
+    }
+
+    #[test]
+    fn rustlike_parser_preserves_borrow_capture_in_record_bind() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let DecisionContext { camera: ref seen_camera, quality } =
+        DecisionContext { camera: T, quality: 0.75 };
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record ref bind should parse");
+        let main = &program.functions[0];
+        let Stmt::LetRecord { items, .. } = program.arena.stmt(main.body[0]) else {
+            panic!("expected record destructuring bind");
+        };
+        assert!(matches!(
+            items[0].target,
+            RecordPatternTarget::Bind {
+                name,
+                capture: CaptureMode::Borrow
+            } if program.arena.symbol_name(name) == "seen_camera"
+        ));
+        assert!(matches!(
+            items[1].target,
+            RecordPatternTarget::Bind {
+                name,
+                capture: CaptureMode::Move
+            } if program.arena.symbol_name(name) == "quality"
+        ));
     }
 
     #[test]
@@ -5373,7 +5443,13 @@ fn main() {
             RecordPatternTarget::QuadLiteral(QuadVal::T)
         ));
         assert!(
-            matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "score")
+            matches!(
+                items[1].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "score"
+            )
         );
         assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
         assert!(else_return.is_none());

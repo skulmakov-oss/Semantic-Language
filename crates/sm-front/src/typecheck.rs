@@ -746,13 +746,6 @@ fn check_stmt(
             items,
             value,
         } => {
-            let record = record_table.get(record_name).ok_or(FrontendError {
-                pos: 0,
-                message: format!(
-                    "unknown record type '{}' in record destructuring bind",
-                    resolve_symbol_name(arena, *record_name)?
-                ),
-            })?;
             let value_ty = infer_expr_type(
                 *value,
                 arena,
@@ -775,36 +768,29 @@ fn check_stmt(
                 });
             }
             for item in items {
-                let field = record
-                    .fields
-                    .iter()
-                    .find(|field| field.name == item.field)
-                    .ok_or(FrontendError {
+                if matches!(item.target, RecordPatternTarget::QuadLiteral(_)) {
+                    return Err(FrontendError {
                         pos: 0,
-                        message: format!(
-                            "record type '{}' has no field named '{}' in destructuring bind",
-                            resolve_symbol_name(arena, *record_name)?,
-                            resolve_symbol_name(arena, item.field)?
-                        ),
-                    })?;
-                match item.target {
-                    RecordPatternTarget::Bind(target) => {
-                        env.insert(
-                            target,
-                            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
-                        );
-                    }
-                    RecordPatternTarget::Discard => {}
-                    RecordPatternTarget::QuadLiteral(_) => {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message:
-                                "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
-                                    .to_string(),
-                        });
-                    }
+                        message:
+                            "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
+                                .to_string(),
+                    });
                 }
             }
+            let mut plan = BindingPlan::default();
+            build_record_pattern_plan(
+                items,
+                &value_ty,
+                &PatternPath::root(),
+                &mut plan,
+                arena,
+                record_table,
+                adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::LetElseRecord {
@@ -813,13 +799,6 @@ fn check_stmt(
             value,
             else_return,
         } => {
-            let record = record_table.get(record_name).ok_or(FrontendError {
-                pos: 0,
-                message: format!(
-                    "unknown record type '{}' in record let-else",
-                    resolve_symbol_name(arena, *record_name)?
-                ),
-            })?;
             let value_ty = infer_expr_type(
                 *value,
                 arena,
@@ -854,6 +833,13 @@ fn check_stmt(
             )?;
             let mut saw_refutable_item = false;
             for item in items {
+                let record = record_table.get(record_name).ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown record type '{}' in record let-else",
+                        resolve_symbol_name(arena, *record_name)?
+                    ),
+                })?;
                 let field = record
                     .fields
                     .iter()
@@ -867,12 +853,7 @@ fn check_stmt(
                         ),
                     })?;
                 match item.target {
-                    RecordPatternTarget::Bind(target) => {
-                        env.insert(
-                            target,
-                            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
-                        );
-                    }
+                    RecordPatternTarget::Bind { .. } => {}
                     RecordPatternTarget::Discard => {}
                     RecordPatternTarget::QuadLiteral(_) => {
                         saw_refutable_item = true;
@@ -903,6 +884,20 @@ fn check_stmt(
                             .to_string(),
                 });
             }
+            let mut plan = BindingPlan::default();
+            build_record_pattern_plan(
+                items,
+                &value_ty,
+                &PatternPath::root(),
+                &mut plan,
+                arena,
+                record_table,
+                adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::LetElseTuple {
@@ -4599,9 +4594,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("unknown record field must reject");
-        assert!(err.message.contains(
-            "record type 'DecisionContext' has no field named 'badge' in destructuring bind"
-        ));
+        assert!(err
+            .message
+            .contains("record type 'DecisionContext' has no field named 'badge'"));
     }
 
     #[test]
@@ -5430,6 +5425,99 @@ mod tests {
         assert!(binding.path_state.iter().any(|(path, state)| {
             *state == PathAvailability::Moved
                 && *path == PatternPath::root().tuple_index(1)
+        }));
+    }
+
+    #[test]
+    fn ref_binding_in_record_pattern_parses() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: score } = ctx;
+                let _ = seen_camera;
+                let _ = score;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("ref binding in record pattern should parse and typecheck");
+    }
+
+    #[test]
+    fn plain_record_ref_binding_preserves_record_field_path_state() {
+        use crate::types::{PathAvailability, PatternPath, RecordDecl, RecordField, RecordPatternItem};
+
+        let mut arena = AstArena::default();
+        let source = arena.intern_symbol("source");
+        let record_name = arena.intern_symbol("DecisionContext");
+        let camera = arena.intern_symbol("camera");
+        let quality = arena.intern_symbol("quality");
+        let borrowed = arena.intern_symbol("borrowed");
+        let moved = arena.intern_symbol("moved");
+        let value = arena.alloc_expr(Expr::Var(source));
+        let stmt = arena.alloc_stmt(Stmt::LetRecord {
+            record_name,
+            items: vec![
+                RecordPatternItem {
+                    field: camera,
+                    target: RecordPatternTarget::Bind {
+                        name: borrowed,
+                        capture: CaptureMode::Borrow,
+                    },
+                },
+                RecordPatternItem {
+                    field: quality,
+                    target: RecordPatternTarget::Bind {
+                        name: moved,
+                        capture: CaptureMode::Move,
+                    },
+                },
+            ],
+            value,
+        });
+
+        let mut env = ScopeEnv::new();
+        env.insert(source, Type::Record(record_name));
+
+        let table = FnTable::new();
+        let mut record_table = RecordTable::new();
+        record_table.insert(
+            record_name,
+            RecordDecl {
+                name: record_name,
+                type_params: Vec::new(),
+                fields: vec![
+                    RecordField { name: camera, ty: Type::Quad },
+                    RecordField { name: quality, ty: Type::F64 },
+                ],
+            },
+        );
+        let adt_table = AdtTable::new();
+        let mut loop_stack = Vec::new();
+        check_stmt(
+            stmt,
+            &arena,
+            &mut env,
+            Type::Unit,
+            &table,
+            &record_table,
+            &adt_table,
+            &mut loop_stack,
+            &[],
+        )
+        .expect("record ref bind should typecheck");
+
+        let binding = env.binding(source).expect("source binding must exist");
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Borrowed
+                && *path == PatternPath::root().record_field(camera)
+        }));
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Moved
+                && *path == PatternPath::root().record_field(quality)
         }));
     }
 
@@ -8649,6 +8737,57 @@ pub(crate) fn build_tuple_pattern_plan(
                     ty: item_ty.clone(),
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from record pattern items against a known record type.
+pub(crate) fn build_record_pattern_plan(
+    items: &[crate::types::RecordPatternItem],
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let Type::Record(record_name) = expected_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "record pattern requires record scrutinee, got {:?}",
+                expected_ty
+            ),
+        });
+    };
+    let record = record_table.get(record_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in record pattern",
+            resolve_symbol_name(arena, *record_name)?
+        ),
+    })?;
+    for item in items {
+        let field = record
+            .fields
+            .iter()
+            .find(|field| field.name == item.field)
+            .ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record type '{}' has no field named '{}' in record pattern",
+                    resolve_symbol_name(arena, *record_name)?,
+                    resolve_symbol_name(arena, item.field)?
+                ),
+            })?;
+        if let RecordPatternTarget::Bind { name, capture } = &item.target {
+            out.push(BindingPlanItem {
+                name: *name,
+                capture: *capture,
+                path: base.record_field(item.field),
+                ty: canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+            });
         }
     }
     Ok(())

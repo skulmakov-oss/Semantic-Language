@@ -3196,7 +3196,7 @@ fn bind_record_items(
             index,
         });
         match item.target {
-            RecordPatternTarget::Bind(target) => {
+            RecordPatternTarget::Bind { name: target, .. } => {
                 env.insert(target, field.ty.clone());
                 out.push(IrInstr::StoreVar {
                     name: resolve_symbol_name(arena, target)?.to_string(),
@@ -3284,7 +3284,7 @@ fn bind_let_else_record_items(
             index,
         });
         match item.target {
-            RecordPatternTarget::Bind(target) => {
+            RecordPatternTarget::Bind { name: target, .. } => {
                 deferred_binds.push((target, reg, field.ty.clone()));
             }
             RecordPatternTarget::Discard => {}
