@@ -24,6 +24,7 @@ fn gate_rw_program(write_port: u16) -> Vec<IrFunction> {
             },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 

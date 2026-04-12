@@ -24,6 +24,7 @@ fn runtime_program() -> Vec<IrFunction> {
             },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 
@@ -44,6 +45,7 @@ fn state_query_program() -> Vec<IrFunction> {
             IrInstr::Assert { cond: 2 },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 
@@ -58,6 +60,7 @@ fn state_update_program() -> Vec<IrFunction> {
             },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 
@@ -70,6 +73,7 @@ fn event_post_program() -> Vec<IrFunction> {
             },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 
@@ -87,6 +91,7 @@ fn clock_read_program() -> Vec<IrFunction> {
             IrInstr::Assert { cond: 2 },
             IrInstr::Ret { src: None },
         ],
+        ownership_events: Vec::new(),
     }]
 }
 
