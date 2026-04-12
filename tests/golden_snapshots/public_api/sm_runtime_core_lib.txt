@@ -22,6 +22,7 @@ pub root: SymbolId,
 pub components: Vec<PathComponent>,
 pub fn new(root: SymbolId) -> Self {
 pub fn tuple_index(&self, index: u16) -> Self {
+pub fn field(&self, name: SymbolId) -> Self {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PathComponent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
