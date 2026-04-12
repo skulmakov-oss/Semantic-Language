@@ -19,6 +19,8 @@ struct FunctionLayout {
     instr_start: usize,
 }
 
+const DETERMINISTIC_RUNS: usize = 8;
+
 #[test]
 fn runtime_ownership_sibling_write_passes_on_verified_path() {
     let bytes = compile_program_to_semcode(tuple_assignment_source()).expect("compile");
@@ -146,6 +148,114 @@ fn runtime_ownership_does_not_silently_claim_record_or_adt_support() {
     }
 }
 
+#[test]
+fn runtime_ownership_sibling_write_is_stable_across_runs() {
+    let bytes = compile_program_to_semcode(tuple_assignment_source()).expect("compile");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[0],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[1],
+            },
+        ],
+    );
+
+    assert_repeated_verified_success(&rewritten, DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_same_path_rejects_identically_across_runs() {
+    let bytes = compile_program_to_semcode(tuple_assignment_source()).expect("compile");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[0],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[0],
+            },
+        ],
+    );
+
+    assert_repeated_write_overlap_rejects(&rewritten, "pair", DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_parent_child_rejects_identically_across_runs() {
+    let bytes = compile_program_to_semcode(tuple_assignment_source()).expect("compile");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[0],
+            },
+        ],
+    );
+
+    assert_repeated_write_overlap_rejects(&rewritten, "pair", DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_child_parent_rejects_identically_across_runs() {
+    let bytes = compile_program_to_semcode(tuple_assignment_source()).expect("compile");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[0],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[],
+            },
+        ],
+    );
+
+    assert_repeated_write_overlap_rejects(&rewritten, "pair", DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_multi_frame_cleanup_is_stable_across_runs() {
+    let bytes = compile_program_to_semcode(multi_frame_source()).expect("compile");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[OwnershipEventSpec {
+            kind: OWNERSHIP_EVENT_KIND_WRITE,
+            root: "pair",
+            components: &[],
+        }],
+    );
+
+    assert_repeated_verified_success(&rewritten, DETERMINISTIC_RUNS);
+}
+
 fn tuple_assignment_source() -> &'static str {
     r#"
         fn main() {
@@ -213,17 +323,34 @@ fn adt_source() -> &'static str {
 }
 
 fn assert_write_overlap_rejects_deterministically(bytes: &[u8], symbol_name: &str) {
+    assert_repeated_write_overlap_rejects(bytes, symbol_name, 2);
+}
+
+fn assert_repeated_verified_success(bytes: &[u8], runs: usize) {
+    verify_semcode(bytes).expect("verify");
+    for _ in 0..runs {
+        run_verified_semcode(bytes).expect("verified run must stay successful");
+    }
+}
+
+fn assert_repeated_write_overlap_rejects(bytes: &[u8], symbol_name: &str, runs: usize) {
     verify_semcode(bytes).expect("verify");
 
-    let first = run_verified_semcode(bytes).expect_err("runtime overlap must reject");
-    let second = run_verified_semcode(bytes).expect_err("runtime overlap must reject deterministically");
+    let mut observed = Vec::with_capacity(runs);
+    for _ in 0..runs {
+        let err = run_verified_semcode(bytes).expect_err("runtime overlap must reject");
+        let rendered = format!("{err}");
+        assert!(matches!(
+            err,
+            RuntimeError::TypeMismatchRuntime(message)
+                if message == format!("write path overlaps active borrow for '{symbol_name}'")
+        ));
+        observed.push(rendered);
+    }
 
-    assert_eq!(format!("{first}"), format!("{second}"));
-    assert!(matches!(
-        first,
-        RuntimeError::TypeMismatchRuntime(message)
-            if message == format!("write path overlaps active borrow for '{symbol_name}'")
-    ));
+    for rendered in &observed[1..] {
+        assert_eq!(rendered, &observed[0]);
+    }
 }
 
 fn any_function_has_ownership_section(bytes: &[u8]) -> bool {
