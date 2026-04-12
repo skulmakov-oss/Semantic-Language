@@ -3,168 +3,153 @@
 </p>
 
 # Semantic
-Rust-like language toolchain with SemCode emitter and VM runtime.
+Rust-like deterministic language toolchain with SemCode emission, verifier admission, and VM execution.
 
-Semantic is not framed here as a general-purpose language first. It is a deterministic language/toolchain for describing reasoning rules, semantic state transitions, and executable logic inside the broader PROMETHEUS system model.
+Semantic is built for reasoning rules, semantic state transitions, declarative Logos surfaces, and executable logic inside the broader PROMETHEUS system model.
 
-Reference:
-- `docs/LANGUAGE.md` - language purpose, mechanics, design influences.
-- `docs/NAMING.md` - naming rules and short forms.
+The public contract is centered in `docs/spec/*`. Historical roadmap notes and legacy compatibility shims remain in the repository, but they are not the primary source of truth for the current toolchain surface.
 
-This repository state is frozen as Toolchain v0 on branch `release/v0` and tag `v0.1.0`.
+## Current State
+- Active draft toolchain on `main`; this repository is not frozen on `release/v0`.
+- Standard execution route: `source -> AST -> sema -> IR -> SemCode -> verify -> execute`.
+- SemCode is versioned and verifier-gated before standard VM execution.
+- Tuple-only runtime ownership is implemented end-to-end for borrowed-path write rejection:
+  - frontend preserves borrow capture
+  - lowering emits canonical ownership path events
+  - SemCode transports ownership metadata
+  - verifier admits ownership payload structurally
+  - VM rejects overlapping tuple writes at runtime
+- CLI ownership is centered in `crates/smc-cli`; root `smc` and `svm` binaries remain process entrypoints.
 
-## Changelog
-- See `CHANGELOG.md` for release notes (`v0.1.0`, `v1.0.0`).
+## Primary References
+- `docs/spec/index.md` - canonical spec bundle entrypoint
+- `docs/spec/syntax.md` - source syntax contract
+- `docs/spec/types.md` - source type contract
+- `docs/spec/source_semantics.md` - source execution and binding semantics
+- `docs/spec/semcode.md` - SemCode contract and version policy
+- `docs/spec/verifier.md` - admission verifier contract
+- `docs/spec/vm.md` - VM execution contract
+- `docs/spec/runtime_ownership.md` - tuple-only runtime ownership contract
+- `docs/spec/cli.md` - public CLI surface
+- `docs/LANGUAGE.md` - language overview and design intent
+- `docs/NAMING.md` - naming rules and short forms
 
-## What's included
-- Parser, type-checker, IR lowering, SemCode emitter.
-- SemCode v0 VM executor and disassembler.
-- Tools: `smc` for compile/check/lint and `svm` for VM run/disasm.
-- Golden byte-format tests.
+## What Is In The Repository
+- Source frontend: lexer, parser, typing, and source-surface ownership work in `crates/sm-front`
+- Semantic analysis and diagnostics in `crates/sm-sema`
+- Lowering, IR, optimization passes, and canonical SemCode contract in `crates/sm-ir`
+- Producer-facing SemCode facade in `crates/sm-emit`
+- Structural SemCode admission verifier in `crates/sm-verify`
+- Shared runtime vocabulary and quotas in `crates/sm-runtime-core`
+- Verified-only VM execution in `crates/sm-vm`
+- Canonical public CLI owner in `crates/smc-cli`
+- PROMETHEUS-facing boundary crates:
+  - `crates/prom-abi`
+  - `crates/prom-cap`
+  - `crates/prom-gates`
+  - `crates/prom-runtime`
+  - `crates/prom-state`
+  - `crates/prom-rules`
+  - `crates/prom-audit`
+  - `crates/prom-ui`
+  - `crates/prom-ui-runtime`
+  - `crates/prom-ui-demo`
+- Compatibility perimeter:
+  - `src/bin/ton618_core.rs`
+  - `crates/ton618-core`
 
 ## Quickstart
-Use these commands as-is from repository root.
+Use these commands from repository root.
 
 ```powershell
-# 1) Build CLI
-cargo build --bin smc
+# 1) Build the public entrypoints
+cargo build --bin smc --bin svm
 
-# 2) Create minimal source program
+# 2) Create a minimal program
 @'
 fn main() {
     return;
 }
 '@ | Set-Content program.sm
 
-# 3) Compile source -> SemCode
+# 3) Check source
+cargo run --bin smc -- check program.sm
+
+# 4) Compile source -> SemCode
 cargo run --bin smc -- compile program.sm -o program.smc
 
-# 4) Run source directly (compile in memory + execute main)
+# 5) Verify compiled SemCode
+cargo run --bin smc -- verify program.smc
+
+# 6) Run source directly
 cargo run --bin smc -- run program.sm
 
-# 5) Run precompiled SemCode
-cargo run --bin svm -- run program.smc
+# 7) Run precompiled SemCode through the standard CLI route
+cargo run --bin smc -- run-smc program.smc
 
-# 6) Disassemble SemCode
+# 8) Disassemble SemCode
 cargo run --bin svm -- disasm program.smc
 ```
 
-Example `disasm` output:
+## Current CLI Surface
+Current command families exposed by `smc`:
+- `compile`
+- `check`
+- `lint`
+- `watch`
+- `fmt`
+- `dump-ast`
+- `dump-ir`
+- `dump-bytecode`
+- `hash-ast`
+- `hash-ir`
+- `hash-smc`
+- `snapshots`
+- `features`
+- `explain`
+- `repl`
+- `verify`
+- `run`
+- `run-smc`
+- `disasm`
 
-```text
-SEMCODE0
-fn one: code=13 bytes, strings=0
-  0000: LOAD_I32 r0, 1
-  0007: RET r0
-fn main: code=25 bytes, strings=2
-  0000: CALL dst?1 r0 fn#0 argc=0
-  0008: STORE_VAR s1, r0
-  000d: RET
-```
-
-## CLI reference
-- Canonical public CLI owner: `smc-cli`.
-- Current repository note: root `src/bin/smc.rs` and `src/bin/svm.rs` remain process entrypoints that delegate into the canonical `smc-cli` owner.
-- `ton618_core` remains only as part of the retained non-owning TON618 compatibility perimeter for pre-v1 workflows.
-- `smc compile <input.sm> -o <out.smc>`
-  - Parses, type-checks, lowers, validates IR, emits SemCode file.
-- `smc features`
-  - Prints compile-time feature flags baked into this binary.
-- `smc run <input.sm>`
-  - Compiles source in memory and executes `main` in VM.
+Low-level VM entrypoint:
 - `svm run <input.smc>`
-  - Executes precompiled SemCode in VM.
 - `svm disasm <input.smc>`
-  - Prints decoded functions/opcodes from SemCode payload.
 
-## SemCode v0 format (spec)
-- Endianness: little-endian for all integer fields.
-- Header: ASCII magic `SEMCODE0` (8 bytes).
-- File body: repeated function records until EOF.
-  - `u16 name_len`
-  - `name_len` bytes function name (UTF-8)
-  - `u32 code_len`
-  - `code_len` bytes function code section
-- Function `code` layout:
-  - string table prefix
-  - opcode stream payload
-- String table layout:
-  - `u16 string_count`
-  - for each string: `u16 len`, then `len` bytes UTF-8
-  - instructions reference strings by `u16 str_id`
-- Jumps:
-  - encoded as absolute function-local addresses in opcode stream.
-  - `Label` nodes do not serialize into bytecode.
-- Opcode and encoding source of truth:
-  - `src/semcode_format.rs` (`MAGIC`, `Opcode`, read/write LE helpers).
+## Current SemCode And Runtime Notes
+- The SemCode contract is owned by `sm-ir` and surfaced through `sm-emit`.
+- The current spec documents a versioned SemCode family and capability-gated emission.
+- Standard `.smc` execution is verifier-first; verified admission is not optional on the public route.
+- The current runtime ownership slice is intentionally narrow:
+  - tuple-only paths
+  - frame-local borrow lifetime
+  - exact overlap rejection
+  - parent-child rejection
+  - child-parent rejection
+  - sibling writes allowed
 
-## Language constraints (v0)
-- `if` condition is `bool` only. `if quad_expr` is forbidden.
-- `->` (implies) is `quad`-only.
-- `match` is `quad`-only.
-- `match` requires explicit default arm `_ => { ... }`.
-- Unit-returning call is valid as statement, invalid as value expression.
-
-## Tests
+## Testing
 ```powershell
 cargo fmt --check
-cargo test
-cargo test --test golden_semcode
+cargo test -q
+cargo test -q --test public_api_contracts
+cargo test -q --test runtime_ownership_e2e
 ```
 
-## no_std smoke-check
-Core library supports `no_std` mode. Run:
+## no_std Smoke Check
+Core library supports `no_std` mode.
 
 ```powershell
 cargo check --no-default-features
 ```
 
-Reference matrix: `docs/NO_STD.md`.
-Naming note: `docs/NAMING.md`.
+Reference:
+- `docs/NO_STD.md`
 
-## Compile-Time Feature Flags
+## License
+Apache License 2.0
 
-Default build enables:
-- `std`
-- `profile-rust`
-- `profile-logos`
-- `debug-symbols`
+Copyright (c) 2026 Said Kulmakov
 
-Optional:
-- `simd`
-- `bench`
-
-## Repository layout
-- `crates/sm-front` - lexer, parser, and source-surface typing.
-- `crates/sm-sema` - semantic analysis and diagnostics.
-- `crates/sm-ir` - lowering, IR verification, optimizer passes, and SemCode contract owner.
-- `crates/sm-emit` - producer-facing SemCode facade over the canonical `sm-ir` contract.
-- `crates/sm-verify` - SemCode admission verifier.
-- `crates/sm-runtime-core` - runtime primitives, quotas, and symbol vocabulary.
-- `crates/sm-vm` - verified-only VM execution.
-- `crates/smc-cli` - canonical public CLI owner.
-- `src/bin/smc.rs` and `src/bin/svm.rs` - root process entrypoints.
-- `src/bin/ton618_core.rs` - retained non-owning TON618 compatibility CLI shim.
-- `crates/ton618-core` - retained non-owning TON618 compatibility primitive crate.
-- `tests/golden/*` and `tests/golden_snapshots/**` - format and runtime golden baselines.
-
-## Roadmap
-- SemCode structural validator before VM execution.
-- VM step limit / sandbox mode for deterministic safety.
-- Extend arithmetic typing and lowering (`u32`, `fx` ops).
-- Optimize `match` lowering (jump tables/selective chains).
-- Stabilize stdlib ABI and calling convention.
-- Debug info mapping (source positions -> bytecode offsets).
-- SemCode versioning policy and compatibility matrix.
-
-## v1-math (in progress)
-- Add first-class `f64` type and float literals in frontend/type checker/IR.
-- Add arithmetic opcodes for `f64`: `LOAD_F64`, `ADD_F64`, `SUB_F64`, `MUL_F64`, `DIV_F64`.
-- Add math builtins in VM dispatch: `sin`, `cos`, `tan`, `sqrt`, `abs`, `pow`.
-- Preserve backward compatibility: VM executes both `SEMCODE0` and `SEMCODE1`.
-- Keep all v0 tests/golden fixtures green while extending v1.
-
-## SemCode Versioning Policy
-- `SEMCODE0`: frozen v0 format and opcode set.
-- `SEMCODE1`: v1 extension format (new MAGIC) for math opcodes.
-- VM reader supports both `SEMCODE0` and `SEMCODE1`, so old `.smc` files remain runnable.
+See `LICENSE` for the repository license text.
