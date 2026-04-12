@@ -255,6 +255,38 @@ pub enum IrInstr {
     },
 }
 
+/// Canonical execution-layer access path for ownership transport.
+///
+/// This is intentionally IR-owned and tuple-only in the first slice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessPath {
+    pub root: SymbolId,
+    pub components: Vec<PathComponent>,
+}
+
+impl AccessPath {
+    pub fn new(root: SymbolId) -> Self {
+        Self {
+            root,
+            components: Vec::new(),
+        }
+    }
+
+    pub fn tuple_index(&self, index: u16) -> Self {
+        let mut components = self.components.clone();
+        components.push(PathComponent::TupleIndex(index));
+        Self {
+            root: self.root,
+            components,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathComponent {
+    TupleIndex(u16),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrFunction {
     pub name: String,
@@ -6647,6 +6679,32 @@ fn alloc(next: &mut u16) -> u16 {
 mod opt_tests {
     use super::*;
     use crate::passes::run_default_opt_passes;
+
+    #[test]
+    fn access_path_root_starts_with_empty_component_list() {
+        let path = AccessPath::new(SymbolId(7));
+        assert_eq!(path.root, SymbolId(7));
+        assert!(path.components.is_empty());
+    }
+
+    #[test]
+    fn access_path_tuple_indices_preserve_append_order() {
+        let path = AccessPath::new(SymbolId(3)).tuple_index(1).tuple_index(4);
+        assert_eq!(path.root, SymbolId(3));
+        assert_eq!(
+            path.components,
+            vec![PathComponent::TupleIndex(1), PathComponent::TupleIndex(4)]
+        );
+    }
+
+    #[test]
+    fn access_path_component_order_is_deterministic() {
+        let left = AccessPath::new(SymbolId(9)).tuple_index(0).tuple_index(2);
+        let right = AccessPath::new(SymbolId(9)).tuple_index(0).tuple_index(2);
+        let different = AccessPath::new(SymbolId(9)).tuple_index(2).tuple_index(0);
+        assert_eq!(left, right);
+        assert_ne!(left, different);
+    }
 
     #[test]
     fn lower_block_expression_tail_to_ir() {
