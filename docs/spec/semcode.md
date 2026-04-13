@@ -40,6 +40,7 @@ Current supported header family:
 - `SEMCODE9`
 - `SEMCOD10`
 - `SEMCOD11`
+- `SEMCOD12`
 
 Observed runtime support in the current toolchain:
 
@@ -55,6 +56,7 @@ Observed runtime support in the current toolchain:
 - `SEMCODE9`: epoch `0`, revision `10`
 - `SEMCOD10`: epoch `0`, revision `11`
 - `SEMCOD11`: epoch `0`, revision `12`
+- `SEMCOD12`: epoch `0`, revision `13`
 
 Header responsibilities:
 
@@ -166,6 +168,18 @@ Compatibility rules:
 - does not claim record, ADT payload, schema, or release/lifetime transport
   beyond the current frame-local tuple slice
 
+`SEMCOD12`
+
+- promoted contract used when emitted program usage requires direct record-field
+  borrow ownership path transport
+- keeps `SEMCOD11` fixed for tuple-only ownership-path artifacts
+- uses the fixed-width 8-byte header magic form `SEMCOD12`
+- keeps the tagged function-local ownership section `OWN0`
+- extends the ownership-path component vocabulary with:
+  - `Field(SymbolId)` encoded as component kind + little-endian `u32`
+- does not claim direct record-field `Write` transport, verifier admission, or
+  VM enforcement beyond the currently landed tuple-only slice
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -196,6 +210,7 @@ Current canonical capability families:
 - `CAP_SEQUENCE_VALUES`
 - `CAP_CLOSURE_VALUES`
 - `CAP_OWNERSHIP_PATHS`
+- `CAP_OWNERSHIP_FIELD_PATHS`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:
@@ -225,6 +240,12 @@ Current ownership-specific structural admission for `SEMCOD11` validates:
 - tuple-only path component kinds
 - deterministic root/component payload shape
 - capability/header consistency for ownership transport
+
+Current `SEMCOD12` format extension is transport-only in this slice:
+
+- producer transport may encode direct record-field `Borrow` paths in `OWN0`
+- verifier and VM support for direct record-field ownership payload is staged
+  separately and must not be implied by header support alone
 
 Execution semantics for admitted ownership payload are specified separately in
 `runtime_ownership.md`.
