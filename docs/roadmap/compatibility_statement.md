@@ -106,9 +106,10 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to the first-wave tuple-only
   runtime ownership metadata transport on current `main`, including lowered
   borrow/write path events, canonical `AccessPath`, and `SEMCODE11`
-- the same forward-only reading also applies to the staged direct record-field
-  borrow transport extension on current `main`, including `Field(SymbolId)` in
-  `AccessPath`, `OWN0` field-path payloads, and `SEMCOD12`
+- the same forward-only reading also applies to the direct record-field
+  runtime ownership extension on current `main`, including `Field(SymbolId)` in
+  `AccessPath`, `OWN0` field-path payloads, `SEMCOD12`, verifier admission, VM
+  frame-local borrow tracking, and `BorrowWriteConflict` overlap rejection
 - the same forward-only reading also applies to the first-wave generics surface
   on current `main`, including type-parameter syntax for functions, records, and
   ADTs, deterministic call-site monomorphisation, and the narrow
@@ -141,13 +142,12 @@ The repository does not yet claim final compatibility guarantees for:
   carrier/index/equality contract on `main`
 - closure semantics beyond the current admitted first-wave `Closure(T -> U)`
   family, immutable capture, and direct invocation contract on `main`
-- runtime ownership metadata semantics beyond the current admitted first-wave
-  tuple-only `AccessPath` transport, `Borrow`/`Write` event encoding, and
-  `SEMCODE11` contract on `main`
-- direct record-field ownership semantics beyond the current staged
-  producer-side `Borrow(Field)`/`Write(Field)` transport and `SEMCOD12`
-  format extension on `main` (verifier admission is claimed; VM tracking and
-  runtime overlap enforcement are not yet claimed)
+- runtime ownership metadata semantics beyond the current admitted tuple +
+  direct record-field `AccessPath` transport on `main`, including `Borrow` /
+  `Write` event encoding, `SEMCOD11` / `SEMCOD12`, verifier admission,
+  frame-local borrow lifetime, and `BorrowWriteConflict` overlap rejection
+  (ADT payload paths, schema paths, partial release, advanced aliasing,
+  inter-frame persistence, and indirect field projection are not claimed)
 - generics semantics beyond the current admitted first-wave type-parameter
   family, call-site substitution, and monomorphisation contract on `main`
   (trait/protocol bounds, higher-kinded types, variance, and specialisation are
