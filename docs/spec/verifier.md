@@ -35,11 +35,13 @@ Current SemCode verification checks include:
 - call-target validity
 - capability consistency with actual opcode usage
 
-Current ownership-specific structural checks for `SEMCOD11` include:
+Current ownership-specific structural checks for ownership transport include:
 
 - `OWN0` section presence and layout validity when ownership transport is used
 - admitted ownership event kind validity
-- tuple-only `AccessPath` payload validity
+- tuple `AccessPath` payload validity under `SEMCOD11`
+- direct record-field `AccessPath` payload validity under `SEMCOD12`
+- structural admission for valid `Borrow(Field)` and `Write(Field)` payloads
 - header/capability consistency for ownership transport
 
 ## Contract Rule

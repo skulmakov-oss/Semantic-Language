@@ -170,15 +170,18 @@ Compatibility rules:
 
 `SEMCOD12`
 
-- promoted contract used when emitted program usage requires direct record-field
-  borrow ownership path transport
+- promoted contract used when emitted program usage requires direct
+  record-field ownership path transport
 - keeps `SEMCOD11` fixed for tuple-only ownership-path artifacts
 - uses the fixed-width 8-byte header magic form `SEMCOD12`
 - keeps the tagged function-local ownership section `OWN0`
 - extends the ownership-path component vocabulary with:
   - `Field(SymbolId)` encoded as component kind + little-endian `u32`
-- does not claim direct record-field `Write` transport, verifier admission, or
-  VM enforcement beyond the currently landed tuple-only slice
+- transports direct record-field `Borrow` and `Write` paths deterministically
+- requires `CAP_OWNERSHIP_FIELD_PATHS` when direct record-field components are
+  present
+- does not claim ADT payload, schema, or release/lifetime transport beyond the
+  current frame-local tuple+record slice
 
 Important rule:
 
@@ -237,7 +240,7 @@ Current ownership-specific structural admission for `SEMCOD11` validates:
 
 - `OWN0` section layout
 - admitted ownership event kinds
-- tuple-only path component kinds
+- tuple-only path component kinds under `SEMCOD11`
 - deterministic root/component payload shape
 - capability/header consistency for ownership transport
 
@@ -246,8 +249,10 @@ Current `SEMCOD12` format extension in this slice:
 - producer transport may encode direct record-field `Borrow` and `Write` paths
   in `OWN0`
 - verifier admits direct record-field ownership payload structurally
-- VM tracking/enforcement for direct record-field ownership payload remains
-  staged separately and must not be implied by header support alone
+- VM consumes admitted direct record-field ownership payload for frame-local
+  borrow tracking and overlap enforcement
+- ownership execution semantics remain specified separately in
+  `runtime_ownership.md`
 
 Execution semantics for admitted ownership payload are specified separately in
 `runtime_ownership.md`.
