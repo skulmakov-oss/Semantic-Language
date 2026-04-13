@@ -8,9 +8,11 @@ use sm_emit::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     Opcode, SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS,
     CAP_EVENT_POST, CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE,
-    CAP_OWNERSHIP_PATHS, CAP_SEQUENCE_VALUES, CAP_STATE_QUERY, CAP_STATE_UPDATE,
-    CAP_TEXT_VALUES, CAP_CLOSURE_VALUES, OWNERSHIP_EVENT_KIND_BORROW,
-    OWNERSHIP_EVENT_KIND_WRITE, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
+    CAP_OWNERSHIP_FIELD_PATHS, CAP_OWNERSHIP_PATHS, CAP_SEQUENCE_VALUES,
+    CAP_STATE_QUERY, CAP_STATE_UPDATE, CAP_TEXT_VALUES, CAP_CLOSURE_VALUES,
+    OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
+    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
+    OWNERSHIP_SECTION_TAG,
 };
 use sm_runtime_core::RuntimeQuotas;
 use std::collections::HashSet;
@@ -216,6 +218,19 @@ pub fn verify_semcode(bytes: &[u8]) -> Result<VerifiedProgram, RejectReport> {
         ));
     }
 
+    if header.capabilities & CAP_OWNERSHIP_FIELD_PATHS != 0
+        && !pending_functions
+            .iter()
+            .any(|function| function.has_record_field_ownership)
+    {
+        diagnostics.push(diag(
+            VerificationCode::InvalidOwnershipSection,
+            None,
+            None,
+            "header advertises record-field ownership transport but no Field(SymbolId) path is present",
+        ));
+    }
+
     let known_functions = pending_functions
         .iter()
         .map(|function| function.verified.name.as_str())
@@ -361,13 +376,12 @@ fn verify_function_code(
         }
     }
 
-    let has_ownership_section = if cursor + 4 <= code.len()
-        && &code[cursor..cursor + 4] == OWNERSHIP_SECTION_TAG
-    {
-        verify_ownership_section(name, code, &mut cursor, quotas)?;
-        true
+    let has_ownership_section = cursor + 4 <= code.len()
+        && &code[cursor..cursor + 4] == OWNERSHIP_SECTION_TAG;
+    let ownership_usage = if has_ownership_section {
+        verify_ownership_section(name, code, &mut cursor, quotas)?
     } else {
-        false
+        OwnershipSectionUsage::default()
     };
 
     let instr_start = cursor;
@@ -429,6 +443,9 @@ fn verify_function_code(
     }
     if has_ownership_section {
         used_caps |= CAP_OWNERSHIP_PATHS;
+    }
+    if ownership_usage.has_record_field_ownership {
+        used_caps |= CAP_OWNERSHIP_FIELD_PATHS;
     }
 
     let missing_caps = used_caps & !header.capabilities;
@@ -503,6 +520,7 @@ fn verify_function_code(
         },
         call_targets,
         has_ownership_section,
+        has_record_field_ownership: ownership_usage.has_record_field_ownership,
     })
 }
 
@@ -905,14 +923,21 @@ fn builtin_call_required_capabilities(name: &str) -> Option<u32> {
 }
 
 #[cfg(feature = "std")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct OwnershipSectionUsage {
+    has_record_field_ownership: bool,
+}
+
+#[cfg(feature = "std")]
 fn verify_ownership_section(
     function: &str,
     code: &[u8],
     cursor: &mut usize,
     quotas: &RuntimeQuotas,
-) -> Result<(), RejectReport> {
+) -> Result<OwnershipSectionUsage, RejectReport> {
     let section_start = *cursor;
     *cursor += OWNERSHIP_SECTION_TAG.len();
+    let mut usage = OwnershipSectionUsage::default();
 
     let event_count = read_u16_le(code, cursor).map_err(|_| {
         reject_one(
@@ -983,6 +1008,7 @@ fn verify_ownership_section(
             ));
         }
 
+        let mut event_has_field_component = false;
         for _ in 0..component_count {
             let component_offset = *cursor;
             let component_kind = read_u8(code, cursor).map_err(|_| {
@@ -993,28 +1019,54 @@ fn verify_ownership_section(
                     "truncated ownership path component kind",
                 )
             })?;
-            if component_kind != OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX {
-                return Err(reject_one(
-                    function,
-                    VerificationCode::InvalidOwnershipSection,
-                    *cursor - 1,
-                    format!(
-                        "unsupported ownership path component kind 0x{component_kind:02x}"
-                    ),
-                ));
+            match component_kind {
+                OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX => {
+                    read_u16_le(code, cursor).map_err(|_| {
+                        reject_one(
+                            function,
+                            VerificationCode::InvalidOwnershipSection,
+                            *cursor,
+                            "truncated tuple-index ownership path component",
+                        )
+                    })?;
+                }
+                OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL => {
+                    event_has_field_component = true;
+                    read_u32_le(code, cursor).map_err(|_| {
+                        reject_one(
+                            function,
+                            VerificationCode::InvalidOwnershipSection,
+                            *cursor,
+                            "truncated field-symbol ownership path component",
+                        )
+                    })?;
+                }
+                _ => {
+                    return Err(reject_one(
+                        function,
+                        VerificationCode::InvalidOwnershipSection,
+                        *cursor - 1,
+                        format!(
+                            "unsupported ownership path component kind 0x{component_kind:02x}"
+                        ),
+                    ));
+                }
             }
-            read_u16_le(code, cursor).map_err(|_| {
-                reject_one(
-                    function,
-                    VerificationCode::InvalidOwnershipSection,
-                    *cursor,
-                    "truncated tuple-index ownership path component",
-                )
-            })?;
         }
+
+        if kind == OWNERSHIP_EVENT_KIND_WRITE && event_has_field_component {
+            return Err(reject_one(
+                function,
+                VerificationCode::InvalidOwnershipSection,
+                event_offset,
+                "record field write ownership transport is not admitted in this slice",
+            ));
+        }
+
+        usage.has_record_field_ownership |= event_has_field_component;
     }
 
-    Ok(())
+    Ok(usage)
 }
 
 #[cfg(feature = "std")]
@@ -1031,6 +1083,7 @@ struct PendingVerifiedFunction {
     verified: VerifiedFunction,
     call_targets: Vec<(usize, String)>,
     has_ownership_section: bool,
+    has_record_field_ownership: bool,
 }
 
 #[cfg(feature = "std")]
@@ -1070,7 +1123,8 @@ mod tests {
     use super::*;
     use sm_emit::{
         compile_program_to_semcode, compile_program_to_semcode_with_options_debug, read_u16_le,
-        read_u32_le, CompileProfile, OptLevel, MAGIC11, OWNERSHIP_SECTION_TAG,
+        read_u32_le, CompileProfile, OptLevel, MAGIC11, MAGIC12, OWNERSHIP_EVENT_KIND_WRITE,
+        OWNERSHIP_SECTION_TAG,
     };
     use sm_ir::{emit_ir_to_semcode, IrFunction, IrInstr};
 
@@ -1471,7 +1525,6 @@ mod tests {
                 let override_state: quad = N;
                 let quality: f64 = 0.75;
                 let ctx: DecisionContext = DecisionContext { camera, override_state, quality };
-                let DecisionContext { camera, quality: _ } = ctx;
                 let patched: DecisionContext = ctx with { camera };
                 let DecisionContext { camera: T, override_state, quality } =
                     patched else return;
@@ -1492,6 +1545,15 @@ mod tests {
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.header.rev, 12);
         assert_eq!(verified.functions.len(), 2);
+    }
+
+    #[test]
+    fn verifier_accepts_record_field_borrow_ownership_semcode() {
+        let bytes = record_field_borrow_semcode_bytes();
+        assert_eq!(&bytes[..MAGIC12.len()], &MAGIC12);
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 13);
+        assert_eq!(verified.functions.len(), 1);
     }
 
     #[test]
@@ -1653,16 +1715,75 @@ mod tests {
     #[test]
     fn verifier_rejects_truncated_ownership_path_payload() {
         let mut bytes = ownership_semcode_bytes();
-        let (_, code_start, code_end) = function_code_span(&bytes, "main");
-        let code = &mut bytes[code_start..code_end];
+        let (code_len_pos, code_start, code_end) = function_code_span(&bytes, "main");
+        let code = &bytes[code_start..code_end];
         let section_offset = ownership_section_offset(code);
-        let component_count_offset = section_offset + 4 + 2 + 1 + 4;
-        code[component_count_offset..component_count_offset + 2]
-            .copy_from_slice(&2u16.to_le_bytes());
+        let truncated_code_len = section_offset + 4 + 2 + 1 + 4 + 2 + 1 + 1;
+        bytes[code_len_pos..code_len_pos + 4]
+            .copy_from_slice(&(truncated_code_len as u32).to_le_bytes());
+        bytes.truncate(code_start + truncated_code_len);
         let report = verify_semcode(&bytes).expect_err("must reject");
         assert_eq!(
             report.diagnostics[0].code,
             VerificationCode::InvalidOwnershipSection
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_invalid_record_field_component_kind() {
+        let mut bytes = record_field_borrow_semcode_bytes();
+        let (_, code_start, code_end) = function_code_span(&bytes, "main");
+        let code = &mut bytes[code_start..code_end];
+        let section_offset = ownership_section_offset(code);
+        let component_kind_offset = section_offset + 4 + 2 + 1 + 4 + 2;
+        code[component_kind_offset] = 0xff;
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::InvalidOwnershipSection
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_truncated_record_field_payload() {
+        let mut bytes = record_field_borrow_semcode_bytes();
+        let (code_len_pos, code_start, code_end) = function_code_span(&bytes, "main");
+        let code = &bytes[code_start..code_end];
+        let section_offset = ownership_section_offset(code);
+        let truncated_code_len = section_offset + 4 + 2 + 1 + 4 + 2 + 1 + 3;
+        bytes[code_len_pos..code_len_pos + 4]
+            .copy_from_slice(&(truncated_code_len as u32).to_le_bytes());
+        bytes.truncate(code_start + truncated_code_len);
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::InvalidOwnershipSection
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_record_field_write_transport_claim() {
+        let mut bytes = record_field_borrow_semcode_bytes();
+        let (_, code_start, code_end) = function_code_span(&bytes, "main");
+        let code = &mut bytes[code_start..code_end];
+        let section_offset = ownership_section_offset(code);
+        let kind_offset = section_offset + 4 + 2;
+        code[kind_offset] = OWNERSHIP_EVENT_KIND_WRITE;
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::InvalidOwnershipSection
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_record_field_payload_under_v11_capabilities() {
+        let mut bytes = record_field_borrow_semcode_bytes();
+        bytes[..MAGIC11.len()].copy_from_slice(&MAGIC11);
+        let report = verify_semcode(&bytes).expect_err("must reject");
+        assert_eq!(
+            report.diagnostics[0].code,
+            VerificationCode::CapabilityViolation
         );
     }
 
@@ -1799,6 +1920,22 @@ mod tests {
                 let (ref left, _): (i32, i32) = pair;
                 let total: f64 = 0.0;
                 total += 1.0;
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn record_field_borrow_semcode_bytes() -> Vec<u8> {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
                 return;
             }
         "#;
