@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn sm_emit_does_not_claim_record_field_write_transport() {
+    fn sm_emit_promotes_record_field_write_transport_to_v12() {
         let src = r#"
             record DecisionContext {
                 camera: quad,
@@ -178,10 +178,29 @@ mod tests {
             }
         "#;
         let bytes = compile_program_to_semcode(src).expect("emit");
-        assert_ne!(&bytes[0..8], &MAGIC12);
+        let bytes_again = compile_program_to_semcode(src).expect("emit");
+
+        assert_eq!(bytes, bytes_again);
+        assert_eq!(&bytes[0..8], &MAGIC12);
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[0..8]);
+        let spec = header_spec_from_magic(&magic).expect("known header");
+        assert_eq!(spec.rev, 13);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_PATHS, 0);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_FIELD_PATHS, 0);
 
         let code = function_code(&bytes, "main");
-        let cursor = skip_string_table(code);
-        assert_ne!(&code[cursor..cursor + 4], &OWNERSHIP_SECTION_TAG);
+        let mut cursor = skip_string_table(code);
+        assert_eq!(&code[cursor..cursor + 4], &OWNERSHIP_SECTION_TAG);
+        cursor += 4;
+        assert_eq!(read_u16_le(code, &mut cursor).expect("event count"), 1);
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_WRITE);
+        let _root = read_u32_le(code, &mut cursor).expect("root");
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 1);
+        assert_eq!(
+            read_u8(code, &mut cursor).expect("component kind"),
+            OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL
+        );
+        let _field = read_u32_le(code, &mut cursor).expect("field symbol");
     }
 }

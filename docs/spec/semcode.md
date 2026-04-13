@@ -241,11 +241,13 @@ Current ownership-specific structural admission for `SEMCOD11` validates:
 - deterministic root/component payload shape
 - capability/header consistency for ownership transport
 
-Current `SEMCOD12` format extension is transport-only in this slice:
+Current `SEMCOD12` format extension in this slice:
 
-- producer transport may encode direct record-field `Borrow` paths in `OWN0`
-- verifier and VM support for direct record-field ownership payload is staged
-  separately and must not be implied by header support alone
+- producer transport may encode direct record-field `Borrow` and `Write` paths
+  in `OWN0`
+- verifier admits direct record-field ownership payload structurally
+- VM tracking/enforcement for direct record-field ownership payload remains
+  staged separately and must not be implied by header support alone
 
 Execution semantics for admitted ownership payload are specified separately in
 `runtime_ownership.md`.

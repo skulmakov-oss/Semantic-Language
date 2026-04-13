@@ -145,9 +145,9 @@ The repository does not yet claim final compatibility guarantees for:
   tuple-only `AccessPath` transport, `Borrow`/`Write` event encoding, and
   `SEMCODE11` contract on `main`
 - direct record-field ownership semantics beyond the current staged
-  producer-side `Borrow(Field)` transport and `SEMCOD12` format extension on
-  `main` (verifier admission, VM tracking, and runtime overlap enforcement are
-  not yet claimed)
+  producer-side `Borrow(Field)`/`Write(Field)` transport and `SEMCOD12`
+  format extension on `main` (verifier admission is claimed; VM tracking and
+  runtime overlap enforcement are not yet claimed)
 - generics semantics beyond the current admitted first-wave type-parameter
   family, call-site substitution, and monomorphisation contract on `main`
   (trait/protocol bounds, higher-kinded types, variance, and specialisation are

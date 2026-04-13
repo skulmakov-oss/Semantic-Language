@@ -137,7 +137,7 @@ Current lowering contract:
 Current binary contract:
 
 - tuple-only ownership metadata is transported through `SEMCOD11`
-- direct record-field borrow transport is emitted through `SEMCOD12`
+- direct record-field `Borrow`/`Write` transport is emitted through `SEMCOD12`
 - the ownership section tag is `OWN0`
 - each event carries:
   - event kind (`Borrow` or `Write`)
@@ -147,7 +147,7 @@ Current binary contract:
 Current transport scope:
 
 - tuple-only path components admitted end-to-end
-- direct record-field `Borrow` transport only, encoded as `Field(SymbolId)`
+- direct record-field `Borrow`/`Write` transport, encoded as `Field(SymbolId)`
 - deterministic event order
 
 Approved next transport scope:
@@ -161,7 +161,7 @@ Current verifier responsibility:
 
 - validate `OWN0` section structure
 - validate admitted ownership event kinds
-- validate tuple-only path payload shape
+- validate tuple and direct record-field path payload shape
 - validate header/capability consistency for ownership transport
 
 Approved next verifier scope:

@@ -1054,15 +1054,6 @@ fn verify_ownership_section(
             }
         }
 
-        if kind == OWNERSHIP_EVENT_KIND_WRITE && event_has_field_component {
-            return Err(reject_one(
-                function,
-                VerificationCode::InvalidOwnershipSection,
-                event_offset,
-                "record field write ownership transport is not admitted in this slice",
-            ));
-        }
-
         usage.has_record_field_ownership |= event_has_field_component;
     }
 
@@ -1123,8 +1114,7 @@ mod tests {
     use super::*;
     use sm_emit::{
         compile_program_to_semcode, compile_program_to_semcode_with_options_debug, read_u16_le,
-        read_u32_le, CompileProfile, OptLevel, MAGIC11, MAGIC12, OWNERSHIP_EVENT_KIND_WRITE,
-        OWNERSHIP_SECTION_TAG,
+        read_u32_le, CompileProfile, OptLevel, MAGIC11, MAGIC12, OWNERSHIP_SECTION_TAG,
     };
     use sm_ir::{emit_ir_to_semcode, IrFunction, IrInstr};
 
@@ -1557,6 +1547,15 @@ mod tests {
     }
 
     #[test]
+    fn verifier_accepts_record_field_write_ownership_semcode() {
+        let bytes = record_field_write_semcode_bytes();
+        assert_eq!(&bytes[..MAGIC12.len()], &MAGIC12);
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 13);
+        assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
     fn verifier_rejects_short_header() {
         let report = verify_semcode(b"SEMC").expect_err("must reject");
         assert_eq!(report.diagnostics[0].code, VerificationCode::BadHeader);
@@ -1762,21 +1761,6 @@ mod tests {
     }
 
     #[test]
-    fn verifier_rejects_record_field_write_transport_claim() {
-        let mut bytes = record_field_borrow_semcode_bytes();
-        let (_, code_start, code_end) = function_code_span(&bytes, "main");
-        let code = &mut bytes[code_start..code_end];
-        let section_offset = ownership_section_offset(code);
-        let kind_offset = section_offset + 4 + 2;
-        code[kind_offset] = OWNERSHIP_EVENT_KIND_WRITE;
-        let report = verify_semcode(&bytes).expect_err("must reject");
-        assert_eq!(
-            report.diagnostics[0].code,
-            VerificationCode::InvalidOwnershipSection
-        );
-    }
-
-    #[test]
     fn verifier_rejects_record_field_payload_under_v11_capabilities() {
         let mut bytes = record_field_borrow_semcode_bytes();
         bytes[..MAGIC11.len()].copy_from_slice(&MAGIC11);
@@ -1936,6 +1920,23 @@ mod tests {
             fn main() {
                 let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
                 let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn record_field_write_semcode_bytes() -> Vec<u8> {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let patched: DecisionContext = ctx with { quality: 1.0 };
+                let _ = patched;
                 return;
             }
         "#;

@@ -1525,19 +1525,6 @@ fn emit_ownership_events(
         })?,
     );
     for event in ownership_events {
-        if matches!(event.kind, OwnershipPathEventKind::Write)
-            && event
-                .path
-                .components
-                .iter()
-                .any(|component| matches!(component, PathComponent::Field(_)))
-        {
-            return Err(FrontendError {
-                pos: 0,
-                message: "record field write ownership transport is not enabled in this slice"
-                    .to_string(),
-            });
-        }
         out.push(match event.kind {
             OwnershipPathEventKind::Borrow => OWNERSHIP_EVENT_KIND_BORROW,
             OwnershipPathEventKind::Write => OWNERSHIP_EVENT_KIND_WRITE,
@@ -3823,6 +3810,7 @@ fn lower_stmt(
     let stmt = arena.stmt(stmt_id);
     match stmt {
         Stmt::Const { name, ty, value } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let (reg, vty) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -3846,6 +3834,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::Let { name, ty, value } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let (reg, vty) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -3869,6 +3858,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::LetTuple { items, ty, value } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let tuple_path = tuple_access_path_from_expr(*value, arena);
             let (tuple_reg, vty) = lower_expr_with_expected(
                 *value,
@@ -3902,6 +3892,7 @@ fn lower_stmt(
             items,
             value,
         } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let record_path = direct_record_access_path_from_expr(*value, arena);
             let (record_reg, record_ty) = lower_expr_with_expected(
                 *value,
@@ -3938,6 +3929,7 @@ fn lower_stmt(
             value,
             else_return,
         } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let record_path = direct_record_access_path_from_expr(*value, arena);
             let (record_reg, record_ty) = lower_expr_with_expected(
                 *value,
@@ -3983,6 +3975,7 @@ fn lower_stmt(
             value,
             else_return,
         } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let tuple_path = tuple_access_path_from_expr(*value, arena);
             let (tuple_reg, vty) = lower_expr_with_expected(
                 *value,
@@ -4023,6 +4016,7 @@ fn lower_stmt(
             )
         }
         Stmt::Discard { ty, value } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let _ = lower_expr_with_expected(
                 *value,
                 arena,
@@ -4056,6 +4050,7 @@ fn lower_stmt(
                     ),
                 });
             }
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let (reg, _) = lower_expr_with_expected(
                 *value,
                 arena,
@@ -4081,6 +4076,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::AssignTuple { items, value } => {
+            append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let (tuple_reg, tuple_ty) = lower_expr(
                 *value,
                 arena,
@@ -4173,6 +4169,11 @@ fn lower_stmt(
             condition,
             else_return,
         } => {
+            append_record_update_write_events_from_expr(
+                *condition,
+                arena,
+                &mut ctx.ownership_events,
+            );
             let (cond_reg, cond_ty) = lower_expr(
                 *condition,
                 arena,
@@ -4222,6 +4223,7 @@ fn lower_stmt(
             Ok(())
         }
         Stmt::Expr(expr) => {
+            append_record_update_write_events_from_expr(*expr, arena, &mut ctx.ownership_events);
             lower_expr_stmt(
                 *expr,
                 arena,
@@ -4234,28 +4236,42 @@ fn lower_stmt(
             )?;
             Ok(())
         }
-        Stmt::Return(v) => lower_return_payload(
-            *v,
-            &ctx.ensures,
-            ctx.ensures_result_symbol,
-            &ctx.invariants,
-            ctx.invariants_result_symbol,
-            arena,
-            &mut ctx.next_reg,
-            &mut ctx.instrs,
-            env,
-            &mut ctx.loop_stack,
-            fn_table,
-            record_table,
-            adt_table,
-            ret_ty.clone(),
-            &mut ctx.closure_state,
-        ),
+        Stmt::Return(v) => {
+            if let Some(value) = *v {
+                append_record_update_write_events_from_expr(
+                    value,
+                    arena,
+                    &mut ctx.ownership_events,
+                );
+            }
+            lower_return_payload(
+                *v,
+                &ctx.ensures,
+                ctx.ensures_result_symbol,
+                &ctx.invariants,
+                ctx.invariants_result_symbol,
+                arena,
+                &mut ctx.next_reg,
+                &mut ctx.instrs,
+                env,
+                &mut ctx.loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                &mut ctx.closure_state,
+            )
+        }
         Stmt::If {
             condition,
             then_block,
             else_block,
         } => {
+            append_record_update_write_events_from_expr(
+                *condition,
+                arena,
+                &mut ctx.ownership_events,
+            );
             let (cond_reg, cond_ty) = lower_expr(
                 *condition,
                 arena,
@@ -4337,6 +4353,11 @@ fn lower_stmt(
             arms,
             default,
         } => {
+            append_record_update_write_events_from_expr(
+                *scrutinee,
+                arena,
+                &mut ctx.ownership_events,
+            );
             let (scr_reg, scr_ty) = lower_expr(
                 *scrutinee,
                 arena,
@@ -6877,6 +6898,120 @@ fn direct_record_access_path_from_expr(expr_id: ExprId, arena: &AstArena) -> Opt
     }
 }
 
+fn append_record_update_write_events_from_expr(
+    expr_id: ExprId,
+    arena: &AstArena,
+    ownership_events: &mut Vec<OwnershipPathEvent>,
+) {
+    match arena.expr(expr_id) {
+        Expr::Tuple(items) => {
+            for item in items {
+                append_record_update_write_events_from_expr(*item, arena, ownership_events);
+            }
+        }
+        Expr::RecordLiteral(record_literal) => {
+            for field in &record_literal.fields {
+                append_record_update_write_events_from_expr(field.value, arena, ownership_events);
+            }
+        }
+        Expr::RecordField(field_expr) => {
+            append_record_update_write_events_from_expr(field_expr.base, arena, ownership_events);
+        }
+        Expr::SequenceLiteral(sequence) => {
+            for item in &sequence.items {
+                append_record_update_write_events_from_expr(*item, arena, ownership_events);
+            }
+        }
+        Expr::SequenceIndex(index_expr) => {
+            append_record_update_write_events_from_expr(index_expr.base, arena, ownership_events);
+            append_record_update_write_events_from_expr(index_expr.index, arena, ownership_events);
+        }
+        Expr::RecordUpdate(update_expr) => {
+            append_record_update_write_events_from_expr(update_expr.base, arena, ownership_events);
+            for field in &update_expr.fields {
+                append_record_update_write_events_from_expr(field.value, arena, ownership_events);
+            }
+            if let Some(record_path) = direct_record_access_path_from_expr(update_expr.base, arena) {
+                for field in &update_expr.fields {
+                    ownership_events.push(OwnershipPathEvent {
+                        kind: OwnershipPathEventKind::Write,
+                        path: record_path.field(field.name),
+                    });
+                }
+            }
+        }
+        Expr::Call(_, args) => {
+            for arg in args {
+                append_record_update_write_events_from_expr(arg.value, arena, ownership_events);
+            }
+        }
+        Expr::Unary(_, inner) => {
+            append_record_update_write_events_from_expr(*inner, arena, ownership_events);
+        }
+        Expr::Binary(lhs, _, rhs) => {
+            append_record_update_write_events_from_expr(*lhs, arena, ownership_events);
+            append_record_update_write_events_from_expr(*rhs, arena, ownership_events);
+        }
+        Expr::Range(range) => {
+            append_record_update_write_events_from_expr(range.start, arena, ownership_events);
+            append_record_update_write_events_from_expr(range.end, arena, ownership_events);
+        }
+        Expr::If(if_expr) => {
+            append_record_update_write_events_from_expr(if_expr.condition, arena, ownership_events);
+            append_record_update_write_events_from_expr(
+                if_expr.then_block.tail,
+                arena,
+                ownership_events,
+            );
+            append_record_update_write_events_from_expr(
+                if_expr.else_block.tail,
+                arena,
+                ownership_events,
+            );
+        }
+        Expr::IfLet(if_let_expr) => {
+            append_record_update_write_events_from_expr(if_let_expr.value, arena, ownership_events);
+            append_record_update_write_events_from_expr(
+                if_let_expr.then_block.tail,
+                arena,
+                ownership_events,
+            );
+            append_record_update_write_events_from_expr(
+                if_let_expr.else_block.tail,
+                arena,
+                ownership_events,
+            );
+        }
+        Expr::Block(block) => {
+            append_record_update_write_events_from_expr(block.tail, arena, ownership_events);
+        }
+        Expr::Match(match_expr) => {
+            append_record_update_write_events_from_expr(
+                match_expr.scrutinee,
+                arena,
+                ownership_events,
+            );
+            for arm in &match_expr.arms {
+                if let Some(guard) = arm.guard {
+                    append_record_update_write_events_from_expr(guard, arena, ownership_events);
+                }
+                append_record_update_write_events_from_expr(arm.block.tail, arena, ownership_events);
+            }
+            if let Some(default) = &match_expr.default {
+                append_record_update_write_events_from_expr(default.tail, arena, ownership_events);
+            }
+        }
+        Expr::QuadLiteral(_)
+        | Expr::BoolLiteral(_)
+        | Expr::TextLiteral(_)
+        | Expr::NumericLiteral(_)
+        | Expr::Closure(_)
+        | Expr::AdtCtor(_)
+        | Expr::Var(_)
+        | Expr::Loop(_) => {}
+    }
+}
+
 #[inline]
 fn alloc(next: &mut u16) -> u16 {
     let out = *next;
@@ -8454,7 +8589,7 @@ mod opt_tests {
     }
 
     #[test]
-    fn lower_record_copy_with_emits_no_field_write_events() {
+    fn lower_record_copy_with_emits_field_write_events() {
         let src = r#"
             record DecisionContext {
                 camera: quad,
@@ -8469,8 +8604,23 @@ mod opt_tests {
             }
         "#;
 
-        let (_program, main) = lower_single_function_with_program(src, "main");
-        assert!(main.ownership_events.is_empty());
+        let (program, main) = lower_single_function_with_program(src, "main");
+        let main_fn = program
+            .functions
+            .iter()
+            .find(|func| program.arena.symbol_name(func.name) == "main")
+            .expect("main fn");
+        let Stmt::Let { name: ctx_name, .. } = program.arena.stmt(main_fn.body[0]) else {
+            panic!("expected ctx binding");
+        };
+        let quality_field = program.records[0].fields[1].name;
+        assert_eq!(
+            main.ownership_events,
+            vec![OwnershipPathEvent {
+                kind: OwnershipPathEventKind::Write,
+                path: AccessPath::new(*ctx_name).field(quality_field),
+            }]
+        );
     }
 
     #[test]
