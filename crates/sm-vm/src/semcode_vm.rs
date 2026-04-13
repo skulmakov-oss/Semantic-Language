@@ -474,7 +474,6 @@ fn parse_string_table_debug_and_ownership(
             let root = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
             let component_count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
             let mut path = AccessPath::new(root);
-            let mut has_field_component = false;
             for _ in 0..component_count {
                 let component_kind = read_u8(code, &mut i).map_err(map_format_err)?;
                 match component_kind {
@@ -483,7 +482,6 @@ fn parse_string_table_debug_and_ownership(
                         path = path.tuple_index(index);
                     }
                     OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL => {
-                        has_field_component = true;
                         let field = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
                         path = path.field(field);
                     }
@@ -496,15 +494,7 @@ fn parse_string_table_debug_and_ownership(
             }
             match kind {
                 OWNERSHIP_EVENT_KIND_BORROW => borrowed_paths.push(path),
-                OWNERSHIP_EVENT_KIND_WRITE => {
-                    if has_field_component {
-                        return Err(RuntimeError::BadFormat(
-                            "record field write ownership transport is not enabled in this slice"
-                                .to_string(),
-                        ));
-                    }
-                    write_paths.push(path);
-                }
+                OWNERSHIP_EVENT_KIND_WRITE => write_paths.push(path),
                 _ => {
                     return Err(RuntimeError::BadFormat(format!(
                         "unsupported ownership event kind 0x{kind:02x}"
@@ -2870,6 +2860,45 @@ mod tests {
     }
 
     #[test]
+    fn vm_rejects_record_field_write_after_borrow_same_field() {
+        let bytes = record_field_write_overlap_bytes(Some("camera"), Some("camera"));
+        let err = run_semcode(&bytes).expect_err("same-field record write must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_rejects_record_field_write_when_borrowed_parent_overlaps_child_field() {
+        let bytes = record_field_write_overlap_bytes(None, Some("camera"));
+        let err = run_semcode(&bytes).expect_err("record parent-child overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_rejects_record_parent_write_when_borrowed_child_field() {
+        let bytes = record_field_write_overlap_bytes(Some("camera"), None);
+        let err = run_semcode(&bytes).expect_err("record child-parent overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_allows_record_field_write_to_sibling_field_with_active_borrow() {
+        let bytes = record_field_write_overlap_bytes(Some("camera"), Some("quality"));
+        run_semcode(&bytes).expect("sibling record field write must stay allowed");
+    }
+
+    #[test]
     fn vm_runs_stage1_record_literal_path() {
         let src = r#"
             record DecisionContext {
@@ -3422,6 +3451,114 @@ mod tests {
             }
         "#;
         compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn record_field_write_overlap_bytes(
+        borrowed_field: Option<&str>,
+        write_field: Option<&str>,
+    ) -> Vec<u8> {
+        let src = r#"
+            fn main() {
+                let camera: f64 = 0.0;
+                let quality: f64 = 1.0;
+                let ctx: f64 = 1.0;
+                ctx += 2.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        rewrite_record_main_ownership_section(bytes, borrowed_field, write_field)
+    }
+
+    fn rewrite_record_main_ownership_section(
+        bytes: Vec<u8>,
+        borrowed_field: Option<&str>,
+        write_field: Option<&str>,
+    ) -> Vec<u8> {
+        let mut cursor = 8usize;
+        let name_len = read_u16_le(&bytes, &mut cursor).expect("name len") as usize;
+        let name = read_utf8(&bytes, &mut cursor, name_len).expect("name");
+        assert_eq!(name, "main");
+        let code_len_pos = cursor;
+        let code_len = read_u32_le(&bytes, &mut cursor).expect("code len") as usize;
+        let code_start = cursor;
+        let code_end = code_start + code_len;
+        let code = &bytes[code_start..code_end];
+        let (strings, _, _, _, instr_start) =
+            parse_string_table_debug_and_ownership(code).expect("parse");
+        let ctx_root = strings
+            .iter()
+            .position(|s| s == "ctx")
+            .expect("ctx root index") as u32;
+        let ownership_start = code[..instr_start]
+            .windows(OWNERSHIP_SECTION_TAG.len())
+            .position(|window| window == OWNERSHIP_SECTION_TAG)
+            .expect("OWN0 section");
+        let mut new_code = Vec::with_capacity(code.len());
+        new_code.extend_from_slice(&code[..ownership_start]);
+        new_code.extend_from_slice(&record_field_ownership_section_bytes(
+            ctx_root,
+            &strings,
+            borrowed_field,
+            write_field,
+        ));
+        new_code.extend_from_slice(&code[instr_start..]);
+
+        let mut out = Vec::with_capacity(bytes.len() + new_code.len().saturating_sub(code.len()));
+        out.extend_from_slice(&bytes[..code_len_pos]);
+        out.extend_from_slice(&(new_code.len() as u32).to_le_bytes());
+        out.extend_from_slice(&new_code);
+        out.extend_from_slice(&bytes[code_end..]);
+        out
+    }
+
+    fn record_field_ownership_section_bytes(
+        root: u32,
+        strings: &[String],
+        borrowed_field: Option<&str>,
+        write_field: Option<&str>,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&OWNERSHIP_SECTION_TAG);
+        out.extend_from_slice(&2u16.to_le_bytes());
+        append_record_field_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_BORROW,
+            root,
+            strings,
+            borrowed_field,
+        );
+        append_record_field_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_WRITE,
+            root,
+            strings,
+            write_field,
+        );
+        out
+    }
+
+    fn append_record_field_ownership_event(
+        out: &mut Vec<u8>,
+        kind: u8,
+        root: u32,
+        strings: &[String],
+        field: Option<&str>,
+    ) {
+        out.push(kind);
+        out.extend_from_slice(&root.to_le_bytes());
+        match field {
+            Some(field_name) => {
+                out.extend_from_slice(&1u16.to_le_bytes());
+                out.push(OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL);
+                let field_symbol = strings
+                    .iter()
+                    .position(|s| s == field_name)
+                    .expect("field symbol") as u32;
+                out.extend_from_slice(&field_symbol.to_le_bytes());
+            }
+            None => out.extend_from_slice(&0u16.to_le_bytes()),
+        }
     }
 
     fn ownership_write_overlap_bytes(
