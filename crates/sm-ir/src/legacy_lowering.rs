@@ -1,9 +1,10 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11, MAGIC12,
     OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
-    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
+    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
+    OWNERSHIP_SECTION_TAG,
 };
 use sm_front::types::{
     AdtCtorExpr, AdtPatternItem, ClosureCapturePolicy, ClosureLiteral, ClosureType,
@@ -854,7 +855,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v11_ownership_events(funcs) {
+    if has_v12_record_field_ownership_events(funcs) {
+        out.extend_from_slice(&MAGIC12);
+    } else if has_v11_ownership_events(funcs) {
         out.extend_from_slice(&MAGIC11);
     } else if has_v10_closure_instr(funcs) {
         out.extend_from_slice(&MAGIC10);
@@ -1493,6 +1496,18 @@ fn has_v11_ownership_events(funcs: &[IrFunction]) -> bool {
     funcs.iter().any(|f| !f.ownership_events.is_empty())
 }
 
+fn has_v12_record_field_ownership_events(funcs: &[IrFunction]) -> bool {
+    funcs.iter().any(|function| {
+        function.ownership_events.iter().any(|event| {
+            event
+                .path
+                .components
+                .iter()
+                .any(|component| matches!(component, PathComponent::Field(_)))
+        })
+    })
+}
+
 fn emit_ownership_events(
     ownership_events: &[OwnershipPathEvent],
     out: &mut Vec<u8>,
@@ -1510,6 +1525,19 @@ fn emit_ownership_events(
         })?,
     );
     for event in ownership_events {
+        if matches!(event.kind, OwnershipPathEventKind::Write)
+            && event
+                .path
+                .components
+                .iter()
+                .any(|component| matches!(component, PathComponent::Field(_)))
+        {
+            return Err(FrontendError {
+                pos: 0,
+                message: "record field write ownership transport is not enabled in this slice"
+                    .to_string(),
+            });
+        }
         out.push(match event.kind {
             OwnershipPathEventKind::Borrow => OWNERSHIP_EVENT_KIND_BORROW,
             OwnershipPathEventKind::Write => OWNERSHIP_EVENT_KIND_WRITE,
@@ -1528,8 +1556,9 @@ fn emit_ownership_events(
                     out.push(OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX);
                     write_u16_le(out, *index);
                 }
-                PathComponent::Field(_) => {
-                    unreachable!("record field ownership transport is not enabled in this slice");
+                PathComponent::Field(name) => {
+                    out.push(OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL);
+                    write_u32_le(out, name.0);
                 }
             }
         }

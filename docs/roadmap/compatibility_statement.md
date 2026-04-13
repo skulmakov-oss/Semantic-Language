@@ -106,6 +106,9 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to the first-wave tuple-only
   runtime ownership metadata transport on current `main`, including lowered
   borrow/write path events, canonical `AccessPath`, and `SEMCODE11`
+- the same forward-only reading also applies to the staged direct record-field
+  borrow transport extension on current `main`, including `Field(SymbolId)` in
+  `AccessPath`, `OWN0` field-path payloads, and `SEMCOD12`
 - the same forward-only reading also applies to the first-wave generics surface
   on current `main`, including type-parameter syntax for functions, records, and
   ADTs, deterministic call-site monomorphisation, and the narrow
@@ -141,6 +144,10 @@ The repository does not yet claim final compatibility guarantees for:
 - runtime ownership metadata semantics beyond the current admitted first-wave
   tuple-only `AccessPath` transport, `Borrow`/`Write` event encoding, and
   `SEMCODE11` contract on `main`
+- direct record-field ownership semantics beyond the current staged
+  producer-side `Borrow(Field)` transport and `SEMCOD12` format extension on
+  `main` (verifier admission, VM tracking, and runtime overlap enforcement are
+  not yet claimed)
 - generics semantics beyond the current admitted first-wave type-parameter
   family, call-site substitution, and monomorphisation contract on `main`
   (trait/protocol bounds, higher-kinded types, variance, and specialisation are
