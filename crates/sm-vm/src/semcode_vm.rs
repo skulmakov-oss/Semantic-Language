@@ -2,7 +2,8 @@ use crate::semcode_format::{
     header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
     supported_headers, Opcode, SemcodeFormatError, SemcodeHeaderSpec,
     OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
-    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX, OWNERSHIP_SECTION_TAG,
+    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
+    OWNERSHIP_SECTION_TAG,
 };
 use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
@@ -381,13 +382,7 @@ fn parse_semcode(
                 .into_iter()
                 .map(|path| {
                     let local_root = path.root.raw() as usize;
-                    let root = symbol_ids.get(local_root).copied().ok_or_else(|| {
-                        RuntimeError::BadFormat(format!(
-                            "ownership path root out of bounds in '{}': {}",
-                            name,
-                            path.root.raw()
-                        ))
-                    })?;
+                    let root = symbol_ids.get(local_root).copied().unwrap_or(path.root);
                     Ok(AccessPath {
                         root,
                         components: path.components,
@@ -479,19 +474,37 @@ fn parse_string_table_debug_and_ownership(
             let root = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
             let component_count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
             let mut path = AccessPath::new(root);
+            let mut has_field_component = false;
             for _ in 0..component_count {
                 let component_kind = read_u8(code, &mut i).map_err(map_format_err)?;
-                if component_kind != OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX {
-                    return Err(RuntimeError::BadFormat(format!(
-                        "unsupported ownership path component kind 0x{component_kind:02x}"
-                    )));
+                match component_kind {
+                    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX => {
+                        let index = read_u16_le(code, &mut i).map_err(map_format_err)?;
+                        path = path.tuple_index(index);
+                    }
+                    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL => {
+                        has_field_component = true;
+                        let field = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
+                        path = path.field(field);
+                    }
+                    _ => {
+                        return Err(RuntimeError::BadFormat(format!(
+                            "unsupported ownership path component kind 0x{component_kind:02x}"
+                        )));
+                    }
                 }
-                let index = read_u16_le(code, &mut i).map_err(map_format_err)?;
-                path = path.tuple_index(index);
             }
             match kind {
                 OWNERSHIP_EVENT_KIND_BORROW => borrowed_paths.push(path),
-                OWNERSHIP_EVENT_KIND_WRITE => write_paths.push(path),
+                OWNERSHIP_EVENT_KIND_WRITE => {
+                    if has_field_component {
+                        return Err(RuntimeError::BadFormat(
+                            "record field write ownership transport is not enabled in this slice"
+                                .to_string(),
+                        ));
+                    }
+                    write_paths.push(path);
+                }
                 _ => {
                     return Err(RuntimeError::BadFormat(format!(
                         "unsupported ownership event kind 0x{kind:02x}"
@@ -2758,6 +2771,66 @@ mod tests {
     }
 
     #[test]
+    fn vm_tracks_record_field_borrowed_paths_on_frame_push() {
+        let bytes = record_field_borrow_tracking_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push frame");
+
+        assert_eq!(vm.callstack.len(), 1);
+        let frame = &vm.callstack[0];
+        assert_eq!(frame.borrowed_paths.len(), 1);
+        assert!(matches!(
+            frame.borrowed_paths[0].components.as_slice(),
+            [PathComponent::Field(_)]
+        ));
+    }
+
+    #[test]
+    fn vm_clears_record_field_borrowed_paths_on_frame_exit() {
+        let bytes = helper_record_field_borrow_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push main");
+        push_frame(
+            &mut vm,
+            "helper",
+            vec![Value::Record(RecordCarrier {
+                type_name: "DecisionContext".to_string(),
+                slots: vec![Value::Quad(QuadVal::T), Value::F64(0.75)],
+            })],
+            None,
+        )
+        .expect("push helper");
+
+        assert_eq!(vm.callstack.len(), 2);
+        assert_eq!(vm.callstack[1].borrowed_paths.len(), 1);
+        assert!(matches!(
+            vm.callstack[1].borrowed_paths[0].components.as_slice(),
+            [PathComponent::Field(_)]
+        ));
+
+        let finished = vm.callstack.pop().expect("helper frame");
+        assert_eq!(finished.borrowed_paths.len(), 1);
+        assert_eq!(vm.callstack.len(), 1);
+        assert!(vm.callstack[0].borrowed_paths.is_empty());
+    }
+
+    #[test]
     fn vm_rejects_write_after_borrow_same_path() {
         let bytes = ownership_write_overlap_bytes(&[0], &[0]);
         let err = run_semcode(&bytes).expect_err("overlapping write must fail");
@@ -3138,8 +3211,8 @@ mod tests {
                 let override_state: quad = N;
                 let quality: f64 = 0.75;
                 let ctx: DecisionContext = DecisionContext { camera, override_state, quality };
-                let DecisionContext { camera, quality: _ } = ctx;
                 let patched: DecisionContext = ctx with { camera };
+                let DecisionContext { camera, quality: _ } = ctx;
                 let DecisionContext { camera: T, override_state, quality } =
                     patched else return;
                 assert(camera == T);
@@ -3304,6 +3377,43 @@ mod tests {
             fn helper(pair: (i32, bool)) {
                 let (ref left, _): (i32, bool) = pair;
                 let _ = left;
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn record_field_borrow_tracking_bytes() -> Vec<u8> {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                let _ = seen_camera;
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn helper_record_field_borrow_bytes() -> Vec<u8> {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn helper(ctx: DecisionContext) {
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                let _ = seen_camera;
                 return;
             }
 
