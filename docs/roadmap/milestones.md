@@ -39,7 +39,8 @@
   - `docs/spec/vm.md`
   - `docs/spec/quotas.md`
   - `docs/spec/cli.md`
-  - `docs/spec/versioning.md`
+  - current active IR hardening checkpoint:
+    `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
 - `M4 PROMETHEUS Boundary`
   - ABI
   - capabilities
