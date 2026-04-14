@@ -110,6 +110,9 @@ Current `v1` scope commitment:
   runtime ownership extension on current `main`, including `Field(SymbolId)` in
   `AccessPath`, `OWN0` field-path payloads, `SEMCOD12`, verifier admission, VM
   frame-local borrow tracking, and `BorrowWriteConflict` overlap rejection
+- the tuple + direct record-field runtime ownership track is complete on
+  current `main`; no additional runtime ownership scope is implied beyond the
+  admitted contract listed above
 - the same forward-only reading also applies to the first-wave generics surface
   on current `main`, including type-parameter syntax for functions, records, and
   ADTs, deterministic call-site monomorphisation, and the narrow
