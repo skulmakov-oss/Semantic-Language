@@ -247,6 +247,123 @@ fn runtime_ownership_record_child_parent_conflict_rejects() {
 }
 
 #[test]
+fn runtime_ownership_conflict_surface_is_stable_across_tuple_and_record_cases() {
+    let tuple_bytes = compile_program_to_semcode(tuple_assignment_source()).expect("compile");
+    let tuple_same_path = rewrite_function_ownership_events(
+        &tuple_bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[OwnershipPathComponentSpec::TupleIndex(0)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[OwnershipPathComponentSpec::TupleIndex(0)],
+            },
+        ],
+    );
+    let tuple_parent_child = rewrite_function_ownership_events(
+        &tuple_bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[OwnershipPathComponentSpec::TupleIndex(0)],
+            },
+        ],
+    );
+    let tuple_child_parent = rewrite_function_ownership_events(
+        &tuple_bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "pair",
+                components: &[OwnershipPathComponentSpec::TupleIndex(0)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "pair",
+                components: &[],
+            },
+        ],
+    );
+
+    let record_bytes = compile_program_to_semcode(record_assignment_source()).expect("compile");
+    let (camera_field, _) = record_field_component_ids(&record_bytes, "main");
+    let record_same_field = rewrite_function_ownership_events(
+        &record_bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+        ],
+    );
+    let record_parent_child = rewrite_function_ownership_events(
+        &record_bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+        ],
+    );
+    let record_child_parent = rewrite_function_ownership_events(
+        &record_bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[],
+            },
+        ],
+    );
+
+    let observed = [
+        observe_borrow_write_conflict_surface(&tuple_same_path),
+        observe_borrow_write_conflict_surface(&tuple_parent_child),
+        observe_borrow_write_conflict_surface(&tuple_child_parent),
+        observe_borrow_write_conflict_surface(&record_same_field),
+        observe_borrow_write_conflict_surface(&record_parent_child),
+        observe_borrow_write_conflict_surface(&record_child_parent),
+    ];
+
+    for rendered in &observed[1..] {
+        assert_eq!(rendered, &observed[0]);
+    }
+}
+
+#[test]
 fn runtime_ownership_record_inner_frame_borrow_does_not_leak_after_exit() {
     let bytes = compile_program_to_semcode(record_multi_frame_source()).expect("compile");
     assert_eq!(&bytes[..8], &MAGIC12);
@@ -627,6 +744,19 @@ fn assert_repeated_verified_success(bytes: &[u8], runs: usize) {
     for _ in 0..runs {
         run_verified_semcode(bytes).expect("verified run must stay successful");
     }
+}
+
+fn observe_borrow_write_conflict_surface(bytes: &[u8]) -> String {
+    verify_semcode(bytes).expect("verify");
+
+    let err = run_verified_semcode(bytes).expect_err("runtime overlap must reject");
+    let rendered = format!("{err}");
+    assert!(matches!(
+        err,
+        RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+    ));
+    assert_eq!(rendered, "write path overlaps active borrow");
+    rendered
 }
 
 fn assert_repeated_write_overlap_rejects(bytes: &[u8], _symbol_name: &str, runs: usize) {
