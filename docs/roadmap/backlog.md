@@ -23,6 +23,8 @@ Current remaining `v1` wave:
 
 Current post-`v1` wave:
 
+- `Runtime Ownership (tuple + direct record-field paths)` is completed and now
+  lives as frozen baseline history in `docs/spec/runtime_ownership.md`
 - `M7 UI Application Boundary` is now completed as first-wave baseline history
   and is scoped in
   `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
@@ -67,6 +69,12 @@ Current post-`v1` wave:
 - the first-wave `fx` arithmetic expansion track is completed and now lives as
   frozen baseline history in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+
+Current next-focus wave:
+
+- IR v1 contract freeze
+- SemCode version discipline
+- runtime boundary hardening without expanding supported runtime ownership scope
 
 Foundational work already in place:
 

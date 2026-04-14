@@ -3,22 +3,23 @@
 </p>
 
 # Semantic
-Rust-like deterministic language toolchain with SemCode emission, verifier admission, and VM execution.
+Deterministic, contract-driven compiler/runtime system with SemCode emission, verifier admission, and VM execution.
 
 Semantic is built for reasoning rules, semantic state transitions, declarative Logos surfaces, and executable logic inside the broader PROMETHEUS system model.
 
 The public contract is centered in `docs/spec/*`. Historical roadmap notes and legacy compatibility shims remain in the repository, but they are not the primary source of truth for the current toolchain surface.
 
-## Current State
-- Active draft toolchain on `main`; this repository is not frozen on `release/v0`.
-- Standard execution route: `source -> AST -> sema -> IR -> SemCode -> verify -> execute`.
-- SemCode is versioned and verifier-gated before standard VM execution.
-- Tuple + direct record-field runtime ownership is implemented end-to-end for borrowed-path write rejection:
-  - frontend preserves borrow capture
-  - lowering emits canonical ownership path events
-  - SemCode transports ownership metadata
-  - verifier admits ownership payload structurally
-  - VM rejects overlapping tuple and direct record-field writes at runtime
+## Current Status
+- Semantic is in a post-v1 stabilization phase on `main`.
+- Canonical staged pipeline: `frontend -> semantics -> lowering -> IR passes -> emit -> VM`.
+- All pipeline stages are deterministic, explicitly staged, and contract-bound; verifier admission remains mandatory before standard VM execution.
+- Runtime Ownership (v1 slice) is DONE:
+  - tuple paths
+  - direct record-field paths
+  - borrow/write path tracking
+  - deterministic overlap enforcement
+  - verifier-admitted execution contract
+- This is a scoped ownership model, not a full borrow system.
 - CLI ownership is centered in `crates/smc-cli`; root `smc` and `svm` binaries remain process entrypoints.
 
 ## Primary References

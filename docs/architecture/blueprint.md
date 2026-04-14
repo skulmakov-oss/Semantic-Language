@@ -1,5 +1,7 @@
 # Semantic Architecture Blueprint
 
+Semantic is a deterministic, contract-driven compiler/runtime system.
+
 Semantic is split into two architectural products:
 
 - `Semantic Core`: source, frontend, semantic analysis, IR, optimization, SemCode, verifier, VM.
@@ -7,7 +9,7 @@ Semantic is split into two architectural products:
 
 The core execution rule is:
 
-`source -> AST -> sema -> IR -> opt -> SemCode -> verify -> execute`
+`frontend -> semantics -> lowering -> IR passes -> emit -> VM`
 
 Current repository state:
 
@@ -52,8 +54,66 @@ Planned post-stable UI application boundary:
 Non-negotiable architecture rules:
 
 - compiler semantics and runtime semantics must stay separate;
+- no frontend/AST structures may leak into runtime;
+- runtime operates only on lowered execution contracts;
+- verifier enforces structure before execution and is a public admission layer,
+  not an internal VM detail;
+- no silent contract mutation is allowed across source, IR, SemCode, or VM
+  layers;
+- determinism is mandatory across all stages;
 - VM mechanics and semantic state/rule logic must stay separate;
 - all host effects must cross a formal ABI boundary;
-- verifier is a public admission layer, not an internal VM detail;
 - desktop UI, if admitted, must stay behind an explicit host/runtime boundary
   and must not leak backend ownership into compiler or VM crates.
+
+## Runtime Ownership (Execution Contract)
+
+Status: DONE (v1 slice)
+
+Runtime ownership is implemented as a lowered execution contract, not as a full
+ownership system.
+
+### Representation
+
+Ownership is expressed via canonical `AccessPath`:
+
+- `root: SymbolId`
+- `components`:
+  - `TupleIndex`
+  - `Field(SymbolId)` for direct record-field access only
+
+### Semantics
+
+- borrow events register paths in frame-local state
+- write operations check overlap against active borrows
+
+Overlap rules:
+
+- exact -> reject
+- parent-child -> reject
+- child-parent -> reject
+- siblings -> allowed
+
+### Lifetime Model
+
+- borrow lifetime is frame-local until frame exit
+
+### Guarantees
+
+- deterministic enforcement
+- no frontend structure leakage into runtime
+- explicit runtime trap on violation through `BorrowWriteConflict`
+
+### Supported Scope
+
+- tuple paths
+- direct record-field paths
+
+### Out Of Scope
+
+- ADT payload paths
+- nested generalized path systems
+- non-frame-local lifetimes
+- partial release
+- alias/reborrow models
+- indirect field projections beyond direct record-field access
