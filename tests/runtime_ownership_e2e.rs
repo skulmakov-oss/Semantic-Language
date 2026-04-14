@@ -380,6 +380,113 @@ fn runtime_ownership_multi_frame_cleanup_is_stable_across_runs() {
     assert_repeated_verified_success(&rewritten, DETERMINISTIC_RUNS);
 }
 
+#[test]
+fn runtime_ownership_record_sibling_write_is_stable_across_runs() {
+    let bytes = compile_program_to_semcode(record_assignment_source()).expect("compile");
+    assert_eq!(&bytes[..8], &MAGIC12);
+    let (camera_field, quality_field) = record_field_component_ids(&bytes, "main");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(quality_field)],
+            },
+        ],
+    );
+
+    assert_repeated_verified_success(&rewritten, DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_record_same_field_rejects_identically_across_runs() {
+    let bytes = compile_program_to_semcode(record_assignment_source()).expect("compile");
+    let (camera_field, _) = record_field_component_ids(&bytes, "main");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+        ],
+    );
+
+    assert_repeated_write_overlap_rejects(&rewritten, "ctx", DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_record_parent_child_rejects_identically_across_runs() {
+    let bytes = compile_program_to_semcode(record_assignment_source()).expect("compile");
+    let (camera_field, _) = record_field_component_ids(&bytes, "main");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+        ],
+    );
+
+    assert_repeated_write_overlap_rejects(&rewritten, "ctx", DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_record_child_parent_rejects_identically_across_runs() {
+    let bytes = compile_program_to_semcode(record_assignment_source()).expect("compile");
+    let (camera_field, _) = record_field_component_ids(&bytes, "main");
+    let rewritten = rewrite_function_ownership_events(
+        &bytes,
+        "main",
+        &[
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_BORROW,
+                root: "ctx",
+                components: &[OwnershipPathComponentSpec::FieldSymbol(camera_field)],
+            },
+            OwnershipEventSpec {
+                kind: OWNERSHIP_EVENT_KIND_WRITE,
+                root: "ctx",
+                components: &[],
+            },
+        ],
+    );
+
+    assert_repeated_write_overlap_rejects(&rewritten, "ctx", DETERMINISTIC_RUNS);
+}
+
+#[test]
+fn runtime_ownership_record_multi_frame_cleanup_is_stable_across_runs() {
+    let bytes = compile_program_to_semcode(record_multi_frame_source()).expect("compile");
+    assert_eq!(&bytes[..8], &MAGIC12);
+    assert!(function_has_ownership_section(&bytes, "helper"));
+    assert!(function_has_ownership_section(&bytes, "main"));
+
+    assert_repeated_verified_success(&bytes, DETERMINISTIC_RUNS);
+}
+
 fn tuple_assignment_source() -> &'static str {
     r#"
         fn main() {
