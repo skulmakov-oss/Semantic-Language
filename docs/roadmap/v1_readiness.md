@@ -16,6 +16,8 @@ Current repository state has working coverage for:
 - PROMETHEUS ABI, capability, and gate boundaries
 - PROMETHEUS runtime, state, rules, and audit owner crates
 - semantic runtime validation matrix and golden baselines
+- tuple + direct record-field runtime ownership, including deterministic
+  `BorrowWriteConflict` enforcement and end-to-end regression coverage
 - CI-enforced boundary, public API, runtime, and release-bundle gates
 
 This means the repository has crossed from architecture-only planning into a
@@ -64,6 +66,7 @@ Currently ready or substantially stabilized surfaces:
 - `sm-verify`
 - verified-only VM execution path
 - `sm-runtime-core`
+- runtime ownership pipeline for tuple + direct record-field paths
 - `sm-profile`
 - `sm-ir` verification and minimum optimizer contract
 - `prom-abi`
@@ -117,6 +120,13 @@ The following limits remain explicit and should be treated as release-facing hon
   surface, even though current `main` now admits type-parameter syntax for
   functions, records, and ADTs, and deterministic call-site monomorphisation
   under the narrow `TypeVar`-to-concrete substitution model
+- the published `v1.1.1` line intentionally excludes the completed runtime
+  ownership track on current `main`, even though `main` now admits tuple +
+  direct record-field `AccessPath` transport, verifier admission, frame-local
+  borrow tracking, deterministic `BorrowWriteConflict` rejection, and e2e
+  regression coverage; unsupported scope remains explicit for ADT payload
+  paths, schema paths, partial release, aliasing graphs, inter-frame
+  persistence, and indirect projections
 - the published `v1.1.1` line intentionally excludes the first-wave UI
   application boundary, even though current `main` now admits single-window
   session ownership, deterministic event polling, frame-token ownership, and

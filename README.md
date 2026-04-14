@@ -13,12 +13,12 @@ The public contract is centered in `docs/spec/*`. Historical roadmap notes and l
 - Active draft toolchain on `main`; this repository is not frozen on `release/v0`.
 - Standard execution route: `source -> AST -> sema -> IR -> SemCode -> verify -> execute`.
 - SemCode is versioned and verifier-gated before standard VM execution.
-- Tuple-only runtime ownership is implemented end-to-end for borrowed-path write rejection:
+- Tuple + direct record-field runtime ownership is implemented end-to-end for borrowed-path write rejection:
   - frontend preserves borrow capture
   - lowering emits canonical ownership path events
   - SemCode transports ownership metadata
   - verifier admits ownership payload structurally
-  - VM rejects overlapping tuple writes at runtime
+  - VM rejects overlapping tuple and direct record-field writes at runtime
 - CLI ownership is centered in `crates/smc-cli`; root `smc` and `svm` binaries remain process entrypoints.
 
 ## Primary References
@@ -29,7 +29,7 @@ The public contract is centered in `docs/spec/*`. Historical roadmap notes and l
 - `docs/spec/semcode.md` - SemCode contract and version policy
 - `docs/spec/verifier.md` - admission verifier contract
 - `docs/spec/vm.md` - VM execution contract
-- `docs/spec/runtime_ownership.md` - tuple-only runtime ownership contract
+- `docs/spec/runtime_ownership.md` - frozen tuple + direct record-field runtime ownership contract
 - `docs/spec/cli.md` - public CLI surface
 - `docs/LANGUAGE.md` - language overview and design intent
 - `docs/NAMING.md` - naming rules and short forms
@@ -122,12 +122,14 @@ Low-level VM entrypoint:
 - The current spec documents a versioned SemCode family and capability-gated emission.
 - Standard `.smc` execution is verifier-first; verified admission is not optional on the public route.
 - The current runtime ownership slice is intentionally narrow:
-  - tuple-only paths
+  - tuple paths
+  - direct record-field paths
   - frame-local borrow lifetime
   - exact overlap rejection
   - parent-child rejection
   - child-parent rejection
   - sibling writes allowed
+  - unsupported: ADT payload paths, schema paths, partial release, aliasing graphs, inter-frame persistence, and indirect projections
 
 ## Testing
 ```powershell
