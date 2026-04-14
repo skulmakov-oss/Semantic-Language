@@ -5,13 +5,16 @@ Owner crate: `sm-ir`
 
 ## Purpose
 
-This document defines the current intermediate-representation contract between semantic analysis and SemCode production.
+This document defines the current intermediate-representation contract between
+lowering and SemCode production.
 
 IR exists to make execution-relevant structure explicit before bytecode emission.
 
 Current pipeline role:
 
-`source -> AST -> sema -> IR -> opt -> SemCode`
+`frontend -> semantics -> lowering -> IR passes -> emit`
+
+IR is the explicit lowered execution-contract boundary in that staged pipeline.
 
 ## Current Ownership
 
@@ -35,6 +38,12 @@ Current owner decision:
 - `sm-opt` is not a canonical owner crate in the repository baseline
 - any future `sm-opt` split requires an explicit architecture decision and code movement, not just naming changes in docs
 
+Contract freeze rule:
+
+- IR remains execution-oriented rather than syntax-oriented
+- frontend or AST structures must not leak across the IR boundary
+- SemCode remains downstream binary contract ownership, not IR ownership
+
 ## Current IR Shapes
 
 Current top-level IR units:
@@ -42,6 +51,8 @@ Current top-level IR units:
 - `IrFunction`
 - `IrInstr`
 - `ImmutableIrProgram`
+- admitted ownership-path metadata attached to IR functions for the current
+  runtime ownership slice
 
 Current `IrInstr` family includes explicit forms for:
 
@@ -119,3 +130,5 @@ This draft does not yet fully formalize:
 - richer optimizer passes beyond `StructuralCleanup v1` and `CrystalFold v1`
 - a separate `sm-opt` owner model
 - canonical serialized textual IR form
+- broader CFG or generalized graph notation beyond the current narrow
+  execution-oriented reading

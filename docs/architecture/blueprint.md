@@ -54,6 +54,8 @@ Planned post-stable UI application boundary:
 Non-negotiable architecture rules:
 
 - compiler semantics and runtime semantics must stay separate;
+- IR is the lowered execution-contract boundary between source semantics and
+  emitted binary contract;
 - no frontend/AST structures may leak into runtime;
 - runtime operates only on lowered execution contracts;
 - verifier enforces structure before execution and is a public admission layer,
