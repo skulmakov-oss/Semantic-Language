@@ -74,7 +74,8 @@ Current next-focus wave:
 
 - IR v1 contract freeze in
   `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
-- SemCode version discipline
+- SemCode version discipline in
+  `docs/roadmap/language_maturity/semcode_version_discipline.md`
 - runtime boundary hardening without expanding supported runtime ownership scope
 
 Foundational work already in place:
