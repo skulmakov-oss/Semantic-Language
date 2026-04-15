@@ -22,14 +22,17 @@ Current post-stable admitted families on `main`:
 - `SEMCODE7`
 - `SEMCODE8`
 - `SEMCODE9`
-- `SEMCODE10`
-- `SEMCODE11`
+- `SEMCOD10`
+- `SEMCOD11`
+- `SEMCOD12`
 
 Current compatibility rule:
 
 - standard execution accepts only verified SemCode
 - verifier rejects unknown or unsupported SemCode headers
 - VM must not silently reinterpret unsupported headers
+- widening on current `main` is forward-only and additive, not a retroactive
+  widening of the published stable line
 
 ## ParserProfile Compatibility
 
@@ -102,10 +105,10 @@ Current `v1` scope commitment:
   bracketed literals, same-family equality, `expr[index]`, and `SEMCODE9`
 - the same forward-only reading also applies to the first-wave first-class
   closure surface on current `main`, including `Closure(T -> U)`, standalone
-  closure literals, immutable capture, direct invocation, and `SEMCODE10`
+  closure literals, immutable capture, direct invocation, and `SEMCOD10`
 - the same forward-only reading also applies to the first-wave tuple-only
   runtime ownership metadata transport on current `main`, including lowered
-  borrow/write path events, canonical `AccessPath`, and `SEMCODE11`
+  borrow/write path events, canonical `AccessPath`, and `SEMCOD11`
 - the same forward-only reading also applies to the direct record-field
   runtime ownership extension on current `main`, including `Field(SymbolId)` in
   `AccessPath`, `OWN0` field-path payloads, `SEMCOD12`, verifier admission, VM

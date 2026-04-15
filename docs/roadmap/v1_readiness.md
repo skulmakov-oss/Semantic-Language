@@ -19,6 +19,8 @@ Current repository state has working coverage for:
 - tuple + direct record-field runtime ownership, including deterministic
   `BorrowWriteConflict` enforcement and end-to-end regression coverage
 - CI-enforced boundary, public API, runtime, and release-bundle gates
+- explicit SemCode version/capability discipline through the admitted
+  `SEMCODE0`..`SEMCOD12` family on current `main`
 
 This means the repository has crossed from architecture-only planning into a
 published stable release line for the current contract surfaces.
@@ -115,7 +117,7 @@ The following limits remain explicit and should be treated as release-facing hon
 - the published `v1.1.1` line intentionally excludes the first-wave first-class
   closure surface, even though current `main` now admits `Closure(T -> U)`,
   standalone closure literals, immutable capture, direct invocation, and
-  canonical verified execution through `SEMCODE10`
+  canonical verified execution through `SEMCOD10`
 - the published `v1.1.1` line intentionally excludes the first-wave generics
   surface, even though current `main` now admits type-parameter syntax for
   functions, records, and ADTs, and deterministic call-site monomorphisation

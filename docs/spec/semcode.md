@@ -19,7 +19,10 @@ Ownership rule:
 
 Standard execution rule:
 
-`source -> AST -> sema -> IR -> SemCode -> verify -> execute`
+`frontend -> semantics -> lowering -> IR passes -> emit -> verify -> execute`
+
+SemCode is the downstream binary contract after IR passes and before
+verifier-admitted VM execution.
 
 The VM is not the primary structural admission gate.
 `sm-verify` is the required admission stage for standard SemCode execution.
@@ -72,6 +75,16 @@ Compatibility rules:
 2. A verifier must reject artifacts with unknown or unsupported headers.
 3. A VM must not silently reinterpret an unsupported header as a supported one.
 4. Any incompatible binary layout or meaning change requires a version bump.
+
+Discipline rules:
+
+- existing admitted header families remain fixed once they ship on `main`
+- capability widening stays additive in the current baseline and must not
+  repurpose existing bits
+- release-facing documents must distinguish the published stable line from the
+  wider admitted line on current `main`
+- SemCode header selection remains derived from actual emitted usage, not from
+  policy permission alone
 
 ## Current Header Semantics
 
@@ -271,9 +284,11 @@ The following changes require a SemCode version review:
 Required follow-up:
 
 1. update this specification
-2. update verifier compatibility tests
-3. update VM compatibility tests
-4. update golden or compatibility fixtures if public behavior changed
+2. update `docs/roadmap/compatibility_statement.md`
+3. update `docs/roadmap/v1_readiness.md`
+4. update verifier compatibility tests
+5. update VM compatibility tests
+6. update golden or compatibility fixtures if public behavior changed
 
 ## No Silent Mutation Rule
 
