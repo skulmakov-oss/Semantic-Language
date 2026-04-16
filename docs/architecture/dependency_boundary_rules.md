@@ -27,7 +27,10 @@ Boundary rules:
 
 - construction crates must not depend on VM/runtime state or PROMETHEUS internals;
 - execution crates must not reach back into parser/sema internals;
+- shared runtime vocabulary stays in `sm-runtime-core`; it must not become a
+  second execution authority;
 - integration crates must not rewrite compiler or VM semantics;
+- integration crates must reach execution only through verified VM entrypoints;
 - all host effects must cross ABI and capability checks;
 - public contracts require versioning, tests, and spec updates.
 

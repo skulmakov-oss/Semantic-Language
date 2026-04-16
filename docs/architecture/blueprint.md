@@ -62,6 +62,8 @@ Non-negotiable architecture rules:
 - runtime operates only on lowered execution contracts;
 - verifier enforces structure before execution and is a public admission layer,
   not an internal VM detail;
+- orchestration layers must call verified VM entrypoints only and must not
+  become alternate execution authorities;
 - no silent contract mutation is allowed across source, IR, SemCode, or VM
   layers;
 - determinism is mandatory across all stages;

@@ -34,8 +34,11 @@ Ownership rules:
 - `sm-emit` is a producer-facing facade in the current `v1` baseline; the SemCode header/opcode/capability contract is owned by `sm-ir`;
 - `smc-cli` is the canonical owner of the public CLI contract in the current `v1` baseline; root `smc` and `svm` binaries are process entrypoints and not second CLI owners;
 - the retained non-owning TON618 compatibility perimeter (`ton618_core`, `ton618-core`, `ton618_legacy/`) is not a canonical public owner and must not become a second owner for `sm-*` public contracts;
+- `sm-runtime-core` owns shared runtime vocabulary only; it does not own
+  verifier admission, VM execution mechanics, or orchestration semantics;
 - `sm-vm` consumes SemCode but does not own its format contract;
 - `sm-verify` owns admission, `sm-vm` executes only admitted code;
 - `prom-state` owns semantic state, not `sm-vm`;
 - `prom-rules` owns agenda/conflict logic, not `sm-vm`;
-- `prom-runtime` orchestrates but does not own all subdomains.
+- `prom-runtime` orchestrates verified entrypoints but does not own VM
+  execution, runtime traps, or quota semantics.

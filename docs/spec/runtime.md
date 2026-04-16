@@ -30,6 +30,10 @@ Current canonical orchestration types:
 
 - ABI descriptor semantics
 - capability policy semantics
+- verifier admission
+- VM execution mechanics
+- runtime trap taxonomy
+- quota semantics
 - gate registry semantics
 - semantic state, agenda, or rule scheduling
 
@@ -42,6 +46,8 @@ Current `v1` rule:
 Current session invariant:
 
 - every runtime session must execute only through verified SemCode entrypoints
+- raw or testing-only VM helpers are not part of the public orchestration
+  boundary
 - session context is explicit through `ExecutionConfig` / `ExecutionContext`
 - session descriptor must expose:
   - execution context
@@ -55,6 +61,8 @@ Current orchestrator wiring:
 - `ExecutionSession` wires a generic `prom-abi` host and `prom-cap` checker
 - `GateExecutionSession` wires `prom-gates` through `GateHostAdapter`
 - session orchestration may compose owner crates, but it must not redefine their contracts
+- orchestration must surface VM verifier rejection and runtime traps as owned by
+  the execution layer, not reinterpret them as new orchestration semantics
 
 ## Controlled Integration Surface
 

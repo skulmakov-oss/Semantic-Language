@@ -75,6 +75,8 @@
     `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
   - current completed post-stable rollback checkpoint:
     `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
+  - current active runtime-boundary hardening checkpoint:
+    `docs/roadmap/language_maturity/runtime_boundary_hardening.md`
 - `M6 v1 Lockdown`
   - freezes
   - golden baselines
