@@ -101,6 +101,7 @@ Current public runtime error families include:
 - `StackOverflow`
 - `QuotaExceeded`
 - `VerifierRejected`
+- `BorrowWriteConflict`
 - `UnknownVariable`
 - `InvalidStringId`
 
@@ -131,7 +132,7 @@ Current frame model includes:
 - program counter
 - register vector
 - `SymbolId` local map
-- frame-local borrowed tuple paths
+- frame-local borrowed tuple and direct record-field paths
 - function identity
 - optional return destination
 
