@@ -349,6 +349,10 @@ pub struct LogosIrLaw {
 
 const FX_SCALE: i32 = 1_000;
 
+fn iterable_for_gap_message() -> &'static str {
+    "iterable 'for x in collection' loops are owner-layer only in M9.3 Wave 1; executable admission is deferred"
+}
+
 fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
     let scaled = value * FX_SCALE as f64;
     if !scaled.is_finite() {
@@ -3489,9 +3493,9 @@ fn assign_tuple_items(
     Ok(())
 }
 
-fn lower_for_range_stmt(
+fn lower_for_range_stmt_from_reg(
     name: SymbolId,
-    range: ExprId,
+    range_reg: u16,
     body: &[StmtId],
     arena: &AstArena,
     ctx: &mut LoweringCtx,
@@ -3501,27 +3505,6 @@ fn lower_for_range_stmt(
     record_table: &RecordTable,
     adt_table: &AdtTable,
 ) -> Result<(), FrontendError> {
-    let (range_reg, range_ty) = lower_expr_with_expected(
-        range,
-        arena,
-        &mut ctx.next_reg,
-        &mut ctx.instrs,
-        env,
-        &mut ctx.loop_stack,
-        fn_table,
-        record_table,
-        adt_table,
-        Some(Type::RangeI32),
-        ret_ty.clone(),
-        &mut ctx.closure_state,
-    )?;
-    if range_ty != Type::RangeI32 {
-        return Err(FrontendError {
-            pos: 0,
-            message: "for-range currently requires i32 range expression".to_string(),
-        });
-    }
-
     let id = ctx.next_if_id();
     let current_name = format!("__for_range_{}_current", id);
     let start_reg = alloc(&mut ctx.next_reg);
@@ -3665,6 +3648,102 @@ fn lower_for_range_stmt(
     ctx.instrs.push(IrInstr::Jmp { label: test_label });
     ctx.instrs.push(IrInstr::Label { name: end_label });
     Ok(())
+}
+
+fn lower_for_range_stmt(
+    name: SymbolId,
+    range: ExprId,
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let (range_reg, range_ty) = lower_expr_with_expected(
+        range,
+        arena,
+        &mut ctx.next_reg,
+        &mut ctx.instrs,
+        env,
+        &mut ctx.loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        Some(Type::RangeI32),
+        ret_ty.clone(),
+        &mut ctx.closure_state,
+    )?;
+    if range_ty != Type::RangeI32 {
+        return Err(FrontendError {
+            pos: 0,
+            message: "for-range currently requires i32 range expression".to_string(),
+        });
+    }
+    lower_for_range_stmt_from_reg(
+        name,
+        range_reg,
+        body,
+        arena,
+        ctx,
+        env,
+        ret_ty,
+        fn_table,
+        record_table,
+        adt_table,
+    )
+}
+
+fn lower_for_each_stmt(
+    name: SymbolId,
+    iterable: ExprId,
+    trait_name: SymbolId,
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let (iterable_reg, iterable_ty) = lower_expr(
+        iterable,
+        arena,
+        &mut ctx.next_reg,
+        &mut ctx.instrs,
+        env,
+        &mut ctx.loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        ret_ty.clone(),
+        &mut ctx.closure_state,
+    )?;
+    if iterable_ty == Type::RangeI32 {
+        return lower_for_range_stmt_from_reg(
+            name,
+            iterable_reg,
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        );
+    }
+    Err(FrontendError {
+        pos: 0,
+        message: format!(
+            "{} (`{}` contract)",
+            iterable_for_gap_message(),
+            resolve_symbol_name(arena, trait_name)?
+        ),
+    })
 }
 
 fn bind_let_else_tuple_items(
@@ -4104,6 +4183,24 @@ fn lower_stmt(
         Stmt::ForRange { name, range, body } => lower_for_range_stmt(
             *name,
             *range,
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        ),
+        Stmt::ForEach {
+            name,
+            iterable,
+            body,
+            desugaring,
+        } => lower_for_each_stmt(
+            *name,
+            *iterable,
+            desugaring.trait_name,
             body,
             arena,
             ctx,
@@ -5816,6 +5913,11 @@ fn lower_loop_expr_stmt(
         Stmt::ForRange { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow for-range".to_string(),
+        }),
+        Stmt::ForEach { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow iterable for-each"
+                .to_string(),
         }),
         Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
             pos: 0,
@@ -8133,6 +8235,48 @@ mod opt_tests {
             instr,
             IrInstr::StoreVar { name, .. } if name.starts_with("__for_range_")
         )));
+    }
+
+    #[test]
+    fn lower_for_range_through_variable_keeps_existing_execution_path() {
+        let src = r#"
+            fn main() {
+                let window = 0..=2;
+                for i in window {
+                    assert(i == i);
+                }
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("range-valued variable loop should still lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::LoadVar { name, .. } if name == "window")));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpI32Le { .. })));
+    }
+
+    #[test]
+    fn compile_program_rejects_general_iterable_loop_before_wave_three() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                for item in items {
+                    let _: i32 = item;
+                }
+                return;
+            }
+        "#;
+
+        let err = compile_program_to_ir(src)
+            .expect_err("general iterable loop must remain non-executable in owner slice");
+        assert!(err.message.contains("iterable 'for x in collection' loops are owner-layer only"));
+        assert!(err.message.contains("Iterable"));
     }
 
     #[test]

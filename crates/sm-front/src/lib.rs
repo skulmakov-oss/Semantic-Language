@@ -20,7 +20,7 @@ pub use types::{
     ClosureCapturePolicy, ClosureLiteral, ClosureType, ClosureValueFamily, Expr, ExprId,
     FrontendError, FrontendErrorKind, Function, IfExpr, ImplDecl, LogosEntity, LogosEntityField,
     LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen, LoopExpr, MatchArm,
-    MatchExpr, MatchExprArm, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
+    MatchExpr, MatchExprArm, IterableLoopDesugaring, Program, QuadVal, RecordDecl, RecordField, RecordFieldExpr,
     RecordInitField, RecordLiteralExpr, RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole,
     SchemaShape, SchemaVariant, SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr,
     SequenceLiteral, SequenceType, Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token,

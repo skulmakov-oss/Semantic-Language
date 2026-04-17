@@ -16,6 +16,10 @@ fn fx_measured_arithmetic_gap_message() -> &'static str {
     "unit-carrying fx arithmetic is not part of the first post-stable fx arithmetic slice yet"
 }
 
+fn iterable_for_gap_message() -> &'static str {
+    "iterable 'for x in collection' loops are owner-layer only in M9.3 Wave 1; executable admission is deferred"
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
@@ -1168,6 +1172,52 @@ fn check_stmt(
             }
             body_env.pop_scope();
             Ok(())
+        }
+        Stmt::ForEach {
+            name,
+            iterable,
+            body,
+            desugaring,
+        } => {
+            let iterable_ty = infer_expr_type(
+                *iterable,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            if iterable_ty == Type::RangeI32 {
+                let mut body_env = env.clone();
+                body_env.push_scope();
+                body_env.insert_const(*name, Type::I32);
+                for stmt in body {
+                    check_stmt(
+                        *stmt,
+                        arena,
+                        &mut body_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                        impl_list,
+                    )?;
+                }
+                body_env.pop_scope();
+                return Ok(());
+            }
+            Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "{} (`{}` contract)",
+                    iterable_for_gap_message(),
+                    resolve_symbol_name(arena, desugaring.trait_name)?
+                ),
+            })
         }
         Stmt::Break(value) => {
             let break_ty = infer_expr_type(
@@ -3681,7 +3731,7 @@ mod tests {
     }
 
     #[test]
-    fn for_range_rejects_non_range_value() {
+    fn iterable_for_surface_rejects_non_iterable_execution_in_wave_one() {
         let src = r#"
             fn main() {
                 for i in 1 {
@@ -3691,10 +3741,43 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("non-range for input must reject");
+        let err = typecheck_source(src).expect_err("non-iterable executable for input must reject");
         assert!(err
             .message
-            .contains("for-range currently requires i32 range expression"));
+            .contains("iterable 'for x in collection' loops are owner-layer only"));
+    }
+
+    #[test]
+    fn iterable_for_gap_is_explicit_for_sequence_values() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                for item in items {
+                    let _: i32 = item;
+                }
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("general iterable loop must stay owner-layer only");
+        assert!(err.message.contains("iterable 'for x in collection' loops are owner-layer only"));
+        assert!(err.message.contains("Iterable"));
+    }
+
+    #[test]
+    fn for_range_through_variable_remains_typecheckable() {
+        let src = r#"
+            fn main() {
+                let window = 0..=2;
+                for i in window {
+                    let _: i32 = i;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("range-valued variable for-loop should keep existing path");
     }
 
     #[test]
@@ -3729,6 +3812,27 @@ mod tests {
         assert!(err
             .message
             .contains("loop expression body currently does not allow for-range"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_iterable_for_each_in_body() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                let value: i32 = loop {
+                    for item in items {
+                        break item;
+                    }
+                };
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("iterable for-each in loop expression must reject");
+        assert!(err
+            .message
+            .contains("loop expression body currently does not allow iterable for-each"));
     }
 
     #[test]
@@ -6395,6 +6499,11 @@ fn check_loop_expr_stmt(
         Stmt::ForRange { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow for-range".to_string(),
+        }),
+        Stmt::ForEach { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow iterable for-each"
+                .to_string(),
         }),
         Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
             pos: 0,
