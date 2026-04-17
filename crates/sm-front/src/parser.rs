@@ -2,7 +2,7 @@ use crate::lexer::lex_tokens;
 use crate::types::{
     AdtCtorExpr, AdtDecl, AdtMatchPattern, AdtPatternItem, AdtVariant, AstArena, BinaryOp,
     BlockExpr, CallArg, CaptureMode, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily,
-    Expr, ExprId, FrontendError, Function, IfExpr, IfLetExpr, ImplDecl, IntRangePattern, LogosEntity,
+    Expr, ExprId, FrontendError, Function, IfExpr, IfLetExpr, ImplDecl, IntRangePattern, IterableLoopDesugaring, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
     LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
     RangeExpr, RecordDecl, RecordField,
@@ -784,9 +784,24 @@ impl<'a> Parser<'a> {
         if self.eat(TokenKind::KwFor) {
             let name = self.expect_symbol()?;
             self.expect(TokenKind::KwIn, "expected 'in' after for binding")?;
-            let range = self.parse_expr()?;
+            let iterable = self.parse_expr()?;
             let body = self.parse_block()?;
-            return Ok(self.arena.alloc_stmt(Stmt::ForRange { name, range, body }));
+            let iterable_trait = self.arena.intern_symbol("Iterable");
+            return Ok(match self.arena.expr(iterable) {
+                Expr::Range(_) => self.arena.alloc_stmt(Stmt::ForRange {
+                    name,
+                    range: iterable,
+                    body,
+                }),
+                _ => self.arena.alloc_stmt(Stmt::ForEach {
+                    name,
+                    iterable,
+                    body,
+                    desugaring: IterableLoopDesugaring {
+                        trait_name: iterable_trait,
+                    },
+                }),
+            });
         }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
@@ -4347,6 +4362,36 @@ fn main() {
             panic!("expected range expression");
         };
         assert!(range_expr.inclusive);
+        assert_eq!(body.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_owns_iterable_for_surface_separately_from_range() {
+        let src = r#"
+fn main() {
+    let items: Sequence(i32) = [1, 2, 3];
+    for item in items {
+        let _ = item;
+    }
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("iterable owner-layer for-loop should parse");
+        let func = &program.functions[0];
+        let Stmt::ForEach {
+            name,
+            iterable,
+            body,
+            desugaring,
+        } = program.arena.stmt(func.body[1])
+        else {
+            panic!("expected owner-layer iterable for-loop");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "item");
+        assert!(matches!(program.arena.expr(*iterable), Expr::Var(_)));
+        assert_eq!(program.arena.symbol_name(desugaring.trait_name), "Iterable");
         assert_eq!(body.len(), 1);
     }
 

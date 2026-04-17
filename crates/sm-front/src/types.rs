@@ -430,6 +430,17 @@ pub enum Stmt {
         items: Vec<Option<SymbolId>>,
         value: ExprId,
     },
+    /// M9.3 Wave 1: owner-layer iterable loop surface.
+    ///
+    /// This records the future `for x in collection` contract without making
+    /// general iterable loops executable yet. Existing `RangeI32` loops remain
+    /// runnable through explicit typecheck/lowering compatibility handling.
+    ForEach {
+        name: SymbolId,
+        iterable: ExprId,
+        body: Vec<StmtId>,
+        desugaring: IterableLoopDesugaring,
+    },
     ForRange {
         name: SymbolId,
         range: ExprId,
@@ -543,6 +554,15 @@ pub struct MatchArm {
     pub pat: MatchPattern,
     pub guard: Option<ExprId>,
     pub block: Vec<StmtId>,
+}
+
+/// M9.3 Wave 1: canonical owner-layer desugaring anchor for iterable loops.
+///
+/// Wave 1 records only the stdlib trait contract name. Type admission and
+/// executable lowering remain deferred to later iterable waves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IterableLoopDesugaring {
+    pub trait_name: SymbolId,
 }
 
 /// A named behavior bound on a type parameter.
@@ -1253,6 +1273,41 @@ mod tests {
         assert_eq!(func.trait_bounds.len(), 1);
         assert_eq!(func.trait_bounds[0].bound, display);
         assert!(func.type_params.contains(&t_param));
+    }
+
+    #[test]
+    fn iterable_loop_desugaring_owner_layer_is_stable() {
+        let mut arena = AstArena::default();
+        let iterable_trait = arena.intern_symbol("Iterable");
+        let desugaring = IterableLoopDesugaring {
+            trait_name: iterable_trait,
+        };
+        assert_eq!(desugaring.trait_name, iterable_trait);
+    }
+
+    #[test]
+    fn for_each_statement_owner_layer_is_stable() {
+        let stmt = Stmt::ForEach {
+            name: SymbolId(1),
+            iterable: ExprId(2),
+            body: vec![StmtId(3)],
+            desugaring: IterableLoopDesugaring {
+                trait_name: SymbolId(4),
+            },
+        };
+        let Stmt::ForEach {
+            name,
+            iterable,
+            body,
+            desugaring,
+        } = stmt
+        else {
+            panic!("expected ForEach");
+        };
+        assert_eq!(name, SymbolId(1));
+        assert_eq!(iterable, ExprId(2));
+        assert_eq!(body, vec![StmtId(3)]);
+        assert_eq!(desugaring.trait_name, SymbolId(4));
     }
 
     #[test]
