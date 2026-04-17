@@ -69,16 +69,20 @@ Current post-`v1` wave:
 - the first-wave `fx` arithmetic expansion track is completed and now lives as
   frozen baseline history in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- the IR/runtime anti-drift package is completed and now lives as frozen
+  baseline history in:
+  - `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
+  - `docs/roadmap/language_maturity/semcode_version_discipline.md`
+  - `docs/roadmap/language_maturity/runtime_boundary_hardening.md`
 
 Current next-focus wave:
 
-- IR v1 contract freeze in
-  `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
-- SemCode version discipline in
-  `docs/roadmap/language_maturity/semcode_version_discipline.md`
-- runtime boundary hardening in
-  `docs/roadmap/language_maturity/runtime_boundary_hardening.md` without
-  expanding supported runtime ownership scope
+- `M9.3 Iterable Abstraction` in
+  `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
+- keep one active language-maturity stream at a time while `M9.3` is in flight
+- do not widen iterable scope beyond the first-wave `Iterable` contract,
+  `for x in collection` desugaring, and stdlib/typecheck admission defined in
+  the scope doc
 
 Foundational work already in place:
 
