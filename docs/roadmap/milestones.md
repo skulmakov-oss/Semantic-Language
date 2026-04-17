@@ -130,6 +130,8 @@
   - iterable abstraction
   - richer pattern surface
   - current status: active post-stable language-maturity package
+  - current active subtrack:
+    `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
   - completed subtracks:
     - M9.1: `docs/roadmap/language_maturity/generics_full_scope.md`
     - M9.2: `docs/roadmap/language_maturity/traits_full_scope.md`

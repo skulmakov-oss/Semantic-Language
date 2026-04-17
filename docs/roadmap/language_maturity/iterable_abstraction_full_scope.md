@@ -1,6 +1,6 @@
 # Iterable Abstraction Full Scope
 
-Status: proposed M9.3 post-stable subtrack
+Status: active M9.3 post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -37,10 +37,10 @@ system without mixing in lazy evaluation, async iteration, or combinator chains.
 
 ## Decision Check
 
-- [ ] This is a new explicit post-stable track with its own scope decision
-- [ ] This does not silently widen published `v1.1.1`
-- [ ] This is one stream, not a mixture of multiple tracks
-- [ ] This can be closed with a clear done-boundary
+- [x] This is a new explicit post-stable track with its own scope decision
+- [x] This does not silently widen published `v1.1.1`
+- [x] This is one stream, not a mixture of multiple tracks
+- [x] This can be closed with a clear done-boundary
 
 ## Stable Baseline Before This Track
 
@@ -55,6 +55,18 @@ The current stable line already freezes these facts:
 
 That baseline remains the source of truth until this subtrack explicitly lands
 its widened contract on `main`.
+
+## Activation Reading
+
+`M9.3 Iterable Abstraction` is now the active language-maturity stream after
+the completion of:
+
+- `IR v1 contract freeze`
+- `SemCode version discipline`
+- `runtime boundary hardening`
+
+This activation is a scope/governance checkpoint only. It does not itself claim
+that iterable abstraction is admitted yet on current `main`.
 
 ## Included In This Track
 
