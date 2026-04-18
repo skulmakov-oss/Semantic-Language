@@ -637,6 +637,19 @@ fn lower_function_to_ir_with_tables(
     })
 }
 
+fn impl_method_function_name(
+    arena: &AstArena,
+    imp: &sm_front::ImplDecl,
+    method: &Function,
+) -> Result<String, FrontendError> {
+    Ok(format!(
+        "__impl::{}::{}::{}",
+        resolve_symbol_name(arena, imp.trait_name)?,
+        resolve_symbol_name(arena, imp.for_type)?,
+        resolve_symbol_name(arena, method.name)?,
+    ))
+}
+
 pub fn lower_function_to_ir(
     func: &Function,
     arena: &AstArena,
@@ -748,7 +761,7 @@ pub fn compile_program_to_ir_with_options_and_profile(
             message: "RustLike lowering is disabled at compile time".to_string(),
         });
     }
-    let program = parse_program_with_profile(input, parser_profile)?;
+    let mut program = parse_program_with_profile(input, parser_profile)?;
     let fn_table = build_fn_table(&program)?;
     let record_table = build_record_table(&program)?;
     let adt_table = build_adt_table(&program)?;
@@ -764,6 +777,23 @@ pub fn compile_program_to_ir_with_options_and_profile(
         )?;
         out.push(lowered.primary);
         out.extend(lowered.lifted);
+    }
+    let impls = program.impls.clone();
+    for imp in &impls {
+        for method in &imp.methods {
+            let mut lowered_method = method.clone();
+            let lowered_name = impl_method_function_name(&program.arena, imp, method)?;
+            lowered_method.name = program.arena.intern_symbol(&lowered_name);
+            let lowered = lower_function_to_ir_with_tables(
+                &lowered_method,
+                &program.arena,
+                &fn_table,
+                &record_table,
+                &adt_table,
+            )?;
+            out.push(lowered.primary);
+            out.extend(lowered.lifted);
+        }
     }
     if matches!(opt, OptLevel::O1) {
         let _ = crate::passes::run_default_opt_passes(&mut out);
@@ -8469,6 +8499,34 @@ mod opt_tests {
             .expect_err("explicit Iterable impl execution must stay deferred");
         assert!(err.message.contains("explicit `Iterable` impls is still deferred"));
         assert!(err.message.contains("Iterable"));
+    }
+
+    #[test]
+    fn compile_program_lowers_impl_methods_to_internal_functions() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Numbers) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Numbers) -> Option(i32) {
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("impl methods should now lower to IR");
+        assert!(ir
+            .iter()
+            .any(|func| func.name == "__impl::Iterable::Numbers::next"));
     }
 
     #[test]
