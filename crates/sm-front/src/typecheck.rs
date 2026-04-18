@@ -155,6 +155,18 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
     for f in &p.functions {
         type_check_function_with_tables(f, &p.arena, &table, &record_table, &adt_table, &p.impls)?;
     }
+    for imp in &p.impls {
+        for method in &imp.methods {
+            type_check_function_with_tables(
+                method,
+                &p.arena,
+                &table,
+                &record_table,
+                &adt_table,
+                &p.impls,
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -5326,6 +5338,65 @@ mod tests {
     }
 
     #[test]
+    fn impl_method_wrong_parameter_type_is_rejected() {
+        let src = r#"
+            trait Counter {
+                fn count(self: Cnt) -> i32;
+            }
+
+            record Cnt { n: i32 }
+
+            impl Counter for Cnt {
+                fn count(self: i32) -> i32 {
+                    return 0;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("impl method with wrong parameter type must be rejected");
+        assert!(
+            err.message.contains("parameter type") || err.message.contains("expected"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_method_body_is_typechecked_even_without_dispatch() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Numbers) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Numbers) -> Option(i32) {
+                    return 1;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("impl method body must be typechecked before dispatch lands");
+        assert!(
+            err.message.contains("return") || err.message.contains("Option"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
     fn generic_fn_with_bound_and_satisfying_impl_typechecks() {
         let src = r#"
             trait Zeroable {
@@ -6806,6 +6877,20 @@ fn validate_impl_conformance(
     arena: &AstArena,
 ) -> Result<(), FrontendError> {
     for imp in impls {
+        let mut seen_methods = BTreeSet::new();
+        for method in &imp.methods {
+            if !seen_methods.insert(method.name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "impl of '{}' for '{}' defines duplicate method '{}'",
+                        resolve_symbol_name(arena, imp.trait_name)?,
+                        resolve_symbol_name(arena, imp.for_type)?,
+                        resolve_symbol_name(arena, method.name)?,
+                    ),
+                });
+            }
+        }
         let trait_decl = match trait_table.get(&imp.trait_name) {
             Some(t) => t,
             None => {
@@ -6832,6 +6917,34 @@ fn validate_impl_conformance(
                     });
                 }
                 Some(m) => {
+                    if m.params.len() != trait_method.params.len() {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "impl method '{}' has {} parameter(s), expected {} from trait '{}'",
+                                resolve_symbol_name(arena, trait_method.name)?,
+                                m.params.len(),
+                                trait_method.params.len(),
+                                resolve_symbol_name(arena, imp.trait_name)?,
+                            ),
+                        });
+                    }
+                    for ((_, actual_ty), (_, expected_ty)) in
+                        m.params.iter().zip(trait_method.params.iter())
+                    {
+                        if actual_ty != expected_ty {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "impl method '{}' parameter type {:?} does not match expected {:?} from trait '{}'",
+                                    resolve_symbol_name(arena, trait_method.name)?,
+                                    actual_ty,
+                                    expected_ty,
+                                    resolve_symbol_name(arena, imp.trait_name)?,
+                                ),
+                            });
+                        }
+                    }
                     if m.ret != trait_method.ret {
                         return Err(FrontendError {
                             pos: 0,
