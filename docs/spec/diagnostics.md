@@ -149,6 +149,8 @@ Current message families include:
   `M8.4` first-wave surface
 - closure equality is not part of the current `M8.4` first-wave surface
 - for-range requires `i32` range expression
+- source-admitted iterable `for x in collection` loop whose executable
+  `Iterable` contract wave has not landed yet
 - duplicate record declaration
 - duplicate schema declaration
 - top-level record/function name collision
@@ -213,8 +215,8 @@ Current message families include:
 - tuple destructuring assignment to const target
 - malformed or empty `where` binding lists
 - `break expr;` outside `loop` expression context
-- loop-expression bodies that currently use unsupported `for-range`, `guard`,
-  or `return`
+- loop-expression bodies that currently use unsupported `for-range`,
+  iterable `for-each`, `guard`, or `return`
 - UFCS method-call sugar written without explicit `(...)`
 - return type mismatch
 - invalid `guard` condition type

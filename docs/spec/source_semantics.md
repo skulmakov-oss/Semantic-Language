@@ -335,6 +335,10 @@ Current `for ... in range` semantics:
 Current v0 limit:
 
 - `for ... in range` currently accepts only `RangeI32` values
+- general `for x in collection` source syntax is now admitted on current `main`
+  as an owner-layer desugaring toward the named `Iterable` contract
+- non-range iterable loops still reject during source checking until the stdlib
+  `Iterable` contract and loop typing wave lands
 - descending ranges, custom step values, `continue`, and a general iterable
   subsystem are not yet part of the stable contract
 - `for ... in range` does not widen the public operator surface to general

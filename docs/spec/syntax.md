@@ -209,6 +209,7 @@ Current statement forms:
 - `(a, b) = expr;`
 - `for name in 0..10 { ... }`
 - `for name in 0..=10 { ... }`
+- `for name in collection { ... }`
 - `guard condition else return;`
 - `guard condition else return expr;`
 - `assert(condition);`
@@ -395,6 +396,10 @@ Current v0 range-literal limits:
 - range equality is not yet part of the stable source contract
 - range literals are not yet part of the stable tuple/user-data surface
 - `for ... in range` currently exposes only the narrow `i32` interval surface
+- `for name in collection { ... }` is source-admitted on current `main` as the
+  `Iterable` owner-layer loop surface
+- non-range iterable loops still reject before execution until the stdlib
+  `Iterable` contract and loop typing wave lands
 - descending/custom-step/general iterable range forms are not yet part of the
   stable syntax contract
 
