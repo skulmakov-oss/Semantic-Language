@@ -33,7 +33,7 @@ In that reading:
 
 The current `main` already includes:
 
-- a supported header family from `SEMCODE0` through `SEMCOD12`
+- a supported header family from `SEMCODE0` through `SEMCOD13`
 - canonical header specs and capability masks in `sm-ir`
 - verifier admission aligned to the same supported header family
 - VM rejection of unsupported headers without silent reinterpretation
@@ -46,7 +46,7 @@ That is enough to freeze the narrow version-discipline contract.
 ## Included In This Freeze
 
 - SemCode as a versioned binary contract owned by `sm-ir`
-- the current supported family from `SEMCODE0` through `SEMCOD12`
+- the current supported family from `SEMCODE0` through `SEMCOD13`
 - additive capability widening as the only admitted widening model in the
   current baseline
 - explicit version review for binary layout or meaning changes

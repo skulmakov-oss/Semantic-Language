@@ -11,6 +11,7 @@ pub const MAGIC9: [u8; 8] = *b"SEMCODE9";
 pub const MAGIC10: [u8; 8] = *b"SEMCOD10";
 pub const MAGIC11: [u8; 8] = *b"SEMCOD11";
 pub const MAGIC12: [u8; 8] = *b"SEMCOD12";
+pub const MAGIC13: [u8; 8] = *b"SEMCOD13";
 
 pub const CAP_DEBUG_SYMBOLS: u32 = 1 << 0;
 pub const CAP_F64_MATH: u32 = 1 << 1;
@@ -26,6 +27,7 @@ pub const CAP_SEQUENCE_VALUES: u32 = 1 << 10;
 pub const CAP_CLOSURE_VALUES: u32 = 1 << 11;
 pub const CAP_OWNERSHIP_PATHS: u32 = 1 << 12;
 pub const CAP_OWNERSHIP_FIELD_PATHS: u32 = 1 << 13;
+pub const CAP_SEQUENCE_ITERATION: u32 = 1 << 14;
 
 pub const OWNERSHIP_SECTION_TAG: [u8; 4] = *b"OWN0";
 pub const OWNERSHIP_EVENT_KIND_BORROW: u8 = 0;
@@ -213,10 +215,31 @@ pub const HEADER_V12: SemcodeHeaderSpec = SemcodeHeaderSpec {
         | CAP_OWNERSHIP_FIELD_PATHS,
 };
 
+pub const HEADER_V13: SemcodeHeaderSpec = SemcodeHeaderSpec {
+    magic: MAGIC13,
+    epoch: 0,
+    rev: 14,
+    capabilities: CAP_DEBUG_SYMBOLS
+        | CAP_F64_MATH
+        | CAP_GATE_SURFACE
+        | CAP_FX_VALUES
+        | CAP_FX_MATH
+        | CAP_STATE_QUERY
+        | CAP_STATE_UPDATE
+        | CAP_EVENT_POST
+        | CAP_CLOCK_READ
+        | CAP_TEXT_VALUES
+        | CAP_SEQUENCE_VALUES
+        | CAP_CLOSURE_VALUES
+        | CAP_OWNERSHIP_PATHS
+        | CAP_OWNERSHIP_FIELD_PATHS
+        | CAP_SEQUENCE_ITERATION,
+};
+
 pub fn supported_headers() -> &'static [SemcodeHeaderSpec] {
     &[
         HEADER_V0, HEADER_V1, HEADER_V2, HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7,
-        HEADER_V8, HEADER_V9, HEADER_V10, HEADER_V11, HEADER_V12,
+        HEADER_V8, HEADER_V9, HEADER_V10, HEADER_V11, HEADER_V12, HEADER_V13,
     ]
 }
 
@@ -275,6 +298,7 @@ pub enum Opcode {
     SequenceGet = 0x5c,
     MakeClosure = 0x5d,
     ClosureCall = 0x5e,
+    SequenceLen = 0x5f,
     GateRead = 0x60,
     GateWrite = 0x61,
     PulseEmit = 0x62,
@@ -355,6 +379,7 @@ impl Opcode {
             x if x == Self::SequenceGet as u8 => Ok(Self::SequenceGet),
             x if x == Self::MakeClosure as u8 => Ok(Self::MakeClosure),
             x if x == Self::ClosureCall as u8 => Ok(Self::ClosureCall),
+            x if x == Self::SequenceLen as u8 => Ok(Self::SequenceLen),
             x if x == Self::GateRead as u8 => Ok(Self::GateRead),
             x if x == Self::GateWrite as u8 => Ok(Self::GateWrite),
             x if x == Self::PulseEmit as u8 => Ok(Self::PulseEmit),

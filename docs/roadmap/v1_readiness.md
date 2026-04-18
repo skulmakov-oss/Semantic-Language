@@ -20,7 +20,7 @@ Current repository state has working coverage for:
   `BorrowWriteConflict` enforcement and end-to-end regression coverage
 - CI-enforced boundary, public API, runtime, and release-bundle gates
 - explicit SemCode version/capability discipline through the admitted
-  `SEMCODE0`..`SEMCOD12` family on current `main`
+  `SEMCODE0`..`SEMCOD13` family on current `main`
 
 This means the repository has crossed from architecture-only planning into a
 published stable release line for the current contract surfaces.
@@ -114,6 +114,11 @@ The following limits remain explicit and should be treated as release-facing hon
   sequence collection surface, even though current `main` now admits
   `Sequence(type)`, bracketed literals, same-family equality, `expr[index]`,
   and canonical verified execution through `SEMCODE9`
+- the published `v1.1.1` line intentionally excludes the built-in executable
+  iterable loop slice, even though current `main` now admits `for x in
+  collection` over `Sequence(type)` through canonical `SEQUENCE_LEN` lowering
+  and verified execution under `SEMCOD13`; explicit user-defined `Iterable`
+  impl dispatch remains out of scope for the current slice
 - the published `v1.1.1` line intentionally excludes the first-wave first-class
   closure surface, even though current `main` now admits `Closure(T -> U)`,
   standalone closure literals, immutable capture, direct invocation, and

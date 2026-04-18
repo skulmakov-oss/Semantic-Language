@@ -110,12 +110,18 @@ that iterable abstraction is admitted yet on current `main`.
 
 ### Wave 3 — Stdlib Impl + Typecheck
 
-- stdlib `Iterable` trait definition
-- `Sequence(T)` impl of `Iterable`
-- range types impl of `Iterable`
-- typecheck enforcement that `for x in collection` requires `Iterable` impl
+- built-in executable iterable slice for `Sequence(T)` and range values
+- explicit typecheck/lowering agreement that built-in iterable loops run on
+  current `main`
+- explicit diagnostics that user-defined `Iterable` impl dispatch is still
+  deferred
 
-### Wave 4 — Freeze
+### Wave 4 — Explicit Impl Dispatch
+
+- executable lowering for explicit user-defined `Iterable` impls
+- honest type/value contract for loop item typing from the impl surface
+
+### Wave 5 — Freeze
 
 - docs/spec/tests/compatibility freeze
 
@@ -124,8 +130,9 @@ that iterable abstraction is admitted yet on current `main`.
 1. PR 1: scope checkpoint
 2. PR 2: owner-layer `Iterable` trait surface and desugaring ownership
 3. PR 3: parser/sema/type admission for `for x in collection`
-4. PR 4: stdlib impl for `Sequence(T)` and range types, typecheck enforcement
-5. PR 5: freeze and close-out
+4. PR 4: built-in executable iterable slice for `Sequence(T)` and ranges
+5. PR 5: explicit user-defined `Iterable` impl dispatch
+6. PR 6: freeze and close-out
 
 ## Initial First-Wave Reading
 
