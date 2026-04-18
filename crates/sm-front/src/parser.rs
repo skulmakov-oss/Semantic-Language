@@ -5975,6 +5975,36 @@ impl Display for MyNum {
     }
 
     #[test]
+    fn iterable_trait_and_impl_surface_parse_on_current_main() {
+        let src = r#"
+trait Iterable {
+    fn next(self: Numbers) -> Option(i32);
+}
+
+record Numbers {
+    current: i32,
+}
+
+impl Iterable for Numbers {
+    fn next(self: Numbers) -> Option(i32) {
+        return Option::None;
+    }
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("Iterable trait and impl surface should parse");
+        assert_eq!(program.traits.len(), 1);
+        assert_eq!(program.impls.len(), 1);
+        assert_eq!(program.arena.symbol_name(program.traits[0].name), "Iterable");
+        assert_eq!(program.arena.symbol_name(program.impls[0].trait_name), "Iterable");
+    }
+
+    #[test]
     fn function_with_trait_bound_is_parsed() {
         let src = r#"
 fn print_all<T: Display>(x: T) -> i32 {

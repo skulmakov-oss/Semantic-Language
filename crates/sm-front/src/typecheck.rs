@@ -20,6 +20,14 @@ fn iterable_for_gap_message() -> &'static str {
     "iterable 'for x in collection' loops are owner-layer only in M9.3 Wave 1; executable admission is deferred"
 }
 
+fn iterable_for_stdlib_gap_message() -> &'static str {
+    "iterable 'for x in collection' source admission is open, but stdlib Iterable implementations are deferred to M9.3 Wave 3"
+}
+
+fn iterable_for_impl_gap_message() -> &'static str {
+    "iterable 'for x in collection' source admission is open, but executable loop typing for explicit `Iterable` impls is deferred to M9.3 Wave 3"
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
@@ -36,6 +44,23 @@ fn is_numeric_for_fx_gap(ty: &Type) -> bool {
 
 fn is_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     is_numeric_literal_like_expr(expr_id, arena)
+}
+
+fn has_explicit_iterable_impl(
+    ty: &Type,
+    arena: &AstArena,
+    impl_list: &[ImplDecl],
+) -> Result<bool, FrontendError> {
+    let nominal = match ty {
+        Type::Record(name) | Type::Adt(name) => *name,
+        _ => return Ok(false),
+    };
+    for imp in impl_list {
+        if imp.for_type == nominal && resolve_symbol_name(arena, imp.trait_name)? == "Iterable" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn match_unit_lift(expected: &Type, actual: &Type, expr_id: ExprId, arena: &AstArena) -> bool {
@@ -1210,11 +1235,18 @@ fn check_stmt(
                 body_env.pop_scope();
                 return Ok(());
             }
+            let detail = match &iterable_ty {
+                Type::Sequence(_) => iterable_for_stdlib_gap_message().to_string(),
+                _ if has_explicit_iterable_impl(&iterable_ty, arena, impl_list)? => {
+                    iterable_for_impl_gap_message().to_string()
+                }
+                _ => iterable_for_gap_message().to_string(),
+            };
             Err(FrontendError {
                 pos: 0,
                 message: format!(
                     "{} (`{}` contract)",
-                    iterable_for_gap_message(),
+                    detail,
                     resolve_symbol_name(arena, desugaring.trait_name)?
                 ),
             })
@@ -3761,7 +3793,7 @@ mod tests {
 
         let err =
             typecheck_source(src).expect_err("general iterable loop must stay owner-layer only");
-        assert!(err.message.contains("iterable 'for x in collection' loops are owner-layer only"));
+        assert!(err.message.contains("stdlib Iterable implementations are deferred"));
         assert!(err.message.contains("Iterable"));
     }
 
@@ -3833,6 +3865,65 @@ mod tests {
         assert!(err
             .message
             .contains("loop expression body currently does not allow iterable for-each"));
+    }
+
+    #[test]
+    fn explicit_iterable_impl_surface_typechecks_without_loop_execution() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Numbers) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Numbers) -> Option(i32) {
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("Iterable trait/impl surface should typecheck");
+    }
+
+    #[test]
+    fn iterable_for_with_explicit_nominal_impl_reports_source_gap() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Numbers) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Numbers) -> Option(i32) {
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { current: 0 };
+                for value in numbers {
+                    let _ = value;
+                }
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("iterable loop execution must still reject here");
+        assert!(err
+            .message
+            .contains("explicit `Iterable` impls is deferred to M9.3 Wave 3"));
+        assert!(err.message.contains("Iterable"));
     }
 
     #[test]
