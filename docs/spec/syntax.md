@@ -398,8 +398,10 @@ Current v0 range-literal limits:
 - `for ... in range` currently exposes only the narrow `i32` interval surface
 - `for name in collection { ... }` is source-admitted on current `main` as the
   `Iterable` owner-layer loop surface
-- non-range iterable loops still reject before execution until the stdlib
-  `Iterable` contract and loop typing wave lands
+- built-in `Sequence(type)` collections now execute through the current
+  first-wave iterable loop path on `main`
+- explicit user-defined `Iterable` impl dispatch is still not executable in the
+  current slice
 - descending/custom-step/general iterable range forms are not yet part of the
   stable syntax contract
 

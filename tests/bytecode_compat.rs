@@ -451,6 +451,10 @@ fn compat_unsupported_version_has_migration_hint() {
             assert!(supported.contains("SEMCODE7"));
             assert!(supported.contains("SEMCODE8"));
             assert!(supported.contains("SEMCODE9"));
+            assert!(supported.contains("SEMCOD10"));
+            assert!(supported.contains("SEMCOD11"));
+            assert!(supported.contains("SEMCOD12"));
+            assert!(supported.contains("SEMCOD13"));
         }
         other => panic!("unexpected error: {other:?}"),
     }

@@ -17,15 +17,11 @@ fn fx_measured_arithmetic_gap_message() -> &'static str {
 }
 
 fn iterable_for_gap_message() -> &'static str {
-    "iterable 'for x in collection' loops are owner-layer only in M9.3 Wave 1; executable admission is deferred"
-}
-
-fn iterable_for_stdlib_gap_message() -> &'static str {
-    "iterable 'for x in collection' source admission is open, but stdlib Iterable implementations are deferred to M9.3 Wave 3"
+    "iterable 'for x in collection' currently requires built-in Sequence(type) or i32 range; explicit `Iterable` dispatch is deferred"
 }
 
 fn iterable_for_impl_gap_message() -> &'static str {
-    "iterable 'for x in collection' source admission is open, but executable loop typing for explicit `Iterable` impls is deferred to M9.3 Wave 3"
+    "iterable 'for x in collection' source admission is open, but executable loop typing for explicit `Iterable` impls is still deferred after the built-in Sequence/range slice"
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
@@ -1235,8 +1231,27 @@ fn check_stmt(
                 body_env.pop_scope();
                 return Ok(());
             }
+            if let Type::Sequence(sequence_ty) = &iterable_ty {
+                let mut body_env = env.clone();
+                body_env.push_scope();
+                body_env.insert_const(*name, sequence_ty.item.as_ref().clone());
+                for stmt in body {
+                    check_stmt(
+                        *stmt,
+                        arena,
+                        &mut body_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                        impl_list,
+                    )?;
+                }
+                body_env.pop_scope();
+                return Ok(());
+            }
             let detail = match &iterable_ty {
-                Type::Sequence(_) => iterable_for_stdlib_gap_message().to_string(),
                 _ if has_explicit_iterable_impl(&iterable_ty, arena, impl_list)? => {
                     iterable_for_impl_gap_message().to_string()
                 }
@@ -3776,11 +3791,11 @@ mod tests {
         let err = typecheck_source(src).expect_err("non-iterable executable for input must reject");
         assert!(err
             .message
-            .contains("iterable 'for x in collection' loops are owner-layer only"));
+            .contains("currently requires built-in Sequence(type) or i32 range"));
     }
 
     #[test]
-    fn iterable_for_gap_is_explicit_for_sequence_values() {
+    fn iterable_for_sequence_values_typechecks_with_item_binding() {
         let src = r#"
             fn main() {
                 let items: Sequence(i32) = [1, 2, 3];
@@ -3791,10 +3806,7 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("general iterable loop must stay owner-layer only");
-        assert!(err.message.contains("stdlib Iterable implementations are deferred"));
-        assert!(err.message.contains("Iterable"));
+        typecheck_source(src).expect("Sequence(T) iterable loop should now typecheck");
     }
 
     #[test]
@@ -3922,7 +3934,7 @@ mod tests {
             typecheck_source(src).expect_err("iterable loop execution must still reject here");
         assert!(err
             .message
-            .contains("explicit `Iterable` impls is deferred to M9.3 Wave 3"));
+            .contains("explicit `Iterable` impls is still deferred"));
         assert!(err.message.contains("Iterable"));
     }
 

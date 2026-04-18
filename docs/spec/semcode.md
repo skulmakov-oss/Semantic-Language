@@ -44,6 +44,7 @@ Current supported header family:
 - `SEMCOD10`
 - `SEMCOD11`
 - `SEMCOD12`
+- `SEMCOD13`
 
 Observed runtime support in the current toolchain:
 
@@ -60,6 +61,7 @@ Observed runtime support in the current toolchain:
 - `SEMCOD10`: epoch `0`, revision `11`
 - `SEMCOD11`: epoch `0`, revision `12`
 - `SEMCOD12`: epoch `0`, revision `13`
+- `SEMCOD13`: epoch `0`, revision `14`
 
 Header responsibilities:
 
@@ -196,6 +198,19 @@ Discipline rules:
 - does not claim ADT payload, schema, or release/lifetime transport beyond the
   current frame-local tuple+record slice
 
+`SEMCOD13`
+
+- promoted contract used when emitted program usage requires executable
+  first-wave built-in iterable loops over `Sequence(T)`
+- keeps `SEMCOD12` fixed for artifacts that do not use the widened sequence
+  iteration primitive
+- uses the fixed-width 8-byte header magic form `SEMCOD13`
+- adds the deterministic execution opcode `SEQUENCE_LEN` for built-in
+  sequence-loop lowering
+- requires `CAP_SEQUENCE_ITERATION` when `SEQUENCE_LEN` is present
+- does not claim executable user-defined `Iterable` impl dispatch, ADT payload
+  iteration, schema iteration, or non-frame-local iterator state
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -224,6 +239,7 @@ Current canonical capability families:
 - `CAP_CLOCK_READ`
 - `CAP_TEXT_VALUES`
 - `CAP_SEQUENCE_VALUES`
+- `CAP_SEQUENCE_ITERATION`
 - `CAP_CLOSURE_VALUES`
 - `CAP_OWNERSHIP_PATHS`
 - `CAP_OWNERSHIP_FIELD_PATHS`

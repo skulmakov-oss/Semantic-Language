@@ -149,8 +149,9 @@ Current message families include:
   `M8.4` first-wave surface
 - closure equality is not part of the current `M8.4` first-wave surface
 - for-range requires `i32` range expression
-- source-admitted iterable `for x in collection` loop whose executable
-  `Iterable` contract wave has not landed yet
+- iterable `for x in collection` loop over a non-iterable value
+- iterable `for x in collection` loop that relies on explicit user-defined
+  `Iterable` impl dispatch beyond the current built-in Sequence/range slice
 - duplicate record declaration
 - duplicate schema declaration
 - top-level record/function name collision

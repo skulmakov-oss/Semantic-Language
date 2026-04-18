@@ -25,6 +25,7 @@ Current post-stable admitted families on `main`:
 - `SEMCOD10`
 - `SEMCOD11`
 - `SEMCOD12`
+- `SEMCOD13`
 
 Current compatibility rule:
 
@@ -103,6 +104,9 @@ Current `v1` scope commitment:
 - the same forward-only reading also applies to the first-wave ordered
   sequence collection surface on current `main`, including `Sequence(type)`,
   bracketed literals, same-family equality, `expr[index]`, and `SEMCODE9`
+- the same forward-only reading also applies to the built-in executable
+  iterable loop slice on current `main`, including `for x in collection` over
+  `Sequence(type)`, canonical `SEQUENCE_LEN` lowering, and `SEMCOD13`
 - the same forward-only reading also applies to the first-wave first-class
   closure surface on current `main`, including `Closure(T -> U)`, standalone
   closure literals, immutable capture, direct invocation, and `SEMCOD10`

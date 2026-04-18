@@ -644,6 +644,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::SequenceLen => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::ClosureCall => {
                 let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1312,6 +1316,21 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     ))
                 })?;
                 set_reg(vm, frame_idx, dst, item)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequenceLen => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, src)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_LEN source must be sequence".to_string(),
+                    ));
+                };
+                let len = i32::try_from(items.len()).map_err(|_| {
+                    RuntimeError::BadFormat("SEQUENCE_LEN exceeds i32 range".to_string())
+                })?;
+                set_reg(vm, frame_idx, dst, Value::I32(len))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
@@ -2170,6 +2189,11 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("SEQUENCE_GET r{}, r{}, r{}", d, s, i)
+        }
+        Opcode::SequenceLen => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_LEN r{}, r{}", d, s)
         }
         Opcode::ClosureCall => {
             let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
@@ -3306,6 +3330,31 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_iterable_for_over_sequence_path() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                let saw_two: bool = false;
+                let total: i32 = 0;
+                for item in items {
+                    total += item;
+                    if item == 2 {
+                        saw_two ||= true;
+                    }
+                }
+                assert(saw_two == true);
+                assert(total == 6);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("SEQUENCE_LEN"));
+        assert!(disasm.contains("SEQUENCE_GET"));
+        run_semcode(&bytes).expect("Sequence(T) iterable loop should run");
+    }
+
+    #[test]
     fn vm_rejects_unknown_opcode_on_load() {
         let src = "fn main() { return; }";
         let mut bytes = compile_program_to_semcode(src).expect("compile");
@@ -3335,6 +3384,9 @@ mod tests {
                 assert!(supported.contains("SEMCODE8"));
                 assert!(supported.contains("SEMCODE9"));
                 assert!(supported.contains("SEMCOD10"));
+                assert!(supported.contains("SEMCOD11"));
+                assert!(supported.contains("SEMCOD12"));
+                assert!(supported.contains("SEMCOD13"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }

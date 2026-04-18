@@ -1,7 +1,7 @@
 use super::*;
 use crate::semcode_format::{
     write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode, MAGIC0, MAGIC1, MAGIC2,
-    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11, MAGIC12,
+    MAGIC3, MAGIC4, MAGIC5, MAGIC6, MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11, MAGIC12, MAGIC13,
     OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
     OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
     OWNERSHIP_SECTION_TAG,
@@ -51,6 +51,10 @@ pub enum IrInstr {
     MakeSequence {
         dst: u16,
         items: Vec<u16>,
+    },
+    SequenceLen {
+        dst: u16,
+        src: u16,
     },
     MakeClosure {
         dst: u16,
@@ -350,7 +354,7 @@ pub struct LogosIrLaw {
 const FX_SCALE: i32 = 1_000;
 
 fn iterable_for_gap_message() -> &'static str {
-    "iterable 'for x in collection' loops are owner-layer only in M9.3 Wave 1; executable admission is deferred"
+    "iterable 'for x in collection' currently requires built-in Sequence(type) or i32 range; explicit `Iterable` dispatch is deferred"
 }
 
 fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
@@ -859,7 +863,9 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
-    if has_v12_record_field_ownership_events(funcs) {
+    if has_v13_sequence_iter_instr(funcs) {
+        out.extend_from_slice(&MAGIC13);
+    } else if has_v12_record_field_ownership_events(funcs) {
         out.extend_from_slice(&MAGIC12);
     } else if has_v11_ownership_events(funcs) {
         out.extend_from_slice(&MAGIC11);
@@ -916,7 +922,9 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             IrInstr::LoadText { val, .. } => {
                 let _ = interner.id(val)?;
             }
-            IrInstr::MakeSequence { .. } | IrInstr::SequenceGet { .. } => {}
+            IrInstr::MakeSequence { .. }
+            | IrInstr::SequenceGet { .. }
+            | IrInstr::SequenceLen { .. } => {}
             IrInstr::MakeClosure { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -1038,6 +1046,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadFx { .. } => 1 + 2 + 4,
         IrInstr::LoadText { .. } => 1 + 2 + 2,
         IrInstr::MakeSequence { items, .. } => 1 + 2 + 2 + (items.len() * 2),
+        IrInstr::SequenceLen { .. } => 1 + 2 + 2,
         IrInstr::MakeClosure { captures, .. } => 1 + 2 + 2 + 2 + (captures.len() * 2),
         IrInstr::SequenceGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::ClosureCall { .. } => 1 + 1 + 2 + 2 + 2,
@@ -1162,6 +1171,11 @@ fn emit_instr(
             for capture in captures {
                 write_u16_le(out, *capture);
             }
+        }
+        IrInstr::SequenceLen { dst, src } => {
+            out.push(Opcode::SequenceLen.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *src);
         }
         IrInstr::SequenceGet { dst, src, index } => {
             out.push(Opcode::SequenceGet.byte());
@@ -1486,6 +1500,12 @@ fn has_v9_sequence_instr(funcs: &[IrFunction]) -> bool {
             )
         })
     })
+}
+
+fn has_v13_sequence_iter_instr(funcs: &[IrFunction]) -> bool {
+    funcs
+        .iter()
+        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::SequenceLen { .. })))
 }
 
 fn has_v10_closure_instr(funcs: &[IrFunction]) -> bool {
@@ -3736,6 +3756,21 @@ fn lower_for_each_stmt(
             adt_table,
         );
     }
+    if let Type::Sequence(sequence_ty) = iterable_ty {
+        return lower_for_sequence_stmt_from_reg(
+            name,
+            iterable_reg,
+            sequence_ty.item.as_ref().clone(),
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        );
+    }
     Err(FrontendError {
         pos: 0,
         message: format!(
@@ -3744,6 +3779,117 @@ fn lower_for_each_stmt(
             resolve_symbol_name(arena, trait_name)?
         ),
     })
+}
+
+fn lower_for_sequence_stmt_from_reg(
+    name: SymbolId,
+    sequence_reg: u16,
+    item_ty: Type,
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let id = ctx.next_if_id();
+    let index_name = format!("__for_each_seq_{}_index", id);
+    let loop_name = resolve_symbol_name(arena, name)?.to_string();
+
+    let zero_reg = alloc(&mut ctx.next_reg);
+    let one_reg = alloc(&mut ctx.next_reg);
+    let len_reg = alloc(&mut ctx.next_reg);
+    let index_reg = alloc(&mut ctx.next_reg);
+    let cmp_reg = alloc(&mut ctx.next_reg);
+    let item_reg = alloc(&mut ctx.next_reg);
+    let next_reg = alloc(&mut ctx.next_reg);
+
+    ctx.instrs.push(IrInstr::LoadI32 {
+        dst: zero_reg,
+        val: 0,
+    });
+    ctx.instrs.push(IrInstr::LoadI32 {
+        dst: one_reg,
+        val: 1,
+    });
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: index_name.clone(),
+        src: zero_reg,
+    });
+    ctx.instrs.push(IrInstr::SequenceLen {
+        dst: len_reg,
+        src: sequence_reg,
+    });
+
+    let test_label = format!("for_each_seq_{}_test", id);
+    let body_label = format!("for_each_seq_{}_body", id);
+    let end_label = format!("for_each_seq_{}_end", id);
+
+    ctx.instrs.push(IrInstr::Label {
+        name: test_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::LoadVar {
+        dst: index_reg,
+        name: index_name.clone(),
+    });
+    ctx.instrs.push(IrInstr::CmpI32Lt {
+        dst: cmp_reg,
+        lhs: index_reg,
+        rhs: len_reg,
+    });
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: cmp_reg,
+        label: body_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::Jmp {
+        label: end_label.clone(),
+    });
+
+    ctx.instrs.push(IrInstr::Label { name: body_label });
+    ctx.instrs.push(IrInstr::SequenceGet {
+        dst: item_reg,
+        src: sequence_reg,
+        index: index_reg,
+    });
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    body_env.insert_const(name, item_ty);
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: loop_name,
+        src: item_reg,
+    });
+    for stmt in body {
+        lower_stmt(
+            *stmt,
+            arena,
+            ctx,
+            &mut body_env,
+            ret_ty.clone(),
+            fn_table,
+            record_table,
+            adt_table,
+        )?;
+    }
+    body_env.pop_scope();
+
+    ctx.instrs.push(IrInstr::LoadVar {
+        dst: index_reg,
+        name: index_name.clone(),
+    });
+    ctx.instrs.push(IrInstr::AddI32 {
+        dst: next_reg,
+        lhs: index_reg,
+        rhs: one_reg,
+    });
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: index_name,
+        src: next_reg,
+    });
+    ctx.instrs.push(IrInstr::Jmp { label: test_label });
+    ctx.instrs.push(IrInstr::Label { name: end_label });
+    Ok(())
 }
 
 fn bind_let_else_tuple_items(
@@ -8262,20 +8408,66 @@ mod opt_tests {
     }
 
     #[test]
-    fn compile_program_rejects_general_iterable_loop_before_wave_three() {
+    fn lower_sequence_iterable_loop_to_length_and_index_path() {
         let src = r#"
             fn main() {
                 let items: Sequence(i32) = [1, 2, 3];
                 for item in items {
-                    let _: i32 = item;
+                    assert(item == item);
+                }
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("Sequence(T) iterable loop should now lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::SequenceLen { .. })));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::SequenceGet { .. })));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name == "item"
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::StoreVar { name, .. } if name.starts_with("__for_each_seq_")
+        )));
+    }
+
+    #[test]
+    fn compile_program_with_explicit_iterable_impl_still_rejects_dispatch_gap() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Numbers) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Numbers) -> Option(i32) {
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { current: 0 };
+                for value in numbers {
+                    let _ = value;
                 }
                 return;
             }
         "#;
 
         let err = compile_program_to_ir(src)
-            .expect_err("general iterable loop must remain non-executable in owner slice");
-        assert!(err.message.contains("iterable 'for x in collection' loops are owner-layer only"));
+            .expect_err("explicit Iterable impl execution must stay deferred");
+        assert!(err.message.contains("explicit `Iterable` impls is still deferred"));
         assert!(err.message.contains("Iterable"));
     }
 
