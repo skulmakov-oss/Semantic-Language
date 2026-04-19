@@ -402,6 +402,10 @@ Current v0 range-literal limits:
   first-wave iterable loop path on `main`
 - explicit user-defined `Iterable` impl dispatch is still not executable in the
   current slice
+- `Self` is admitted only in trait method signatures and impl method type
+  positions on current `main`
+- `Self` outside trait/impl method type positions is not part of the stable
+  syntax contract
 - descending/custom-step/general iterable range forms are not yet part of the
   stable syntax contract
 

@@ -35,6 +35,7 @@ pub fn parse_rustlike_with_profile(
         arena: AstArena::default(),
         policy: CompilePolicyView::new(profile),
         type_param_scope: Vec::new(),
+        self_type_scope: None,
     };
     p.parse_program()
 }
@@ -51,6 +52,7 @@ pub fn parse_logos_with_profile(
         arena: AstArena::default(),
         policy: CompilePolicyView::new(profile),
         type_param_scope: Vec::new(),
+        self_type_scope: None,
     };
     p.parse_logos_program()
 }
@@ -67,9 +69,23 @@ struct Parser<'a> {
     /// function/record/adt declaration finishes parsing. Drives `parse_type`
     /// to emit `Type::TypeVar` rather than `Type::Record` for matching names.
     type_param_scope: Vec<SymbolId>,
+    /// Narrow owner-layer `Self` marker available only while parsing trait
+    /// method signatures or impl methods.
+    self_type_scope: Option<Type>,
 }
 
 impl<'a> Parser<'a> {
+    fn with_self_type_scope<T, F>(&mut self, self_ty: Type, f: F) -> Result<T, FrontendError>
+    where
+        F: FnOnce(&mut Self) -> Result<T, FrontendError>,
+    {
+        let previous = self.self_type_scope.clone();
+        self.self_type_scope = Some(self_ty);
+        let result = f(self);
+        self.self_type_scope = previous;
+        result
+    }
+
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
         let mut adts = Vec::new();
         let mut records = Vec::new();
@@ -273,19 +289,23 @@ impl<'a> Parser<'a> {
         let name = self.expect_symbol()?;
         let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace, "expected '{' after trait name")?;
-        let mut methods = Vec::new();
-        loop {
-            let i = self.next_non_layout_idx();
-            if i >= self.tokens.len() {
-                break;
+        let self_placeholder = Type::TypeVar(self.arena.intern_symbol("Self"));
+        let methods = self.with_self_type_scope(self_placeholder, |parser| {
+            let mut methods = Vec::new();
+            loop {
+                let i = parser.next_non_layout_idx();
+                if i >= parser.tokens.len() {
+                    break;
+                }
+                if parser.tokens[i].kind == TokenKind::RBrace {
+                    parser.idx = i;
+                    break;
+                }
+                parser.idx = i;
+                methods.push(parser.parse_trait_method_sig()?);
             }
-            if self.tokens[i].kind == TokenKind::RBrace {
-                self.idx = i;
-                break;
-            }
-            self.idx = i;
-            methods.push(self.parse_trait_method_sig()?);
-        }
+            Ok(methods)
+        })?;
         self.expect(TokenKind::RBrace, "expected '}' to close trait body")?;
         self.pop_type_param_scope(type_params.len());
         Ok(TraitDecl { name, type_params, methods })
@@ -328,19 +348,22 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::KwFor, "expected 'for' after trait name in impl")?;
         let for_type = self.expect_symbol()?;
         self.expect(TokenKind::LBrace, "expected '{' after impl target type")?;
-        let mut methods = Vec::new();
-        loop {
-            let i = self.next_non_layout_idx();
-            if i >= self.tokens.len() {
-                break;
+        let methods = self.with_self_type_scope(Type::Record(for_type), |parser| {
+            let mut methods = Vec::new();
+            loop {
+                let i = parser.next_non_layout_idx();
+                if i >= parser.tokens.len() {
+                    break;
+                }
+                if parser.tokens[i].kind == TokenKind::RBrace {
+                    parser.idx = i;
+                    break;
+                }
+                parser.idx = i;
+                methods.push(parser.parse_function()?);
             }
-            if self.tokens[i].kind == TokenKind::RBrace {
-                self.idx = i;
-                break;
-            }
-            self.idx = i;
-            methods.push(self.parse_function()?);
-        }
+            Ok(methods)
+        })?;
         self.expect(TokenKind::RBrace, "expected '}' to close impl body")?;
         self.pop_type_param_scope(type_params.len());
         Ok(ImplDecl { trait_name, for_type, type_params, methods })
@@ -2475,7 +2498,14 @@ impl<'a> Parser<'a> {
             self.parse_paren_type_or_tuple()?
         } else if self.check(TokenKind::Ident) {
             let t = self.tokens[self.next_non_layout_idx()].text.clone();
-            if t == "qvec" {
+            if t == "Self" {
+                let _ = self.advance();
+                if let Some(self_ty) = &self.self_type_scope {
+                    self_ty.clone()
+                } else {
+                    Type::Record(self.arena.intern_symbol("Self"))
+                }
+            } else if t == "qvec" {
                 let _ = self.advance();
                 if self.eat(TokenKind::LBracket) || self.eat(TokenKind::LParen) {
                     let n = if self.check(TokenKind::Num) {
@@ -6002,6 +6032,52 @@ fn main() {
         assert_eq!(program.impls.len(), 1);
         assert_eq!(program.arena.symbol_name(program.traits[0].name), "Iterable");
         assert_eq!(program.arena.symbol_name(program.impls[0].trait_name), "Iterable");
+    }
+
+    #[test]
+    fn trait_method_self_type_parses_as_owner_layer_marker() {
+        let src = r#"
+trait Iterable {
+    fn next(self: Self, index: i32) -> Option(i32);
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("trait method Self type should parse");
+        let self_symbol = program
+            .arena
+            .symbol_to_id
+            .get("Self")
+            .copied()
+            .expect("Self symbol must be interned");
+        let method = &program.traits[0].methods[0];
+        assert_eq!(method.params[0].1, Type::TypeVar(self_symbol));
+        assert_eq!(method.params[1].1, Type::I32);
+    }
+
+    #[test]
+    fn impl_method_self_type_is_anchored_to_impl_target() {
+        let src = r#"
+trait Iterable {
+    fn next(self: Self, index: i32) -> Option(i32);
+}
+
+record Numbers {
+    current: i32,
+}
+
+impl Iterable for Numbers {
+    fn next(self: Self, index: i32) -> Option(i32) {
+        let _ = index;
+        return Option::None;
+    }
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("impl method Self type should parse");
+        let numbers = program.impls[0].for_type;
+        let method = &program.impls[0].methods[0];
+        assert_eq!(method.params[0].1, Type::Record(numbers));
+        assert_eq!(method.params[1].1, Type::I32);
     }
 
     #[test]

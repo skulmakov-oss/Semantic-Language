@@ -5366,6 +5366,93 @@ mod tests {
     }
 
     #[test]
+    fn trait_self_contract_allows_multiple_impl_targets() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            record Others {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self.current;
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            impl Iterable for Others {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self.current;
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("trait-side Self should anchor independently per impl target");
+    }
+
+    #[test]
+    fn trait_self_contract_still_rejects_wrong_concrete_impl_parameter() {
+        let src = r#"
+            trait Counter {
+                fn count(self: Self) -> i32;
+            }
+
+            record Cnt { n: i32 }
+
+            impl Counter for Cnt {
+                fn count(self: i32) -> i32 {
+                    return 0;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("trait-side Self must still anchor to the impl target");
+        assert!(
+            err.message.contains("parameter type") || err.message.contains("expected"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn self_type_outside_trait_or_impl_positions_is_not_admitted() {
+        let src = r#"
+            fn id(value: Self) -> Self {
+                return value;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("Self outside trait/impl method type positions must stay unsupported");
+        assert!(
+            err.message.contains("unknown nominal type 'Self'"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
     fn impl_method_body_is_typechecked_even_without_dispatch() {
         let src = r#"
             trait Iterable {
@@ -6876,6 +6963,7 @@ fn validate_impl_conformance(
     trait_table: &TraitTable,
     arena: &AstArena,
 ) -> Result<(), FrontendError> {
+    let self_type_var = arena.symbol_to_id.get("Self").copied();
     for imp in impls {
         let mut seen_methods = BTreeSet::new();
         for method in &imp.methods {
@@ -6932,7 +7020,9 @@ fn validate_impl_conformance(
                     for ((_, actual_ty), (_, expected_ty)) in
                         m.params.iter().zip(trait_method.params.iter())
                     {
-                        if actual_ty != expected_ty {
+                        let expected_ty =
+                            substitute_trait_self_type(expected_ty, self_type_var, imp.for_type);
+                        if actual_ty != &expected_ty {
                             return Err(FrontendError {
                                 pos: 0,
                                 message: format!(
@@ -6945,14 +7035,16 @@ fn validate_impl_conformance(
                             });
                         }
                     }
-                    if m.ret != trait_method.ret {
+                    let expected_ret =
+                        substitute_trait_self_type(&trait_method.ret, self_type_var, imp.for_type);
+                    if m.ret != expected_ret {
                         return Err(FrontendError {
                             pos: 0,
                             message: format!(
                                 "impl method '{}' has return type {:?}, expected {:?} from trait '{}'",
                                 resolve_symbol_name(arena, trait_method.name)?,
                                 m.ret,
-                                trait_method.ret,
+                                expected_ret,
                                 resolve_symbol_name(arena, imp.trait_name)?,
                             ),
                         });
@@ -6962,6 +7054,70 @@ fn validate_impl_conformance(
         }
     }
     Ok(())
+}
+
+fn substitute_trait_self_type(
+    ty: &Type,
+    self_type_var: Option<SymbolId>,
+    concrete_self: SymbolId,
+) -> Type {
+    match ty {
+        Type::TypeVar(name) if Some(*name) == self_type_var => Type::Record(concrete_self),
+        Type::Tuple(items) => Type::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_trait_self_type(item, self_type_var, concrete_self))
+                .collect(),
+        ),
+        Type::Sequence(sequence) => Type::Sequence(SequenceType {
+            family: sequence.family,
+            item: Box::new(substitute_trait_self_type(
+                sequence.item.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+        }),
+        Type::Closure(closure) => Type::Closure(crate::types::ClosureType {
+            family: closure.family,
+            capture: closure.capture,
+            param: Box::new(substitute_trait_self_type(
+                closure.param.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+            ret: Box::new(substitute_trait_self_type(
+                closure.ret.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+        }),
+        Type::Measured(base, unit) => Type::Measured(
+            Box::new(substitute_trait_self_type(
+                base.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+            *unit,
+        ),
+        Type::Option(item) => Type::Option(Box::new(substitute_trait_self_type(
+            item.as_ref(),
+            self_type_var,
+            concrete_self,
+        ))),
+        Type::Result(ok_ty, err_ty) => Type::Result(
+            Box::new(substitute_trait_self_type(
+                ok_ty.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+            Box::new(substitute_trait_self_type(
+                err_ty.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+        ),
+        _ => ty.clone(),
+    }
 }
 
 fn validate_top_level_name_collisions(
