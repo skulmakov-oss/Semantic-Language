@@ -122,7 +122,7 @@ that iterable abstraction is admitted yet on current `main`.
   dispatch before code changes
 - require one deterministic trait method shape for the first executable
   user-defined slice:
-  `fn next(self: Collection, index: i32) -> Option(Item)`
+  `fn next(self: Self, index: i32) -> Option(Item)`
 - treat `index` as the zero-based loop-driver cursor supplied by the lowered
   `for x in collection` execution path
 - continue the loop on `Option::Some(item)` and terminate on `Option::None`
@@ -135,6 +135,8 @@ that iterable abstraction is admitted yet on current `main`.
 
 - impl method bodies typecheck on current `main`
 - impl methods lower into executable internal functions on current `main`
+- trait-side `Self` now survives parser/typecheck as the narrow impl-anchored
+  receiver contract on current `main`
 - this prerequisite is now complete and removes the earlier dead owner-layer
   gap for trait/impl method bodies
 - this does not by itself claim user-visible iterable loop execution over
@@ -179,7 +181,7 @@ Approved direction for the next step:
   host-managed mutable iteration state
 - the loop driver owns the cursor and passes it explicitly as `index: i32`
 - the executable trait hook is:
-  `fn next(self: Collection, index: i32) -> Option(Item)`
+  `fn next(self: Self, index: i32) -> Option(Item)`
 - `Option::Some(item)` yields one loop item and increments the cursor
 - `Option::None` terminates the loop
 - the built-in `Sequence(T)` / range path remains the already-landed separate

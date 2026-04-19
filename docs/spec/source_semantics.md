@@ -341,6 +341,10 @@ Current v0 limit:
   iterable loop path on `main`
 - explicit user-defined `Iterable` impl dispatch is still deferred beyond the
   current built-in Sequence/range slice
+- trait-side `Self` now denotes the impl-anchored receiver contract only inside
+  trait method signatures and impl method type positions
+- `Self` does not widen the general executable type surface beyond that narrow
+  trait/impl contract
 - descending ranges, custom step values, `continue`, and a general iterable
   subsystem are not yet part of the stable contract
 - `for ... in range` does not widen the public operator surface to general

@@ -42,6 +42,8 @@ a claim that trait-based polymorphism was part of the published `v1.1.1` line.
 ### Wave 3 — Typecheck
 - `validate_trait_coherence`: rejects duplicate `(trait, for_type)` impl pairs
 - `validate_impl_conformance`: rejects impls missing required methods or with wrong return types
+- trait-side `Self` in method signatures now anchors to the concrete impl target
+  during conformance checking
 - Bound satisfaction check at generic call sites: after type-var substitution,
   verifies `impl TraitName for ConcreteType` exists in the program's impl list
 - All checks run centrally in `type_check_program`
@@ -63,6 +65,7 @@ a claim that trait-based polymorphism was part of the published `v1.1.1` line.
 - coherence: duplicate `(trait, for_type)` pair is rejected
 - conformance: impl missing a required method is rejected
 - conformance: impl method with wrong return type is rejected
+- conformance: trait-side `Self` may be reused across multiple impl targets
 - bound satisfaction: generic call with satisfying impl typechecks
 - bound satisfaction: generic call with no impl is rejected
 
