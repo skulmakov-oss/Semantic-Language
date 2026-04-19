@@ -354,7 +354,7 @@ pub struct LogosIrLaw {
 const FX_SCALE: i32 = 1_000;
 
 fn iterable_for_gap_message() -> &'static str {
-    "iterable 'for x in collection' currently requires built-in Sequence(type) or i32 range; explicit `Iterable` dispatch is deferred"
+    "iterable 'for x in collection' currently requires built-in Sequence(type), i32 range, or a direct record `Iterable` impl shaped as `fn next(self: Self, index: i32) -> Option(Item)`"
 }
 
 fn encode_fx_literal(value: f64) -> Result<i32, FrontendError> {
@@ -494,6 +494,7 @@ fn lower_function_to_ir_with_tables(
     fn_table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    impl_list: &[sm_front::ImplDecl],
 ) -> Result<LoweredFunctionBundle, FrontendError> {
     let parent_fn_name = resolve_symbol_name(arena, func.name)?.to_string();
     let ensures_result_symbol = find_contract_result_symbol(&func.ensures, arena)?;
@@ -504,6 +505,7 @@ fn lower_function_to_ir_with_tables(
         ensures_result_symbol,
         func.invariants.clone(),
         invariants_result_symbol,
+        impl_list,
     );
     let canonical_params = func
         .params
@@ -650,6 +652,51 @@ fn impl_method_function_name(
     ))
 }
 
+fn resolve_explicit_iterable_loop_contract(
+    iterable_ty: &Type,
+    trait_name: SymbolId,
+    arena: &AstArena,
+    impl_list: &[sm_front::ImplDecl],
+) -> Result<Option<(Type, String)>, FrontendError> {
+    let nominal = match iterable_ty {
+        Type::Record(name) => *name,
+        _ => return Ok(None),
+    };
+    for imp in impl_list {
+        if imp.for_type != nominal || imp.trait_name != trait_name {
+            continue;
+        }
+        let method = imp
+            .methods
+            .iter()
+            .find(|method| resolve_symbol_name(arena, method.name).ok() == Some("next"))
+            .ok_or(FrontendError {
+                pos: 0,
+                message: iterable_for_gap_message().to_string(),
+            })?;
+        if method.params.len() != 2
+            || method.params[0].1 != Type::Record(nominal)
+            || method.params[1].1 != Type::I32
+        {
+            return Err(FrontendError {
+                pos: 0,
+                message: iterable_for_gap_message().to_string(),
+            });
+        }
+        let Type::Option(item_ty) = &method.ret else {
+            return Err(FrontendError {
+                pos: 0,
+                message: iterable_for_gap_message().to_string(),
+            });
+        };
+        return Ok(Some((
+            item_ty.as_ref().clone(),
+            impl_method_function_name(arena, imp, method)?,
+        )));
+    }
+    Ok(None)
+}
+
 pub fn lower_function_to_ir(
     func: &Function,
     arena: &AstArena,
@@ -658,7 +705,14 @@ pub fn lower_function_to_ir(
     type_check_function_with_table(func, arena, fn_table)?;
     let empty_records = RecordTable::new();
     let empty_adts = AdtTable::new();
-    let lowered = lower_function_to_ir_with_tables(func, arena, fn_table, &empty_records, &empty_adts)?;
+    let lowered = lower_function_to_ir_with_tables(
+        func,
+        arena,
+        fn_table,
+        &empty_records,
+        &empty_adts,
+        &[],
+    )?;
     if !lowered.lifted.is_empty() {
         return Err(FrontendError {
             pos: 0,
@@ -774,6 +828,7 @@ pub fn compile_program_to_ir_with_options_and_profile(
             &fn_table,
             &record_table,
             &adt_table,
+            &program.impls,
         )?;
         out.push(lowered.primary);
         out.extend(lowered.lifted);
@@ -790,6 +845,7 @@ pub fn compile_program_to_ir_with_options_and_profile(
                 &fn_table,
                 &record_table,
                 &adt_table,
+                &program.impls,
             )?;
             out.push(lowered.primary);
             out.extend(lowered.lifted);
@@ -3786,11 +3842,32 @@ fn lower_for_each_stmt(
             adt_table,
         );
     }
-    if let Type::Sequence(sequence_ty) = iterable_ty {
+    if let Type::Sequence(sequence_ty) = &iterable_ty {
         return lower_for_sequence_stmt_from_reg(
             name,
             iterable_reg,
             sequence_ty.item.as_ref().clone(),
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        );
+    }
+    if let Some((item_ty, next_fn_name)) = resolve_explicit_iterable_loop_contract(
+        &iterable_ty,
+        trait_name,
+        arena,
+        &ctx.impls,
+    )? {
+        return lower_for_explicit_iterable_stmt_from_reg(
+            name,
+            iterable_reg,
+            item_ty,
+            &next_fn_name,
             body,
             arena,
             ctx,
@@ -3916,6 +3993,126 @@ fn lower_for_sequence_stmt_from_reg(
     ctx.instrs.push(IrInstr::StoreVar {
         name: index_name,
         src: next_reg,
+    });
+    ctx.instrs.push(IrInstr::Jmp { label: test_label });
+    ctx.instrs.push(IrInstr::Label { name: end_label });
+    Ok(())
+}
+
+fn lower_for_explicit_iterable_stmt_from_reg(
+    name: SymbolId,
+    iterable_reg: u16,
+    item_ty: Type,
+    next_fn_name: &str,
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let id = ctx.next_if_id();
+    let index_name = format!("__for_each_iter_{}_index", id);
+    let loop_name = resolve_symbol_name(arena, name)?.to_string();
+
+    let zero_reg = alloc(&mut ctx.next_reg);
+    let one_reg = alloc(&mut ctx.next_reg);
+    let index_reg = alloc(&mut ctx.next_reg);
+    let next_opt_reg = alloc(&mut ctx.next_reg);
+    let tag_reg = alloc(&mut ctx.next_reg);
+    let has_item_reg = alloc(&mut ctx.next_reg);
+    let item_reg = alloc(&mut ctx.next_reg);
+    let next_index_reg = alloc(&mut ctx.next_reg);
+
+    ctx.instrs.push(IrInstr::LoadI32 {
+        dst: zero_reg,
+        val: 0,
+    });
+    ctx.instrs.push(IrInstr::LoadI32 {
+        dst: one_reg,
+        val: 1,
+    });
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: index_name.clone(),
+        src: zero_reg,
+    });
+
+    let test_label = format!("for_each_iter_{}_test", id);
+    let body_label = format!("for_each_iter_{}_body", id);
+    let end_label = format!("for_each_iter_{}_end", id);
+
+    ctx.instrs.push(IrInstr::Label {
+        name: test_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::LoadVar {
+        dst: index_reg,
+        name: index_name.clone(),
+    });
+    ctx.instrs.push(IrInstr::Call {
+        dst: Some(next_opt_reg),
+        name: next_fn_name.to_string(),
+        args: vec![iterable_reg, index_reg],
+    });
+    ctx.instrs.push(IrInstr::AdtTag {
+        dst: tag_reg,
+        src: next_opt_reg,
+        adt_name: "Option".to_string(),
+    });
+    ctx.instrs.push(IrInstr::CmpEq {
+        dst: has_item_reg,
+        lhs: tag_reg,
+        rhs: one_reg,
+    });
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: has_item_reg,
+        label: body_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::Jmp {
+        label: end_label.clone(),
+    });
+
+    ctx.instrs.push(IrInstr::Label { name: body_label });
+    ctx.instrs.push(IrInstr::AdtGet {
+        dst: item_reg,
+        src: next_opt_reg,
+        adt_name: "Option".to_string(),
+        index: 0,
+    });
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    body_env.insert_const(name, item_ty);
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: loop_name,
+        src: item_reg,
+    });
+    for stmt in body {
+        lower_stmt(
+            *stmt,
+            arena,
+            ctx,
+            &mut body_env,
+            ret_ty.clone(),
+            fn_table,
+            record_table,
+            adt_table,
+        )?;
+    }
+    body_env.pop_scope();
+
+    ctx.instrs.push(IrInstr::LoadVar {
+        dst: index_reg,
+        name: index_name.clone(),
+    });
+    ctx.instrs.push(IrInstr::AddI32 {
+        dst: next_index_reg,
+        lhs: index_reg,
+        rhs: one_reg,
+    });
+    ctx.instrs.push(IrInstr::StoreVar {
+        name: index_name,
+        src: next_index_reg,
     });
     ctx.instrs.push(IrInstr::Jmp { label: test_label });
     ctx.instrs.push(IrInstr::Label { name: end_label });
@@ -6487,6 +6684,7 @@ fn lower_loop_expr_stmt(
                 invariants_result_symbol: None,
                 instrs: core::mem::take(out),
                 ownership_events: Vec::new(),
+                impls: Vec::new(),
             };
             let result = lower_stmt(
                 stmt_id,
@@ -7052,6 +7250,7 @@ struct LoweringCtx {
     invariants_result_symbol: Option<SymbolId>,
     instrs: Vec<IrInstr>,
     ownership_events: Vec<OwnershipPathEvent>,
+    impls: Vec<sm_front::ImplDecl>,
 }
 
 #[derive(Debug, Clone)]
@@ -7069,6 +7268,7 @@ impl LoweringCtx {
         ensures_result_symbol: Option<SymbolId>,
         invariants: Vec<ExprId>,
         invariants_result_symbol: Option<SymbolId>,
+        impl_list: &[sm_front::ImplDecl],
     ) -> Self {
         Self {
             next_reg: 0,
@@ -7085,6 +7285,7 @@ impl LoweringCtx {
             invariants_result_symbol,
             instrs: Vec::new(),
             ownership_events: Vec::new(),
+            impls: impl_list.to_vec(),
         }
     }
 
@@ -7358,6 +7559,7 @@ mod opt_tests {
             &fn_table,
             &record_table,
             &adt_table,
+            &program.impls,
         )
         .expect("function should lower");
         (program, lowered.primary)
@@ -8470,10 +8672,10 @@ mod opt_tests {
     }
 
     #[test]
-    fn compile_program_with_explicit_iterable_impl_still_rejects_dispatch_gap() {
+    fn compile_program_lowers_explicit_iterable_impl_dispatch() {
         let src = r#"
             trait Iterable {
-                fn next(self: Numbers) -> Option(i32);
+                fn next(self: Self, index: i32) -> Option(i32);
             }
 
             record Numbers {
@@ -8481,7 +8683,58 @@ mod opt_tests {
             }
 
             impl Iterable for Numbers {
-                fn next(self: Numbers) -> Option(i32) {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    if index == 0 {
+                        return Option::Some(0);
+                    }
+                    if index == 1 {
+                        return Option::Some(1);
+                    }
+                    if index == 2 {
+                        return Option::Some(index);
+                    }
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { current: 0 };
+                for value in numbers {
+                    let _ = value;
+                }
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("explicit Iterable impl loop should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Call { name, args, .. } if name == "__impl::Iterable::Numbers::next" && args.len() == 2
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AdtTag { adt_name, .. } if adt_name == "Option"
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::AdtGet { adt_name, index, .. } if adt_name == "Option" && *index == 0
+        )));
+    }
+
+    #[test]
+    fn compile_program_rejects_explicit_iterable_impl_with_wrong_contract() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self) -> Option(i32) {
                     return Option::None;
                 }
             }
@@ -8496,16 +8749,17 @@ mod opt_tests {
         "#;
 
         let err = compile_program_to_ir(src)
-            .expect_err("explicit Iterable impl execution must stay deferred");
-        assert!(err.message.contains("explicit `Iterable` impls is still deferred"));
-        assert!(err.message.contains("Iterable"));
+            .expect_err("wrong executable Iterable contract must reject");
+        assert!(err
+            .message
+            .contains("fn next(self: Self, index: i32) -> Option(Item)"));
     }
 
     #[test]
     fn compile_program_lowers_impl_methods_to_internal_functions() {
         let src = r#"
             trait Iterable {
-                fn next(self: Numbers) -> Option(i32);
+                fn next(self: Self, index: i32) -> Option(i32);
             }
 
             record Numbers {
@@ -8513,7 +8767,8 @@ mod opt_tests {
             }
 
             impl Iterable for Numbers {
-                fn next(self: Numbers) -> Option(i32) {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = index;
                     return Option::None;
                 }
             }

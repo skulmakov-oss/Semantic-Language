@@ -400,12 +400,14 @@ Current v0 range-literal limits:
   `Iterable` owner-layer loop surface
 - built-in `Sequence(type)` collections now execute through the current
   first-wave iterable loop path on `main`
-- explicit user-defined `Iterable` impl dispatch is still not executable in the
-  current slice
+- direct record `Iterable` impl dispatch now executes on current `main` when the
+  impl exposes `fn next(self: Self, index: i32) -> Option(Item)`
 - `Self` is admitted only in trait method signatures and impl method type
   positions on current `main`
 - `Self` outside trait/impl method type positions is not part of the stable
   syntax contract
+- ADT/schema iterable dispatch and indirect iterable projection are not part of
+  the current syntax contract
 - descending/custom-step/general iterable range forms are not yet part of the
   stable syntax contract
 

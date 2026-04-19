@@ -339,12 +339,14 @@ Current v0 limit:
   as an owner-layer desugaring toward the named `Iterable` contract
 - built-in `Sequence(type)` values now execute through the current first-wave
   iterable loop path on `main`
-- explicit user-defined `Iterable` impl dispatch is still deferred beyond the
-  current built-in Sequence/range slice
+- direct record `Iterable` impls now execute through the same loop driver when
+  they expose `fn next(self: Self, index: i32) -> Option(Item)`
 - trait-side `Self` now denotes the impl-anchored receiver contract only inside
   trait method signatures and impl method type positions
 - `Self` does not widen the general executable type surface beyond that narrow
   trait/impl contract
+- ADT/schema iterable dispatch and indirect iterable projection remain outside
+  the current stable contract
 - descending ranges, custom step values, `continue`, and a general iterable
   subsystem are not yet part of the stable contract
 - `for ... in range` does not widen the public operator surface to general

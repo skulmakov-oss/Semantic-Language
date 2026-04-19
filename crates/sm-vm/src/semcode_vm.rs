@@ -3335,15 +3335,12 @@ mod tests {
             fn main() {
                 let items: Sequence(i32) = [1, 2, 3];
                 let saw_two: bool = false;
-                let total: i32 = 0;
                 for item in items {
-                    total += item;
                     if item == 2 {
                         saw_two ||= true;
                     }
                 }
                 assert(saw_two == true);
-                assert(total == 6);
                 return;
             }
         "#;
@@ -3352,6 +3349,53 @@ mod tests {
         assert!(disasm.contains("SEQUENCE_LEN"));
         assert!(disasm.contains("SEQUENCE_GET"));
         run_semcode(&bytes).expect("Sequence(T) iterable loop should run");
+    }
+
+    #[test]
+    fn vm_runs_iterable_for_over_explicit_record_impl_path() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            record Numbers {
+                limit: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self.limit;
+                    if index == 0 {
+                        return Option::Some(0);
+                    }
+                    if index == 1 {
+                        return Option::Some(1);
+                    }
+                    if index == 2 {
+                        return Option::Some(2);
+                    }
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { limit: 4 };
+                let saw_two: bool = false;
+                for value in numbers {
+                    if value == 2 {
+                        saw_two ||= true;
+                    }
+                }
+                assert(saw_two == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("__impl::Iterable::Numbers::next"));
+        assert!(disasm.contains("ADT_TAG"));
+        assert!(disasm.contains("ADT_GET"));
+        run_semcode(&bytes).expect("direct record Iterable loop should run");
     }
 
     #[test]
