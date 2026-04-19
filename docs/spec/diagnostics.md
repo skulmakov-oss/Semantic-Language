@@ -150,8 +150,10 @@ Current message families include:
 - closure equality is not part of the current `M8.4` first-wave surface
 - for-range requires `i32` range expression
 - iterable `for x in collection` loop over a non-iterable value
-- iterable `for x in collection` loop that relies on explicit user-defined
-  `Iterable` impl dispatch beyond the current built-in Sequence/range slice
+- iterable `for x in collection` loop whose explicit `Iterable` impl does not
+  satisfy the executable contract `fn next(self: Self, index: i32) -> Option(Item)`
+- iterable `for x in collection` loop that relies on ADT/schema or indirect
+  explicit `Iterable` dispatch beyond the direct-record slice on current `main`
 - duplicate record declaration
 - duplicate schema declaration
 - top-level record/function name collision

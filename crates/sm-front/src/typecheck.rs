@@ -17,11 +17,15 @@ fn fx_measured_arithmetic_gap_message() -> &'static str {
 }
 
 fn iterable_for_gap_message() -> &'static str {
-    "iterable 'for x in collection' currently requires built-in Sequence(type) or i32 range; explicit `Iterable` dispatch is deferred"
+    "iterable 'for x in collection' currently requires built-in Sequence(type), i32 range, or a direct record `Iterable` impl shaped as `fn next(self: Self, index: i32) -> Option(Item)`"
 }
 
-fn iterable_for_impl_gap_message() -> &'static str {
-    "iterable 'for x in collection' source admission is open, but executable loop typing for explicit `Iterable` impls is still deferred after the built-in Sequence/range slice"
+fn iterable_for_impl_contract_message() -> &'static str {
+    "iterable 'for x in collection' over an explicit `Iterable` impl currently requires direct record contract `fn next(self: Self, index: i32) -> Option(Item)`"
+}
+
+fn iterable_for_impl_out_of_scope_message() -> &'static str {
+    "iterable 'for x in collection' executable explicit `Iterable` dispatch currently supports direct record impls only; ADT/schema dispatch stays out of scope"
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
@@ -44,7 +48,7 @@ fn is_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> bool {
 
 fn has_explicit_iterable_impl(
     ty: &Type,
-    arena: &AstArena,
+    trait_name: SymbolId,
     impl_list: &[ImplDecl],
 ) -> Result<bool, FrontendError> {
     let nominal = match ty {
@@ -52,11 +56,53 @@ fn has_explicit_iterable_impl(
         _ => return Ok(false),
     };
     for imp in impl_list {
-        if imp.for_type == nominal && resolve_symbol_name(arena, imp.trait_name)? == "Iterable" {
+        if imp.for_type == nominal && imp.trait_name == trait_name {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn resolve_explicit_iterable_loop_item_type(
+    iterable_ty: &Type,
+    trait_name: SymbolId,
+    arena: &AstArena,
+    impl_list: &[ImplDecl],
+) -> Result<Option<Type>, FrontendError> {
+    let nominal = match iterable_ty {
+        Type::Record(name) => *name,
+        _ => return Ok(None),
+    };
+    for imp in impl_list {
+        if imp.for_type != nominal || imp.trait_name != trait_name {
+            continue;
+        }
+        let method = imp
+            .methods
+            .iter()
+            .find(|method| resolve_symbol_name(arena, method.name).ok() == Some("next"))
+            .ok_or(FrontendError {
+                pos: 0,
+                message: iterable_for_impl_contract_message().to_string(),
+            })?;
+        if method.params.len() != 2
+            || method.params[0].1 != Type::Record(nominal)
+            || method.params[1].1 != Type::I32
+        {
+            return Err(FrontendError {
+                pos: 0,
+                message: iterable_for_impl_contract_message().to_string(),
+            });
+        }
+        let Type::Option(item_ty) = &method.ret else {
+            return Err(FrontendError {
+                pos: 0,
+                message: iterable_for_impl_contract_message().to_string(),
+            });
+        };
+        return Ok(Some(item_ty.as_ref().clone()));
+    }
+    Ok(None)
 }
 
 fn match_unit_lift(expected: &Type, actual: &Type, expr_id: ExprId, arena: &AstArena) -> bool {
@@ -1263,9 +1309,47 @@ fn check_stmt(
                 body_env.pop_scope();
                 return Ok(());
             }
+            if let Some(item_ty) = resolve_explicit_iterable_loop_item_type(
+                &iterable_ty,
+                desugaring.trait_name,
+                arena,
+                impl_list,
+            )? {
+                let mut body_env = env.clone();
+                body_env.push_scope();
+                body_env.insert_const(*name, item_ty);
+                for stmt in body {
+                    check_stmt(
+                        *stmt,
+                        arena,
+                        &mut body_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                        impl_list,
+                    )?;
+                }
+                body_env.pop_scope();
+                return Ok(());
+            }
             let detail = match &iterable_ty {
-                _ if has_explicit_iterable_impl(&iterable_ty, arena, impl_list)? => {
-                    iterable_for_impl_gap_message().to_string()
+                Type::Adt(_) if has_explicit_iterable_impl(
+                    &iterable_ty,
+                    desugaring.trait_name,
+                    impl_list,
+                )? =>
+                {
+                    iterable_for_impl_out_of_scope_message().to_string()
+                }
+                _ if has_explicit_iterable_impl(
+                    &iterable_ty,
+                    desugaring.trait_name,
+                    impl_list,
+                )? =>
+                {
+                    iterable_for_impl_contract_message().to_string()
                 }
                 _ => iterable_for_gap_message().to_string(),
             };
@@ -3803,7 +3887,7 @@ mod tests {
         let err = typecheck_source(src).expect_err("non-iterable executable for input must reject");
         assert!(err
             .message
-            .contains("currently requires built-in Sequence(type) or i32 range"));
+            .contains("currently requires built-in Sequence(type), i32 range"));
     }
 
     #[test]
@@ -3895,7 +3979,7 @@ mod tests {
     fn explicit_iterable_impl_surface_typechecks_without_loop_execution() {
         let src = r#"
             trait Iterable {
-                fn next(self: Numbers) -> Option(i32);
+                fn next(self: Self, index: i32) -> Option(i32);
             }
 
             record Numbers {
@@ -3903,7 +3987,8 @@ mod tests {
             }
 
             impl Iterable for Numbers {
-                fn next(self: Numbers) -> Option(i32) {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = index;
                     return Option::None;
                 }
             }
@@ -3917,10 +4002,10 @@ mod tests {
     }
 
     #[test]
-    fn iterable_for_with_explicit_nominal_impl_reports_source_gap() {
+    fn iterable_for_with_explicit_record_impl_typechecks() {
         let src = r#"
             trait Iterable {
-                fn next(self: Numbers) -> Option(i32);
+                fn next(self: Self, index: i32) -> Option(i32);
             }
 
             record Numbers {
@@ -3928,7 +4013,45 @@ mod tests {
             }
 
             impl Iterable for Numbers {
-                fn next(self: Numbers) -> Option(i32) {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    if index == 0 {
+                        return Option::Some(0);
+                    }
+                    if index == 1 {
+                        return Option::Some(1);
+                    }
+                    if index == 2 {
+                        return Option::Some(index);
+                    }
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { current: 0 };
+                for value in numbers {
+                    let _: i32 = value;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("direct record Iterable loop should typecheck");
+    }
+
+    #[test]
+    fn iterable_for_with_wrong_iterable_contract_rejects() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self) -> Option(i32) {
                     return Option::None;
                 }
             }
@@ -3942,12 +4065,42 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("iterable loop execution must still reject here");
+        let err = typecheck_source(src).expect_err("wrong executable Iterable contract must reject");
         assert!(err
             .message
-            .contains("explicit `Iterable` impls is still deferred"));
-        assert!(err.message.contains("Iterable"));
+            .contains("fn next(self: Self, index: i32) -> Option(Item)"));
+    }
+
+    #[test]
+    fn iterable_for_with_explicit_adt_impl_reports_out_of_scope() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            enum Numbers {
+                Wrap(i32),
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self;
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers::Wrap(0);
+                for value in numbers {
+                    let _ = value;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("ADT Iterable loop must stay out of scope");
+        assert!(err.message.contains("direct record impls only"));
     }
 
     #[test]

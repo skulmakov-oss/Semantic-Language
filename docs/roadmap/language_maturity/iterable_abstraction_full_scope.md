@@ -113,8 +113,7 @@ that iterable abstraction is admitted yet on current `main`.
 - built-in executable iterable slice for `Sequence(T)` and range values
 - explicit typecheck/lowering agreement that built-in iterable loops run on
   current `main`
-- explicit diagnostics that user-defined `Iterable` impl dispatch is still
-  deferred
+- explicit diagnostics for wrong-shape or out-of-scope iterable impl dispatch
 
 ### Wave 4 — Explicit Impl Dispatch
 
@@ -128,8 +127,8 @@ that iterable abstraction is admitted yet on current `main`.
 - continue the loop on `Option::Some(item)` and terminate on `Option::None`
 - do not introduce hidden mutable iterator state, host callbacks, or dynamic
   dispatch in this first executable user-defined slice
-- executable lowering/runtime wiring for explicit user-defined `Iterable` impls
-  lands only after that contract is frozen
+- executable lowering/runtime wiring for direct record `Iterable` impls now
+  lands on current `main`
 
 ### Wave 4A — Impl Method Executable Contract
 
@@ -139,8 +138,7 @@ that iterable abstraction is admitted yet on current `main`.
   receiver contract on current `main`
 - this prerequisite is now complete and removes the earlier dead owner-layer
   gap for trait/impl method bodies
-- this does not by itself claim user-visible iterable loop execution over
-  explicit impls yet
+- this prerequisite now feeds the landed direct-record executable dispatch slice
 
 ### Wave 5 — Freeze
 
@@ -186,6 +184,8 @@ Approved direction for the next step:
 - `Option::None` terminates the loop
 - the built-in `Sequence(T)` / range path remains the already-landed separate
   executable slice on current `main`
+- direct record `Iterable` impls now execute on current `main` through this
+  exact `next(self: Self, index: i32) -> Option(Item)` contract
 
 Still out of scope for this first explicit-dispatch slice:
 
@@ -203,6 +203,8 @@ This track is done only when:
 - `for x in collection` desugaring, typecheck, and execution agree on one
   deterministic first-wave model
 - `Sequence(T)` and range types both satisfy the `Iterable` contract
+- direct record `Iterable` impls satisfy the first executable user-defined
+  dispatch contract
 - docs/spec/tests describe the same admitted baseline
 - published `v1.1.1` and widened `main` are explicitly distinguished
 
