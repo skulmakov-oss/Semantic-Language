@@ -80,9 +80,11 @@ Current next-focus wave:
 - `M9.3 Iterable Abstraction` in
   `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
 - keep one active language-maturity stream at a time while `M9.3` is in flight
+- the next clean step inside `M9.3` is explicit iterable impl dispatch
+  contract freeze before executable wiring
 - do not widen iterable scope beyond the first-wave `Iterable` contract,
-  `for x in collection` desugaring, and stdlib/typecheck admission defined in
-  the scope doc
+  `for x in collection` desugaring, built-in `Sequence(T)` / range execution,
+  and the explicit dispatch contract defined in the scope doc
 
 Foundational work already in place:
 

@@ -118,8 +118,27 @@ that iterable abstraction is admitted yet on current `main`.
 
 ### Wave 4 — Explicit Impl Dispatch
 
-- executable lowering for explicit user-defined `Iterable` impls
-- honest type/value contract for loop item typing from the impl surface
+- freeze the executable contract for explicit user-defined `Iterable` impl
+  dispatch before code changes
+- require one deterministic trait method shape for the first executable
+  user-defined slice:
+  `fn next(self: Collection, index: i32) -> Option(Item)`
+- treat `index` as the zero-based loop-driver cursor supplied by the lowered
+  `for x in collection` execution path
+- continue the loop on `Option::Some(item)` and terminate on `Option::None`
+- do not introduce hidden mutable iterator state, host callbacks, or dynamic
+  dispatch in this first executable user-defined slice
+- executable lowering/runtime wiring for explicit user-defined `Iterable` impls
+  lands only after that contract is frozen
+
+### Wave 4A — Impl Method Executable Contract
+
+- impl method bodies typecheck on current `main`
+- impl methods lower into executable internal functions on current `main`
+- this prerequisite is now complete and removes the earlier dead owner-layer
+  gap for trait/impl method bodies
+- this does not by itself claim user-visible iterable loop execution over
+  explicit impls yet
 
 ### Wave 5 — Freeze
 
@@ -131,8 +150,10 @@ that iterable abstraction is admitted yet on current `main`.
 2. PR 2: owner-layer `Iterable` trait surface and desugaring ownership
 3. PR 3: parser/sema/type admission for `for x in collection`
 4. PR 4: built-in executable iterable slice for `Sequence(T)` and ranges
-5. PR 5: explicit user-defined `Iterable` impl dispatch
-6. PR 6: freeze and close-out
+5. PR 5: impl method executable contract prerequisite
+6. PR 6: explicit iterable impl dispatch contract freeze
+7. PR 7: explicit user-defined `Iterable` impl dispatch
+8. PR 8: freeze and close-out
 
 ## Initial First-Wave Reading
 
@@ -146,6 +167,31 @@ The first-wave iterable contract is intentionally narrow:
 
 That keeps the track additive over the current concrete collection surfaces
 without opening a full lazy-evaluation or combinator system in one step.
+
+## Explicit Dispatch Contract Freeze
+
+The next executable user-defined iterable slice must stay narrow and
+deterministic.
+
+Approved direction for the next step:
+
+- explicit user-defined iterable loops do not use hidden iterator objects or
+  host-managed mutable iteration state
+- the loop driver owns the cursor and passes it explicitly as `index: i32`
+- the executable trait hook is:
+  `fn next(self: Collection, index: i32) -> Option(Item)`
+- `Option::Some(item)` yields one loop item and increments the cursor
+- `Option::None` terminates the loop
+- the built-in `Sequence(T)` / range path remains the already-landed separate
+  executable slice on current `main`
+
+Still out of scope for this first explicit-dispatch slice:
+
+- ADT/schema-specific iteration contracts
+- hidden mutable iterator cells
+- dynamic trait dispatch
+- lazy combinator pipelines
+- non-`i32` driver cursors
 
 ## Acceptance Reading
 
