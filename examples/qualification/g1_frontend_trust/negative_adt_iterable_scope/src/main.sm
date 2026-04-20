@@ -1,0 +1,23 @@
+trait Iterable {
+    fn next(self: Self, index: i32) -> Option(i32);
+}
+
+enum Numbers {
+    Wrap(i32),
+}
+
+impl Iterable for Numbers {
+    fn next(self: Self, index: i32) -> Option(i32) {
+        let _ = self;
+        let _ = index;
+        return Option::None;
+    }
+}
+
+fn main() {
+    let numbers: Numbers = Numbers::Wrap(0);
+    for value in numbers {
+        let _ = value;
+    }
+    return;
+}

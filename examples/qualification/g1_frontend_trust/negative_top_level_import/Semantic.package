@@ -1,0 +1,4 @@
+format 1
+package negative_top_level_import
+manifest_dir .
+module_root src
