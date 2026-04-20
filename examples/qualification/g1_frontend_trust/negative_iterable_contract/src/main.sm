@@ -1,0 +1,21 @@
+trait Iterable {
+    fn next(self: Self) -> Option(i32);
+}
+
+record Numbers {
+    current: i32,
+}
+
+impl Iterable for Numbers {
+    fn next(self: Self) -> Option(i32) {
+        return Option::None;
+    }
+}
+
+fn main() {
+    let numbers: Numbers = Numbers { current: 0 };
+    for value in numbers {
+        let _ = value;
+    }
+    return;
+}

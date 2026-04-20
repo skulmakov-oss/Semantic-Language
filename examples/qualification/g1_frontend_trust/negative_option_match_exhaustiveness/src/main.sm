@@ -1,0 +1,10 @@
+fn unwrap(opt: Option(bool)) -> bool {
+    let out: bool = match opt {
+        Option::Some(value) => { value }
+    };
+    return out;
+}
+
+fn main() {
+    return;
+}

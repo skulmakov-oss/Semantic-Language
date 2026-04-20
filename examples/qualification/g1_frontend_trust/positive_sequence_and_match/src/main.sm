@@ -1,0 +1,25 @@
+fn unwrap(opt: Option(bool)) -> bool {
+    let out: bool = match opt {
+        Option::Some(value) => { value }
+        Option::None => { false }
+    };
+    return out;
+}
+
+fn classify(values: Sequence(i32)) -> bool {
+    let saw_retry: bool = false;
+    for value in values {
+        if value == 2 {
+            saw_retry ||= true;
+        }
+    }
+    return saw_retry;
+}
+
+fn main() {
+    let left: bool = unwrap(Option::Some(true));
+    let right: bool = classify([0, 2, 4]);
+    assert(left == true);
+    assert(right == true);
+    return;
+}

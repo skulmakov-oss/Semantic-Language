@@ -1,0 +1,28 @@
+trait Iterable {
+    fn next(self: Self, index: i32) -> Option(i32);
+}
+
+record Numbers {
+    first: i32,
+    second: i32,
+}
+
+impl Iterable for Numbers {
+    fn next(self: Self, index: i32) -> Option(i32) {
+        if index == 0 {
+            return Option::Some(self.first);
+        }
+        if index == 1 {
+            return Option::Some(self.second);
+        }
+        return Option::None;
+    }
+}
+
+fn main() {
+    let numbers: Numbers = Numbers { first: 1, second: 2 };
+    for value in numbers {
+        let _: i32 = value;
+    }
+    return;
+}
