@@ -83,10 +83,10 @@ Current post-`v1` wave:
 
 Current next-focus wave:
 
-- `Units Of Measure Scope` in
-  `docs/roadmap/language_maturity/units_of_measure_scope.md`
-- keep one active language-maturity stream at a time while the first-wave
-  compile-time units contract is in flight
+- `Option and Result Standard Forms Scope` in
+  `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
+- keep one active language-maturity stream at a time while the narrow
+  `Option(T)` / `Result(T, E)` decision checkpoint is being resolved
 - do not widen the frozen source-language bundle without a new track or an
   explicit source-contract amendment
 
