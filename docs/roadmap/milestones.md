@@ -22,6 +22,8 @@
   - current stable-note checkpoint: `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
   - current completed post-stable expansion checkpoint:
     `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+  - current active post-stable units checkpoint:
+    `docs/roadmap/language_maturity/units_of_measure_scope.md`
 - `M3 Platform Formalization`
   - spec bundle
   - stable CLI
