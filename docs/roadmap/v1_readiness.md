@@ -31,6 +31,9 @@ Current `v1` boundary decision:
 - wider planned host calls are not part of the current `v1` commitment
 - ownership alignment for optimizer, SemCode, and CLI is already implemented in code
 - the active stable `v1.1.1` line is published from `main`
+- the first `Gate 1` qualification cycle is completed and currently supports
+  only a `limited release` decision for the admitted practical-programming
+  contour documented in `reports/g1_release_scope_statement.md`
 
 ## Current Artifact List
 
@@ -118,8 +121,10 @@ The following limits remain explicit and should be treated as release-facing hon
 - the published `v1.1.1` line intentionally excludes the built-in executable
   iterable loop slice, even though current `main` now admits `for x in
   collection` over `Sequence(type)` through canonical `SEQUENCE_LEN` lowering
-  and verified execution under `SEMCOD13`; explicit user-defined `Iterable`
-  impl dispatch remains out of scope for the current slice
+  and verified execution under `SEMCOD13`, plus direct-record user-defined
+  `Iterable` impl dispatch through the admitted
+  `fn next(self: Self, index: i32) -> Option(Item)` contract; broader
+  ADT/schema/generalized iterable dispatch remains out of scope
 - the published `v1.1.1` line intentionally excludes the first-wave first-class
   closure surface, even though current `main` now admits `Closure(T -> U)`,
   standalone closure literals, immutable capture, direct invocation, and
@@ -170,8 +175,9 @@ Current highest-signal remaining work after the first stable `v1.1.1` tag:
 2. rerun representative asset smoke for every forward release tag
 3. keep narrow `v1` limits explicit unless a separate scope decision promotes them
 4. run the internal Gate 1 qualification program in
-   `docs/roadmap/release_qualification/gate1_protocol.md` before making any
-   broader release-readiness claim
+   `docs/roadmap/release_qualification/gate1_protocol.md`; use
+   `reports/g1_release_scope_statement.md` as the current authority and rerun
+   Gate 1 before widening any broader release-readiness claim
 5. treat any future widening as a forward versioned release, not silent drift
 
 ## Contract Rule

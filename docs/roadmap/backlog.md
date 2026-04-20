@@ -97,10 +97,20 @@ Current qualification wave:
 
 - `Gate 1 Release Qualification Protocol` in
   `docs/roadmap/release_qualification/gate1_protocol.md`
-- run `Q1` through `Q5` only after this protocol is frozen
+- the first `Gate 1` cycle is now completed through:
+  - `reports/g1_real_program_trial.md`
+  - `reports/g1_frontend_trust.md`
+  - `reports/g1_execution_integrity.md`
+  - `reports/g1_benchmark_baseline.md`
+  - `reports/g1_surface_expressiveness.md`
+  - `reports/g1_release_scope_statement.md`
+- the current Gate 1 decision state is `limited release` for the admitted
+  narrow practical-programming contour
 - keep UI out of the first qualification contour unless UI is explicitly
-  admitted into the release scope
+  admitted into a future release scope
 - do not treat landed-on-`main` behavior as automatically release-promised
+- rerun or amend Gate 1 only through a new explicit qualification cycle if the
+  admitted release contour is widened
 
 Foundational work already in place:
 
