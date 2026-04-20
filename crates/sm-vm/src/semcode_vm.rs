@@ -295,7 +295,9 @@ pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
         spec.rev,
         spec.capabilities
     ));
-    for f in functions.values() {
+    let mut ordered = functions.values().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.name.cmp(&right.name));
+    for f in ordered {
         out.push_str(&format!(
             "fn {}: code={} bytes, strings={}, debug={}\n",
             f.name,
