@@ -93,6 +93,15 @@ Current next-focus wave:
 - do not widen the frozen source-language bundle without a new track or an
   explicit source-contract amendment
 
+Current qualification wave:
+
+- `Gate 1 Release Qualification Protocol` in
+  `docs/roadmap/release_qualification/gate1_protocol.md`
+- run `Q1` through `Q5` only after this protocol is frozen
+- keep UI out of the first qualification contour unless UI is explicitly
+  admitted into the release scope
+- do not treat landed-on-`main` behavior as automatically release-promised
+
 Foundational work already in place:
 
 - repository discipline and architecture baseline
