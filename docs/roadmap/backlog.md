@@ -49,6 +49,9 @@ Current post-`v1` wave:
 - `M9.3 Iterable Abstraction` is now completed as first-wave baseline history
   and is scoped in
   `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
+- `Source Language Contract Freeze` is completed and now lives as frozen
+  baseline history in
+  `docs/roadmap/language_maturity/source_language_contract.md`
 - `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
   frozen baseline history in `docs/roadmap_next.md`
 - the retained non-owning TON618 compatibility perimeter is completed and now
@@ -80,12 +83,12 @@ Current post-`v1` wave:
 
 Current next-focus wave:
 
-- `Source Language Contract Freeze` in
-  `docs/roadmap/language_maturity/source_language_contract.md`
-- keep one active language-maturity stream at a time while source-level
-  contract freeze is in flight
-- do not reopen iterable scope beyond the completed first-wave `Iterable`
-  contract without a new track
+- `Units Of Measure Scope` in
+  `docs/roadmap/language_maturity/units_of_measure_scope.md`
+- keep one active language-maturity stream at a time while the first-wave
+  compile-time units contract is in flight
+- do not widen the frozen source-language bundle without a new track or an
+  explicit source-contract amendment
 
 Foundational work already in place:
 
