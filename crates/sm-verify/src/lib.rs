@@ -219,19 +219,6 @@ pub fn verify_semcode(bytes: &[u8]) -> Result<VerifiedProgram, RejectReport> {
         ));
     }
 
-    if header.capabilities & CAP_OWNERSHIP_FIELD_PATHS != 0
-        && !pending_functions
-            .iter()
-            .any(|function| function.has_record_field_ownership)
-    {
-        diagnostics.push(diag(
-            VerificationCode::InvalidOwnershipSection,
-            None,
-            None,
-            "header advertises record-field ownership transport but no Field(SymbolId) path is present",
-        ));
-    }
-
     let known_functions = pending_functions
         .iter()
         .map(|function| function.verified.name.as_str())
@@ -521,7 +508,6 @@ fn verify_function_code(
         },
         call_targets,
         has_ownership_section,
-        has_record_field_ownership: ownership_usage.has_record_field_ownership,
     })
 }
 
@@ -1085,7 +1071,6 @@ struct PendingVerifiedFunction {
     verified: VerifiedFunction,
     call_targets: Vec<(usize, String)>,
     has_ownership_section: bool,
-    has_record_field_ownership: bool,
 }
 
 #[cfg(feature = "std")]
@@ -1564,6 +1549,33 @@ mod tests {
         let verified = verify_semcode(&bytes).expect("verify");
         assert_eq!(verified.header.rev, 13);
         assert_eq!(verified.functions.len(), 1);
+    }
+
+    #[test]
+    fn verifier_accepts_v13_program_without_record_field_ownership_payload() {
+        let src = r#"
+            fn saw_retry(values: Sequence(i32)) -> bool {
+                let found: bool = false;
+                for value in values {
+                    if value == 2 {
+                        found ||= true;
+                    }
+                }
+                return found;
+            }
+
+            fn main() {
+                let values: Sequence(i32) = [2, 9, 4];
+                let found: bool = saw_retry(values);
+                assert(found == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        assert_eq!(&bytes[..MAGIC12.len()], b"SEMCOD13");
+        let verified = verify_semcode(&bytes).expect("verify");
+        assert_eq!(verified.header.rev, 14);
+        assert_eq!(verified.functions.len(), 2);
     }
 
     #[test]
