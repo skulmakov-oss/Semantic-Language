@@ -28,6 +28,30 @@ fn iterable_for_impl_out_of_scope_message() -> &'static str {
     "iterable 'for x in collection' executable explicit `Iterable` dispatch currently supports direct record impls only; ADT/schema dispatch stays out of scope"
 }
 
+fn executable_import_resolution_gap_message() -> &'static str {
+    "top-level executable Import is parsed on current main, but executable module resolution is not implemented yet; only single-file entry programs remain admitted until the executable module entry track lands"
+}
+
+fn executable_import_wave1_out_of_scope_message() -> &'static str {
+    "top-level executable Import currently admits only direct local-path namespace imports in wave1; re-export, wildcard, and selected import forms remain out of scope"
+}
+
+fn validate_executable_imports(program: &Program) -> Result<(), FrontendError> {
+    for import in &program.imports {
+        if import.reexport || import.wildcard || !import.select_items.is_empty() {
+            return Err(FrontendError {
+                pos: 0,
+                message: executable_import_wave1_out_of_scope_message().to_string(),
+            });
+        }
+        return Err(FrontendError {
+            pos: 0,
+            message: executable_import_resolution_gap_message().to_string(),
+        });
+    }
+    Ok(())
+}
+
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
@@ -131,6 +155,7 @@ fn lift_literal_to_expected_type(
 }
 
 pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
+    validate_executable_imports(program)?;
     if program.functions.len() != 1 {
         return Err(FrontendError {
             pos: 0,
@@ -167,6 +192,7 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
 }
 
 pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
+    validate_executable_imports(p)?;
     let table = build_fn_table(p)?;
     let record_table = build_record_table(p)?;
     let adt_table = build_adt_table(p)?;
@@ -219,6 +245,7 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
 pub fn derive_validation_plan_table(
     program: &Program,
 ) -> Result<ValidationPlanTable, FrontendError> {
+    validate_executable_imports(program)?;
     let record_table = build_record_table(program)?;
     let adt_table = build_adt_table(program)?;
     let schema_table = build_schema_table(program)?;
@@ -2427,6 +2454,55 @@ mod tests {
         "#;
 
         typecheck_source(src).expect("fx passthrough surface should typecheck");
+    }
+
+    #[test]
+    fn executable_namespace_import_rejects_with_wave1_gap_message() {
+        let src = r#"
+            Import "helper.sm"
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("top-level executable Import must stay blocked until module resolution lands");
+        assert!(err.message.contains(executable_import_resolution_gap_message()));
+    }
+
+    #[test]
+    fn executable_selected_import_rejects_as_wave1_out_of_scope() {
+        let src = r#"
+            Import "helper.sm" { Foo }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("selected executable import must stay out of scope in wave1");
+        assert!(err
+            .message
+            .contains(executable_import_wave1_out_of_scope_message()));
+    }
+
+    #[test]
+    fn executable_reexport_import_rejects_as_wave1_out_of_scope() {
+        let src = r#"
+            Import pub "helper.sm" { Foo }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("re-export executable import must stay out of scope in wave1");
+        assert!(err
+            .message
+            .contains(executable_import_wave1_out_of_scope_message()));
     }
 
     #[test]

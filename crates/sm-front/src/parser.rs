@@ -4,8 +4,8 @@ use crate::types::{
     BlockExpr, CallArg, CaptureMode, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily,
     Expr, ExprId, FrontendError, Function, IfExpr, IfLetExpr, ImplDecl, IntRangePattern, IterableLoopDesugaring, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
-    RangeExpr, RecordDecl, RecordField,
+    ExecutableImport, ExecutableImportSelectItem, LoopExpr, MatchArm, MatchExpr, MatchExprArm,
+    MatchPattern, NumericLiteral, Program, QuadVal, RangeExpr, RecordDecl, RecordField,
     RecordFieldExpr, RecordInitField, RecordLiteralExpr, RecordPatternItem, RecordPatternTarget,
     RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
     SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr, SequenceLiteral, SequenceType,
@@ -87,6 +87,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
+        let mut imports = Vec::new();
         let mut adts = Vec::new();
         let mut records = Vec::new();
         let mut schemas = Vec::new();
@@ -104,6 +105,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             match self.tokens[i].kind {
+                TokenKind::KwImport => imports.push(self.parse_import_decl()?),
                 TokenKind::KwEnum => adts.push(self.parse_adt_decl()?),
                 TokenKind::KwFn => functions.push(self.parse_function()?),
                 TokenKind::KwRecord => records.push(self.parse_record_decl()?),
@@ -114,7 +116,7 @@ impl<'a> Parser<'a> {
                     return Err(FrontendError {
                         pos: self.tokens[i].pos,
                         message:
-                            "expected top-level 'enum', 'fn', 'impl', 'record', 'schema', 'trait', or role-marked schema declaration"
+                            "expected top-level 'Import', 'enum', 'fn', 'impl', 'record', 'schema', 'trait', or role-marked schema declaration"
                                 .to_string(),
                     });
                 }
@@ -122,12 +124,51 @@ impl<'a> Parser<'a> {
         }
         Ok(Program {
             arena: ::core::mem::take(&mut self.arena),
+            imports,
             adts,
             records,
             schemas,
             functions,
             traits,
             impls,
+        })
+    }
+
+    fn parse_import_decl(&mut self) -> Result<ExecutableImport, FrontendError> {
+        self.expect(TokenKind::KwImport, "expected 'Import'")?;
+        let reexport = self.eat_ident_text("pub");
+        let spec = self.expect_string_literal_text("expected import path string")?;
+        let alias = if self.eat_ident_text("as") {
+            Some(self.expect_symbol()?)
+        } else {
+            None
+        };
+        let wildcard = self.eat(TokenKind::Star);
+        let mut select_items = Vec::new();
+        if self.eat(TokenKind::LBrace) {
+            if !self.check(TokenKind::RBrace) {
+                loop {
+                    let name = self.expect_symbol()?;
+                    let alias = if self.eat_ident_text("as") {
+                        Some(self.expect_symbol()?)
+                    } else {
+                        None
+                    };
+                    select_items.push(ExecutableImportSelectItem { name, alias });
+                    if self.eat(TokenKind::Comma) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBrace, "expected '}' after import select list")?;
+        }
+        Ok(ExecutableImport {
+            spec,
+            alias,
+            reexport,
+            select_items,
+            wildcard,
         })
     }
 
@@ -3178,6 +3219,21 @@ impl<'a> Parser<'a> {
         self.tokens.get(i).map(|t| t.kind == kind).unwrap_or(false)
     }
 
+    fn eat_ident_text(&mut self, text: &str) -> bool {
+        let i = self.next_non_layout_idx();
+        if self
+            .tokens
+            .get(i)
+            .map(|t| t.kind == TokenKind::Ident && t.text == text)
+            .unwrap_or(false)
+        {
+            self.idx = i + 1;
+            true
+        } else {
+            false
+        }
+    }
+
     fn eat(&mut self, kind: TokenKind) -> bool {
         let i = self.next_non_layout_idx();
         if self.tokens.get(i).map(|t| t.kind == kind).unwrap_or(false) {
@@ -3233,6 +3289,18 @@ impl<'a> Parser<'a> {
             Err(FrontendError {
                 pos: self.pos(),
                 message: "expected identifier".to_string(),
+            })
+        }
+    }
+
+    fn expect_string_literal_text(&mut self, msg: &str) -> Result<String, FrontendError> {
+        if self.check(TokenKind::String) {
+            let token = self.advance().text;
+            Ok(token.trim_matches('"').to_string())
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: msg.to_string(),
             })
         }
     }
@@ -3403,6 +3471,60 @@ fn main() { return; }
             panic!("expected desugared return statement");
         };
         assert!(matches!(program.arena.expr(*value), Expr::Var(_)));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_top_level_namespace_import() {
+        let src = r#"
+Import "helper.sm"
+
+fn main() { return; }
+        "#;
+
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
+        assert_eq!(program.imports.len(), 1);
+        let import = &program.imports[0];
+        assert_eq!(import.spec, "helper.sm");
+        assert_eq!(import.alias, None);
+        assert!(!import.reexport);
+        assert!(!import.wildcard);
+        assert!(import.select_items.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_preserves_import_alias_and_select_items() {
+        let src = r#"
+Import "helper.sm" as Helpers { Foo, Bar as Baz }
+
+fn main() { return; }
+        "#;
+
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
+        assert_eq!(program.imports.len(), 1);
+        let import = &program.imports[0];
+        assert_eq!(import.spec, "helper.sm");
+        assert_eq!(
+            import.alias.map(|sym| program.arena.symbol_name(sym).to_string()),
+            Some("Helpers".to_string())
+        );
+        assert_eq!(import.select_items.len(), 2);
+        assert_eq!(
+            program.arena.symbol_name(import.select_items[0].name),
+            "Foo"
+        );
+        assert_eq!(import.select_items[0].alias, None);
+        assert_eq!(
+            program.arena.symbol_name(import.select_items[1].name),
+            "Bar"
+        );
+        assert_eq!(
+            import.select_items[1]
+                .alias
+                .map(|sym| program.arena.symbol_name(sym).to_string()),
+            Some("Baz".to_string())
+        );
     }
 
     #[test]

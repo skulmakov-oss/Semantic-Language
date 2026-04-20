@@ -68,9 +68,9 @@ Evidence:
 
 - `reports/g1_real_program_trial.md` marked the module-based helper split as
   `blocked`
-- `reports/g1_frontend_trust.md` confirmed the parser still rejects top-level
-  `Import` on this executable path with deterministic but trust-reducing
-  diagnostics
+- `reports/g1_frontend_trust.md` confirmed the current wave1 executable import
+  contract still rejects the selected-import module helper path with
+  deterministic but trust-reducing diagnostics
 
 This matters because a language can be technically executable while still
 failing a practical-authoring gate. That is exactly the current situation for
@@ -81,7 +81,8 @@ multi-file executable programs on `main`.
 Current trust-reducing friction that does not break the admitted contour, but
 still matters for practical readiness:
 
-- module-based executable entry is blocked at the parser boundary
+- module-based executable entry is blocked at the current executable module-entry
+  boundary
 - CLI-style programs remain core-only rather than fully user-facing
 - integer arithmetic ergonomics still show rough edges, as seen in the `i32`
   `+=` probe noted in `Q1`

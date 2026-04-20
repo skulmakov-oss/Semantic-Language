@@ -98,13 +98,14 @@ Fixture:
 
 Observed diagnostic:
 
-- contains `expected top-level`
+- contains `top-level executable Import currently admits only direct local-path namespace imports in wave1`
 
 Assessment:
 
 - this is deterministic
 - this is also a real trust problem, because ordinary module-based executable
-  authoring is still blocked at the parser boundary on current `main`
+  authoring is still blocked at the executable module-entry boundary on current
+  `main`
 
 Verdict:
 
@@ -197,8 +198,8 @@ Trusted zones on current `main`:
 
 Still trust-reducing zones:
 
-- ordinary module/import executable entry remains blocked by the current parser
-  top-level contract
+- ordinary module/import executable entry remains blocked by the current wave1
+  executable import contract
 - this is deterministic, but it means source-level modular authoring is not yet
   trustworthy as a practical executable path
 

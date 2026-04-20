@@ -24,11 +24,16 @@ The current Rust-like executable surface is a deterministic function program.
 
 Current rules:
 
-- top-level source items currently include nominal `record`, compile-time-only
-  `schema`, and executable function declarations
+- top-level source items currently include executable `Import` directives,
+  nominal `record`, compile-time-only `schema`, and executable function
+  declarations
 - `record` declarations contribute nominal type identity but are not themselves executable entrypoints
 - `schema` declarations contribute compile-time contract metadata only and are
   not executable entrypoints or value families
+- top-level executable `Import` directives are parsed and preserved on current
+  `main`, but ordinary executable module resolution remains a narrower
+  follow-up track rather than part of the already-qualified single-file
+  contour
 - execution begins at `fn main()`
 - `main` must currently have signature `fn main()`
 - there is no dynamic entrypoint discovery or module-level executable code

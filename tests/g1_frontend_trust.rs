@@ -35,7 +35,7 @@ fn g1_frontend_negative_suite_reports_expected_diagnostics() {
     let cases = [
         (
             "examples/qualification/g1_frontend_trust/negative_top_level_import/src/main.sm",
-            "expected top-level",
+            "top-level executable Import currently admits only direct local-path namespace imports in wave1",
         ),
         (
             "examples/qualification/g1_frontend_trust/negative_iterable_contract/src/main.sm",

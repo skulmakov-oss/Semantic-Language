@@ -45,7 +45,15 @@ fn g1_data_audit_record_iterable_checks_and_runs() {
 fn g1_module_helpers_program_is_blocked() {
     let rel = "examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm";
     let check_err = cli_err("check", rel);
-    assert!(check_err.contains("expected top-level"));
+    assert!(
+        check_err.contains(
+            "top-level executable Import currently admits only direct local-path namespace imports in wave1"
+        )
+    );
     let run_err = cli_err("run", rel);
-    assert!(run_err.contains("expected top-level"));
+    assert!(
+        run_err.contains(
+            "top-level executable Import currently admits only direct local-path namespace imports in wave1"
+        )
+    );
 }
