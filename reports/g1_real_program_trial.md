@@ -130,13 +130,13 @@ Observed behavior:
 
 - `smc check` rejects the entry module
 - `smc run` rejects the entry module
-- current parser surface reports top-level `Import` as invalid in this
+- current wave1 executable import surface rejects selected import form in this
   executable program path
 
 Observed blocking surface:
 
 ```text
-expected top-level 'enum', 'fn', 'impl', 'record', 'schema', 'trait', or role-marked schema declaration
+top-level executable Import currently admits only direct local-path namespace imports in wave1; re-export, wildcard, and selected import forms remain out of scope
 ```
 
 Verdict:

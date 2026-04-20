@@ -756,9 +756,25 @@ pub struct ValidationPlan {
     pub checks: Vec<ValidationCheck>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutableImportSelectItem {
+    pub name: SymbolId,
+    pub alias: Option<SymbolId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutableImport {
+    pub spec: String,
+    pub alias: Option<SymbolId>,
+    pub reexport: bool,
+    pub select_items: Vec<ExecutableImportSelectItem>,
+    pub wildcard: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub arena: AstArena,
+    pub imports: Vec<ExecutableImport>,
     pub adts: Vec<AdtDecl>,
     pub records: Vec<RecordDecl>,
     pub schemas: Vec<SchemaDecl>,

@@ -166,6 +166,7 @@ pub mod frontend {
         }
         Ok(Program {
             arena: ::core::mem::take(&mut p.arena),
+            imports: p.imports,
             adts: p.adts,
             records: p.records,
             schemas: p.schemas,

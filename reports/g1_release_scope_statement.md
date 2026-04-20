@@ -37,8 +37,8 @@ This is enough to support a narrow release promise.
 
 The evidence does **not** support a broader practical-programming claim because:
 
-- ordinary module-based executable authoring is still blocked at the parser
-  boundary
+- ordinary module-based executable authoring is still blocked at the current
+  executable module-entry boundary
 - practical CLI-style authoring remains incomplete
 - the admitted contour is still narrow enough that broader ecosystem/program
   authoring would be overstated
