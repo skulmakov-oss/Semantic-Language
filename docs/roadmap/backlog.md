@@ -46,6 +46,9 @@ Current post-`v1` wave:
   `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
 - `M9.1 Generics` is now completed as first-wave baseline history and is scoped
   in `docs/roadmap/language_maturity/generics_full_scope.md`
+- `M9.3 Iterable Abstraction` is now completed as first-wave baseline history
+  and is scoped in
+  `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
 - `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
   frozen baseline history in `docs/roadmap_next.md`
 - the retained non-owning TON618 compatibility perimeter is completed and now
@@ -77,14 +80,12 @@ Current post-`v1` wave:
 
 Current next-focus wave:
 
-- `M9.3 Iterable Abstraction` in
-  `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
-- keep one active language-maturity stream at a time while `M9.3` is in flight
-- the next clean step inside `M9.3` is explicit iterable impl dispatch
-  contract freeze before executable wiring
-- do not widen iterable scope beyond the first-wave `Iterable` contract,
-  `for x in collection` desugaring, built-in `Sequence(T)` / range execution,
-  and the explicit dispatch contract defined in the scope doc
+- `Source Language Contract Freeze` in
+  `docs/roadmap/language_maturity/source_language_contract.md`
+- keep one active language-maturity stream at a time while source-level
+  contract freeze is in flight
+- do not reopen iterable scope beyond the completed first-wave `Iterable`
+  contract without a new track
 
 Foundational work already in place:
 

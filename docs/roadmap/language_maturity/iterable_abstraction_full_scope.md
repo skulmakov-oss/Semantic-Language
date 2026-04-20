@@ -1,6 +1,6 @@
 # Iterable Abstraction Full Scope
 
-Status: active M9.3 post-stable subtrack
+Status: completed M9.3 post-stable subtrack
 Related roadmap package:
 `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
 
@@ -58,15 +58,15 @@ its widened contract on `main`.
 
 ## Activation Reading
 
-`M9.3 Iterable Abstraction` is now the active language-maturity stream after
-the completion of:
+`M9.3 Iterable Abstraction` is now completed as first-wave baseline history
+after the completion of:
 
 - `IR v1 contract freeze`
 - `SemCode version discipline`
 - `runtime boundary hardening`
 
-This activation is a scope/governance checkpoint only. It does not itself claim
-that iterable abstraction is admitted yet on current `main`.
+This close-out marks the iterable track as fully landed on current `main`. It no
+longer counts as an active language-maturity stream.
 
 ## Included In This Track
 
@@ -77,6 +77,23 @@ that iterable abstraction is admitted yet on current `main`.
 - range types implementation of `Iterable`
 - user record and ADT definitions may implement `Iterable`
 - docs/spec/tests/compatibility wording for the widened contract
+
+## Current Supported Slice On `main`
+
+- built-in `Sequence(T)` iterable loops execute
+- `i32` range iterable loops execute
+- direct record `Iterable` impls execute when they expose
+  `fn next(self: Self, index: i32) -> Option(Item)`
+- `for x in collection` desugaring, typecheck, lowering, SemCode, verifier, and
+  VM now agree on that first-wave iterable contract
+
+## Current Explicit Out-Of-Scope Slice
+
+- ADT/schema-specific executable iterable dispatch
+- indirect iterable projection or hidden iterator objects
+- non-`i32` loop-driver cursors
+- dynamic trait dispatch
+- lazy iterable combinators
 
 ## Explicit Non-Goals
 
@@ -168,12 +185,11 @@ The first-wave iterable contract is intentionally narrow:
 That keeps the track additive over the current concrete collection surfaces
 without opening a full lazy-evaluation or combinator system in one step.
 
-## Explicit Dispatch Contract Freeze
+## Frozen Explicit Dispatch Contract
 
-The next executable user-defined iterable slice must stay narrow and
-deterministic.
+The executable user-defined iterable slice stays narrow and deterministic.
 
-Approved direction for the next step:
+Frozen contract:
 
 - explicit user-defined iterable loops do not use hidden iterator objects or
   host-managed mutable iteration state
@@ -222,7 +238,7 @@ Even after this first wave lands, the repository still does not claim:
 
 Before closing this track:
 
-- [ ] code/tests are green
-- [ ] spec/docs are synced
-- [ ] public API or golden snapshots are updated if needed
-- [ ] compatibility/release-facing wording is honest
+- [x] code/tests are green
+- [x] spec/docs are synced
+- [x] public API or golden snapshots are updated if needed
+- [x] compatibility/release-facing wording is honest
