@@ -43,6 +43,7 @@ Current v1-facing artifact families in the repository:
   - `docs/roadmap/type_completeness_matrix.md`
   - `docs/roadmap/runtime_validation_policy.md`
   - `docs/roadmap/release_bundle_checklist.md`
+  - `docs/roadmap/release_qualification/gate1_protocol.md`
   - `docs/roadmap/compatibility_statement.md`
   - `docs/roadmap/release_asset_smoke_matrix.md`
   - `docs/roadmap/stable_release_policy.md`
@@ -168,7 +169,10 @@ Current highest-signal remaining work after the first stable `v1.1.1` tag:
 1. keep release-facing docs aligned with the published stable line on `main`
 2. rerun representative asset smoke for every forward release tag
 3. keep narrow `v1` limits explicit unless a separate scope decision promotes them
-4. treat any future widening as a forward versioned release, not silent drift
+4. run the internal Gate 1 qualification program in
+   `docs/roadmap/release_qualification/gate1_protocol.md` before making any
+   broader release-readiness claim
+5. treat any future widening as a forward versioned release, not silent drift
 
 ## Contract Rule
 
