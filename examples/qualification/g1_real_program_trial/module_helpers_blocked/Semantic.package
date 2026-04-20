@@ -1,0 +1,4 @@
+format 1
+package module_helpers_blocked
+manifest_dir .
+module_root src
