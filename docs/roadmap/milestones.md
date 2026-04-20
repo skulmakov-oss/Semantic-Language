@@ -45,6 +45,8 @@
   - `docs/spec/cli.md`
   - current completed post-stable source-contract freeze checkpoint:
     `docs/roadmap/language_maturity/source_language_contract.md`
+  - current active post-qualification executable module entry checkpoint:
+    `docs/roadmap/language_maturity/executable_module_entry_scope.md`
   - current active IR hardening checkpoint:
     `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
   - current active SemCode version-discipline checkpoint:

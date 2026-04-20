@@ -86,12 +86,13 @@ Current post-`v1` wave:
 
 Current next-focus wave:
 
-- no active language-maturity stream is currently open after the completed
-  units and standard-forms close-outs
-- open the next language-maturity stream only through an explicit scope
-  checkpoint
-- do not widen the frozen source-language bundle without a new track or an
-  explicit source-contract amendment
+- `Executable Module Entry Scope` is now the active blocker-removal stream in
+  `docs/roadmap/language_maturity/executable_module_entry_scope.md`
+- this stream exists because `Gate 1` ended in `limited release` rather than a
+  broader practical-programming claim
+- do not widen the frozen source-language bundle beyond this narrow executable
+  module entry track without a new track or an explicit source-contract
+  amendment
 
 Current qualification wave:
 
