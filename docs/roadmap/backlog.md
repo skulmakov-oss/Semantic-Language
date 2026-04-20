@@ -75,6 +75,9 @@ Current post-`v1` wave:
 - the first-wave `fx` arithmetic expansion track is completed and now lives as
   frozen baseline history in
   `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- the first-wave `Option` / `Result` standard-forms track is completed and now
+  lives as frozen baseline history in
+  `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
 - the IR/runtime anti-drift package is completed and now lives as frozen
   baseline history in:
   - `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
@@ -83,10 +86,10 @@ Current post-`v1` wave:
 
 Current next-focus wave:
 
-- `Option and Result Standard Forms Scope` in
-  `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
-- keep one active language-maturity stream at a time while the narrow
-  `Option(T)` / `Result(T, E)` decision checkpoint is being resolved
+- no active language-maturity stream is currently open after the completed
+  units and standard-forms close-outs
+- open the next language-maturity stream only through an explicit scope
+  checkpoint
 - do not widen the frozen source-language bundle without a new track or an
   explicit source-contract amendment
 
