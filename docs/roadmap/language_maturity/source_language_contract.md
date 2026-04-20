@@ -1,6 +1,6 @@
 # Source Language Contract Freeze
 
-Status: proposed
+Status: completed checkpoint
 
 ## Goal
 
@@ -10,21 +10,59 @@ Turn the current Semantic source surface into a single canonical language contra
 
 Semantic already has a strong execution contract. What it still lacks is a fully frozen source-language contract that a user can treat as the primary truth for writing programs.
 
-## Scope
+## Canonical Source Contract Bundle
+
+The current `main` source contract is frozen through the canonical spec bundle
+and its adjacent source-facing companion:
+
+- `docs/spec/syntax.md`
+- `docs/spec/types.md`
+- `docs/spec/source_semantics.md`
+- `docs/spec/diagnostics.md`
+- `docs/spec/modules.md`
+- `docs/LANGUAGE.md`
+
+That bundle is the public truth for the current source surface.
+
+## Included In This Freeze
 
 - define canonical source syntax and grammar boundaries
 - define expression and statement semantics
 - define type rules for `quad`, `bool`, `i32`, `u32`, `f64`, and `fx`
 - define import and export behavior as part of the language contract
 - define user-facing diagnostics expectations for source-level contract violations
+- freeze the current admitted post-stable source surface as documented in the
+  canonical bundle, including:
+  - records
+  - schemas
+  - generics
+  - traits
+  - iterable loops for built-in sequences and direct record `Iterable` impls
 
-## Non-Goals
+## Explicit Non-Goals
 
 - adding new runtime semantics
 - widening the PROMETHEUS boundary
 - changing bytecode or VM behavior beyond what is required to document the source contract honestly
+- claiming support for source features outside the canonical bundle
+- reopening iterable scope beyond the completed first-wave contract
+- widening source ownership, ADT payload, schema migration, or unit semantics
+  beyond what the current spec bundle already states
 
-## Acceptance Criteria
+## Freeze Rules
+
+- `docs/spec/*` remains the source-language contract authority
+- source-surface changes must update the relevant source-contract file in the
+  same PR
+- diagnostics and examples must stay aligned with the documented source surface
+- source docs must not imply runtime, ABI, or VM behavior beyond what the
+  execution-contract specs already publish
+- unsupported source behavior must stay explicit rather than being left to
+  implementation accident
+
+## Done Boundary
+
+This checkpoint is complete because:
 
 - one canonical source-language specification bundle exists and is linked from the main spec index
 - syntax, typing, and module semantics are documented in one intentional contract family
