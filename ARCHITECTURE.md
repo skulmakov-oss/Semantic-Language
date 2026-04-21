@@ -85,13 +85,9 @@ Public rule:
 
 ## Compatibility Perimeter
 
-The repository still retains a compatibility perimeter:
+The repository still retains a narrow legacy compatibility perimeter.
 
-- `src/bin/ton618_core.rs`
-- `crates/ton618-core`
-- `ton618_legacy/`
-
-These are compatibility artifacts, not canonical owners of current public
+These compatibility artifacts are not canonical owners of current public
 contracts.
 
 ## Reading Order
