@@ -98,7 +98,7 @@ Fixture:
 
 Observed diagnostic:
 
-- contains `top-level executable Import currently admits only direct local-path namespace imports in wave1`
+- contains `top-level executable Import currently admits only direct local-path helper-module imports in wave2`
 
 Assessment:
 
@@ -199,7 +199,7 @@ Trusted zones on current `main`:
 Still trust-reducing zones:
 
 - ordinary module/import executable entry remains blocked by the current wave1
-  executable import contract
+  executable import contract for alias/selected/wildcard/re-export forms
 - this is deterministic, but it means source-level modular authoring is not yet
   trustworthy as a practical executable path
 

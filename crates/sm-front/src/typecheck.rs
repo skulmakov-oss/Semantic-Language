@@ -28,26 +28,23 @@ fn iterable_for_impl_out_of_scope_message() -> &'static str {
     "iterable 'for x in collection' executable explicit `Iterable` dispatch currently supports direct record impls only; ADT/schema dispatch stays out of scope"
 }
 
-fn executable_import_resolution_gap_message() -> &'static str {
-    "top-level executable Import is parsed on current main, but executable module resolution is not implemented yet; only single-file entry programs remain admitted until the executable module entry track lands"
-}
-
-fn executable_import_wave1_out_of_scope_message() -> &'static str {
-    "top-level executable Import currently admits only direct local-path namespace imports in wave1; re-export, wildcard, and selected import forms remain out of scope"
+fn executable_import_wave2_out_of_scope_message() -> &'static str {
+    "top-level executable Import currently admits only direct local-path helper-module imports in wave2; alias, selected, wildcard, re-export, and package-qualified import forms remain out of scope"
 }
 
 fn validate_executable_imports(program: &Program) -> Result<(), FrontendError> {
     for import in &program.imports {
-        if import.reexport || import.wildcard || !import.select_items.is_empty() {
+        if import.reexport
+            || import.wildcard
+            || import.alias.is_some()
+            || !import.select_items.is_empty()
+            || import.spec.contains("::")
+        {
             return Err(FrontendError {
                 pos: 0,
-                message: executable_import_wave1_out_of_scope_message().to_string(),
+                message: executable_import_wave2_out_of_scope_message().to_string(),
             });
         }
-        return Err(FrontendError {
-            pos: 0,
-            message: executable_import_resolution_gap_message().to_string(),
-        });
     }
     Ok(())
 }
@@ -2457,7 +2454,7 @@ mod tests {
     }
 
     #[test]
-    fn executable_namespace_import_rejects_with_wave1_gap_message() {
+    fn executable_bare_local_path_import_typechecks_in_wave2() {
         let src = r#"
             Import "helper.sm"
 
@@ -2466,13 +2463,11 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src)
-            .expect_err("top-level executable Import must stay blocked until module resolution lands");
-        assert!(err.message.contains(executable_import_resolution_gap_message()));
+        typecheck_source(src).expect("bare local-path executable import should typecheck in wave2");
     }
 
     #[test]
-    fn executable_selected_import_rejects_as_wave1_out_of_scope() {
+    fn executable_selected_import_rejects_as_wave2_out_of_scope() {
         let src = r#"
             Import "helper.sm" { Foo }
 
@@ -2482,14 +2477,14 @@ mod tests {
         "#;
 
         let err = typecheck_source(src)
-            .expect_err("selected executable import must stay out of scope in wave1");
+            .expect_err("selected executable import must stay out of scope in wave2");
         assert!(err
             .message
-            .contains(executable_import_wave1_out_of_scope_message()));
+            .contains(executable_import_wave2_out_of_scope_message()));
     }
 
     #[test]
-    fn executable_reexport_import_rejects_as_wave1_out_of_scope() {
+    fn executable_reexport_import_rejects_as_wave2_out_of_scope() {
         let src = r#"
             Import pub "helper.sm" { Foo }
 
@@ -2499,10 +2494,27 @@ mod tests {
         "#;
 
         let err = typecheck_source(src)
-            .expect_err("re-export executable import must stay out of scope in wave1");
+            .expect_err("re-export executable import must stay out of scope in wave2");
         assert!(err
             .message
-            .contains(executable_import_wave1_out_of_scope_message()));
+            .contains(executable_import_wave2_out_of_scope_message()));
+    }
+
+    #[test]
+    fn executable_package_qualified_import_rejects_as_wave2_out_of_scope() {
+        let src = r#"
+            Import "math::core.sm"
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("package-qualified executable import must stay out of scope in wave2");
+        assert!(err
+            .message
+            .contains(executable_import_wave2_out_of_scope_message()));
     }
 
     #[test]

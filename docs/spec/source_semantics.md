@@ -30,10 +30,17 @@ Current rules:
 - `record` declarations contribute nominal type identity but are not themselves executable entrypoints
 - `schema` declarations contribute compile-time contract metadata only and are
   not executable entrypoints or value families
-- top-level executable `Import` directives are parsed and preserved on current
-  `main`, but ordinary executable module resolution remains a narrower
-  follow-up track rather than part of the already-qualified single-file
-  contour
+- top-level executable `Import` directives now admit one narrow module-entry
+  slice on current `main`:
+  - direct local-path bare imports such as `Import "helper.sm"`
+  - deterministic helper-module bundling before executable semantic checking
+- the current executable path still does **not** admit:
+  - alias imports
+  - selected imports
+  - wildcard imports
+  - public re-exports
+  - package-qualified executable imports
+  - namespace-qualified executable access
 - execution begins at `fn main()`
 - `main` must currently have signature `fn main()`
 - there is no dynamic entrypoint discovery or module-level executable code
