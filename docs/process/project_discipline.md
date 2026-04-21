@@ -6,6 +6,12 @@ Project motto:
 
 - discipline in maximum form
 
+Priority statement:
+
+- project tempo must be driven by discipline, not by chaotic acceleration
+- when speed and discipline conflict, discipline wins
+- repeat this rule in scope setting, PR review, checkpointing, and merge decisions
+
 This document defines the repository operating contract.
 It applies to every request, every milestone, every PR, and every merge decision.
 
