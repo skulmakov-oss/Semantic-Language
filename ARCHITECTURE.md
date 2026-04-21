@@ -1,42 +1,106 @@
-# Semantic Architecture (Profile 2)
+# Semantic Architecture
 
-Semantic is a strict Rust-like systems language with native quad logic.
+Status: current top-level architecture entrypoint
 
-## Positioning
-- Not a DSL.
-- Not a declarative script format.
-- A systems language where `quad` is a built-in primitive, similar to `bool` in Rust.
+This file is the short architectural map for the current repository.
 
-## Type Core
-- `quad` : `N | F | T | S`
-- `bool`
-- `i32`
-- `u32`
-- `fx` (Q16.16)
+The canonical detailed architecture lives in:
 
-## Quad Operators
-- Unary: `!a`
-- Binary: `a && b`, `a || b`, `a -> b`
-- Equality: `==`, `!=`
+- `docs/architecture/blueprint.md`
+- `docs/architecture/module_ownership_map.md`
+- `docs/architecture/dependency_boundary_rules.md`
+- `docs/spec/index.md`
 
-Rules:
-- `if quad_expr` is forbidden.
-- Explicit compare is required: `if state == T`.
+## System Shape
 
-## Layers
-- **L1 (Human Semantic Layer)**:
-  - Rust-like syntax.
-  - Strict typing.
-  - Minimal constructs: `fn`, `let`, `if/else`, `return`, function calls.
-- **L2 (Machine IR)**:
-  - Register instructions, explicit control flow, no high-level semantics.
-  - Core ops: `LOAD_Q`, `Q_AND`, `Q_OR`, `Q_NOT`, `Q_IMPL`, `CMP_EQ`, `JMP`, `JMP_IF`, `CALL`, `RET`.
+Semantic is a deterministic, contract-driven compiler/runtime system with a
+separate PROMETHEUS integration layer.
 
-## Current frontend module
-- File: `src/frontend.rs`
-- Contains:
-  - EBNF grammar constant.
-  - Lexer.
-  - AST for strict Rust-like profile.
-  - Type checker with explicit `if` bool requirement.
-  - Basic expression lowering into IR instruction enum.
+The repository is split into two architectural products:
+
+- `Semantic Core`
+  - source frontend
+  - semantic analysis
+  - IR and lowering
+  - SemCode emission
+  - verifier admission
+  - VM execution
+- `PROMETHEUS Integration`
+  - ABI
+  - capabilities
+  - gates
+  - semantic state
+  - rule execution
+  - orchestration
+  - audit and replay metadata
+
+## Primary Flow
+
+The canonical staged execution path is:
+
+`frontend -> semantics -> lowering -> IR passes -> emit -> verify -> VM`
+
+Public rule:
+
+- standard execution is verifier-first
+- VM execution is not the owner of source semantics
+- host/runtime effects stay outside compiler ownership and cross explicit
+  boundaries
+
+## Current Owner Split
+
+### Core crates
+
+- `sm-profile` - parser/profile policy
+- `sm-front` - lexer, parser, AST, and source-surface typing
+- `sm-sema` - semantic analysis, diagnostics, import/export policy
+- `sm-ir` - lowering, IR, optimizer ownership, SemCode contract ownership
+- `sm-emit` - producer-facing SemCode facade
+- `sm-verify` - SemCode admission contract
+- `sm-runtime-core` - shared runtime vocabulary and quotas
+- `sm-vm` - verified execution and disassembly
+- `smc-cli` - canonical public CLI owner
+
+### PROMETHEUS crates
+
+- `prom-abi` - host ABI
+- `prom-cap` - capability policy
+- `prom-gates` - gate registry and adapters
+- `prom-state` - semantic state ownership
+- `prom-rules` - rule and agenda ownership
+- `prom-runtime` - orchestration over verified entrypoints
+- `prom-audit` - audit and replay metadata
+- `prom-ui`, `prom-ui-runtime`, `prom-ui-demo` - narrow UI boundary layer
+
+## Architecture Rules
+
+- one public concept has one owner
+- frontend structures must not leak into runtime execution
+- IR is the lowered contract boundary between source semantics and binary
+  execution
+- verifier admission remains a public contract layer, not an internal VM detail
+- integration crates must not become alternate execution authorities
+- no silent contract mutation is allowed across source, IR, SemCode, verifier,
+  or VM layers
+
+## Compatibility Perimeter
+
+The repository still retains a compatibility perimeter:
+
+- `src/bin/ton618_core.rs`
+- `crates/ton618-core`
+- `ton618_legacy/`
+
+These are compatibility artifacts, not canonical owners of current public
+contracts.
+
+## Reading Order
+
+Use this order when reloading repository context:
+
+1. `docs/spec/index.md`
+2. `docs/architecture/blueprint.md`
+3. `docs/architecture/module_ownership_map.md`
+4. `docs/architecture/dependency_boundary_rules.md`
+5. `docs/roadmap/repository_truth_audit_2026-04-22.md` if present on the
+   current branch
