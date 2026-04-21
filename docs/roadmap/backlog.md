@@ -16,7 +16,8 @@ Current release-maintenance wave:
 
 Current remaining `v1` wave:
 
-- `fx` numeric contract notes are frozen for the current stable line in
+- `fx` numeric contract notes now freeze the published stable `v1.1.1`
+  reading versus the forward-only current-`main` widening in
   `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
 - forward stable release/tag policy is frozen for the current stable line in
   `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
