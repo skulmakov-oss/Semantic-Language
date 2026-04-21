@@ -65,6 +65,10 @@ Verify published assets are checked against at least:
 - one verified-path `f64` builtin case
 - one representative semantic policy example from `examples/`
 
+Reproducible command:
+
+- `pwsh -File scripts/verify_release_assets.ps1 -Tag <tag> -AssetsDirectory <downloaded-assets-dir>`
+
 ## Blocking Rule
 
 Do not mark the bundle release-ready if:
