@@ -91,6 +91,8 @@ The following limits remain explicit and should be treated as release-facing hon
   unary/binary arithmetic, even though current `main` now admits deterministic
   plain `fx` arithmetic with canonical lowering/verified execution under
   `SEMCODE3`
+- the canonical stable-vs-main `fx` reading is frozen in
+  `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
 - the published `v1.1.1` line intentionally excludes post-stable PROMETHEUS
   calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead`,
   even though current `main` now admits them as a forward-only widened boundary

@@ -8,10 +8,14 @@ Related milestone: `M2 Language Completion`
 Freeze the honest `v1.1.1` reading of the current `fx` contract now that the
 canonical value path is end-to-end.
 
-This checkpoint does not widen `fx` semantics. It narrows the wording around
-what is already stable.
+This checkpoint does not widen the published stable line. It freezes the
+release-facing distinction between:
 
-## Current Stable Reading
+- the published stable `v1.1.1` `fx` contract
+- the forward-only first-wave plain `fx` arithmetic widening now admitted on
+  current `main`
+
+## Published Stable `v1.1.1` Reading
 
 - `fx` has a canonical source -> IR -> VM value path.
 - explicit `fx` literals are supported and lower through the fixed-point
@@ -30,15 +34,45 @@ what is already stable.
   in the canonical Rust-like path; they are not general-purpose `fx` operators.
 - coercion from non-literal non-`fx` numeric expressions into `fx` is not part
   of the stable contract.
-- richer `fx` arithmetic remains post-`v1` work and must not be implied by the
-  current end-to-end value path.
+
+## Current `main` Forward-Only Widening
+
+Current `main` now admits one completed first-wave widening beyond the
+published stable line:
+
+- deterministic plain unary `+` / unary `-` over already-typed `fx`
+  expressions
+- deterministic plain binary `+`, `-`, `*`, `/` between already-typed `fx`
+  operands
+- canonical lowering and verified execution for that admitted arithmetic
+  surface under `SEMCODE3`
+
+That widening is forward-only. It does not retroactively change the published
+`v1.1.1` release promise.
+
+The completed widening checkpoint is:
+
+- `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+
+## Still Outside The Current Contract
+
+Even after the completed first-wave widening on current `main`, the repository
+still does not claim:
+
+- implicit coercion from non-literal non-`fx` numeric expressions into `fx`
+- `fx[unit]` arithmetic
+- full arithmetic parity between `fx` and `f64`
+- any host/runtime/ABI widening justified only by the presence of `fx`
+  arithmetic on current `main`
 
 ## Release Honesty Rule
 
 Release-facing docs should describe `fx` as:
 
-- stable for explicit fixed-point values and transport through the current
-  canonical execution path
-- intentionally narrower than `f64` for arithmetic semantics
-- not a justification for widening host/runtime/operator boundaries on the
-  stable line
+- stable for explicit fixed-point values and transport through the published
+  `v1.1.1` execution path
+- widened on current `main` only for the admitted first-wave plain arithmetic
+  slice documented above
+- still intentionally narrower than `f64` for arithmetic semantics
+- not a justification for silently widening host/runtime/operator boundaries on
+  either the published stable line or the forward-only first-wave widening
