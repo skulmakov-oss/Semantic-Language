@@ -47,13 +47,13 @@ fn g1_module_helpers_program_is_blocked() {
     let check_err = cli_err("check", rel);
     assert!(
         check_err.contains(
-            "top-level executable Import currently admits only direct local-path namespace imports in wave1"
+            "top-level executable Import currently admits only direct local-path helper-module imports in wave2"
         )
     );
     let run_err = cli_err("run", rel);
     assert!(
         run_err.contains(
-            "top-level executable Import currently admits only direct local-path namespace imports in wave1"
+            "top-level executable Import currently admits only direct local-path helper-module imports in wave2"
         )
     );
 }

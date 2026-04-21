@@ -136,7 +136,7 @@ Observed behavior:
 Observed blocking surface:
 
 ```text
-top-level executable Import currently admits only direct local-path namespace imports in wave1; re-export, wildcard, and selected import forms remain out of scope
+top-level executable Import currently admits only direct local-path helper-module imports in wave2; alias, selected, wildcard, re-export, and package-qualified import forms remain out of scope
 ```
 
 Verdict:

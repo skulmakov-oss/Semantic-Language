@@ -57,6 +57,27 @@ Import "a/b/c" *
 Import pub "a/b/c" { Foo }
 ```
 
+## Current Executable-Path Narrowing
+
+The broader module/import source contract above is not yet fully admitted on
+the current executable Rust-like path.
+
+Current executable-path admission is narrower:
+
+- direct local-path bare imports such as `Import "helper.sm"` are admitted for
+  deterministic helper-module loading
+- imported helper-module declarations are bundled into the executable semantic
+  path before checking/lowering
+
+The following executable import forms remain out of scope on current `main`:
+
+- explicit alias imports
+- selected imports
+- wildcard imports
+- public re-exports
+- package-qualified executable imports
+- namespace-qualified executable access such as `X.Foo`
+
 ## Name Resolution Order
 
 Current effective resolution order:

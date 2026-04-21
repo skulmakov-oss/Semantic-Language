@@ -46,7 +46,7 @@ Those reports showed:
 
 The first wave will target only:
 
-- direct local-path executable module imports
+- direct local-path executable helper-module imports
 - one root executable entry module containing `fn main()`
 - imported executable declarations needed for ordinary helper-module programs
 
@@ -56,7 +56,7 @@ silently widening into a general package or registry system.
 ## Included In First Wave
 
 - top-level `Import` admission on the executable source path
-- direct local-path import resolution for executable module graphs
+- direct local-path helper-module loading for executable module graphs
 - imported executable declarations for current source items such as:
   - `fn`
   - `record`
@@ -79,6 +79,8 @@ silently widening into a general package or registry system.
 - module-level executable statements
 - wildcard or public re-export promises for the executable path unless they are
   explicitly admitted in a later scope decision
+- namespace-qualified executable access unless it is explicitly admitted in a
+  later scope decision
 
 ## Honest First-Wave Rules
 
@@ -104,8 +106,11 @@ silently widening into a general package or registry system.
 
 ### Wave 2 — Executable Module Resolution
 
-- build the executable module graph before semantic checking
-- make imported declarations available to the executable semantic path
+- build the executable helper-module graph before semantic checking
+- make direct local-path helper-module declarations available to the executable
+  semantic path through deterministic bundling
+- keep alias, selected, wildcard, re-export, and package-qualified executable
+  import forms explicitly out of scope
 
 ### Wave 3 — Lowering / CLI / End-To-End
 

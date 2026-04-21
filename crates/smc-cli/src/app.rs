@@ -46,10 +46,112 @@ fn ensure_package_module_admission(path: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn executable_import_wave2_out_of_scope_message() -> &'static str {
+    "top-level executable Import currently admits only direct local-path helper-module imports in wave2; alias, selected, wildcard, re-export, and package-qualified import forms remain out of scope"
+}
+
 fn read_source_with_package_admission(path: &Path) -> Result<String, String> {
     ensure_package_module_admission(path)?;
-    std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read '{}': {}", path.display(), e))
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve '{}': {}", path.display(), e))?;
+    let source = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("failed to read '{}': {}", canonical.display(), e))?;
+    let parser_profile = cli_profile();
+    let program = match parse_program_with_profile(&source, &parser_profile) {
+        Ok(program) => program,
+        Err(_) => return Ok(source),
+    };
+    if program.imports.is_empty() {
+        return Ok(source);
+    }
+    let mut visiting = Vec::new();
+    let mut loaded = HashSet::new();
+    let mut modules = Vec::new();
+    collect_executable_bundle(
+        &canonical,
+        &parser_profile,
+        &mut visiting,
+        &mut loaded,
+        &mut modules,
+    )?;
+    let mut bundle = String::new();
+    for (idx, (_path, module_source)) in modules.into_iter().enumerate() {
+        if idx > 0 {
+            bundle.push_str("\n\n");
+        }
+        bundle.push_str(&module_source);
+        if !module_source.ends_with('\n') {
+            bundle.push('\n');
+        }
+    }
+    Ok(bundle)
+}
+
+fn collect_executable_bundle(
+    path: &Path,
+    parser_profile: &ParserProfile,
+    visiting: &mut Vec<PathBuf>,
+    loaded: &mut HashSet<PathBuf>,
+    modules: &mut Vec<(PathBuf, String)>,
+) -> Result<(), String> {
+    ensure_package_module_admission(path)?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve '{}': {}", path.display(), e))?;
+    if loaded.contains(&canonical) {
+        return Ok(());
+    }
+    if let Some(pos) = visiting.iter().position(|entry| entry == &canonical) {
+        let mut chain = visiting[pos..]
+            .iter()
+            .map(|entry| entry.to_string_lossy().replace('\\', "/"))
+            .collect::<Vec<_>>();
+        chain.push(canonical.to_string_lossy().replace('\\', "/"));
+        return Err(format!(
+            "cyclic executable helper import detected: {}",
+            chain.join(" -> ")
+        ));
+    }
+    visiting.push(canonical.clone());
+    let source = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("failed to read '{}': {}", canonical.display(), e))?;
+    let program = parse_program_with_profile(&source, parser_profile).map_err(|e| {
+        format!(
+            "executable helper module '{}' must parse on the Rust-like source path: {}",
+            canonical.display(),
+            e
+        )
+    })?;
+    for import in &program.imports {
+        validate_executable_bundle_import(&canonical, import)?;
+        let child = resolve_package_import_path(&canonical, &import.spec)
+            .map_err(|e| format!("{}: {}", canonical.display(), e))?;
+        collect_executable_bundle(&child, parser_profile, visiting, loaded, modules)?;
+    }
+    let _ = visiting.pop();
+    loaded.insert(canonical.clone());
+    modules.push((canonical, source));
+    Ok(())
+}
+
+fn validate_executable_bundle_import(
+    importer: &Path,
+    import: &sm_front::types::ExecutableImport,
+) -> Result<(), String> {
+    if import.reexport
+        || import.wildcard
+        || import.alias.is_some()
+        || !import.select_items.is_empty()
+        || import.spec.contains("::")
+    {
+        return Err(format!(
+            "{} in '{}'",
+            executable_import_wave2_out_of_scope_message(),
+            importer.display()
+        ));
+    }
+    Ok(())
 }
 
 fn cli_profile() -> ParserProfile {
@@ -469,10 +571,10 @@ fn cmd_watch(args: &[String]) -> Result<(), String> {
                 if last_fp != Some(fp) {
                     let t0 = Instant::now();
                     last_fp = Some(fp);
-                    let src = match std::fs::read_to_string(&root) {
+                    let src = match read_source_with_package_admission(&root) {
                         Ok(s) => s,
                         Err(e) => {
-                            let snap = format!("error: failed to read '{}': {}", root.display(), e);
+                            let snap = format!("error: {}", e);
                             let changed = last_snapshot
                                 .as_ref()
                                 .map(|prev| prev != &snap)
@@ -1778,6 +1880,76 @@ Import "c.sm" as Core
 "#;
         let specs = parse_import_specs(src);
         assert_eq!(specs, vec!["a.sm", "b.sm", "c.sm"]);
+    }
+
+    #[test]
+    fn executable_bundle_includes_direct_local_helper_modules() {
+        let dir = mk_temp_dir("smc_exec_bundle_local_helper");
+        let root = dir.join("main.sm");
+        let helper = dir.join("helper.sm");
+        std::fs::write(
+            &root,
+            r#"
+Import "helper.sm"
+
+fn main() {
+    let value: i32 = score(1);
+    assert(value == 1);
+    return;
+}
+"#,
+        )
+        .expect("write root");
+        std::fs::write(
+            &helper,
+            r#"
+fn score(value: i32) -> i32 {
+    return value;
+}
+"#,
+        )
+        .expect("write helper");
+
+        let bundled = read_source_with_package_admission(&root).expect("bundle");
+        assert!(bundled.contains("Import \"helper.sm\""));
+        assert!(bundled.contains("fn score(value: i32) -> i32"));
+        assert!(bundled.contains("fn main()"));
+        assert!(bundled.find("fn score").unwrap() < bundled.find("fn main").unwrap());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn executable_bundle_rejects_selected_imports_in_wave2() {
+        let dir = mk_temp_dir("smc_exec_bundle_selected_blocked");
+        let root = dir.join("main.sm");
+        let helper = dir.join("helper.sm");
+        std::fs::write(
+            &root,
+            r#"
+Import "helper.sm" { score }
+
+fn main() {
+    return;
+}
+"#,
+        )
+        .expect("write root");
+        std::fs::write(
+            &helper,
+            r#"
+fn score(value: i32) -> i32 {
+    return value;
+}
+"#,
+        )
+        .expect("write helper");
+
+        let err = read_source_with_package_admission(&root)
+            .expect_err("selected executable import must stay out of scope in wave2");
+        assert!(err.contains(executable_import_wave2_out_of_scope_message()));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
