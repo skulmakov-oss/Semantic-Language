@@ -40,6 +40,15 @@ It applies to every request, every milestone, every PR, and every merge decision
 - do not merge with failing relevant tests
 - if tests fail, the work is not complete until the cause is understood and the state is returned to green
 
+## Backup And Recovery Discipline
+
+- before making changes, create two reserve backups of the relevant working state
+- the backups may be filesystem snapshots, worktree snapshots, or another explicit recovery form, but both copies must be real and restorable
+- if the change cannot be brought back to a green state before merge readiness, roll the step back rather than carrying broken state forward
+- after the change reaches a verified green state, delete the first backup
+- keep the second backup until it is genuinely no longer needed for recovery, audit, or comparison
+- do not remove the final backup copy just because the branch is green; remove it only when the recovery value is truly exhausted
+
 ## Claim Discipline
 
 - documentation claims must match actual repository behavior
