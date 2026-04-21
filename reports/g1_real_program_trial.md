@@ -20,7 +20,7 @@ Canonical committed trial programs:
 - `examples/qualification/g1_real_program_trial/cli_batch_core/src/main.sm`
 - `examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm`
 - `examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm`
-- `examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm`
+- `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
 
 Canonical reproducible harness:
 
@@ -120,7 +120,7 @@ Reason:
 
 Path:
 
-- `examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm`
+- `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
 
 Intent:
 
@@ -128,40 +128,43 @@ Intent:
 
 Observed behavior:
 
-- `smc check` rejects the entry module
-- `smc run` rejects the entry module
-- current wave1 executable import surface rejects selected import form in this
-  executable program path
+- `smc check` passes
+- `smc run` passes
+- direct local-path helper-module imports now execute through the full
+  `source -> sema -> IR -> SemCode -> verifier -> VM` path on current `main`
 
-Observed blocking surface:
+Verdict:
+
+- `tolerable`
+
+Reason:
+
+- ordinary helper-module authoring now works without hidden compiler shortcuts
+- the admitted slice is still narrow because selected, alias, wildcard,
+  re-export, and package-qualified executable imports remain out of scope
+
+## Additional Friction Found During Authoring
+
+Two extra limitations showed up while drafting the trial programs:
+
+- direct `i32` accumulation through `+=` produced
+  `f64 arithmetic requires f64 operands, got I32 and I32`
+- the selected-import helper-module variant in
+  `examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm`
+  still rejects with:
 
 ```text
 top-level executable Import currently admits only direct local-path helper-module imports in wave2; alias, selected, wildcard, re-export, and package-qualified import forms remain out of scope
 ```
 
-Verdict:
-
-- `blocked`
-
-Reason:
-
-- a normal module-based executable helper split is not admitted as a working
-  current-`main` program path
-- this is a real qualification blocker for broader practical programming claims
-
-## Additional Friction Found During Authoring
-
-One extra limitation showed up while drafting the trial programs:
-
-- direct `i32` accumulation through `+=` produced
-  `f64 arithmetic requires f64 operands, got I32 and I32`
-
-That probe is not counted as a formal trial-family program, but it is relevant
-evidence:
+Those probes are not counted as separate formal trial-family programs, but they
+are relevant evidence:
 
 - integer control/data handling is usable
 - integer arithmetic ergonomics still require more trust work before a broader
   practical-readiness claim
+- executable module authoring is now admitted only for the narrow direct
+  local-path bare-import slice
 
 ## Q1 Summary
 
@@ -170,26 +173,31 @@ Current `main` can already support:
 - small single-file utility cores
 - rule/state-oriented executable programs
 - narrow data programs over `Sequence(T)` and direct-record `Iterable` impls
+- narrow helper-module executable programs using direct local-path bare imports
 
 Current `main` does **not** yet prove:
 
-- ordinary module-based executable program authoring
+- broader executable module authoring beyond the direct local-path bare-import
+  slice
 - full CLI-style practical usability with admitted IO/process interaction
 
-## Q1 Verdict
-
-Gate `G1-D` is now evidenced, but the outcome is mixed rather than fully green.
-
-Per-program verdicts:
+Per-program verdicts for the admitted trial families:
 
 - CLI utility core: `tolerable`
 - rule/state-oriented program: `natural`
 - data-heavy small program: `tolerable`
-- module-based program: `blocked`
+- module-based program: `tolerable`
+
+## Q1 Verdict
+
+`G1-D Real Program Trial` is green for the widened admitted contour, but the
+contour remains narrow.
 
 Operational conclusion:
 
 - Semantic is already capable of writing some real small programs
+- Semantic is now also capable of ordinary helper-module executable authoring
+  through direct local-path bare imports
 - Semantic is not yet qualified to claim broad practical-programming readiness
-  while ordinary module-based executable authoring remains blocked on current
-  `main`
+  because executable-module authoring remains narrow and full CLI-style
+  practicality is still outside the admitted contour

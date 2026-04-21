@@ -116,10 +116,11 @@ The following limits remain explicit and should be treated as release-facing hon
   ecosystem baseline, even though current `main` now admits `Semantic.package`
   parsing, package entry-module admission, and deterministic local-path
   dependency loading for package-qualified imports
-- current `main` still does not claim ordinary module-based executable entry
-  with top-level `Import`; the first `Gate 1` cycle keeps broader executable
-  module authoring outside the current release-promised contour until the
-  dedicated executable-module-entry track lands and is re-qualified
+- current `main` now admits one narrow executable-module-entry slice through
+  direct local-path bare imports such as `Import "helper.sm"`, but broader
+  alias/selected/wildcard/public re-export/package-qualified/namespace-qualified
+  executable module authoring remains outside the current release-promised
+  contour
 - the published `v1.1.1` line intentionally excludes the first-wave ordered
   sequence collection surface, even though current `main` now admits
   `Sequence(type)`, bracketed literals, same-family equality, `expr[index]`,
@@ -185,8 +186,8 @@ Current highest-signal remaining work after the first stable `v1.1.1` tag:
    `docs/roadmap/release_qualification/gate1_protocol.md`; use
    `reports/g1_release_scope_statement.md` as the current authority and rerun
    Gate 1 before widening any broader release-readiness claim
-5. treat executable module entry as the current highest-signal practical
-   blocker before any broader release-readiness claim
+5. treat any broader practical-programming widening as a new explicit scope
+   decision plus a Gate 1 amendment or new qualification cycle
 6. treat any future widening as a forward versioned release, not silent drift
 
 ## Contract Rule

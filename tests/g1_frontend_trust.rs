@@ -25,6 +25,7 @@ fn g1_frontend_positive_suite_passes() {
         "examples/qualification/g1_frontend_trust/positive_sequence_and_match/src/main.sm",
         "examples/qualification/g1_frontend_trust/positive_record_iterable/src/main.sm",
         "examples/qualification/g1_frontend_trust/positive_where_clause/src/main.sm",
+        "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
     ] {
         check_ok(rel);
     }

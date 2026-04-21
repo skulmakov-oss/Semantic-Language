@@ -42,7 +42,15 @@ fn g1_data_audit_record_iterable_checks_and_runs() {
 }
 
 #[test]
-fn g1_module_helpers_program_is_blocked() {
+fn g1_module_helpers_program_checks_and_runs() {
+    let rel =
+        "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm";
+    cli_ok("check", rel);
+    cli_ok("run", rel);
+}
+
+#[test]
+fn g1_selected_import_module_program_remains_out_of_scope() {
     let rel = "examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm";
     let check_err = cli_err("check", rel);
     assert!(

@@ -87,13 +87,14 @@ Current post-`v1` wave:
 
 Current next-focus wave:
 
-- `Executable Module Entry Scope` is now the active blocker-removal stream in
+- no new blocker-removal stream is currently active on `main`
+- `Executable Module Entry Scope` is completed and now lives as frozen
+  baseline history in
   `docs/roadmap/language_maturity/executable_module_entry_scope.md`
-- this stream exists because `Gate 1` ended in `limited release` rather than a
-  broader practical-programming claim
-- do not widen the frozen source-language bundle beyond this narrow executable
-  module entry track without a new track or an explicit source-contract
-  amendment
+- any broader practical-programming widening now requires:
+  - a new explicit scope decision
+  - a new qualification amendment or cycle under
+    `docs/roadmap/release_qualification/gate1_protocol.md`
 
 Current qualification wave:
 
@@ -106,8 +107,8 @@ Current qualification wave:
   - `reports/g1_benchmark_baseline.md`
   - `reports/g1_surface_expressiveness.md`
   - `reports/g1_release_scope_statement.md`
-- the current Gate 1 decision state is `limited release` for the admitted
-  narrow practical-programming contour
+- the current Gate 1 decision state remains `limited release` for the amended
+  admitted practical-programming contour
 - keep UI out of the first qualification contour unless UI is explicitly
   admitted into a future release scope
 - do not treat landed-on-`main` behavior as automatically release-promised
