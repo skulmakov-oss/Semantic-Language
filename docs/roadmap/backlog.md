@@ -84,6 +84,14 @@ Current post-`v1` wave:
   - `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
   - `docs/roadmap/language_maturity/semcode_version_discipline.md`
   - `docs/roadmap/language_maturity/runtime_boundary_hardening.md`
+- the `v0.3` schema and boundary core package is completed and now lives as
+  frozen baseline history in:
+  - `docs/roadmap/language_maturity/schema_first_declarations_scope.md`
+  - `docs/roadmap/language_maturity/validation_derived_from_schemas_scope.md`
+  - `docs/roadmap/language_maturity/config_schema_contract_scope.md`
+  - `docs/roadmap/language_maturity/generated_api_contract_surface_scope.md`
+  - `docs/roadmap/language_maturity/schema_versioning_and_migration_scope.md`
+  - `docs/roadmap/language_maturity/tagged_wire_unions_and_patch_types_scope.md`
 
 Current next-focus wave:
 

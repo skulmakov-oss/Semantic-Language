@@ -1,6 +1,14 @@
 # Config Schema Contract Scope
 
-Status: proposed
+Status: first-wave implemented baseline history
+
+Implementation note:
+
+- this scope is already implemented on current `main`
+- `smc-cli` already owns the canonical config-document parse and validation
+  path for `config schema`
+- the planning language below is retained as the historical acceptance contract
+  for the landed first wave
 
 ## Goal
 

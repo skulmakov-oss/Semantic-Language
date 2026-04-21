@@ -1,7 +1,13 @@
 # Schema-First Declarations Scope
 
-Status: proposed first-wave checkpoint
+Status: first-wave implemented baseline history
 Related issue: `#121`
+
+Implementation note:
+
+- this scope is already implemented on current `main`
+- the planning language below is retained as the historical acceptance contract
+  for the landed first wave
 
 ## Goal
 

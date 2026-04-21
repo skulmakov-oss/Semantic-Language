@@ -1,6 +1,15 @@
 # Schema Versioning And Migration Scope
 
-Status: proposed
+Status: first-wave implemented baseline history
+
+Implementation note:
+
+- this scope is already implemented on current `main`
+- explicit schema version markers, deterministic compatibility classification,
+  and compile-time migration metadata artifacts are already part of the current
+  tooling surface
+- the planning language below is retained as the historical acceptance contract
+  for the landed first wave
 
 ## Goal
 

@@ -1,7 +1,15 @@
 # Validation Derived From Schemas Scope
 
-Status: proposed first-wave checkpoint
+Status: first-wave implemented baseline history
 Related issue: `#122`
+
+Implementation note:
+
+- this scope is already implemented on current `main`
+- canonical schema validation-plan ownership and generated validation checks are
+  already part of the current tooling surface
+- the planning language below is retained as the historical acceptance contract
+  for the landed first wave
 
 ## Goal
 

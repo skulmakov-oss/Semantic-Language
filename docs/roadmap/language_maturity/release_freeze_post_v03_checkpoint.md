@@ -1,6 +1,13 @@
 # Release Freeze Post-V03 Checkpoint
 
-Status: proposed
+Status: completed baseline history
+
+Implementation note:
+
+- this freeze reading is already reflected in the published `v1.1.1` release
+  notes and the current repository governance posture
+- the planning language below is retained as the historical freeze contract for
+  the landed post-`v0.3` state
 
 ## Goal
 

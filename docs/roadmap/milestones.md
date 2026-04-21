@@ -45,6 +45,13 @@
   - `docs/spec/cli.md`
   - current completed post-stable source-contract freeze checkpoint:
     `docs/roadmap/language_maturity/source_language_contract.md`
+  - current completed post-stable schema/boundary checkpoint bundle:
+    - `docs/roadmap/language_maturity/schema_first_declarations_scope.md`
+    - `docs/roadmap/language_maturity/validation_derived_from_schemas_scope.md`
+    - `docs/roadmap/language_maturity/config_schema_contract_scope.md`
+    - `docs/roadmap/language_maturity/generated_api_contract_surface_scope.md`
+    - `docs/roadmap/language_maturity/schema_versioning_and_migration_scope.md`
+    - `docs/roadmap/language_maturity/tagged_wire_unions_and_patch_types_scope.md`
   - current completed post-qualification executable module entry checkpoint:
     `docs/roadmap/language_maturity/executable_module_entry_scope.md`
   - current active IR hardening checkpoint:
