@@ -1,17 +1,17 @@
 # Executable Module Entry Scope
 
-Status: active post-qualification blocker-removal checkpoint
+Status: completed post-qualification blocker-removal checkpoint
 
 ## Goal
 
-Open a narrow follow-up track after the first `Gate 1` cycle to remove the
-largest remaining practical-programming blocker on current `main`:
+This narrow follow-up track removed the largest practical-programming blocker
+identified after the first `Gate 1` cycle:
 
-- ordinary module-based executable authoring is still blocked because top-level
-  `Import` is not admitted on the executable source path
+- ordinary helper-module executable authoring was blocked because top-level
+  executable `Import` was not admitted on the executable source path
 
-This track is intentionally narrow. It is not a reboot of the whole package or
-module ecosystem story.
+The landed result remains intentionally narrow. It is not a reboot of the whole
+package or module ecosystem story.
 
 ## Why This Track Exists
 
@@ -28,12 +28,12 @@ Evidence is frozen in:
 - `reports/g1_frontend_trust.md`
 - `reports/g1_release_scope_statement.md`
 
-Those reports showed:
+Those reports originally showed:
 
 - single-file executable programs are admitted and runnable
 - the frontend and execution path are trusted on the admitted contour
-- module-based executable entry with top-level `Import` is still blocked at the
-  parser/source-contract boundary
+- module-based executable entry with top-level `Import` was still blocked at
+  the parser/source-contract boundary
 
 ## Decision Check
 
@@ -42,18 +42,18 @@ Those reports showed:
 - [x] This remains one stream, not a mixture of package, registry, and stdlib expansion
 - [x] This can close with a clear done-boundary
 
-## Narrow First-Wave Decision
+## Landed First-Wave Reading
 
-The first wave will target only:
+The landed first wave now admits only:
 
 - direct local-path executable helper-module imports
 - one root executable entry module containing `fn main()`
 - imported executable declarations needed for ordinary helper-module programs
 
-The goal is to admit ordinary module-based executable authoring without
+The goal was to admit ordinary module-based executable authoring without
 silently widening into a general package or registry system.
 
-## Included In First Wave
+## Landed In First Wave
 
 - top-level `Import` admission on the executable source path
 - direct local-path helper-module loading for executable module graphs
@@ -91,7 +91,7 @@ silently widening into a general package or registry system.
 - landed package/dependency work on `main` does not automatically mean broader
   executable-module promises are qualified
 
-## Suggested Wave Order
+## Executed Wave Order
 
 ### Wave 0 — Governance
 
@@ -127,9 +127,24 @@ silently widening into a general package or registry system.
 - docs/spec/tests agree on the admitted executable module contour
 - rerun qualification evidence if the practical-programming contour widens
 
+## Qualification Sync Result
+
+The widened admitted contour is now frozen as:
+
+- single-file executable programs
+- narrow helper-module executable programs using direct local-path bare imports
+
+The updated Gate 1 evidence keeps the overall decision state at:
+
+- `limited release`
+
+The blocker was removed, but the release contour remains intentionally narrow
+because broader executable import forms and full CLI-style authoring are still
+outside the admitted contour.
+
 ## Acceptance Reading
 
-This track is done only when:
+This track is now done because:
 
 1. ordinary helper-module executable programs are admitted on current `main`,
 2. the executable import path is deterministic and tested end to end,

@@ -68,9 +68,56 @@ fn repo_path(rel: &str) -> String {
         .replace('\\', "/")
 }
 
-fn source_text(rel: &str) -> String {
-    let path = repo_path(rel);
-    fs::read_to_string(&path).unwrap_or_else(|err| panic!("read failed for {path}: {err}"))
+fn bundle_source(rel: &str) -> String {
+    let root = PathBuf::from(repo_path(rel));
+    let parser_profile = ParserProfile::foundation_default();
+    let mut loaded = Vec::new();
+    let mut visiting = Vec::new();
+    let mut modules = Vec::new();
+    collect_bundle_modules(&root, &parser_profile, &mut loaded, &mut visiting, &mut modules);
+    modules.join("\n\n")
+}
+
+fn collect_bundle_modules(
+    path: &PathBuf,
+    parser_profile: &ParserProfile,
+    loaded: &mut Vec<PathBuf>,
+    visiting: &mut Vec<PathBuf>,
+    modules: &mut Vec<String>,
+) {
+    let canonical = path
+        .canonicalize()
+        .unwrap_or_else(|err| panic!("resolve failed for {}: {err}", path.display()));
+    if loaded.iter().any(|entry| entry == &canonical) {
+        return;
+    }
+    if visiting.iter().any(|entry| entry == &canonical) {
+        panic!("cyclic executable helper import detected at {}", canonical.display());
+    }
+    visiting.push(canonical.clone());
+    let source = fs::read_to_string(&canonical)
+        .unwrap_or_else(|err| panic!("read failed for {}: {err}", canonical.display()));
+    let program = parse_program_with_profile(&source, parser_profile)
+        .unwrap_or_else(|err| panic!("parse failed for {}: {err}", canonical.display()));
+    for import in &program.imports {
+        assert!(
+            !import.reexport
+                && !import.wildcard
+                && import.alias.is_none()
+                && import.select_items.is_empty()
+                && !import.spec.contains("::"),
+            "out-of-scope executable import leaked into bundled contour for {}",
+            canonical.display()
+        );
+        let child = canonical
+            .parent()
+            .expect("module parent")
+            .join(&import.spec);
+        collect_bundle_modules(&child, parser_profile, loaded, visiting, modules);
+    }
+    let _ = visiting.pop();
+    loaded.push(canonical);
+    modules.push(source);
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -135,7 +182,7 @@ fn summarize(mut values: Vec<u128>) -> StageStats {
 }
 
 fn measure_scenario(label: &'static str, rel: &'static str) -> ScenarioBaseline {
-    let src = source_text(rel);
+    let src = bundle_source(rel);
     let profile = ParserProfile::foundation_default();
 
     for _ in 0..WARMUP_RUNS {
@@ -233,6 +280,10 @@ fn g1_benchmark_baseline_collects_reproducible_pipeline_metrics() {
         measure_scenario(
             "record_iterable_data",
             "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm",
+        ),
+        measure_scenario(
+            "module_helper_entry",
+            "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
         ),
     ];
 

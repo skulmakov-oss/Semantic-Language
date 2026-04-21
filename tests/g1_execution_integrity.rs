@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use semantic_language::{
-    frontend::{compile_program_to_ir, compile_program_to_semcode},
+    frontend::{compile_program_to_ir, compile_program_to_semcode, parse_program_with_profile, ParserProfile},
     semantics::check_source,
     semcode_format::header_spec_from_magic,
     semcode_verify::{verify_semcode, VerificationCode},
@@ -19,6 +19,58 @@ fn repo_path(rel: &str) -> String {
 fn source_text(rel: &str) -> String {
     let path = repo_path(rel);
     fs::read_to_string(&path).unwrap_or_else(|err| panic!("read failed for {path}: {err}"))
+}
+
+fn bundle_source(rel: &str) -> String {
+    let root = PathBuf::from(repo_path(rel));
+    let parser_profile = ParserProfile::foundation_default();
+    let mut loaded = Vec::new();
+    let mut visiting = Vec::new();
+    let mut modules = Vec::new();
+    collect_bundle_modules(&root, &parser_profile, &mut loaded, &mut visiting, &mut modules);
+    modules.join("\n\n")
+}
+
+fn collect_bundle_modules(
+    path: &PathBuf,
+    parser_profile: &ParserProfile,
+    loaded: &mut Vec<PathBuf>,
+    visiting: &mut Vec<PathBuf>,
+    modules: &mut Vec<String>,
+) {
+    let canonical = path
+        .canonicalize()
+        .unwrap_or_else(|err| panic!("resolve failed for {}: {err}", path.display()));
+    if loaded.iter().any(|entry| entry == &canonical) {
+        return;
+    }
+    if visiting.iter().any(|entry| entry == &canonical) {
+        panic!("cyclic executable helper import detected at {}", canonical.display());
+    }
+    visiting.push(canonical.clone());
+    let source = fs::read_to_string(&canonical)
+        .unwrap_or_else(|err| panic!("read failed for {}: {err}", canonical.display()));
+    let program = parse_program_with_profile(&source, parser_profile)
+        .unwrap_or_else(|err| panic!("parse failed for {}: {err}", canonical.display()));
+    for import in &program.imports {
+        assert!(
+            !import.reexport
+                && !import.wildcard
+                && import.alias.is_none()
+                && import.select_items.is_empty()
+                && !import.spec.contains("::"),
+            "out-of-scope executable import leaked into bundled contour for {}",
+            canonical.display()
+        );
+        let child = canonical
+            .parent()
+            .expect("module parent")
+            .join(&import.spec);
+        collect_bundle_modules(&child, parser_profile, loaded, visiting, modules);
+    }
+    let _ = visiting.pop();
+    loaded.push(canonical);
+    modules.push(source);
 }
 
 fn label_for(rel: &str) -> &str {
@@ -41,7 +93,7 @@ fn disasm_function_names(disasm: &str) -> Vec<String> {
 }
 
 fn execution_summary(rel: &str) -> String {
-    let src = source_text(rel);
+    let src = bundle_source(rel);
     let sema = check_source(&src).expect("semantic check");
     let ir = compile_program_to_ir(&src).expect("compile ir");
     let bytes = compile_program_to_semcode(&src).expect("compile semcode");
@@ -93,6 +145,7 @@ fn g1_execution_integrity_stage_summaries_match_current_baseline() {
         "examples/qualification/g1_real_program_trial/cli_batch_core/src/main.sm",
         "examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm",
         "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm",
+        "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
     ] {
         observed.push_str(&execution_summary(rel));
         observed.push('\n');
@@ -123,6 +176,14 @@ verify:names=__impl::Iterable::Samples::next,main,summarize
 disasm:names=__impl::Iterable::Samples::next,main,summarize
 run=ok
 
+program=wave2_local_helper_import
+sema:warnings=0 laws=0
+ir:names=main,score
+semcode:magic=SEMCODE0 rev=1
+verify:names=main,score
+disasm:names=main,score
+run=ok
+
 ";
     assert_eq!(observed, expected);
 }
@@ -133,8 +194,9 @@ fn g1_execution_integrity_repeated_compiles_are_byte_stable() {
         "examples/qualification/g1_real_program_trial/cli_batch_core/src/main.sm",
         "examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm",
         "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm",
+        "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
     ] {
-        let src = source_text(rel);
+        let src = bundle_source(rel);
 
         let first = compile_program_to_semcode(&src).expect("first compile");
         let second = compile_program_to_semcode(&src).expect("second compile");

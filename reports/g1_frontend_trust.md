@@ -21,6 +21,7 @@ Canonical positive fixtures:
 - `examples/qualification/g1_frontend_trust/positive_sequence_and_match/src/main.sm`
 - `examples/qualification/g1_frontend_trust/positive_record_iterable/src/main.sm`
 - `examples/qualification/g1_frontend_trust/positive_where_clause/src/main.sm`
+- `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
 
 Canonical negative fixtures:
 
@@ -90,7 +91,7 @@ Verdict:
 
 ## Negative Coverage
 
-### Module/import executable entry
+### Out-of-scope executable import form
 
 Fixture:
 
@@ -103,13 +104,13 @@ Observed diagnostic:
 Assessment:
 
 - this is deterministic
-- this is also a real trust problem, because ordinary module-based executable
-  authoring is still blocked at the executable module-entry boundary on current
-  `main`
+- this now reads as an honest boundary diagnostic rather than a parser/source
+  failure, because the admitted bare-import helper-module path is already
+  working on current `main`
 
 Verdict:
 
-- `deterministic but trust-reducing`
+- `trusted`
 
 ### Wrong explicit `Iterable` contract
 
@@ -193,23 +194,26 @@ Trusted zones on current `main`:
 - sequence-loop admission
 - direct-record iterable trait/impl admission
 - where-clause source sugar
+- direct local-path bare executable helper-module imports
 - contextual `Option` / `Result` match admission
-- negative diagnostics for iterable contract shape and standard-form scope
+- negative diagnostics for iterable contract shape, standard-form scope, and
+  out-of-scope executable import forms
 
 Still trust-reducing zones:
 
-- ordinary module/import executable entry remains blocked by the current wave1
-  executable import contract for alias/selected/wildcard/re-export forms
-- this is deterministic, but it means source-level modular authoring is not yet
-  trustworthy as a practical executable path
+- broader executable-module authoring remains intentionally narrow because
+  alias/selected/wildcard/re-export/package-qualified forms are still out of
+  scope on the executable path
+- this is no longer a parser trust failure, but it still limits the broader
+  practical-programming contour
 
 ## Q2 Verdict
 
-`G1-B Frontend Trust` is partially evidenced, not fully green.
+`G1-B Frontend Trust` is green for the admitted current contour.
 
 Operational verdict:
 
 - parser/typechecker behavior is stable on the admitted current slices
 - diagnostics for several narrow boundaries are explicit and reproducible
-- frontend trust for broader practical programming remains limited while
-  module-based executable authoring is still blocked on current `main`
+- frontend trust for broader practical programming remains limited only because
+  the admitted contour itself is still intentionally narrow
