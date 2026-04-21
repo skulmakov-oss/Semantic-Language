@@ -26,9 +26,24 @@ This document records the minimum smoke validation required against downloaded r
 
 - downloaded stable `v1.1.1` assets were revalidated from the published
   release, not only from the local build tree
+- release asset hashes are verified against GitHub release metadata before the
+  smoke scenarios run
 - the stable Windows zip contains exactly:
   - `smc.exe`
   - `svm.exe`
+- the zip-contained `smc.exe` and `svm.exe` must hash-match the standalone
+  downloaded executables for the same tag
+
+## Reproducible Smoke Command
+
+Preferred command when the release assets are already downloaded locally:
+
+- `pwsh -File scripts/verify_release_assets.ps1 -Tag v1.1.1 -AssetsDirectory <downloaded-assets-dir>`
+
+Fallback command when the local environment can fetch GitHub release assets
+directly:
+
+- `pwsh -File scripts/verify_release_assets.ps1 -Tag v1.1.1`
 
 ## Smoke Commands
 

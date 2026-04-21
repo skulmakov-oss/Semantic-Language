@@ -31,6 +31,7 @@ A stable tag is allowed only if all of the following remain true on `main`:
 - public API inventory is green
 - runtime matrix, goldens, negative goldens, and compatibility matrix are green
 - `pwsh -File scripts/verify_release_bundle.ps1` is green
+- `pwsh -File scripts/verify_release_assets.ps1 -Tag <tag> -AssetsDirectory <downloaded-assets-dir>` is green
 - published release assets pass the smoke matrix in `docs/roadmap/release_asset_smoke_matrix.md`
 - readiness and compatibility documents match actual repository behavior
 

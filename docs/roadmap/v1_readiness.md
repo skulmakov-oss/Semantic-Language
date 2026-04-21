@@ -166,6 +166,7 @@ The repository should be treated as release-valid only if all of the following s
 - boundary and ownership guard tests
 - `cargo test --test public_api_contracts`
 - `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath <path>`
+- `pwsh -File scripts/verify_release_assets.ps1 -Tag <tag> -AssetsDirectory <downloaded-assets-dir>`
 - semantic runtime matrix tests
 - semantic runtime golden tests
 - semantic runtime negative golden tests
