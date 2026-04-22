@@ -1,51 +1,52 @@
 # Import Re-export Full Scope
 
-Status: proposed post-stable closure track
+Status: completed NEXT-1 post-stable closure track
 
 ## Goal
 
-Define the narrow closure boundary for bringing the current `v0.2`
-import/re-export surface from "working baseline" to "FULL" without reopening
+Close the narrow policy/documentation/test gap that remained after the working
+`v0.2` import/re-export surface had already landed, without reopening
 language/runtime scope.
 
-## Why This Is A Post-Stable Track
+This was a post-stable closure pass on current `main`. It did not reinterpret
+the published `v1.1.1` line as if every post-stable import-path widening had
+already shipped there.
 
-The repository already shipped stable `v1.1.1` with a working import/export
-surface.
+## Stable Baseline Before This Track
 
-The remaining work here is not a release blocker for the shipped stable line.
-It is a correctness/documentation closure track intended to:
+The published stable line already froze these facts:
 
-- remove edge-case ambiguity
-- lock deterministic lookup behavior
-- complete diagnostics coverage
-- strengthen fixtures and snapshots
+- the repository had a working source-level import/export baseline
+- module linkage was deterministic and checked before execution
+- import/export support was not a release blocker for `v1.1.1`
+- broader executable-module authoring and broader package ecosystem work were
+  still separate concerns
 
-## In Scope
+That stable reading remained the source of truth until this closure track
+finished its docs/tests hardening on current `main`.
 
-The `NEXT-1` closure track may include only:
+## Included In This Track
 
 - lookup/export order contract clarification
-- select-import missing symbol behavior
+- select-import missing-symbol behavior
 - kind-mismatch validation across import/re-export paths
 - alias collision and re-export collision matrix completion
 - symbol-level cycle reporting and deterministic chain traces
-- wildcard ambiguity policy finalization
+- wildcard overlap policy clarification
 - fixture/snapshot completion for those cases
-- `docs/imports.md`, `docs/exports.md`, and `docs/errors/E0242..E0245.md` sync
+- sync of `docs/imports.md`, `docs/exports.md`, and `docs/errors/E0242..E0245.md`
 
-## Out Of Scope
-
-This closure track must not silently expand into:
+## Explicit Non-Goals
 
 - new module syntax families
 - new namespace systems
-- package registry/import resolution redesign
+- package registry/import-resolution redesign
 - host/runtime/`prom-*` widening
 - package publishing semantics
 - broad dependency-management work
+- silent widening of published `v1.1.1`
 
-## Intended Slice Order
+## Historical Slice Reading
 
 1. docs/governance checkpoint
 2. lookup/export order contract clarification
@@ -53,15 +54,51 @@ This closure track must not silently expand into:
 4. symbol-cycle and wildcard-policy completion
 5. error-page/docs freeze
 
+## Close-Out Reading
+
+`NEXT-1` is now completed on current `main` as the import/re-export closure
+track.
+
+Completed closure reading:
+
+- the canonical module/import contract now lives in
+  `docs/spec/modules.md`
+- deterministic module/linkage diagnostics are aligned in
+  `docs/spec/diagnostics.md`
+- `docs/imports.md` and `docs/exports.md` now read as compact companion guides
+  rather than stale placeholders
+- `docs/errors/E0242.md` through `docs/errors/E0245.md` now describe the
+  admitted collision/cycle/select-import families in practice
+- fixture coverage exists in `tests/fixtures/imports/`
+- repository-level checks exist in:
+  - `tests/import_export_docs_fixtures.rs`
+  - `tests/imports_matrix.rs`
+
+Still intentionally not included after close-out:
+
+- registry/package-manager redesign
+- new namespace families beyond the admitted source contract
+- broader executable-module import families beyond the separately tracked
+  executable-module-entry contour
+- any release claim that landed-on-`main` behavior is automatically part of the
+  published stable line
+
 ## Acceptance Reading
 
-`NEXT-1` is done only when:
+This closure track is done because:
 
-- import/export behavior is deterministic across the documented edge-case matrix
-- fixtures and snapshots cover the matrix explicitly
-- `docs/imports.md` and `docs/exports.md` match actual repository behavior
-- `E0242..E0245` pages stop being placeholders in practice
+- import/export behavior is documented as deterministic across the edge-case
+  matrix
+- fixtures and repository tests explicitly cover the admitted matrix
+- `docs/imports.md` and `docs/exports.md` match current repository behavior
+- `E0242..E0245` pages are no longer placeholders in practice
 
-## Non-Goal Reminder
+## Non-Commitments After Close-Out
 
-This track is a closure pass, not a new feature wave.
+Even after this closure pass, the repository still does not claim:
+
+- broader package registry/import semantics as part of this track
+- new import syntax families
+- automatic promotion of post-stable `main` behavior into stable
+- broader executable-module authoring than the separately admitted narrow
+  helper-module contour
