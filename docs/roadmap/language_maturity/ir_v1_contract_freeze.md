@@ -1,6 +1,9 @@
 # IR v1 Contract Freeze
 
-Status: proposed checkpoint
+Status: completed post-stable anti-drift checkpoint
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
 
 ## Goal
 
@@ -84,13 +87,13 @@ This checkpoint does not include:
 - changes to IR structure or admitted pass behavior require explicit contract
   review, not silent drift
 
-## Acceptance Criteria
+## Completed Reading
 
-This checkpoint is complete only when:
+This checkpoint is now complete because:
 
 - `docs/spec/ir.md` reflects the same staged-contract reading
 - architecture docs treat IR as the lowered execution-contract boundary
-- roadmap docs point to this file as the active IR freeze checkpoint
+- roadmap docs point to this file as the completed IR freeze checkpoint
 - supported scope and out-of-scope items are explicit
 - no document implies a separate `sm-opt` owner or a broader frozen IR surface
 
