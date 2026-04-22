@@ -1,7 +1,12 @@
 # Validation Derived From Schemas Scope
 
-Status: proposed first-wave checkpoint
+Status: completed first-wave baseline history
 Related issue: `#122`
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
+The scope text below is preserved as the historical scope decision for that
+landed wave.
 
 ## Goal
 
@@ -71,9 +76,9 @@ while remaining separate from:
 3. deterministic derivation for tagged-union schemas
 4. inspectable output and diagnostics freeze for generated validation failures
 
-## Done Boundary
+## Completed Reading
 
-`#122` can close when:
+`#122` is now complete because:
 
 1. canonical schema declarations derive deterministic validation plans,
 2. derived validation stays inspectable and attributable to source schemas,

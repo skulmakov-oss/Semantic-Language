@@ -1,6 +1,11 @@
 # Schema Versioning And Migration Scope
 
-Status: proposed
+Status: completed first-wave baseline history
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
+The scope text below is preserved as the historical scope decision for that
+landed wave.
 
 ## Goal
 
@@ -94,9 +99,9 @@ stable formatter owned by tooling.
 - widening `prom-*`, host capability, or VM/runtime boundaries
 - introducing a second hand-maintained migration truth layer
 
-## Acceptance Reading
+## Completed Reading
 
-This issue is done only when:
+This issue is now complete because:
 
 - schema versions are explicit and inspectable
 - compatibility reading is deterministic and diffable

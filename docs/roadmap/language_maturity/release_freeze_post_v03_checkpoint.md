@@ -1,6 +1,11 @@
 # Release Freeze Post-V03 Checkpoint
 
-Status: proposed
+Status: completed post-v0.3 release-freeze checkpoint
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
+The checkpoint text below is preserved as the historical freeze reading for
+that landed state.
 
 ## Goal
 
@@ -50,9 +55,9 @@ milestone state.
 - widening `prom-*`, host capability, or runtime boundaries
 - mixing release-note work with another schema/language implementation wave
 
-## Acceptance Reading
+## Completed Reading
 
-This checkpoint is useful only if:
+This checkpoint is now complete because:
 
 - closed roadmap waves are no longer presented as active work
 - the repository has one explicit post-`v0.3` freeze note
