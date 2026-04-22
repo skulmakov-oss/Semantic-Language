@@ -116,6 +116,12 @@ The following limits remain explicit and should be treated as release-facing hon
   ecosystem baseline, even though current `main` now admits `Semantic.package`
   parsing, package entry-module admission, and deterministic local-path
   dependency loading for package-qualified imports
+- the published `v1.1.1` line intentionally excludes the landed `v0.3`
+  schema/boundary-core wave, even though current `main` now admits canonical
+  schema declarations with record/tagged-union forms, role markers, version
+  metadata, deterministic validation-plan derivation, canonical config-contract
+  parsing/validation, generated API/wire artifacts, and deterministic schema
+  compatibility/migration metadata
 - current `main` now admits one narrow executable-module-entry slice through
   direct local-path bare imports such as `Import "helper.sm"`, but broader
   alias/selected/wildcard/public re-export/package-qualified/namespace-qualified

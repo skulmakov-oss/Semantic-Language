@@ -1,6 +1,11 @@
 # Config Schema Contract Scope
 
-Status: proposed
+Status: completed first-wave baseline history
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
+The scope text below is preserved as the historical scope decision for that
+landed wave.
 
 ## Goal
 
@@ -64,9 +69,9 @@ Canonical tagged-union config document choice for the next slice:
 - creating an alternate config truth layer separate from canonical schemas and
   validation plans
 
-## Acceptance Reading
+## Completed Reading
 
-This issue is done only when:
+This issue is now complete because:
 
 - one canonical config document surface exists
 - config parsing and validation reuse canonical schema and validation-plan
