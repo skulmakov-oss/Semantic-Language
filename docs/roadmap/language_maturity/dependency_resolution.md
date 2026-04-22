@@ -1,18 +1,24 @@
 # Dependency Resolution
 
-Status: proposed v0
+Status: historical design note, not current baseline
 
 ## Purpose
 
-This document defines the first intended dependency-resolution and lockfile
-contract for Semantic packages.
+This document records one future design candidate for dependency resolution and
+lockfile behavior above the landed first-wave package baseline.
 
-It describes how package metadata should feed the module/import surface without
-pretending that packages and modules are the same concept.
+Current-main truth:
+
+- current `main` already admits deterministic local-path dependency loading
+  through `Semantic.package`
+- this document does not describe that landed baseline; it sketches a broader
+  future layer that would require a new explicit scope decision
+- packages and modules are still distinct concepts in both the landed baseline
+  and any future expansion
 
 ## Resolution Layers
 
-The intended package model has three distinct layers:
+This future package-manager sketch has three distinct layers:
 
 1. package manifest declares dependency roots
 2. resolver maps those dependency roots to concrete package sources
@@ -23,7 +29,7 @@ context.
 
 ## Lockfile
 
-The first canonical lockfile should be:
+One future canonical lockfile candidate would be:
 
 - `Semantic.lock`
 
@@ -35,7 +41,7 @@ Purpose:
 
 ## Resolution Rules
 
-The first package resolver should be deterministic.
+Any future package-manager resolver should be deterministic.
 
 Expected rules:
 
@@ -67,7 +73,8 @@ claim about runtime semantics.
 
 ## Path Dependencies
 
-The first supported dependency source should be local paths.
+The first supported dependency source in this future sketch should be local
+paths.
 
 Reason:
 
@@ -77,8 +84,8 @@ Reason:
 
 ## Versioned Dependencies
 
-Versioned dependencies should be part of the package contract even before a
-public registry is fully implemented.
+Versioned dependencies would belong to the broader package contract even before
+a public registry is fully implemented, if this design is ever reopened.
 
 Expected rules:
 
@@ -88,7 +95,7 @@ Expected rules:
 
 ## Conflict Policy
 
-The first dependency story should prefer clarity over cleverness.
+Any future dependency story should prefer clarity over cleverness.
 
 Expected rules:
 
@@ -108,7 +115,7 @@ ecosystem workstream.
 
 ## Non-Goals
 
-This first resolution contract does not yet define:
+This future resolution contract does not yet define:
 
 - remote registry wire protocol
 - mirrors
