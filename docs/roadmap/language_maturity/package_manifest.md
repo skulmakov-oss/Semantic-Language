@@ -1,18 +1,23 @@
 # Package Manifest
 
-Status: proposed v0
+Status: historical design note, not current baseline
 
 ## Purpose
 
-This document defines the first intended package manifest contract for
-Semantic projects.
+This document records one future design candidate for a broader package-manager
+manifest layer above the landed first-wave package baseline.
 
-It is a design target for the package ecosystem workstream, not a claim that
-the current CLI already parses this file.
+Current-main truth:
+
+- the admitted current-main package baseline is `Semantic.package`, not
+  `Semantic.toml`
+- this document does not describe the landed `M8.2` package baseline
+- if a broader manifest layer is reopened, it requires a new explicit scope
+  decision from fresh `main`
 
 ## Proposed Manifest Name
 
-The first canonical manifest file should be:
+One future canonical manifest candidate would be:
 
 - `Semantic.toml`
 
@@ -51,7 +56,7 @@ policy_core = { version = "^0.2.0" }
 
 ## `package` Table
 
-The first manifest wave should include:
+One future broader manifest wave could include:
 
 - `name`
 - `version`
@@ -87,7 +92,7 @@ Purpose:
 - edition marks the intended language/library compatibility wave for the
   package surface
 
-The first expected value is:
+The first expected value in this design sketch is:
 
 - `v1`
 
@@ -104,7 +109,7 @@ Current honest limit:
 
 ## `dependencies` Table
 
-The first manifest wave should support explicit dependency entries.
+This future design sketch would support explicit dependency entries.
 
 Proposed dependency forms:
 
@@ -123,8 +128,8 @@ The dependency key is the local package alias exposed to the resolver.
 
 ## Future Tables
 
-These tables may come later, but should not be treated as part of the first
-stabilized manifest wave:
+These tables may come later, but should not be treated as part of the initial
+broader manifest wave if it is ever reopened:
 
 - `[dev-dependencies]`
 - `[features]`
@@ -133,7 +138,7 @@ stabilized manifest wave:
 
 ## Non-Goals
 
-This first manifest design does not yet try to define:
+This future manifest design does not yet try to define:
 
 - a full workspace grammar
 - registry authentication

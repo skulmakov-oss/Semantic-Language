@@ -1,18 +1,24 @@
 # `Semantic.lock`
 
-Status: proposed v0
+Status: historical design note, not current baseline
 
 ## Purpose
 
-This document defines the first intended lockfile contract for Semantic
-packages.
+This document records one future design candidate for a package-manager
+lockfile above the landed first-wave package baseline.
+
+Current-main truth:
+
+- the admitted current-main package baseline has no public lockfile contract
+- this document does not describe current `main`; it describes a broader future
+  design that would require a new explicit scope decision
 
 It is the reproducibility companion to `Semantic.toml`. The manifest declares
 intent; the lockfile records the concrete resolved graph used for one build.
 
 ## Canonical Name
 
-The first canonical lockfile name should be:
+One future canonical lockfile candidate would be:
 
 - `Semantic.lock`
 
@@ -67,7 +73,7 @@ feature, or registry wire protocol yet.
 
 ## Required Fields
 
-The first lockfile wave should include:
+One future lockfile wave could include:
 
 - top-level `version`
 - top-level `root`
@@ -87,7 +93,7 @@ Optional later fields may include:
 
 ## Source Forms
 
-The first lockfile wave should support these source forms:
+One future lockfile wave could support these source forms:
 
 - `path:.`
 - `path:../relative-path`
@@ -98,7 +104,7 @@ transport too early.
 
 ## Determinism Rules
 
-The first lockfile contract should obey these rules:
+Any future lockfile contract should obey these rules:
 
 - the same manifest plus lockfile resolves to the same package graph
 - the same lockfile may be used on different machines without changing package
@@ -108,7 +114,8 @@ The first lockfile contract should obey these rules:
 
 ## Mutation Rules
 
-The first stable behavior should be conservative:
+If this future lockfile layer is ever admitted, its stable behavior should be
+conservative:
 
 - ordinary compile/check/run commands should not silently rewrite
   `Semantic.lock`
@@ -117,7 +124,7 @@ The first stable behavior should be conservative:
 
 ## Conflict And Validation Rules
 
-The first lockfile layer should reject:
+The first lockfile layer in this design sketch should reject:
 
 - duplicate package entries with the same identity
 - missing root package entry
@@ -126,7 +133,7 @@ The first lockfile layer should reject:
 
 ## Non-Goals
 
-This first lockfile document does not define:
+This future lockfile document does not define:
 
 - a workspace lockfile grammar
 - feature activation state

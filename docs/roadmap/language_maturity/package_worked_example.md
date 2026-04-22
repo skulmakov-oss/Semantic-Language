@@ -1,11 +1,18 @@
 # Package Worked Example
 
-Status: proposed v0
+Status: historical design note, not current baseline
 
 ## Purpose
 
-This document gives one end-to-end example of the intended Semantic package
-story.
+This document gives one end-to-end example of a future package-manager design
+direction beyond the landed first-wave package baseline.
+
+Current-main truth:
+
+- current `main` already has a narrower admitted package baseline centered on
+  `Semantic.package` and deterministic local-path dependency loading
+- this example does not describe the landed baseline; it is retained only as a
+  future illustrative design note
 
 It connects:
 
