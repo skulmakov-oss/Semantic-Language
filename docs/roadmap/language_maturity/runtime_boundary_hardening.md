@@ -1,6 +1,9 @@
 # Runtime Boundary Hardening
 
-Status: proposed checkpoint
+Status: completed post-stable anti-drift checkpoint
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
 
 ## Goal
 
@@ -75,13 +78,13 @@ This checkpoint does not include:
 - execution-boundary changes require explicit spec and compatibility review, not
   silent drift
 
-## Acceptance Criteria
+## Completed Reading
 
-This checkpoint is complete only when:
+This checkpoint is now complete because:
 
 - `docs/spec/verifier.md`, `docs/spec/vm.md`, and `docs/spec/runtime.md`
   reflect the same verified-only execution route
 - architecture docs describe `prom-runtime` as orchestration only
-- roadmap docs point to this file as the active runtime hardening checkpoint
+- roadmap docs point to this file as the completed runtime hardening checkpoint
 - public VM/runtime docs list the current admitted ownership trap surface
 - no document implies a second execution authority outside verified VM entrypoints

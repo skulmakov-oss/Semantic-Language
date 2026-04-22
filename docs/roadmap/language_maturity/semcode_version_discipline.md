@@ -1,6 +1,9 @@
 # SemCode Version Discipline
 
-Status: proposed checkpoint
+Status: completed post-stable anti-drift checkpoint
+
+This checkpoint is completed and now serves as frozen baseline history on
+current `main`.
 
 ## Goal
 
@@ -88,12 +91,12 @@ Any future header or capability widening must update all of:
 - VM compatibility tests
 - golden or compatibility fixtures if public behavior changed
 
-## Acceptance Criteria
+## Completed Reading
 
-This checkpoint is complete only when:
+This checkpoint is now complete because:
 
 - `docs/spec/semcode.md` reflects the same staged-contract reading
 - architecture docs treat SemCode widening as explicit and additive
-- roadmap docs point to this file as the active SemCode discipline checkpoint
+- roadmap docs point to this file as the completed SemCode discipline checkpoint
 - release-facing compatibility docs use the real admitted header names
 - no document implies silent retroactive widening of the published stable line

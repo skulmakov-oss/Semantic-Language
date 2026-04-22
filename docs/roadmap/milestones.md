@@ -47,9 +47,9 @@
     `docs/roadmap/language_maturity/source_language_contract.md`
   - current completed post-qualification executable module entry checkpoint:
     `docs/roadmap/language_maturity/executable_module_entry_scope.md`
-  - current active IR hardening checkpoint:
+  - current completed post-stable IR hardening checkpoint:
     `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
-  - current active SemCode version-discipline checkpoint:
+  - current completed post-stable SemCode version-discipline checkpoint:
     `docs/roadmap/language_maturity/semcode_version_discipline.md`
 - `M4 PROMETHEUS Boundary`
   - ABI
@@ -83,7 +83,7 @@
     `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
   - current completed post-stable rollback checkpoint:
     `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
-  - current active runtime-boundary hardening checkpoint:
+  - current completed post-stable runtime-boundary hardening checkpoint:
     `docs/roadmap/language_maturity/runtime_boundary_hardening.md`
 - `M6 v1 Lockdown`
   - freezes
