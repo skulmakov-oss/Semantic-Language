@@ -60,6 +60,8 @@ Those reports originally showed:
 The landed first wave now admits only:
 
 - direct local-path executable helper-module imports
+- direct local-path selected executable helper-module imports with optional
+  per-symbol alias inside the current function-only helper slice
 - one root executable entry module containing `fn main()`
 - imported executable declarations needed for ordinary helper-module programs
 
@@ -70,6 +72,9 @@ silently widening into a general package or registry system.
 
 - top-level `Import` admission on the executable source path
 - direct local-path helper-module loading for executable module graphs
+- direct local-path selected helper imports for function-only helper modules,
+  including deterministic synthesis of the requested public bindings plus the
+  required local helper-function call closure
 - imported executable declarations for current source items such as:
   - `fn`
   - `record`
@@ -122,7 +127,9 @@ silently widening into a general package or registry system.
 - build the executable helper-module graph before semantic checking
 - make direct local-path helper-module declarations available to the executable
   semantic path through deterministic bundling
-- keep alias, selected, wildcard, re-export, and package-qualified executable
+- admit direct local-path selected helper imports only for the current
+  function-only helper slice
+- keep top-level alias, wildcard, re-export, and package-qualified executable
   import forms explicitly out of scope
 
 ### Wave 3 — Lowering / CLI / End-To-End
@@ -146,6 +153,8 @@ The widened admitted contour is now frozen as:
 
 - single-file executable programs
 - narrow helper-module executable programs using direct local-path bare imports
+- narrow helper-module executable programs using direct local-path selected
+  imports over function-only helper modules
 
 The updated Gate 1 evidence keeps the overall decision state at:
 

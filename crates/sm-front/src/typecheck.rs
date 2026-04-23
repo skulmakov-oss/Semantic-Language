@@ -29,7 +29,7 @@ fn iterable_for_impl_out_of_scope_message() -> &'static str {
 }
 
 fn executable_import_wave2_out_of_scope_message() -> &'static str {
-    "top-level executable Import currently admits only direct local-path helper-module imports in wave2; alias, selected, wildcard, re-export, and package-qualified import forms remain out of scope"
+    "top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2; alias, wildcard, re-export, and package-qualified import forms remain out of scope"
 }
 
 fn validate_executable_imports(program: &Program) -> Result<(), FrontendError> {
@@ -37,7 +37,6 @@ fn validate_executable_imports(program: &Program) -> Result<(), FrontendError> {
         if import.reexport
             || import.wildcard
             || import.alias.is_some()
-            || !import.select_items.is_empty()
             || import.spec.contains("::")
         {
             return Err(FrontendError {
@@ -2467,7 +2466,7 @@ mod tests {
     }
 
     #[test]
-    fn executable_selected_import_rejects_as_wave2_out_of_scope() {
+    fn executable_selected_import_typechecks_in_wave2() {
         let src = r#"
             Import "helper.sm" { Foo }
 
@@ -2476,11 +2475,7 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src)
-            .expect_err("selected executable import must stay out of scope in wave2");
-        assert!(err
-            .message
-            .contains(executable_import_wave2_out_of_scope_message()));
+        typecheck_source(src).expect("selected executable import should typecheck in wave2");
     }
 
     #[test]
