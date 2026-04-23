@@ -1,332 +1,601 @@
-# Readiness Completion Plan
+# Semantic — Readiness Completion Plan
 
-Status: proposed completion roadmap
+Status: active completion plan
+Primary owners: language maturity, release discipline, public-facing readiness
 
 ## Purpose
 
-This document defines the remaining work needed to move Semantic from its
-current state:
+This document defines the completion plan for bringing Semantic from its
+current state of:
 
-- published stable release line
-- completed first `Gate 1` qualification cycle
-- current decision state: `limited release`
+- architecturally mature
+- engineering-convincing
+- `limited release` qualified
 
-to a state that can honestly support a stronger external readiness claim.
+to a state of full readiness.
 
-This is not a "Wiki polish" plan. Wiki/readme packaging is only a downstream
-effect of real readiness completion.
+This is not a Wiki plan.
+This is not a feature wishlist.
+This is the focused completion program required to reach a point where:
 
-## Current Baseline
+- the technical core is trusted
+- practical-programming contour is sufficiently broad
+- the release posture is simple and honest
+- an external strong engineer can start productively without direct author
+  guidance
+- the public-facing story matches the real repository state
 
-Current `main` already has:
+## Current State
 
-- a deterministic staged pipeline:
-  `frontend -> semantics -> lowering -> IR passes -> emit -> VM`
-- mandatory verifier admission before the standard VM route
-- crate-level ownership boundaries that are reflected in code and tests
-- a published stable `v1.1.1` line
-- a widened current-`main` surface that is broader than the published stable
-  promise
-- a completed first `Gate 1` qualification cycle with decision state
-  `limited release`
+Current `origin/main` is already strong:
 
-This means the project is not in an "architecture-only" phase anymore.
-The remaining work is completion and consolidation work.
+- the project is positioned as a deterministic, contract-driven
+  compiler/runtime system
+- architecture and crate ownership are mature
+- execution integrity is strong
+- release discipline is strong
+- the first `Gate 1` qualification cycle is complete
+- the current formal verdict is `limited release`, not `public release`
+- no active blocker-removal stream is currently open on `main`, and any new
+  widening now requires an explicit scope decision
 
-## Readiness Completion Criteria
+### What Is Already Strong
 
-Semantic should be treated as readiness-complete only when all of the
-following are true.
+- architecture and ownership boundaries
+- verifier-first execution discipline
+- runtime integrity and determinism baseline
+- benchmark baseline
+- qualification discipline
+- release governance
 
-### R1. Technical Core Trust
+### What Is Not Yet Complete
 
-- execution contour is stable
-- verifier and VM are trusted on the admitted contour
-- determinism is demonstrated
+- one simple public status model
+- sufficiently broad practical module authoring contour
+- fully consolidated release truth across `README`, readiness, backlog,
+  milestone, and qualification layers
+- external usability without author guidance
+- a fully finished release-facing artifact story
+
+## Definition Of Full Readiness
+
+Semantic should be considered fully ready only when all of the following are
+true.
+
+### R1 — Technical Core Readiness
+
+- verifier / VM / runtime contour is trusted
+- determinism and integrity are proven
 - benchmark baseline exists and is reproducible
 
-### R2. Practical Programming Trust
+### R2 — Practical Programming Readiness
 
-- module-based authoring does not feel like a special-case workaround
-- real-program trials no longer show a dominant practical blocker
-- import/module ergonomics are strong enough for ordinary use on the admitted
-  contour
+- real programs are no longer blocked by narrow everyday authoring pain points
+- module-based authoring no longer feels like a special-case workaround
+- the language contour is broad enough for a strong limited-release or
+  public-release claim
 
-### R3. Honest Release Posture
+### R3 — Honest Release Posture
 
-- release promise is explicit and evidence-backed
-- the project can honestly remain `limited release`, graduate to a stronger
-  limited contour, or justify a `public release` candidate
+- the current claim is simple and unambiguous
+- `published stable`, `qualified limited release`, `landed on main, not yet
+  promised`, and `out of scope` are clearly separated
 
-### R4. External Usability
+### R4 — External Usability Readiness
 
-- a strong external engineer can build, check, run, and inspect the system
-  without author-side guidance
-- examples, onboarding, and artifact expectations are sufficient for
-  independent use
+- a strong external engineer can install, build, check, run, verify, and
+  understand the system without direct author guidance
 
-### R5. One Truth Model
+### R5 — Public Truth Consolidation
 
-The following layers must not conflict:
+- `README`, backlog, milestones, readiness docs, compatibility docs, and
+  qualification reports describe the same truth model
+
+## Global Execution Rule — Readiness Freeze On `main`
+
+During readiness completion, `main` must remain under a narrow freeze policy.
+
+Allowed changes:
+
+- regression fixes
+- documentation and status consolidation work
+- the explicitly chosen module-authoring widening wave
+- qualification and benchmark reruns required by this plan
+
+Disallowed changes:
+
+- unrelated feature widening
+- parallel language-surface expansion outside the chosen wave
+- opportunistic refactors that change the basis of qualification mid-cycle
+
+Every PR during readiness completion must explicitly state whether it is:
+
+- freeze-safe documentation/status work
+- regression fix
+- chosen Phase B wave work
+- qualification or benchmark re-gating work
+
+This freeze exists to prevent Phase C and Phase F from being written against a
+moving target.
+
+## Authority Order
+
+During readiness completion, the release-facing authority order is:
+
+1. `docs/roadmap/public_status_model.md`
+   Vocabulary authority for:
+   - `published stable`
+   - `qualified limited release`
+   - `landed on main, not yet promised`
+   - `out of scope`
+2. `docs/roadmap/v1_readiness.md`
+   Current release-facing posture authority
+3. `reports/g1_release_scope_statement.md`
+   Current practical-programming qualification verdict authority
+
+No other document may silently override these layers.
+
+## Completion Phases
+
+### Phase A1 — Readiness Truth Skeleton
+
+Target duration: 2–3 days.
+
+#### Goal
+
+Create the truth-consolidation structure early, without prematurely freezing
+factual release claims that may still change after module widening and
+re-synthesis.
+
+#### Required Vocabulary
+
+Use one canonical status vocabulary everywhere:
 
 - `published stable`
 - `qualified limited release`
 - `landed on main, not yet promised`
 - `out of scope`
 
-## Truth Vocabulary
+#### Work Items
 
-Every readiness-facing document should use the same four status families.
+- create the canonical status document skeleton
+- define where each status class is allowed to appear
+- align document structure and terminology across:
+  - `README.md`
+  - `docs/roadmap/backlog.md`
+  - `docs/roadmap/milestones.md`
+  - `docs/roadmap/v1_readiness.md`
+  - `docs/roadmap/compatibility_statement.md`
+  - `docs/roadmap/stable_release_policy.md`
+  - `reports/g1_*`
+- review stale scope docs and mark them for later factual-claim sync
+- define the release-artifact classification skeleton early
 
-### Published Stable
+#### Deliverables
 
-Behavior and artifacts promised by the published stable line.
+- `docs/roadmap/public_status_model.md`
+- release-artifact classification skeleton
 
-### Qualified Limited Release
+#### Definition Of Done
 
-Behavior qualified by the current `Gate 1` evidence and explicitly admitted
-into the current practical-programming contour.
+- the status vocabulary is fixed
+- the repository has one agreed truth-model structure
+- factual claims that may change after re-synthesis are intentionally left for
+  Phase A2
 
-### Landed On `main`, Not Yet Promised
+### Phase B0 — Canonical Examples Draft And Widening Decision Input
 
-Behavior that exists on current `main` but is not part of the current release
-promise until a later qualification or release decision promotes it.
+Target duration: 2–3 days.
 
-### Out Of Scope
+#### Goal
 
-Behavior intentionally excluded from the current release contour.
+Produce an early rough canonical examples draft so the widening choice is based
+on real authoring friction rather than guesswork.
 
-## Governing Rules
+#### Work Items
 
-### Rule 1 — No Readiness By Intuition
+Prepare a draft examples pack covering at minimum:
 
-Readiness cannot be upgraded because the project "feels mature".
-Readiness can move only when the evidence changes.
+- rule/state-oriented program
+- CLI utility
+- data-heavy small program
+- module-based program
+- one current narrow-contour boundary example
 
-### Rule 2 — Phase A Becomes Authoritative
+For each draft example, record:
 
-Once truth consolidation lands, any stale status document becomes a real
-readiness defect and must be synced before further widening.
+- required import/module forms
+- current workarounds
+- friction points
+- which missing surface causes the most distortion
 
-### Rule 3 — One Narrow Widening At A Time
+#### Decision Rule For The Widening Wave
 
-During readiness completion, do not open multiple practical-widening waves at
-once.
+Choose exactly one widening wave based on the draft examples.
 
-### Rule 4 — Landed Is Not Automatically Promised
+- choose `selected import` if draft examples are forced into awkward local
+  rebinding or boilerplate because direct symbol import is missing
+- choose `namespace-qualified executable access` if draft examples remain
+  structurally clean but become noisy or unnatural due to repeated
+  namespace-only access
+- do not choose by intuition alone
 
-Current-`main` behavior is not automatically part of the release contour.
-Promotion requires an explicit qualification or release decision.
+#### Deliverables
 
-### Rule 5 — UI Stays Outside The Current Contour Unless Admitted
+- draft canonical examples pack
+- `docs/roadmap/module_authoring_wave_decision.md`
 
-UI remains outside the readiness-critical contour unless a later release scope
-decision explicitly pulls it in.
+#### Definition Of Done
 
-## Phase Order
-
-### Phase A — Readiness Truth Consolidation
-
-Goal:
-
-- establish one canonical readiness model across release-facing docs
-
-Required sync targets:
-
-- `README.md`
-- `docs/roadmap/backlog.md`
-- `docs/roadmap/milestones.md`
-- `docs/roadmap/v1_readiness.md`
-- `docs/roadmap/compatibility_statement.md`
-- `reports/g1_*.md`
-- stale scope docs whose status language no longer matches current `main`
-
-Done only when:
-
-- the four truth categories are used consistently
-- no release-facing document silently overstates current readiness
-- new widening work can be evaluated against one shared vocabulary
+- the widening wave is selected using explicit evidence from example friction
+- there is a written justification for why the chosen wave reduces the
+  highest-value practical pain
 
 ### Phase B — Module Authoring Completion
 
-Goal:
+Target duration: 1–2 weeks.
 
-- remove the strongest remaining practical-programming weakness without opening
-  a redesign track
+#### Goal
 
-#### B1. Harden Current Narrow Contour
+Remove module authoring as the main remaining practical weakness.
 
-Focus:
+#### Scope Rule
 
-- negative boundary cases
-- cycle rejection
-- duplicate symbol behavior
-- deterministic ordering
-- repeated import behavior
+Do not redesign the whole import/package system.
+Only perform 1–2 honest, narrow widening waves.
+
+#### B1 — Harden The Current Narrow Contour
+
+Required work:
+
+- negative fixtures for all still-out-of-scope import forms
+- cycle rejection checks
+- duplicate symbol handling checks
+- deterministic ordering checks
+- repeated import handling checks
 - helper collision scenarios
 
-#### B2. One Narrow Widening Wave
+#### B2 — One Narrow Widening Wave
 
-Choose exactly one:
+Choose exactly one, based on Phase B0 evidence:
 
-- selected import
-- namespace-qualified executable access
+- `selected import`
+- `namespace-qualified executable access`
 
-#### B3. Optional Second Narrow Widening
+The choice must be justified by the draft canonical examples and their
+workaround burden.
 
-Allowed only if:
+#### B3 — Optional Second Narrow Widening Wave
 
-- the first widening still leaves module authoring as the dominant practical
-  blocker
+Allowed only if one widening wave does not sufficiently reduce practical
+authoring pain.
 
-Explicit non-goals:
+#### Explicitly Not In Scope
 
-- alias + wildcard + re-export + package-qualified mix in one wave
-- broad package/import redesign
-- ecosystem-wide package management expansion
+Do not attempt, in this phase:
 
-Done only when:
+- alias + wildcard + re-export + package-qualified redesign as one wave
+- large import/package architecture rewrite
 
-- module-based authoring no longer feels like a narrow helper hack
-- remaining limits sound like advanced scope, not everyday pain
+#### Deliverables
 
-### Phase C — Gate 1.1 Re-Synthesis
+- widened fixtures and tests for the chosen wave
+- updated source/module docs
+- short module-wave completion note
 
-Goal:
+#### Definition Of Done
 
-- recompute the release verdict using updated evidence after any practical
-  widening
+- module-based executable authoring no longer looks like a narrow special-case
+  path
+- remaining limitations clearly read as advanced scope, not basic daily pain
 
-Required reports:
+### Phase C — Gate 1.1 Re-Synthesis And Benchmark Re-Gate
+
+Target duration: 3–5 days.
+
+#### Goal
+
+Re-run the affected qualification conclusions after module-authoring widening,
+and explicitly re-gate benchmark evidence if the widening touched compiler or
+runtime behavior.
+
+#### Update The Following Reports
 
 - `reports/g1_real_program_trial.md`
 - `reports/g1_frontend_trust.md`
 - `reports/g1_surface_expressiveness.md`
 - `reports/g1_release_scope_statement.md`
 
-Allowed outcomes:
+Update these as well if the widening changes execution-path behavior or
+measurable pipeline/runtime cost:
+
+- `reports/g1_execution_integrity.md`
+- `reports/g1_benchmark_baseline.md`
+
+#### Benchmark Re-Gate Requirement
+
+If Phase B changes frontend, semantics, lowering, emit, verifier, or VM
+behavior in a way that can affect pipeline cost or runtime behavior, rerun the
+relevant benchmark baseline and record whether:
+
+- the prior baseline still stands unchanged
+- the baseline changed but remains acceptable
+- a regression or step-change requires explicit documentation
+
+#### Possible Outcomes
 
 - `limited release` remains unchanged
-- `limited release` broadens
+- `limited release` contour broadens
 - `public release candidate` becomes justified
+- another blocker-removal cycle is still required
 
-Done only when:
+#### Definition Of Done
 
-- the new verdict is traceable to evidence rather than sentiment
+- the new verdict is evidence-based
+- benchmark posture is explicitly reconfirmed or updated
+- the release claim broadens only if qualification evidence actually supports
+  it
+
+### Phase A2 — Factual Truth Consolidation
+
+Target duration: 2–3 days.
+
+#### Goal
+
+Apply the now-finalized factual readiness and release claims after Phase C, so
+the truth model is consolidated once rather than rewritten twice.
+
+#### Work Items
+
+- update factual release posture in:
+  - `README.md`
+  - `docs/roadmap/backlog.md`
+  - `docs/roadmap/milestones.md`
+  - `docs/roadmap/v1_readiness.md`
+  - `docs/roadmap/compatibility_statement.md`
+  - `docs/roadmap/stable_release_policy.md`
+  - `reports/g1_*`
+- update stale scope docs so they reflect the post-Phase C state
+- finalize the release-artifact status mapping
+
+#### Definition Of Done
+
+- release-facing documents now contain synchronized factual claims
+- no second truth-consolidation pass is expected for the same cycle
 
 ### Phase D — External Usability Completion
 
-Goal:
+Target duration: 1–2 weeks.
 
-- let a strong external engineer become productive without author-side guidance
+#### Goal
 
-Required deliverables:
+Make the project independently usable by a strong external engineer.
 
-- canonical examples pack
-- one-page onboarding
-- developer quickstart path
+#### Operational Note
 
-Examples should cover:
+The original ambition of "productive in 15–20 minutes" must be treated as a
+tested operational claim, not a self-assessment.
 
-- rule/state
+Define the target user explicitly before evaluation.
+Recommended baseline:
+
+- a senior engineer with 5+ years of systems-language experience
+- comfortable with Rust-like toolchains and compiler-style workflows
+- no prior project-specific domain knowledge
+
+#### D1 — Canonical Examples Pack
+
+Prepare 4–6 canonical examples covering:
+
+- rule/state-oriented program
 - CLI utility
-- data-heavy program
+- data-heavy small program
 - module-based program
-- one explicit boundary example where useful
+- one boundary example showing a narrow current contour honestly
 
-Done only when:
+For each example, include:
 
-- an external engineer can start productively in roughly 15–20 minutes
-- core workflows do not require oral explanation
+- purpose
+- run/check/verify commands
+- expected output
+- what language surface it demonstrates
+
+#### D2 — One-Page Onboarding
+
+Include:
+
+- install
+- `smc check`
+- `smc compile`
+- `smc run`
+- `smc verify`
+- how to read diagnostics
+- how `stable`, `limited`, and `main-only` surfaces differ
+
+#### D3 — Developer Quickstart
+
+Explain:
+
+- repository structure
+- where spec lives
+- where readiness posture lives
+- where examples live
+- what is promised now
+
+#### D4 — Cold-Start Rehearsal
+
+Run the onboarding on a clean environment or clean VM with a timer.
+
+Record:
+
+- time to first successful `check`
+- time to first successful `run`
+- time to understand the basic status model
+- where onboarding still assumes hidden author knowledge
+
+#### Deliverables
+
+- `docs/getting_started.md`
+- `docs/examples_index.md`
+- canonical examples pack
+- cold-start rehearsal note
+
+#### Definition Of Done
+
+- a strong external engineer profile is defined explicitly
+- the onboarding path is tested in a clean environment
+- no hidden author-only knowledge is required for the basic productive loop
 
 ### Phase E — Release-Facing Artifact Completion
 
-Goal:
+Target duration: 3–5 days.
 
-- make the supported product/artifact model explicit
+#### Goal
 
-Required work:
+Define and finish the release-facing artifact story.
 
-- define supported artifacts
-- define supported platform scope
-- keep stable assets and current-`main` widened behavior clearly separated
-- align release bundle checks, smoke matrix, and public docs
+#### Work Items
 
-Done only when:
+- explicitly define the supported artifact set
+- define platform scope honestly
+- separate stable assets from current-`main` widened behavior
+- connect public docs with:
+  - `scripts/verify_release_bundle.ps1`
+  - `scripts/verify_release_assets.ps1`
+  - `docs/roadmap/release_asset_smoke_matrix.md`
+  - `docs/roadmap/release_bundle_checklist.md`
 
-- users can answer four questions unambiguously:
-  - what to download
-  - what to run
-  - what is promised by that artifact
-  - what is only current-`main` behavior
+#### Deliverables
+
+- `docs/release_artifact_model.md`
+- updated release-facing summary docs if needed
+
+#### Definition Of Done
+
+- a user can answer:
+  - what do I download
+  - what can I run
+  - what is promised by this artifact
+  - what is not yet promised
 
 ### Phase F — Final Readiness Review
 
-Goal:
+Target duration: 2–3 days.
 
-- make one explicit completion decision rather than drifting into endless
-  cleanup
+#### Goal
 
-Review questions:
+Make the final completion judgment.
 
-- does the technical core now support full trust on the admitted contour
-- does practical-programming authoring feel natural enough
-- is the module/import story sufficiently usable
-- can an external engineer work productively without author help
-- do all public truth layers agree
+#### Final Review Checklist
 
-Required final output:
+##### F1 — Technical Core
+
+Is the execution stack fully trusted?
+
+##### F2 — Practical Programming
+
+Can real programs be written without persistent contour friction?
+
+##### F3 — Module Story
+
+Is module/import authoring sufficiently natural?
+
+##### F4 — External Usability
+
+Can a strong external engineer work productively without the author?
+
+##### F5 — Public Truth
+
+Do all release-facing truth layers agree?
+
+#### Possible Final Decisions
 
 - `ready for strong limited release`
-- or `ready for public release`
-- or `one more narrow blocker-removal cycle`
+- `ready for public release`
+- `one final narrow blocker-removal cycle is still required`
 
-Done only when:
+#### Recursion Rule If Another Cycle Is Required
 
-- the final decision exists as an explicit artifact rather than a discussion
+If one final narrow blocker-removal cycle is required, do not automatically
+restart the entire A–F program.
 
-## Recommended Default Path
+Instead:
 
-Unless evidence suggests otherwise, the recommended order is:
+1. keep the existing truth model from Phase A1 intact
+2. run a narrowly scoped continuation cycle:
+   - targeted blocker-removal work
+   - targeted qualification and benchmark re-gate
+   - factual truth update
+3. restart the full A–F program only if the new blocker changes the status
+   vocabulary, release-artifact model, or external-usability basis
 
-1. Phase A
-2. Phase B1
-3. Phase B2
-4. Phase C
-5. Phase D
-6. Phase E
-7. Phase F
+#### Deliverables
 
-If Phase B2 proves unnecessary after Phase B1, move directly from B1 to D/E/F
-only through an explicit decision.
+- `docs/roadmap/final_readiness_verdict.md`
 
-## Near-Term Execution Reading
+#### Definition Of Done
 
-For the next 2–4 weeks, the default readiness-completion sequence is:
+- the final readiness verdict is made from evidence, not intuition
+- the final verdict exists as a canonical repository document
 
-- Week 1:
-  - Phase A
-  - Phase B1
-- Week 2:
-  - Phase B2
-  - optional decision on B3
-- Week 3:
-  - Phase C
-  - start Phase D
-- Week 4:
-  - finish Phase D
-  - Phase E
-  - prepare Phase F
+## Recommended Execution Order
 
-## Explicit Non-Goals During This Completion Cycle
+### Core Path
 
-Do not let this cycle expand into:
+Phase A1 -> Phase B0 -> Phase B -> Phase C -> Phase A2 -> Phase D -> Phase E
+-> Phase F
 
-- large Workbench growth
-- broad agent/runtime/provider expansion
-- a new UI platform push
-- broad ecosystem storytelling beyond the admitted contour
-- unrelated package/import redesign
+## 4-Week Execution Suggestion
 
-Those may be valid future tracks, but they are not on the current readiness
-critical path.
+### Week 1
+
+- Phase A1
+- Phase B0
+- begin Phase B1
+
+### Week 2
+
+- complete Phase B1
+- Phase B2
+- start B3 only if justified
+
+### Week 3
+
+- Phase C
+- Phase A2
+- begin Phase D
+
+### Week 4
+
+- complete Phase D
+- Phase E
+- prepare Phase F
+
+## Out Of Scope During Readiness Completion
+
+Until phases A–F are complete, avoid broad expansion into:
+
+- large Workbench feature pushes
+- Agent Helm expansion
+- local model provider expansion
+- Git boundary growth
+- native UI stack work
+- broad ecosystem storytelling beyond what readiness requires
+
+These may be important later, but they are not on the current critical path to
+full readiness.
+
+## Final Note
+
+The project does not currently need another major conceptual leap.
+It needs a final readiness-completion cycle.
+
+The remaining work is not primarily about inventing more architecture.
+It is about:
+
+- consolidating truth
+- widening the remaining practical contour where it still hurts
+- re-synthesizing the release claim honestly
+- finishing external usability
+- and reaching a state where the final readiness verdict no longer feels
+  uncertain
