@@ -53,7 +53,22 @@ fn compile_bytes(rel: &str) -> Vec<u8> {
 
 #[test]
 fn executable_module_entry_wave2_local_helper_import_checks_and_runs() {
-    let rel = "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm";
+    let rel =
+        "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm";
+    cli_ok("check", rel);
+    cli_ok("run", rel);
+}
+
+#[test]
+fn executable_module_entry_selected_import_checks_and_runs() {
+    let rel = "examples/qualification/executable_module_entry/positive_selected_import/src/main.sm";
+    cli_ok("check", rel);
+    cli_ok("run", rel);
+}
+
+#[test]
+fn executable_module_entry_selected_import_aliases_relieve_helper_collisions() {
+    let rel = "examples/qualification/executable_module_entry/positive_selected_import_alias_collision/src/main.sm";
     cli_ok("check", rel);
     cli_ok("run", rel);
 }
@@ -87,10 +102,9 @@ fn executable_module_entry_helper_graph_compile_is_deterministic() {
 #[test]
 fn executable_module_entry_negative_out_of_scope_import_forms_report_wave2_boundary() {
     let wave2_boundary =
-        "top-level executable Import currently admits only direct local-path helper-module imports in wave2";
+        "top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2";
     let cases = [
         "examples/qualification/executable_module_entry/negative_alias_import/src/main.sm",
-        "examples/qualification/executable_module_entry/negative_selected_import/src/main.sm",
         "examples/qualification/executable_module_entry/negative_wildcard_import/src/main.sm",
         "examples/qualification/executable_module_entry/negative_reexport_import/src/main.sm",
         "examples/qualification/executable_module_entry/negative_package_qualified_import/src/main.sm",

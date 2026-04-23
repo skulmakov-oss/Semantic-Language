@@ -33,10 +33,15 @@ Current rules:
 - top-level executable `Import` directives now admit one narrow module-entry
   slice on current `main`:
   - direct local-path bare imports such as `Import "helper.sm"`
+  - direct local-path selected imports such as
+    `Import "helper.sm" { Foo, Bar as Baz }` when the imported helper module
+    stays within the current function-only helper slice
   - deterministic helper-module bundling before executable semantic checking
+  - selected executable helper imports synthesize only the requested public
+    bindings plus the required local helper-function call closure before
+    executable semantic checking
 - the current executable path still does **not** admit:
-  - alias imports
-  - selected imports
+  - top-level alias imports
   - wildcard imports
   - public re-exports
   - package-qualified executable imports

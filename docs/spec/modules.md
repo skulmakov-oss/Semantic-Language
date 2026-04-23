@@ -66,13 +66,19 @@ Current executable-path admission is narrower:
 
 - direct local-path bare imports such as `Import "helper.sm"` are admitted for
   deterministic helper-module loading
+- direct local-path selected imports such as
+  `Import "helper.sm" { Foo, Bar as Baz }` are now also admitted on the
+  executable path when the imported helper module stays within the current
+  function-only helper slice
 - imported helper-module declarations are bundled into the executable semantic
   path before checking/lowering
+- selected executable helper imports materialize only the requested public
+  bindings plus the required local helper-function call closure before
+  checking/lowering
 
 The following executable import forms remain out of scope on current `main`:
 
-- explicit alias imports
-- selected imports
+- explicit top-level alias imports
 - wildcard imports
 - public re-exports
 - package-qualified executable imports

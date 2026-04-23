@@ -155,7 +155,7 @@ Verdict:
 Reason:
 
 - ordinary helper-module authoring now works without hidden compiler shortcuts
-- the admitted slice is still narrow because selected, alias, wildcard,
+- the admitted slice is still narrow because top-level alias, wildcard,
   re-export, and package-qualified executable imports remain out of scope
 
 ## Additional Friction Found During Authoring
@@ -164,12 +164,12 @@ Two extra limitations showed up while drafting the trial programs:
 
 - direct `i32` accumulation through `+=` produced
   `f64 arithmetic requires f64 operands, got I32 and I32`
-- the selected-import helper-module variant in
-  `examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm`
+- the top-level alias helper-module variant in
+  `examples/qualification/executable_module_entry/negative_alias_import/src/main.sm`
   still rejects with:
 
 ```text
-top-level executable Import currently admits only direct local-path helper-module imports in wave2; alias, selected, wildcard, re-export, and package-qualified import forms remain out of scope
+top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2; alias, wildcard, re-export, and package-qualified import forms remain out of scope
 ```
 
 Those probes are not counted as separate formal trial-family programs, but they
@@ -179,7 +179,7 @@ are relevant evidence:
 - integer arithmetic ergonomics still require more trust work before a broader
   practical-readiness claim
 - executable module authoring is now admitted only for the narrow direct
-  local-path bare-import slice
+  local-path bare/selected-import slice
 
 ## Q1 Summary
 
@@ -189,10 +189,12 @@ Current `main` can already support:
 - rule/state-oriented executable programs
 - narrow data programs over `Sequence(T)` and direct-record `Iterable` impls
 - narrow helper-module executable programs using direct local-path bare imports
+- narrow helper-module executable programs using direct local-path selected
+  imports over function-only helper modules
 
 Current `main` does **not** yet prove:
 
-- broader executable module authoring beyond the direct local-path bare-import
+- broader executable module authoring beyond the direct local-path bare/selected-import
   slice
 - full CLI-style practical usability with admitted IO/process interaction
 
@@ -212,7 +214,7 @@ Operational conclusion:
 
 - Semantic is already capable of writing some real small programs
 - Semantic is now also capable of ordinary helper-module executable authoring
-  through direct local-path bare imports
+  through direct local-path bare imports and direct local-path selected imports
 - Semantic is not yet qualified to claim broad practical-programming readiness
   because executable-module authoring remains narrow and full CLI-style
   practicality is still outside the admitted contour

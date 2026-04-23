@@ -35,8 +35,7 @@ fn g1_rule_state_decision_checks_and_runs() {
 
 #[test]
 fn g1_data_audit_record_iterable_checks_and_runs() {
-    let rel =
-        "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm";
+    let rel = "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm";
     cli_ok("check", rel);
     cli_ok("run", rel);
 }
@@ -50,18 +49,18 @@ fn g1_module_helpers_program_checks_and_runs() {
 }
 
 #[test]
-fn g1_selected_import_module_program_remains_out_of_scope() {
-    let rel = "examples/qualification/g1_real_program_trial/module_helpers_blocked/src/main.sm";
+fn g1_top_level_alias_module_program_remains_out_of_scope() {
+    let rel = "examples/qualification/executable_module_entry/negative_alias_import/src/main.sm";
     let check_err = cli_err("check", rel);
     assert!(
         check_err.contains(
-            "top-level executable Import currently admits only direct local-path helper-module imports in wave2"
+            "top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2"
         )
     );
     let run_err = cli_err("run", rel);
     assert!(
         run_err.contains(
-            "top-level executable Import currently admits only direct local-path helper-module imports in wave2"
+            "top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2"
         )
     );
 }

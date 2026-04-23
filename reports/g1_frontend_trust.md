@@ -113,7 +113,7 @@ Fixture:
 
 Observed diagnostic:
 
-- contains `top-level executable Import currently admits only direct local-path helper-module imports in wave2`
+- contains `top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2`
 
 Assessment:
 
@@ -216,8 +216,9 @@ Trusted zones on current `main`:
 Still trust-reducing zones:
 
 - broader executable-module authoring remains intentionally narrow because
-  alias/selected/wildcard/re-export/package-qualified forms are still out of
-  scope on the executable path
+  top-level alias/wildcard/re-export/package-qualified forms are still out of
+  scope on the executable path even though direct local-path selected imports
+  are now admitted
 - this is no longer a parser trust failure, but it still limits the broader
   practical-programming contour
 

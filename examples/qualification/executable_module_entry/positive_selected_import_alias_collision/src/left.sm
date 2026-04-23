@@ -1,0 +1,10 @@
+fn local_bias(value: i32) -> i32 {
+    if value == 2 {
+        return 12;
+    }
+    return value;
+}
+
+fn score(value: i32) -> i32 {
+    return local_bias(value);
+}

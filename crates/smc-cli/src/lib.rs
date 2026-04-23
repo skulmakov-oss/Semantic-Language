@@ -7,6 +7,8 @@ mod api_contract;
 #[cfg(feature = "std")]
 mod config;
 #[cfg(feature = "std")]
+mod executable_bundle;
+#[cfg(feature = "std")]
 mod formatter;
 #[cfg(feature = "std")]
 mod incremental;
