@@ -1,0 +1,7 @@
+fn score() -> i32 {
+    return 1;
+}
+
+fn alpha_score() -> i32 {
+    return score();
+}

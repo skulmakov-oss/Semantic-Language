@@ -1,0 +1,8 @@
+Import "shared.sm"
+
+fn left_score() -> i32 {
+    if shared_value() == T {
+        return 3;
+    }
+    return 0;
+}

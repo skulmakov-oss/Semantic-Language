@@ -1,0 +1,5 @@
+Import "beta.sm"
+
+fn right_score() -> i32 {
+    return beta_score();
+}
