@@ -17,6 +17,20 @@ This report follows:
 
 - `docs/roadmap/release_qualification/gate1_protocol.md`
 
+## Status Reading
+
+This report uses the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Its role is evidence for the admitted execution contour on current `main`.
+
+It does not by itself:
+
+- promote landed current-`main` behavior into `published stable`
+- widen the current practical-programming release promise
+- override the current release-facing posture in `docs/roadmap/v1_readiness.md`
+
 ## Reproducible Evidence Pack
 
 Representative source fixtures reused from `Q1`:

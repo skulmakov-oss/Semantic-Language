@@ -12,6 +12,18 @@ This was a post-stable closure pass on current `main`. It did not reinterpret
 the published `v1.1.1` line as if every post-stable import-path widening had
 already shipped there.
 
+## Status Reading For This Scope Doc
+
+This document records a completed closure track on current `main`.
+
+Per `docs/roadmap/public_status_model.md`, it should be read as a track record
+for landed behavior and non-goals, not as the authority for the current
+release-facing posture.
+
+Unless a later qualification or stable publication step explicitly promotes a
+surface described here, it should be read as landed on current `main`, not yet
+promised.
+
 ## Stable Baseline Before This Track
 
 The published stable line already froze these facts:

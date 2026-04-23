@@ -13,11 +13,24 @@ identified after the first `Gate 1` cycle:
 The landed result remains intentionally narrow. It is not a reboot of the whole
 package or module ecosystem story.
 
+## Status Reading For This Scope Doc
+
+This document records a completed blocker-removal checkpoint on current `main`.
+
+Per `docs/roadmap/public_status_model.md`, it should be read as a track record
+for landed behavior and track scope, not as the authority for the current
+release-facing verdict.
+
+Current release-facing posture still lives in:
+
+- `docs/roadmap/v1_readiness.md`
+- `reports/g1_release_scope_statement.md`
+
 ## Why This Track Exists
 
 The first `Gate 1` qualification cycle ended in:
 
-- `limited release`
+- `qualified limited release`
 
 The main blocker preventing a broader practical-programming claim was not VM
 integrity or verifier trust. It was ordinary module-based executable authoring.
@@ -136,7 +149,7 @@ The widened admitted contour is now frozen as:
 
 The updated Gate 1 evidence keeps the overall decision state at:
 
-- `limited release`
+- `qualified limited release`
 
 The blocker was removed, but the release contour remains intentionally narrow
 because broader executable import forms and full CLI-style authoring are still

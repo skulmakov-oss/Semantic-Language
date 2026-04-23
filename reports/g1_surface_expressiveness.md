@@ -18,6 +18,20 @@ This report follows:
 
 UI remains outside this qualification contour.
 
+## Status Reading
+
+This report uses the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Its role is synthesis for the current practical-programming qualification.
+
+It does not by itself:
+
+- promote landed current-`main` behavior into `published stable`
+- replace `docs/roadmap/v1_readiness.md` as the release-facing posture authority
+- widen the release claim beyond the evidence set summarized here
+
 ## Evidence Summary
 
 ### Natural zone
@@ -95,7 +109,8 @@ still matters for practical readiness:
 
 ## G1-A Verdict
 
-`G1-A Surface Expressiveness` is green only for a **limited** admitted contour.
+`G1-A Surface Expressiveness` is green only for a `qualified limited release`
+contour.
 
 Operational meaning:
 
@@ -106,6 +121,6 @@ Operational meaning:
   programming claim while executable-module authoring remains intentionally
   narrow and CLI-style authoring remains incomplete
 
-This is sufficient for a `limited release` decision.
+This is sufficient for a `qualified limited release` decision.
 
 It is not sufficient for a `public release` decision.
