@@ -14,6 +14,20 @@ This report follows:
 
 - `docs/roadmap/release_qualification/gate1_protocol.md`
 
+## Status Reading
+
+This report uses the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Its role is evidence for the currently admitted frontend contour.
+
+It does not by itself:
+
+- promote landed current-`main` behavior into `published stable`
+- define the current release-facing posture
+- broaden the current practical-programming claim beyond the evidence pack
+
 ## Reproducible Evidence Pack
 
 Canonical positive fixtures:

@@ -11,6 +11,20 @@ This report follows:
 
 - `docs/roadmap/release_qualification/gate1_protocol.md`
 
+## Status Reading
+
+This report uses the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Its role is benchmark evidence for the currently admitted qualification contour.
+
+It does not by itself:
+
+- promote landed current-`main` behavior into `published stable`
+- widen the current practical-programming claim
+- override the release-facing posture in `docs/roadmap/v1_readiness.md`
+
 ## Scope
 
 This first baseline measures in-process public pipeline stages for the same

@@ -13,6 +13,21 @@ This report follows the canonical Gate 1 protocol in:
 
 UI is not part of this qualification contour.
 
+## Status Reading
+
+This report uses the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Its role is evidence for the current practical-programming contour.
+
+It does not by itself:
+
+- promote landed current-`main` behavior into `published stable`
+- override the current release-facing posture in `docs/roadmap/v1_readiness.md`
+- replace the current qualification verdict in
+  `reports/g1_release_scope_statement.md`
+
 ## Reproducible Evidence Pack
 
 Canonical committed trial programs:

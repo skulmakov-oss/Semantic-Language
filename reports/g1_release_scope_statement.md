@@ -4,7 +4,22 @@ Status: completed synthesis report for `Q5`
 
 ## Decision State
 
-`limited release`
+`qualified limited release`
+
+## Status Reading
+
+This report uses the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Per the authority order defined there, this report is the current
+practical-programming qualification verdict authority.
+
+It does not by itself:
+
+- promote behavior into the `published stable` line
+- override stable publication rules in `docs/roadmap/stable_release_policy.md`
+- reinterpret all landed current-`main` behavior as release-promised
 
 ## Decision Basis
 
