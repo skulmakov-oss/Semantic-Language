@@ -1,0 +1,4 @@
+format 1
+package negative_namespace_collision
+manifest_dir .
+module_root src

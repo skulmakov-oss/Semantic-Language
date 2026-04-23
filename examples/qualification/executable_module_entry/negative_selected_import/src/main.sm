@@ -1,0 +1,5 @@
+Import "helper.sm" { score }
+
+fn main() {
+    return;
+}
