@@ -4,6 +4,12 @@ Status: published stable release line
 
 This document summarizes the current release-facing readiness state for Semantic v1.
 
+Read this document using the canonical status vocabulary in
+`docs/roadmap/public_status_model.md`.
+
+Within that model, this document is the authority for the current
+release-facing posture.
+
 ## Current Readiness Position
 
 Current repository state has working coverage for:
@@ -34,6 +40,16 @@ Current `v1` boundary decision:
 - the first `Gate 1` qualification cycle is completed and currently supports
   only a `limited release` decision for the admitted practical-programming
   contour documented in `reports/g1_release_scope_statement.md`
+
+Status reading:
+
+- `published stable`: the `v1.1.1` line and its stable assets
+- `qualified limited release`: the admitted practical-programming contour
+  documented by the completed first `Gate 1` cycle
+- `landed on main, not yet promised`: widened current-`main` surfaces listed
+  under `Current Known Limits` as excluded from the published stable line
+- `out of scope`: behavior explicitly excluded from both the current stable
+  line and the current qualified contour
 
 ## Current Artifact List
 

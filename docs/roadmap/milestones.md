@@ -1,5 +1,20 @@
 # Semantic v1 Milestones
 
+This document is a milestone/checkpoint map, not the authority for the current
+release-facing verdict.
+
+Read milestone statuses through the canonical status vocabulary in
+`docs/roadmap/public_status_model.md`.
+
+Use:
+
+- `docs/roadmap/v1_readiness.md` for the current published-stable posture
+- `reports/g1_release_scope_statement.md` for the current qualified-limited
+  practical-programming verdict
+
+Do not treat a milestone or subtrack marked as completed on current `main` as
+automatically published stable or release-promised.
+
 - `M0 Repository Discipline`
   - architecture docs
   - crate map

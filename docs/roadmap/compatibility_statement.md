@@ -5,6 +5,15 @@ Status: active stable release baseline
 This document summarizes the current compatibility commitments for the
 repository state published on the active Semantic stable line.
 
+Read this document using the canonical status vocabulary in
+`docs/roadmap/public_status_model.md`.
+
+In this document:
+
+- `published stable` refers to the active stable line and its commitments
+- `landed on main, not yet promised` refers to forward-only widenings that
+  exist on current `main` but are not part of the stable promise
+
 ## SemCode Compatibility
 
 Current published-stable compatible SemCode families:
@@ -14,7 +23,7 @@ Current published-stable compatible SemCode families:
 - `SEMCODE2`
 - `SEMCODE3`
 
-Current post-stable admitted families on `main`:
+Current landed-on-`main`, not-yet-promised families:
 
 - `SEMCODE4`
 - `SEMCODE5`

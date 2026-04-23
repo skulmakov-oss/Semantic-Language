@@ -7,10 +7,13 @@ Current release-control wave:
 - keep active engineering work anchored to the canonical `main` source of truth
   in
   `docs/roadmap/language_maturity/mainline_source_of_truth_policy.md`
+- keep release-facing wording anchored to
+  `docs/roadmap/public_status_model.md`
 
 Current release-maintenance wave:
 
-- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with the published stable line
+- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with
+  the published stable line
 - keep published release assets validated against representative source programs
 - keep release notes and compatibility statements honest about current narrow `v1` limits
 
@@ -23,6 +26,10 @@ Current remaining `v1` wave:
   `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
 
 Current post-`v1` wave:
+
+- the items listed below are landed on current `main` as frozen baseline
+  history; they are not automatically part of the published stable or
+  qualified-limited-release contour unless a later decision promotes them
 
 - `Runtime Ownership (tuple + direct record-field paths)` is completed and now
   lives as frozen baseline history in `docs/spec/runtime_ownership.md`
