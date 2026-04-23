@@ -1,0 +1,13 @@
+Import "risk_policy.sm" { classify_risk, normalize_delta }
+Import "text_format.sm" { format_amount, format_delta }
+
+fn main() {
+    let normalized: i32 = normalize_delta(-2);
+    let risk: quad = classify_risk(9, normalized);
+    let amount_text: text = format_amount(9);
+    let delta_text: text = format_delta(normalized);
+    assert(risk == T);
+    assert(amount_text == "9");
+    assert(delta_text == "2");
+    return;
+}

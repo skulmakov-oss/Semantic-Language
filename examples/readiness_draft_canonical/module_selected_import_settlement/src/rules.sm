@@ -1,0 +1,19 @@
+fn classify_status(amount: i32, flagged: bool) -> quad {
+    if flagged == true {
+        return F;
+    }
+    if amount >= 10 {
+        return T;
+    }
+    return S;
+}
+
+fn status_text(verdict: quad) -> text {
+    if verdict == T {
+        return "ok";
+    }
+    if verdict == F {
+        return "hold";
+    }
+    return "review";
+}
