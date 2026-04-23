@@ -6,6 +6,13 @@ This document defines the release discipline that governed the `v1.1.1` stable
 cut and should continue to govern forward stable releases without reopening
 scope.
 
+Read this policy using the canonical status vocabulary in
+`docs/roadmap/public_status_model.md`.
+
+This document governs the `published stable` line.
+It does not automatically promote behavior that is merely landed on current
+`main`.
+
 ## Scope Freeze
 
 While the repository is preparing or validating a stable release:
@@ -21,6 +28,11 @@ Allowed changes during the release-validation window:
 - release asset validation
 - packaging fixes
 - emergency correctness fixes that are rerun through the full validation contour
+
+Disallowed interpretation:
+
+- landed-on-`main`, not-yet-promised behavior must not be treated as part of
+  the stable line unless an explicit later release decision promotes it
 
 ## Stable Tag Preconditions
 

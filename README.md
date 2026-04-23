@@ -10,7 +10,17 @@ Semantic is built for reasoning rules, semantic state transitions, declarative L
 The public contract is centered in `docs/spec/*`. Historical roadmap notes and legacy compatibility shims remain in the repository, but they are not the primary source of truth for the current toolchain surface.
 
 ## Current Status
+- Semantic currently spans four release-facing status layers:
+  - `published stable`
+  - `qualified limited release`
+  - `landed on main, not yet promised`
+  - `out of scope`
+- The canonical vocabulary for those layers is defined in
+  `docs/roadmap/public_status_model.md`.
 - Semantic is in a post-v1 stabilization phase on `main`.
+- The current published stable line is `v1.1.1`.
+- The current practical-programming qualification posture remains
+  `qualified limited release`, not `public release`.
 - Canonical staged pipeline: `frontend -> semantics -> lowering -> IR passes -> emit -> VM`.
 - All pipeline stages are deterministic, explicitly staged, and contract-bound; verifier admission remains mandatory before standard VM execution.
 - Runtime Ownership (v1 slice) is DONE:
@@ -21,6 +31,9 @@ The public contract is centered in `docs/spec/*`. Historical roadmap notes and l
   - verifier-admitted execution contract
 - This is a scoped ownership model, not a full borrow system.
 - CLI ownership is centered in `crates/smc-cli`; root `smc` and `svm` binaries remain process entrypoints.
+- Landed post-stable surfaces on current `main` should not be read as
+  release-promised unless a later readiness or release decision explicitly
+  promotes them.
 
 ## Primary References
 - `docs/spec/index.md` - canonical spec bundle entrypoint
