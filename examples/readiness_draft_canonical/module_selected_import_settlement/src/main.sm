@@ -1,0 +1,13 @@
+Import "rules.sm" { classify_status, status_text as rule_status_text }
+Import "rendering.sm" { status_text as render_status_text, render_notice }
+
+fn main() {
+    let verdict: quad = classify_status(12, false);
+    let short_status: text = rule_status_text(verdict);
+    let banner: text = render_status_text(verdict);
+    let notice: text = render_notice(short_status, banner);
+    assert(short_status == "ok");
+    assert(banner == "OK");
+    assert(notice == "ok:OK");
+    return;
+}

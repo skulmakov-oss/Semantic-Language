@@ -1,0 +1,20 @@
+fn normalize_delta(delta: i32) -> i32 {
+    if delta < 0 {
+        return 0 - delta;
+    }
+    return delta;
+}
+
+fn classify_risk(amount: i32, delta: i32) -> quad {
+    if amount >= 9 && delta >= 2 {
+        return T;
+    }
+    if amount >= 9 {
+        return S;
+    }
+    return F;
+}
+
+fn helper_threshold() -> i32 {
+    return 9;
+}

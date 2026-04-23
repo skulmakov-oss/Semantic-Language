@@ -1,0 +1,17 @@
+fn format_amount(amount: i32) -> text {
+    if amount == 9 {
+        return "9";
+    }
+    return "other";
+}
+
+fn format_delta(delta: i32) -> text {
+    if delta == 2 {
+        return "2";
+    }
+    return "other";
+}
+
+fn format_banner() -> text {
+    return "AUDIT";
+}

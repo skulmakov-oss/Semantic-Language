@@ -1,0 +1,4 @@
+format 1
+package module_selected_import_audit_report
+manifest_dir .
+module_root src
