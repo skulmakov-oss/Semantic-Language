@@ -1,0 +1,4 @@
+format 1
+package negative_multi_hop_cycle_bare_import
+manifest_dir .
+module_root src

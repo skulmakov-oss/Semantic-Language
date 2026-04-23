@@ -1,0 +1,7 @@
+fn score() -> i32 {
+    return 2;
+}
+
+fn beta_score() -> i32 {
+    return score();
+}

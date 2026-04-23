@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_path(rel: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -19,11 +20,68 @@ fn cli_err(command: &str, rel: &str) -> String {
         .expect_err(&format!("smc {command} unexpectedly passed for {path}"))
 }
 
+fn mk_temp_dir(prefix: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "{}_{}_{}",
+        prefix,
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    dir
+}
+
+fn compile_bytes(rel: &str) -> Vec<u8> {
+    let input = repo_path(rel);
+    let dir = mk_temp_dir("smc_exec_compile_determinism");
+    let out = dir.join("out.smc");
+    let out_arg = out.to_string_lossy().replace('\\', "/");
+    smc_cli::run(vec![
+        "compile".to_string(),
+        input.clone(),
+        "-o".to_string(),
+        out_arg.clone(),
+    ])
+    .unwrap_or_else(|err| panic!("smc compile failed for {input}: {err}"));
+    let bytes = std::fs::read(&out).expect("compiled bytes");
+    let _ = std::fs::remove_dir_all(&dir);
+    bytes
+}
+
 #[test]
 fn executable_module_entry_wave2_local_helper_import_checks_and_runs() {
     let rel = "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm";
     cli_ok("check", rel);
     cli_ok("run", rel);
+}
+
+#[test]
+fn executable_module_entry_repeated_direct_import_is_deduped() {
+    let rel =
+        "examples/qualification/executable_module_entry/positive_repeated_direct_import/src/main.sm";
+    cli_ok("check", rel);
+    cli_ok("run", rel);
+}
+
+#[test]
+fn executable_module_entry_repeated_transitive_helper_import_is_deduped() {
+    let rel = "examples/qualification/executable_module_entry/positive_repeated_transitive_import/src/main.sm";
+    cli_ok("check", rel);
+    cli_ok("run", rel);
+}
+
+#[test]
+fn executable_module_entry_helper_graph_compile_is_deterministic() {
+    let rel = "examples/qualification/executable_module_entry/positive_repeated_transitive_import/src/main.sm";
+    let first = compile_bytes(rel);
+    let second = compile_bytes(rel);
+    assert_eq!(
+        first, second,
+        "helper-module compile output must stay deterministic across repeated builds"
+    );
 }
 
 #[test]
@@ -62,6 +120,10 @@ fn executable_module_entry_negative_graph_and_namespace_cases_report_explicit_fa
             "examples/qualification/executable_module_entry/negative_namespace_collision/src/main.sm",
             "duplicate function 'score'",
         ),
+        (
+            "examples/qualification/executable_module_entry/negative_transitive_duplicate_symbol_collision/src/main.sm",
+            "duplicate function 'score'",
+        ),
     ];
 
     for (rel, needle) in cases {
@@ -69,6 +131,23 @@ fn executable_module_entry_negative_graph_and_namespace_cases_report_explicit_fa
         assert!(
             err.contains(needle),
             "expected diagnostic '{needle}' for {rel}, got: {err}"
+        );
+    }
+}
+
+#[test]
+fn executable_module_entry_multi_hop_cycle_reports_deterministic_chain() {
+    let rel =
+        "examples/qualification/executable_module_entry/negative_multi_hop_cycle_bare_import/src/main.sm";
+    let err = cli_err("check", rel);
+    assert!(
+        err.contains("cyclic executable helper import detected:"),
+        "expected cycle diagnostic, got: {err}"
+    );
+    for needle in ["a.sm", "b.sm", "c.sm"] {
+        assert!(
+            err.contains(needle),
+            "expected cycle diagnostic to mention {needle}, got: {err}"
         );
     }
 }
