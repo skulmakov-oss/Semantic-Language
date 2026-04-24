@@ -384,8 +384,12 @@ Current active collections checkpoint on `main`:
   ordered sequence and `index` is `i32`
 - same-family equality is now admitted for ordered sequence values when the
   item type already supports stable equality
-- iteration, `len`, `is_empty`, maps, sets, and generic collection
-  abstractions are not part of the current `M8.3` first-wave syntax contract
+- `for name in collection { ... }` is now part of the current syntax contract
+  through the narrow `Iterable` owner-layer loop surface described below
+- built-in `Sequence(type)` values now participate in that admitted iterable
+  loop path on current `main`
+- `len`, `is_empty`, maps, sets, and generic collection abstractions are not
+  part of the current `M8.3` first-wave syntax contract
 
 Current v0 range-literal limits:
 
