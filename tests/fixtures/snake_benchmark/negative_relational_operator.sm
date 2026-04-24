@@ -1,0 +1,4 @@
+fn main() {
+    let ok: bool = 2 >= 1;
+    assert(ok);
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let total: i32 = 1 + 2;
+    assert(total == 3);
+}

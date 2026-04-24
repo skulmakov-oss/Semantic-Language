@@ -1,0 +1,151 @@
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn repo_path(rel: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(rel)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn cli_ok(args: Vec<String>, context: &str) {
+    smc_cli::run(args).unwrap_or_else(|err| panic!("{context} failed: {err}"));
+}
+
+fn cli_err(args: Vec<String>, context: &str) -> String {
+    smc_cli::run(args).expect_err(&format!("{context} unexpectedly passed"))
+}
+
+fn mk_temp_dir(prefix: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "{}_{}_{}",
+        prefix,
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    dir
+}
+
+fn check_run_compile_verify(rel: &str) {
+    let input = repo_path(rel);
+    cli_ok(
+        vec!["check".to_string(), input.clone()],
+        &format!("smc check for {input}"),
+    );
+    cli_ok(
+        vec!["run".to_string(), input.clone()],
+        &format!("smc run for {input}"),
+    );
+
+    let dir = mk_temp_dir("smc_snake_benchmark_gap_matrix");
+    let out = dir.join("out.smc");
+    let out_arg = out.to_string_lossy().replace('\\', "/");
+    cli_ok(
+        vec![
+            "compile".to_string(),
+            input.clone(),
+            "-o".to_string(),
+            out_arg.clone(),
+        ],
+        &format!("smc compile for {input}"),
+    );
+    cli_ok(
+        vec!["verify".to_string(), out_arg],
+        &format!("smc verify for {input}"),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn snake_benchmark_positive_surface_passes_end_to_end() {
+    for rel in [
+        "tests/fixtures/snake_benchmark/positive_text_equality.sm",
+        "tests/fixtures/snake_benchmark/positive_enum_match.sm",
+        "tests/fixtures/snake_benchmark/positive_sequence_indexing.sm",
+        "tests/fixtures/snake_benchmark/positive_sequence_iteration.sm",
+        "tests/fixtures/snake_benchmark/positive_closure_capture.sm",
+    ] {
+        check_run_compile_verify(rel);
+    }
+}
+
+#[test]
+fn snake_benchmark_negative_gap_suite_reports_current_blockers() {
+    let cases = [
+        (
+            "tests/fixtures/snake_benchmark/negative_relational_operator.sm",
+            "E0000",
+            "2 >= 1;",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_i32_arithmetic.sm",
+            "E0201",
+            "f64 arithmetic requires f64 operands",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_let_mut.sm",
+            "E0000",
+            "let mut score: i32 = 0;",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_reassignment.sm",
+            "E0000",
+            "score = 1;",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_while_loop.sm",
+            "E0000",
+            "while true",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_loop_break.sm",
+            "E0000",
+            "loop expression v0 currently requires break value",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_continue_statement.sm",
+            "E0000",
+            "continue;",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_sequence_len.sm",
+            "E0201",
+            "unknown function 'len'",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_sequence_push.sm",
+            "E0201",
+            "unknown function 'push'",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_map_surface.sm",
+            "E0000",
+            "Map(text, i32)",
+        ),
+        (
+            "tests/fixtures/snake_benchmark/negative_text_concatenation.sm",
+            "E0201",
+            "text concatenation is not part of the current M8.1 Wave 2 contract",
+        ),
+    ];
+
+    for (rel, code, needle) in cases {
+        let input = repo_path(rel);
+        let err = cli_err(
+            vec!["check".to_string(), input.clone()],
+            &format!("smc check for {input}"),
+        );
+        assert!(
+            err.contains(&format!("Error [{code}]")),
+            "expected diagnostic code {code} for {rel}, got: {err}"
+        );
+        assert!(
+            err.contains(needle),
+            "expected diagnostic containing '{needle}' for {rel}, got: {err}"
+        );
+    }
+}
