@@ -39,6 +39,7 @@ Representative source fixtures reused from `Q1`:
 - `examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm`
 - `examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm`
 - `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
+- `examples/qualification/executable_module_entry/positive_selected_import/src/main.sm`
 
 Canonical harness:
 
@@ -56,8 +57,8 @@ The harness goes through the public compiler/runtime surface:
 - `disasm_semcode(...)`
 
 For the admitted helper-module executable slice, the harness first applies the
-same deterministic direct local-path bare-import bundling rule that current
-`smc` uses before semantic checking/lowering.
+same deterministic direct local-path bare/selected-import bundling rule that
+current `smc` uses before semantic checking/lowering.
 
 ## Representative Stage Snapshots
 
@@ -95,6 +96,14 @@ semcode:magic=SEMCODE0 rev=1
 verify:names=main,score
 disasm:names=main,score
 run=ok
+
+program=positive_selected_import
+sema:warnings=0 laws=0
+ir:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+semcode:magic=SEMCODE0 rev=1
+verify:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+disasm:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+run=ok
 ```
 
 What this proves:
@@ -103,7 +112,8 @@ What this proves:
   through verifier and disasm
 - the current executable iterable slice reaches SemCode and VM without semantic
   disappearance
-- the admitted helper-module executable slice also reaches SemCode and VM
+- the admitted helper-module executable slice, including selected-import
+  bundling, also reaches SemCode and VM
   without semantic disappearance
 - the public `run_verified_semcode(...)` path stays successful after verifier
   admission
@@ -148,10 +158,10 @@ Both fixes were narrow and directly tied to Q3 evidence integrity.
 
 ## Boundary Notes
 
-The selected-import executable helper program from `Q1` still remains outside
-the admitted contour, so it is not counted here as an execution-integrity
-failure. The current admitted executable module-entry slice is only the direct
-local-path bare-import form.
+The admitted executable module-entry slice now includes direct local-path bare
+imports plus direct local-path selected imports over function-only helper
+modules. Alias, wildcard, re-export, package-qualified, and
+namespace-qualified executable import forms remain outside the admitted contour.
 
 ## Q3 Verdict
 
