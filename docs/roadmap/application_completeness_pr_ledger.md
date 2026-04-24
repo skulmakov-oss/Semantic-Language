@@ -1,0 +1,420 @@
+# Semantic Application Completeness PR Ledger
+
+Status: proposed explicit post-readiness expansion program
+
+Read this document using the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+Read this document together with:
+
+- `docs/roadmap/final_readiness_verdict.md`
+- `docs/roadmap/v1_readiness.md`
+- `reports/g1_release_scope_statement.md`
+
+## Purpose
+
+This ledger defines the next honest expansion program after the completed
+readiness cycle.
+
+Its purpose is to make Semantic capable of authoring and validating
+benchmark-class application experiments such as a self-learning snake.
+
+This ledger is not:
+
+- a claim that Semantic is already `public release`
+- a silent widening of the current qualified contour
+- a promise that browser UI becomes part of the language boundary
+
+## Target Outcome
+
+After the base-path PRs in this ledger land, the repository should be able to
+support all of the following as real Semantic programs:
+
+- a deterministic headless snake engine
+- a training loop over that engine using a seeded pseudo-random source
+- a policy/Q-table update loop over admitted collections and scalar operators
+- a text trace or frame stream suitable for external inspection
+
+The required benchmark family is:
+
+- `examples/benchmarks/snake_core.sm`
+- `examples/benchmarks/snake_learning.sm`
+- `examples/benchmarks/snake_trace.sm`
+
+The base path does **not** require:
+
+- browser DOM ownership
+- HTML/CSS as part of the language boundary
+- a widget toolkit
+- multi-window UI
+
+An external HTML/TypeScript renderer may still be used as an adapter on top of
+the experiment trace.
+
+## Current Verified Baseline On `main`
+
+Current `main` already admits these benchmark-relevant surfaces:
+
+- enum declarations and enum-pattern `match`
+- `text` literals, `text` type positions, and same-family text equality
+- `Sequence(T)` declared types, literals, indexing, equality, and `for value in sequence`
+- first-class closures with immutable capture
+- the separate desktop UI boundary as a landed post-stable track
+
+Current `main` still fails this benchmark family at the following points:
+
+- relational operators such as `>`, `<`, `>=`, `<=`
+- public integer arithmetic as a normal `i32` / `u32` application surface
+- `let mut`
+- plain reassignment
+- statement `while`
+- statement `loop` with bare `break;` and `continue`
+- `Sequence(T)` utility layer such as `len`, `is_empty`, `push`, `pop`, and `contains`
+- a first-wave map/dictionary family for Q-tables and visit counts
+- a deterministic seeded pseudo-random source
+- text concatenation / minimal formatting for traces
+- a narrow admitted stdout experiment surface
+
+## Program Rules
+
+- one PR = one logical step
+- every behavioral PR must ship tests
+- every docs/spec/runtime surface change must move together
+- no silent widening of `published stable` or the current qualified contour
+- merge only on green local validation where applicable and green GitHub CI
+- keep one active expansion stream at a time
+
+## PR Ledger
+
+### A — Truth And Benchmark Baseline
+
+- `PR-A1` [required]
+  Title: `docs/spec: sync benchmark-critical current-main truth`
+  Goal:
+  - remove benchmark-relevant doc drift around already-landed `text`,
+    `Sequence(T)`, closure capture, and sequence iteration behavior
+  Scope:
+  - truth-sync only
+  Files:
+  - benchmark-relevant `docs/spec/*` pages
+  Gate:
+  - docs-only
+  - `git diff --check`
+  - CI green
+
+- `PR-A2` [required]
+  Title: `tests: add snake benchmark gap matrix`
+  Goal:
+  - freeze the current pass/fail baseline before widening work starts
+  Scope:
+  - positive fixtures for already-landed benchmark-critical surfaces
+  - negative fixtures for still-missing blockers
+  Files:
+  - `tests/fixtures/snake_benchmark/**`
+  - one focused test target for the matrix
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - focused benchmark-matrix test green
+  - CI green
+
+### B — Imperative Core Completion
+
+- `PR-B1` [required]
+  Title: `frontend/types: admit relational operators for scalar families`
+  Goal:
+  - allow ordinary grid/comparison logic in application programs
+  Scope:
+  - admit `>`, `<`, `>=`, `<=` for the intended scalar families
+  Files:
+  - frontend/type/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted operator tests green
+  - CI green
+
+- `PR-B2` [required]
+  Title: `frontend/runtime: complete public integer arithmetic surface`
+  Goal:
+  - make `i32` / `u32` arithmetic usable for ordinary application state updates
+  Scope:
+  - explicit same-family integer arithmetic only
+  Files:
+  - frontend/lowering/VM/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted integer-arithmetic tests green
+  - CI green
+
+- `PR-B3` [required]
+  Title: `frontend/control: admit mutable locals and reassignment`
+  Goal:
+  - enable normal evolving application state
+  Scope:
+  - `let mut`
+  - plain reassignment
+  - compound assignment over mutable bindings
+  Files:
+  - parser/sema/lowering/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted mutability tests green
+  - CI green
+
+- `PR-B4` [required]
+  Title: `frontend/control: admit statement loops and control exits`
+  Goal:
+  - support long-running application/training loops honestly
+  Scope:
+  - statement `while`
+  - statement `loop`
+  - bare `break;`
+  - `continue`
+  Files:
+  - parser/sema/lowering/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted loop/control tests green
+  - CI green
+
+- `PR-B5` [required]
+  Title: `docs/spec/tests: freeze imperative core benchmark surface`
+  Goal:
+  - close the imperative-core wave as one explicit contract
+  Scope:
+  - docs/spec/tests freeze only
+  Depends on:
+  - `PR-B1`
+  - `PR-B2`
+  - `PR-B3`
+  - `PR-B4`
+  Gate:
+  - docs/spec/tests sync only
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - CI green
+
+### C — Sequence Utility Layer
+
+- `PR-C1` [required]
+  Title: `stdlib/sequence: admit len/is_empty/contains`
+  Goal:
+  - provide the minimum observation helpers needed for snake state logic
+  Scope:
+  - no maps, no mutation-heavy API, no generic iterator framework
+  Files:
+  - sequence owner/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted sequence-helper tests green
+  - CI green
+
+- `PR-C2` [required]
+  Title: `stdlib/sequence: admit push/pop/prepend baseline`
+  Goal:
+  - make evolving snake bodies and traces practical without opening a broad
+    collection redesign
+  Scope:
+  - the narrow sequence update operations needed by the benchmark pack
+  Files:
+  - source/runtime/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted sequence-update tests green
+  - CI green
+
+### D — Lookup State And Deterministic Randomness
+
+- `PR-D1` [required]
+  Title: `docs/scope: define first-wave map surface`
+  Goal:
+  - open exactly one lookup-table family for benchmark-class application state
+  Scope:
+  - one deterministic `Map(K, V)` baseline only
+  - no set family
+  - no generic collection framework beyond the admitted map carrier
+  Gate:
+  - docs-only
+  - `git diff --check`
+  - CI green
+
+- `PR-D2` [required]
+  Title: `frontend/runtime: admit first-wave Map(K, V)`
+  Goal:
+  - support Q-tables and visit counters directly in Semantic
+  Scope:
+  - empty construction
+  - `get`
+  - `set`
+  - `contains`
+  - deterministic key behavior for the admitted key families
+  Files:
+  - source/runtime/spec/tests layers as required
+  Depends on:
+  - `PR-D1`
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted map tests green
+  - CI green
+
+- `PR-D3` [required]
+  Title: `stdlib/random: admit deterministic seeded PRNG`
+  Goal:
+  - support food spawning and exploration without host randomness
+  Scope:
+  - one seeded deterministic pseudo-random family only
+  - no cryptographic or host-entropy claims
+  Files:
+  - std/random owner/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - deterministic PRNG tests green
+  - CI green
+
+- `PR-D4` [required]
+  Title: `docs/spec/tests: freeze map and PRNG benchmark baseline`
+  Goal:
+  - close the state/random wave explicitly
+  Scope:
+  - docs/spec/tests freeze only
+  Depends on:
+  - `PR-D2`
+  - `PR-D3`
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - CI green
+
+### E — Observation Boundary
+
+- `PR-E1` [required]
+  Title: `stdlib/text: admit concatenation and minimal formatting`
+  Goal:
+  - allow human-readable experiment traces without pretending full text
+    processing already exists
+  Scope:
+  - text concatenation
+  - minimal formatting for benchmark-relevant scalar families
+  - no broad formatting engine
+  Files:
+  - text owner/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted text-format tests green
+  - CI green
+
+- `PR-E2` [required]
+  Title: `cli/runtime: admit narrow stdout experiment surface`
+  Goal:
+  - provide one honest observation channel for headless experiments
+  Scope:
+  - stdout text emission only
+  - no general file I/O
+  - no argv story yet
+  Files:
+  - CLI/runtime/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted CLI/runtime tests green
+  - CI green
+
+### F — Benchmark Pack And Close-Out
+
+- `PR-F1` [required]
+  Title: `examples/tests: add snake_core benchmark`
+  Goal:
+  - prove deterministic game-state logic on the admitted application surface
+  Scope:
+  - headless snake engine only
+  - no renderer
+  Files:
+  - `examples/benchmarks/snake_core.sm`
+  - benchmark tests and fixtures
+  Gate:
+  - `cargo test -q`
+  - focused benchmark tests green
+  - CI green
+
+- `PR-F2` [required]
+  Title: `examples/tests: add snake_learning benchmark`
+  Goal:
+  - prove the self-learning loop is writable on the admitted surface
+  Scope:
+  - seeded deterministic training loop
+  - Q-table and visit-count logic
+  - no UI
+  Files:
+  - `examples/benchmarks/snake_learning.sm`
+  - benchmark tests and fixtures
+  Gate:
+  - `cargo test -q`
+  - focused learning-benchmark tests green
+  - CI green
+
+- `PR-F3` [required]
+  Title: `docs/examples: add snake trace adapter contract`
+  Goal:
+  - define how Semantic experiments feed an external HTML/TypeScript renderer
+    without making browser ownership part of the language boundary
+  Scope:
+  - one trace format
+  - one adapter note
+  - one benchmark-oriented workflow note
+  Files:
+  - benchmark docs/examples only
+  Gate:
+  - docs-only
+  - `git diff --check`
+  - CI green
+
+- `PR-F4` [required]
+  Title: `reports/tests: publish application-completeness benchmark verdict`
+  Goal:
+  - close this benchmark program with evidence rather than intuition
+  Scope:
+  - benchmark close-out report only
+  Depends on:
+  - `PR-F1`
+  - `PR-F2`
+  - `PR-F3`
+  Gate:
+  - benchmark evidence updated honestly
+  - relevant benchmark tests green
+  - CI green
+
+## Contingency Slots
+
+- `PR-CONT-1` [contingency]
+  Trigger:
+  - open only if stdout-only observation proves insufficient for the benchmark
+    pack
+  Title:
+  - `cli/runtime: add narrow file export for experiment traces`
+
+- `PR-CONT-2` [contingency]
+  Trigger:
+  - open only if a visual native demo is required after the headless benchmark
+    pack is already green
+  Title:
+  - `examples/ui: add desktop snake demo over the existing UI boundary`
+
+## Exit Condition
+
+This program is complete only when:
+
+- the snake benchmark pack is green on the admitted Semantic surface
+- the trace/export story is explicit
+- the benchmark does not depend on hidden author-only workarounds
+- browser rendering, if used, remains an external adapter rather than an
+  implicit language boundary
