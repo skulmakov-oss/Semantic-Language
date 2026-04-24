@@ -110,6 +110,11 @@ cargo run --bin smc -- run-smc program.smc
 cargo run --bin svm -- disasm program.smc
 ```
 
+For a fuller onboarding path, see:
+
+- `docs/getting_started.md`
+- `docs/examples_index.md`
+
 ## Current CLI Surface
 Current command families exposed by `smc`:
 - `compile`
