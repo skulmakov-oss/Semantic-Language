@@ -11,7 +11,7 @@ reading for the repository.
 
 ## Current Posture
 
-The repository currently spans three different factual layers:
+The repository currently spans four different factual layers:
 
 - `published stable`
   - the stable line is `v1.1.1`
@@ -20,6 +20,9 @@ The repository currently spans three different factual layers:
 - `landed on main, not yet promised`
   - widened surfaces present on current `main` but not yet promoted into either
     the stable line or the qualified contour
+- `out of scope`
+  - surfaces still intentionally excluded from the current qualified contour and
+    current stable promise
 
 Current top-level reading:
 

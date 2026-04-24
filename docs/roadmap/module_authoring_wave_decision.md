@@ -21,7 +21,7 @@ Draft canonical examples used for this note:
 - `examples/readiness_draft_canonical/module_selected_import_settlement`
 - `examples/readiness_draft_canonical/module_selected_import_audit_report`
 
-Current admitted executable module contour:
+Executable module contour at decision time:
 
 - direct local-path bare helper-module imports
 - direct helper declarations bundled into the executable semantic path
@@ -112,6 +112,16 @@ Observed friction:
 Chosen wave:
 
 - `selected import`
+
+Post-decision reading:
+
+- this note records why `selected import` was chosen at the time
+- it is not the authority for the current admitted executable contour after the
+  later `B2` implementation and `C1` Gate 1.1 re-synthesis work
+- current factual release-facing reading now lives in:
+  - `docs/roadmap/v1_readiness.md`
+  - `reports/g1_release_scope_statement.md`
+  - `docs/roadmap/language_maturity/executable_module_entry_scope.md`
 
 ## Why `selected import` Wins
 
