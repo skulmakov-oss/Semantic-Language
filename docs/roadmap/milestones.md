@@ -1,163 +1,91 @@
-# Semantic v1 Milestones
+# Semantic Readiness Milestones
 
-This document is a milestone/checkpoint map, not the authority for the current
-release-facing verdict.
+Status: historical checkpoint map, not release-verdict authority
 
-Read milestone statuses through the canonical status vocabulary in
-`docs/roadmap/public_status_model.md`.
+Read this document using the canonical status vocabulary in:
 
-Use:
+- `docs/roadmap/public_status_model.md`
 
-- `docs/roadmap/v1_readiness.md` for the current published-stable posture
-- `reports/g1_release_scope_statement.md` for the current qualified-limited
-  practical-programming verdict
+For the current release-facing posture, use:
 
-Do not treat a milestone or subtrack marked as completed on current `main` as
-automatically published stable or release-promised.
+- `docs/roadmap/v1_readiness.md`
+- `reports/g1_release_scope_statement.md`
+
+## Purpose
+
+This document records the major milestone families already landed in the
+repository.
+
+It should not be read as:
+
+- automatic stable publication
+- automatic qualification
+- authority for the current release verdict
+
+Milestones can be completed in code while still remaining only:
+
+- `landed on main, not yet promised`
+- or outside the current qualified contour
+
+## Historical Milestone Families
 
 - `M0 Repository Discipline`
-  - architecture docs
-  - crate map
-  - legacy freeze policy
-  - PR/review governance
-  - PR template
-  - architecture review checklist
-  - current status: baseline largely in place
+  - process baseline
+  - architecture map
+  - ownership/governance conventions
+  - current reading: landed baseline
+
 - `M1 Core Contract`
-  - `sm-verify`
-  - `SymbolId` runtime
-  - quotas and admit-then-execute
-  - current status: strong baseline exists in code and tests
-- `M2 Language Completion`
-  - `u32` / `fx`
-  - optimizer minimum set
-  - `sm-profile`
-  - type completeness matrix
-  - optimizer review checklist
-  - current stable-note checkpoint: `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
-  - current completed post-stable expansion checkpoint:
-    `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-  - current completed post-stable units checkpoint:
-    `docs/roadmap/language_maturity/units_of_measure_scope.md`
-  - current completed post-stable standard-forms checkpoint:
-    `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
-- `M3 Platform Formalization`
+  - verifier-first execution
+  - runtime quotas
+  - owner boundaries for core crates
+  - current reading: landed baseline
+
+- `M2 Language/Core Surface`
+  - source frontend
+  - type completeness work
+  - SemCode family growth
+  - current reading: mixed between published stable and landed-on-`main`
+    widenings
+
+- `M3 Toolchain Formalization`
   - spec bundle
-  - stable CLI
-  - version contracts
-  - current status: broad formalization baseline exists and owner alignment is already reflected in code
-  - optimizer owner is fixed to `sm-ir` for the current `v1` baseline
-  - SemCode format owner is fixed to `sm-ir` for the current `v1` baseline
-  - public CLI owner is fixed to `smc-cli` for the current `v1` baseline
-  - `docs/spec/syntax.md`
-  - `docs/spec/types.md`
-  - `docs/spec/ir.md`
-  - `docs/spec/verifier.md`
-  - `docs/spec/semcode.md`
-  - `docs/spec/profile.md`
-  - `docs/spec/vm.md`
-  - `docs/spec/quotas.md`
-  - `docs/spec/cli.md`
-  - current completed post-stable source-contract freeze checkpoint:
-    `docs/roadmap/language_maturity/source_language_contract.md`
-  - current completed post-qualification executable module entry checkpoint:
-    `docs/roadmap/language_maturity/executable_module_entry_scope.md`
-  - current completed post-stable IR hardening checkpoint:
-    `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
-  - current completed post-stable SemCode version-discipline checkpoint:
-    `docs/roadmap/language_maturity/semcode_version_discipline.md`
-- `M4 PROMETHEUS Boundary`
-  - ABI
-  - capabilities
-  - gates
-  - current state: narrow working boundary exists and is fixed as the official `v1` scope
-  - first-wave post-stable host-call expansion is now completed on `main`
-  - published `v1.1.1` still keeps the narrower boundary as its official stable commitment
-  - current completed post-stable expansion checkpoint:
-    `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
-  - `docs/spec/abi.md`
-  - `docs/spec/capabilities.md`
-  - `docs/spec/gates.md`
-- `M5 Semantic Runtime`
-  - state
-  - rules
-  - orchestration
-  - audit
-  - semantic runtime integration checklist
-  - `docs/spec/runtime.md`
-  - `docs/spec/state.md`
-  - `docs/spec/rules.md`
-  - `docs/spec/audit.md`
-  - current state: owner-split runtime baseline exists
-  - richer runtime semantics remain non-blocking for the current narrow `v1`
-  - current completed post-stable persistence/replay checkpoint:
-    `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
-  - current completed post-stable rule execution checkpoint:
-    `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
-  - current completed post-stable replay expansion checkpoint:
-    `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
-  - current completed post-stable rollback checkpoint:
-    `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
-  - current completed post-stable runtime-boundary hardening checkpoint:
-    `docs/roadmap/language_maturity/runtime_boundary_hardening.md`
-- `M6 v1 Lockdown`
-  - freezes
-  - golden baselines
-  - validation matrix
-  - `tests/prometheus_runtime_matrix.rs`
-  - `tests/prometheus_runtime_goldens.rs`
-  - `tests/prometheus_runtime_negative_goldens.rs`
-  - `tests/prometheus_runtime_compat_matrix.rs`
-  - `docs/roadmap/runtime_validation_policy.md`
-  - `docs/roadmap/v1_readiness.md`
-  - `docs/roadmap/release_bundle_checklist.md`
-  - `docs/roadmap/compatibility_statement.md`
-  - current state: validation artifacts, CI-enforced release gates, and the
-    published stable `v1.1.1` governance baseline all exist on `main`
-  - current stable-note checkpoints:
-    - `docs/roadmap/language_maturity/release_version_cut_decision.md`
-    - `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
-- `M7 UI Application Boundary`
-  - desktop window lifecycle
-  - explicit UI capability/admission ownership
-  - deterministic event polling and frame lifecycle
-  - minimal draw-command family and one canonical demo application
-  - current status: completed post-stable milestone
-  - scope checkpoint:
-    `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
-- `M8 Everyday Expressiveness Foundation`
-  - text / strings
-  - package ecosystem baseline
-  - collections
-  - first-class closures
-  - current status: completed post-stable language-maturity package
-  - planning docs:
-    - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
-    - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
-    - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
-  - current completed first subtrack:
-    `docs/roadmap/language_maturity/text_type_full_scope.md`
-  - current completed second subtrack:
-    `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
-  - current completed third subtrack:
-    `docs/roadmap/language_maturity/collections_surface_full_scope.md`
-  - current completed fourth subtrack:
-    `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
-  - planning rule:
-    - keep package baseline earlier than broad abstraction machinery
-    - keep one active stream at a time
-    - keep UI/platform expansion separate from language-maturity work
-- `M9 General Abstraction Layer`
-  - generics / parametric polymorphism
-  - traits / protocols / interfaces
-  - iterable abstraction
-  - richer pattern surface
-  - current status: completed post-stable language-maturity package
-  - completed subtracks:
-    - M9.1: `docs/roadmap/language_maturity/generics_full_scope.md`
-    - M9.2: `docs/roadmap/language_maturity/traits_full_scope.md`
-    - M9.3: `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
-    - M9.4: richer pattern surface (Wildcard, Or, IntRange, nested tuple, if-let)
-  - planning rule:
-    - keep one active stream at a time
-    - keep UI/platform expansion separate from language-maturity work
+  - CLI ownership
+  - SemCode contract ownership
+  - current reading: landed baseline
+
+- `M4 Boundary And Runtime Layering`
+  - `prom-*` owner split
+  - runtime/state/rules/audit layering
+  - current reading: landed baseline, with stable-vs-main commitments governed
+    elsewhere
+
+- `M5 Validation And Qualification`
+  - release bundle checks
+  - compatibility checks
+  - Gate 1 protocol
+  - Gate 1 evidence and synthesis reports
+  - current reading: first Gate 1 cycle completed; current verdict is
+    `qualified limited release`
+
+- `M6 Post-Stable Language Waves`
+  - schemas
+  - package baseline
+  - ordered sequence surface
+  - iterable surface
+  - closures
+  - generics
+  - runtime ownership
+  - UI application boundary
+  - selected-import executable module entry
+  - current reading: landed on `main`, not automatically published stable and
+    not automatically qualified
+
+## Operational Reading
+
+If a milestone family is completed in code:
+
+- check `docs/roadmap/v1_readiness.md` for the release-facing reading
+- check `reports/g1_release_scope_statement.md` for the current practical
+  qualification reading
+- do not infer promotion from this milestone map alone

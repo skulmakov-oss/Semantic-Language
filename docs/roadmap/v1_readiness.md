@@ -1,219 +1,137 @@
 # Semantic v1 Readiness
 
-Status: published stable release line
+Status: current release-facing posture authority
 
-This document summarizes the current release-facing readiness state for Semantic v1.
+Read this document using the canonical status vocabulary in:
 
-Read this document using the canonical status vocabulary in
-`docs/roadmap/public_status_model.md`.
+- `docs/roadmap/public_status_model.md`
 
-Within that model, this document is the authority for the current
-release-facing posture.
+Within that authority order, this document is the primary release-facing
+reading for the repository.
 
-## Current Readiness Position
+## Current Posture
 
-Current repository state has working coverage for:
+The repository currently spans three different factual layers:
 
-- repository governance and ownership rules
-- verified SemCode execution
-- runtime quota contract
-- canonical profile contract
-- IR verification and minimum optimizer pipeline
-- PROMETHEUS ABI, capability, and gate boundaries
-- PROMETHEUS runtime, state, rules, and audit owner crates
-- semantic runtime validation matrix and golden baselines
-- tuple + direct record-field runtime ownership, including deterministic
-  `BorrowWriteConflict` enforcement and end-to-end regression coverage
-- CI-enforced boundary, public API, runtime, and release-bundle gates
-- explicit SemCode version/capability discipline through the admitted
-  `SEMCODE0`..`SEMCOD13` family on current `main`
+- `published stable`
+  - the stable line is `v1.1.1`
+- `qualified limited release`
+  - the current practical-programming verdict from the completed Gate 1 cycle
+- `landed on main, not yet promised`
+  - widened surfaces present on current `main` but not yet promoted into either
+    the stable line or the qualified contour
 
-This means the repository has crossed from architecture-only planning into a
-published stable release line for the current contract surfaces.
+Current top-level reading:
 
-Current `v1` boundary decision:
+- Semantic is **not** currently positioned as `public release`
+- Semantic is currently qualified only for a **limited release** practical
+  contour
+- current `main` contains wider landed work than the stable line and wider
+  landed work than the current qualified contour
 
-- the official `v1` PROMETHEUS scope is the existing narrow ABI/capability/gate boundary
-- wider planned host calls are not part of the current `v1` commitment
-- ownership alignment for optimizer, SemCode, and CLI is already implemented in code
-- the active stable `v1.1.1` line is published from `main`
-- the first `Gate 1` qualification cycle is completed and currently supports
-  only a `limited release` decision for the admitted practical-programming
-  contour documented in `reports/g1_release_scope_statement.md`
+## Published Stable
 
-Status reading:
+The published stable line remains:
 
-- `published stable`: the `v1.1.1` line and its stable assets
-- `qualified limited release`: the admitted practical-programming contour
-  documented by the completed first `Gate 1` cycle
-- `landed on main, not yet promised`: widened current-`main` surfaces listed
-  under `Current Known Limits` as excluded from the published stable line
-- `out of scope`: behavior explicitly excluded from both the current stable
-  line and the current qualified contour
+- `v1.1.1`
 
-## Current Artifact List
+It should be read as the stable publication baseline, not as a complete
+description of everything already landed on current `main`.
 
-Current v1-facing artifact families in the repository:
+## Qualified Limited Release
 
-- architecture bundle
-  - `docs/architecture/`
-- roadmap bundle
-  - `docs/roadmap/milestones.md`
-  - `docs/roadmap/type_completeness_matrix.md`
-  - `docs/roadmap/runtime_validation_policy.md`
-  - `docs/roadmap/release_bundle_checklist.md`
-  - `docs/roadmap/release_qualification/gate1_protocol.md`
-  - `docs/roadmap/compatibility_statement.md`
-  - `docs/roadmap/release_asset_smoke_matrix.md`
-  - `docs/roadmap/stable_release_policy.md`
-- spec bundle
-  - `docs/spec/`
-- CLI/tooling surface
-  - `smc`
-  - `svm`
-- published stable assets
-  - `smc.exe`
-  - `svm.exe`
-  - Windows release zip
-- semantic runtime validation
-  - `tests/prometheus_runtime_matrix.rs`
-  - `tests/prometheus_runtime_goldens.rs`
-  - `tests/prometheus_runtime_negative_goldens.rs`
-  - `tests/prometheus_runtime_compat_matrix.rs`
+The completed Gate 1 evidence currently supports a narrow practical-programming
+contour documented in:
 
-## Current Ready Surfaces
+- `reports/g1_release_scope_statement.md`
 
-Currently ready or substantially stabilized surfaces:
+That qualified contour includes:
 
-- `sm-verify`
-- verified-only VM execution path
-- `sm-runtime-core`
-- runtime ownership pipeline for tuple + direct record-field paths
-- `sm-profile`
-- `sm-ir` verification and minimum optimizer contract
-- `prom-abi`
-- `prom-cap`
-- `prom-gates`
-- `prom-runtime`
-- `prom-state`
-- `prom-rules`
-- `prom-audit`
+- single-file executable programs on the admitted source surface
+- narrow helper-module executable programs using direct local-path bare imports
+- narrow helper-module executable programs using direct local-path selected
+  imports over function-only helper modules
+- rule/state-oriented programs over records, `quad`, and explicit
+  `Option` / `Result`
+- built-in `Sequence(T)` iteration
+- direct-record user-defined `Iterable` dispatch
+- verified execution through the admitted
+  `source -> sema -> IR -> SemCode -> verifier -> VM` path
+
+This is enough for:
+
+- `qualified limited release`
+
+It is not enough for:
+
+- `public release`
+
+## Landed On `main`, Not Yet Promised
+
+Current `main` contains widened surfaces beyond both:
+
+- the published stable line
+- and the currently qualified practical-programming contour
+
+High-signal landed families include:
+
+- schema/boundary-core work
+- package baseline work
+- ordered sequence surface
+- iterable surface
+- first-wave closures
+- first-wave generics
+- runtime ownership for tuple + direct record-field paths
+- first-wave UI application boundary
+- selected-import executable module entry
+
+These surfaces must stay explicitly unpromoted until a later scope decision and
+qualification or release decision promotes them.
 
 ## Current Known Limits
 
-The following limits remain explicit and should be treated as release-facing honesty requirements:
+The following release-facing limits remain explicit:
 
-- the published `v1.1.1` line intentionally excludes first-wave plain `fx`
-  unary/binary arithmetic, even though current `main` now admits deterministic
-  plain `fx` arithmetic with canonical lowering/verified execution under
-  `SEMCODE3`
-- the canonical stable-vs-main `fx` reading is frozen in
-  `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
-- the published `v1.1.1` line intentionally excludes post-stable PROMETHEUS
-  calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead`,
-  even though current `main` now admits them as a forward-only widened boundary
-- the published `v1.1.1` line intentionally excludes first-wave rule-side
-  effect execution, even though current `main` now admits narrow declared
-  `StateWrite` and `AuditNote` execution
-- the published `v1.1.1` line intentionally excludes post-stable persisted
-  archive materialization/loading, even though current `main` now admits narrow
-  `StateSnapshotArchive` and `AuditReplayArchive` ownership/materialization
-- the published `v1.1.1` line intentionally excludes multi-session replay
-  archives, even though current `main` now admits narrow
-  `MultiSessionReplayArchive` ownership/materialization
-- the published `v1.1.1` line intentionally excludes rollback persistence
-  semantics, even though current `main` now admits narrow
-  `StateRollbackArtifact` ownership and deterministic
-  `SemanticStateStore::apply_rollback(...)`
-- the published `v1.1.1` line intentionally excludes executable `text`, even
-  though current `main` now admits first-wave text literals/equality through
-  canonical `SEMCODE8`, verifier admission, and VM execution
-- the published `v1.1.1` line intentionally excludes the first-wave package
-  ecosystem baseline, even though current `main` now admits `Semantic.package`
-  parsing, package entry-module admission, and deterministic local-path
-  dependency loading for package-qualified imports
-- the published `v1.1.1` line intentionally excludes the landed `v0.3`
-  schema/boundary-core wave, even though current `main` now admits canonical
-  schema declarations with record/tagged-union forms, role markers, version
-  metadata, deterministic validation-plan derivation, canonical config-contract
-  parsing/validation, generated API/wire artifacts, and deterministic schema
-  compatibility/migration metadata
-- current `main` now admits one narrow executable-module-entry slice through
-  direct local-path bare imports such as `Import "helper.sm"`, but broader
-  alias/selected/wildcard/public re-export/package-qualified/namespace-qualified
-  executable module authoring remains outside the current release-promised
+- broader executable-module authoring beyond the admitted bare/selected slice
+  is not currently qualified
+- full CLI application authoring with admitted argv/stdout/file IO is not
+  currently qualified
+- UI remains outside the current qualified contour
+- broader generalized iterable dispatch remains outside the current qualified
   contour
-- the published `v1.1.1` line intentionally excludes the first-wave ordered
-  sequence collection surface, even though current `main` now admits
-  `Sequence(type)`, bracketed literals, same-family equality, `expr[index]`,
-  and canonical verified execution through `SEMCODE9`
-- the published `v1.1.1` line intentionally excludes the built-in executable
-  iterable loop slice, even though current `main` now admits `for x in
-  collection` over `Sequence(type)` through canonical `SEQUENCE_LEN` lowering
-  and verified execution under `SEMCOD13`, plus direct-record user-defined
-  `Iterable` impl dispatch through the admitted
-  `fn next(self: Self, index: i32) -> Option(Item)` contract; broader
-  ADT/schema/generalized iterable dispatch remains out of scope
-- the published `v1.1.1` line intentionally excludes the first-wave first-class
-  closure surface, even though current `main` now admits `Closure(T -> U)`,
-  standalone closure literals, immutable capture, direct invocation, and
-  canonical verified execution through `SEMCOD10`
-- the published `v1.1.1` line intentionally excludes the first-wave generics
-  surface, even though current `main` now admits type-parameter syntax for
-  functions, records, and ADTs, and deterministic call-site monomorphisation
-  under the narrow `TypeVar`-to-concrete substitution model
-- the published `v1.1.1` line intentionally excludes the completed runtime
-  ownership track on current `main`, even though `main` now admits tuple +
-  direct record-field `AccessPath` transport, verifier admission, frame-local
-  borrow tracking, deterministic `BorrowWriteConflict` rejection, and e2e
-  regression coverage; unsupported scope remains explicit for ADT payload
-  paths, schema paths, partial release, aliasing graphs, inter-frame
-  persistence, and indirect projections
-- the published `v1.1.1` line intentionally excludes the first-wave UI
-  application boundary, even though current `main` now admits single-window
-  session ownership, deterministic event polling, frame-token ownership, and
-  the minimal `DrawCommand`/`DrawFrame` family as exercised by `prom-ui-demo`
-- current `main` still does not claim rollback, retry/compensation, or generic
-  mixed-family rule-effect execution semantics
-- current `main` still does not claim rollback, migration, recovery, or
-  runtime replay engine semantics for persisted archives
-- current `main` still does not claim implicit coercion into `fx`, `fx[unit]`
-  arithmetic, or full arithmetic parity between `fx` and `f64`
-- current `main` still does not claim rollback artifact text materialization,
-  crash-resume, inter-session repair, or generic transaction semantics
-- final stable packaging and tag policy remain narrower than the long-term distribution plan
+- landed-on-`main` widenings beyond the above admitted contour are not
+  automatically part of the stable line and are not automatically qualified
 
-## Current Release Gate
+## Current Release Gates
 
-The repository should be treated as release-valid only if all of the following stay green:
+Release-facing truth should be treated as valid only while the relevant
+validation remains green:
 
 - `cargo test --workspace`
 - boundary and ownership guard tests
 - `cargo test --test public_api_contracts`
-- `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath <path>`
-- `pwsh -File scripts/verify_release_assets.ps1 -Tag <tag> -AssetsDirectory <downloaded-assets-dir>`
-- semantic runtime matrix tests
-- semantic runtime golden tests
-- semantic runtime negative golden tests
-- semantic runtime compatibility matrix tests
+- release bundle verification
+- release asset smoke verification
+- compatibility/runtime validation checks used by the current release process
 
-## Next Release Maintenance Steps
+## Next Release-Maintenance Steps
 
-Current highest-signal remaining work after the first stable `v1.1.1` tag:
+The highest-signal remaining release-maintenance work is:
 
-1. keep release-facing docs aligned with the published stable line on `main`
-2. rerun representative asset smoke for every forward release tag
-3. keep narrow `v1` limits explicit unless a separate scope decision promotes them
-4. run the internal Gate 1 qualification program in
-   `docs/roadmap/release_qualification/gate1_protocol.md`; use
-   `reports/g1_release_scope_statement.md` as the current authority and rerun
-   Gate 1 before widening any broader release-readiness claim
-5. treat any broader practical-programming widening as a new explicit scope
-   decision plus a Gate 1 amendment or new qualification cycle
-6. treat any future widening as a forward versioned release, not silent drift
+1. keep release-facing docs aligned with:
+   - `docs/roadmap/public_status_model.md`
+   - `reports/g1_release_scope_statement.md`
+   - actual stable assets and actual current-`main` behavior
+2. keep packaged stable assets and smoke validation aligned
+3. avoid reopening scope during release-maintenance work
+4. require a new explicit scope decision plus Gate amendment/new Gate cycle
+   before any broader practical-programming widening is promoted
 
 ## Contract Rule
 
-No document in this readiness summary should be used to silently overstate completeness.
+This document must not:
 
-If a surface is only partially complete, it must remain listed under `Current Known Limits` until tests, docs, and behavior all align.
+- silently promote landed-on-`main` behavior into the stable line
+- silently promote landed-on-`main` behavior into the qualified contour
+- blur the distinction between published stable, qualified, landed, and out of
+  scope

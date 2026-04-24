@@ -1,141 +1,87 @@
-# Semantic v1 Backlog Seed
+# Semantic Readiness Backlog
 
-Current release-control wave:
+Status: release-maintenance backlog for the current repository truth
 
-- keep the active stable release line stable on `main`
-- keep new feature work paused while release-facing docs, asset smoke checks, and packaging stay aligned
-- keep active engineering work anchored to the canonical `main` source of truth
-  in
-  `docs/roadmap/language_maturity/mainline_source_of_truth_policy.md`
-- keep release-facing wording anchored to
-  `docs/roadmap/public_status_model.md`
+Read this document using the canonical status vocabulary in:
 
-Current release-maintenance wave:
+- `docs/roadmap/public_status_model.md`
 
-- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with
-  the published stable line
-- keep published release assets validated against representative source programs
-- keep release notes and compatibility statements honest about current narrow `v1` limits
+This backlog is not a promise to open a new language track by default.
+It exists to keep the published stable line, the qualified limited-release
+reading, and current-`main` reality aligned without silent scope widening.
 
-Current remaining `v1` wave:
+## Current Release-Control Wave
 
-- `fx` numeric contract notes now freeze the published stable `v1.1.1`
-  reading versus the forward-only current-`main` widening in
-  `docs/roadmap/language_maturity/fx_numeric_contract_notes.md`
-- forward stable release/tag policy is frozen for the current stable line in
-  `docs/roadmap/language_maturity/forward_stable_release_tag_policy.md`
+- keep the published stable line `v1.1.1` honest
+- keep the current practical-programming verdict honest:
+  `qualified limited release`, not `public release`
+- keep current-`main` landed widenings described as landed, not silently
+  promoted
 
-Current post-`v1` wave:
+## Current Required Maintenance Wave
 
-- the items listed below are landed on current `main` as frozen baseline
-  history; they are not automatically part of the published stable or
-  qualified-limited-release contour unless a later decision promotes them
-
-- `Runtime Ownership (tuple + direct record-field paths)` is completed and now
-  lives as frozen baseline history in `docs/spec/runtime_ownership.md`
-- `M7 UI Application Boundary` is now completed as first-wave baseline history
-  and is scoped in
-  `docs/roadmap/language_maturity/ui_application_boundary_scope.md`
-- the language-maturity package after the completed post-stable runtime waves
-  is documented in:
-  - `docs/roadmap/language_maturity/m8_everyday_expressiveness_roadmap.md`
-  - `docs/roadmap/language_maturity/m8_everyday_expressiveness_blueprint.md`
-  - `docs/roadmap/language_maturity/m8_everyday_expressiveness_phased_implementation_plan.md`
-- `M8.1 Text / String Surface` is completed as first-wave baseline history in
-  `docs/roadmap/language_maturity/text_type_full_scope.md`
-- `M8.2 Package Ecosystem Baseline` is now completed as first-wave baseline
-  history and is scoped in
-  `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
-- `M8.3 Collections Surface` is now completed as first-wave baseline history
-  and is scoped in
-  `docs/roadmap/language_maturity/collections_surface_full_scope.md`
-- `M8.4 First-Class Closures` is now completed as first-wave baseline history
-  and is scoped in
-  `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
-- `M9.1 Generics` is now completed as first-wave baseline history and is scoped
-  in `docs/roadmap/language_maturity/generics_full_scope.md`
-- `M9.3 Iterable Abstraction` is now completed as first-wave baseline history
-  and is scoped in
-  `docs/roadmap/language_maturity/iterable_abstraction_full_scope.md`
-- `Source Language Contract Freeze` is completed and now lives as frozen
-  baseline history in
-  `docs/roadmap/language_maturity/source_language_contract.md`
-- `NEXT-1..NEXT-4` post-base closure tracks are completed and now live as
-  frozen baseline history in `docs/roadmap_next.md`
-- the retained non-owning TON618 compatibility perimeter is completed and now
-  lives as frozen baseline history in
-  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
-- the first-wave PROMETHEUS host-call expansion track is completed and now
-  lives as frozen baseline history in
-  `docs/roadmap/language_maturity/prometheus_host_call_expansion_scope.md`
-- the first-wave persistence/replay backend track is completed and now lives as
-  frozen baseline history in
-  `docs/roadmap/language_maturity/persistence_replay_backend_scope.md`
-- the first-wave rule-side effect execution track is completed and now lives as
-  frozen baseline history in
-  `docs/roadmap/language_maturity/rule_side_effect_execution_scope.md`
-- the first-wave multi-session replay archive track is completed and now lives
-  as frozen baseline history in
-  `docs/roadmap/language_maturity/multi_session_replay_archive_scope.md`
-- the first-wave rollback persistence semantics track is completed and now
-  lives as frozen baseline history in
-  `docs/roadmap/language_maturity/rollback_persistence_semantics_scope.md`
-- the first-wave `fx` arithmetic expansion track is completed and now lives as
-  frozen baseline history in
-  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
-- the first-wave `Option` / `Result` standard-forms track is completed and now
-  lives as frozen baseline history in
-  `docs/roadmap/language_maturity/option_result_standard_forms_scope.md`
-- the IR/runtime anti-drift package is completed and now lives as frozen
-  baseline history in:
-  - `docs/roadmap/language_maturity/ir_v1_contract_freeze.md`
-  - `docs/roadmap/language_maturity/semcode_version_discipline.md`
-  - `docs/roadmap/language_maturity/runtime_boundary_hardening.md`
-
-Current next-focus wave:
-
-- no new blocker-removal stream is currently active on `main`
-- `Executable Module Entry Scope` is completed and now lives as frozen
-  baseline history in
-  `docs/roadmap/language_maturity/executable_module_entry_scope.md`
-- any broader practical-programming widening now requires:
-  - a new explicit scope decision
-  - a new qualification amendment or cycle under
-    `docs/roadmap/release_qualification/gate1_protocol.md`
-
-Current qualification wave:
-
-- `Gate 1 Release Qualification Protocol` in
-  `docs/roadmap/release_qualification/gate1_protocol.md`
-- the first `Gate 1` cycle is now completed through:
-  - `reports/g1_real_program_trial.md`
-  - `reports/g1_frontend_trust.md`
-  - `reports/g1_execution_integrity.md`
-  - `reports/g1_benchmark_baseline.md`
-  - `reports/g1_surface_expressiveness.md`
+- keep `README.md`, `milestones.md`, `v1_readiness.md`,
+  `compatibility_statement.md`, and `stable_release_policy.md` aligned with:
+  - `docs/roadmap/public_status_model.md`
   - `reports/g1_release_scope_statement.md`
-- the current Gate 1 decision state remains `limited release` for the amended
-  admitted practical-programming contour
-- keep UI out of the first qualification contour unless UI is explicitly
-  admitted into a future release scope
+  - the actual published stable line
+- keep release bundle guidance and smoke validation aligned with the current
+  stable asset story
+- keep qualification reports and release-facing docs in sync after each
+  completed Gate amendment or rerun
+
+## Current Practical-Programming Reading
+
+Qualified limited-release contour currently includes:
+
+- single-file executable programs on the admitted source surface
+- narrow helper-module executable programs through direct local-path bare
+  imports
+- narrow helper-module executable programs through direct local-path selected
+  imports over function-only helper modules
+- rule/state-oriented programs over records, `quad`, and explicit
+  `Option` / `Result`
+- built-in `Sequence(T)` iteration
+- direct-record user-defined `Iterable` dispatch
+- verified execution through the admitted
+  `source -> sema -> IR -> SemCode -> verifier -> VM` path
+
+Still explicitly outside the current qualified contour:
+
+- broader executable-module authoring beyond the admitted bare/selected slice
+- full CLI application authoring with admitted argv/stdout/file IO
+- UI
+- broader generalized iterable dispatch
+
+## Landed On `main`, Not Yet Promised
+
+Current `main` contains widened surfaces beyond the published stable line.
+These remain landed and unpromoted unless a later explicit decision qualifies
+or publishes them.
+
+High-signal landed post-stable families include:
+
+- schema/boundary-core work
+- package baseline work
+- ordered sequence surface
+- built-in iterable surface and direct-record iterable dispatch
+- first-wave closures
+- first-wave generics
+- runtime ownership for tuple + direct record-field paths
+- first-wave UI application boundary
+- selected-import executable module entry
+
+## Default Rule For New Work
+
+- do not open a new feature track by inertia
 - do not treat landed-on-`main` behavior as automatically release-promised
-- rerun or amend Gate 1 only through a new explicit qualification cycle if the
-  admitted release contour is widened
+- if broader practical-programming widening is desired, require:
+  - a new explicit scope decision
+  - and a Gate amendment or new qualification cycle
 
-Foundational work already in place:
+## Execution Rule
 
-- repository discipline and architecture baseline
-- verifier and admit-then-execute baseline
-- `SymbolId` runtime model and quota enforcement
-- type completeness matrix and `u32` completion
-- `fx` end-to-end value path and verified-path `f64` builtin coverage
-- canonical `sm-profile`
-- narrow PROMETHEUS boundary and owner-split semantic runtime baseline
-- CI-enforced release bundle and compatibility checks
-
-Rule of execution:
-
-- do not start semantic runtime before verifier, runtime purity, and quotas are in place;
-- do not reopen scope while the active stable line is being maintained;
-- one PR equals one logical step;
-- contract/spec/tests come before cleanup and optimization.
+- one PR = one logical step
+- docs/spec/tests/report truth must move together
+- no silent scope movement
+- merge only on green local validation where applicable and green CI

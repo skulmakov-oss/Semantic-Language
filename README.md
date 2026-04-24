@@ -5,7 +5,11 @@
 # Semantic
 Deterministic, contract-driven compiler/runtime system with SemCode emission, verifier admission, and VM execution.
 
-Semantic is built for reasoning rules, semantic state transitions, declarative Logos surfaces, and executable logic inside the broader PROMETHEUS system model.
+Semantic is a deterministic compiler/runtime system for contract-bound
+source-to-execution workflows. Current repository `main` includes broader
+language and platform work than the currently published stable line, so release
+reading must follow the canonical status model rather than assuming all landed
+behavior is promised.
 
 The public contract is centered in `docs/spec/*`. Historical roadmap notes and legacy compatibility shims remain in the repository, but they are not the primary source of truth for the current toolchain surface.
 
@@ -17,7 +21,8 @@ The public contract is centered in `docs/spec/*`. Historical roadmap notes and l
   - `out of scope`
 - The canonical vocabulary for those layers is defined in
   `docs/roadmap/public_status_model.md`.
-- Semantic is in a post-v1 stabilization phase on `main`.
+- Semantic currently has a published stable line and a separate qualified
+  practical-programming reading.
 - The current published stable line is `v1.1.1`.
 - The current practical-programming qualification posture remains
   `qualified limited release`, not `public release`.
@@ -57,7 +62,7 @@ The public contract is centered in `docs/spec/*`. Historical roadmap notes and l
 - Shared runtime vocabulary and quotas in `crates/sm-runtime-core`
 - Verified-only VM execution in `crates/sm-vm`
 - Canonical public CLI owner in `crates/smc-cli`
-- PROMETHEUS-facing boundary crates:
+- Additional boundary/runtime crates currently present on `main`:
   - `crates/prom-abi`
   - `crates/prom-cap`
   - `crates/prom-gates`
