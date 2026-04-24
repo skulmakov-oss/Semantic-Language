@@ -1,0 +1,5 @@
+fn main() {
+    let values: Sequence(i32) = [1, 2, 3];
+    let next: Sequence(i32) = push(values, 4);
+    assert(next[0] == 1);
+}
