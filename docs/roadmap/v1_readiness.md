@@ -41,6 +41,11 @@ The published stable line remains:
 It should be read as the stable publication baseline, not as a complete
 description of everything already landed on current `main`.
 
+The current published artifact set and platform scope for that stable line are
+defined in:
+
+- `docs/release_artifact_model.md`
+
 ## Qualified Limited Release
 
 The completed Gate 1 evidence currently supports a narrow practical-programming

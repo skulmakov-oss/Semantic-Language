@@ -6,6 +6,10 @@ Read this document using the canonical status vocabulary in:
 
 - `docs/roadmap/public_status_model.md`
 
+Read this policy together with:
+
+- `docs/release_artifact_model.md`
+
 This policy governs:
 
 - the published stable line
@@ -69,6 +73,7 @@ decision promotes it.
 Stable release notes should state:
 
 - the exact released commit
+- the artifact model for the published asset set
 - the validated asset set
 - the stable-ready surfaces
 - the known limits that remain outside the stable promise

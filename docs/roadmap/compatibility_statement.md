@@ -8,6 +8,7 @@ Read this document using the canonical status vocabulary in:
 
 This document should be read together with:
 
+- `docs/release_artifact_model.md`
 - `docs/roadmap/v1_readiness.md`
 - `reports/g1_release_scope_statement.md`
 

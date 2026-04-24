@@ -9,6 +9,7 @@ prerelease `v1` bundle.
 
 Verify the bundle includes:
 
+- `docs/release_artifact_model.md`
 - `docs/architecture/`
 - `docs/spec/`
 - `docs/roadmap/v1_readiness.md`
