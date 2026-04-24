@@ -32,13 +32,24 @@ fn csv(values: &[String]) -> String {
     values.join(",")
 }
 
+fn normalize_selected_import_name(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("execsel_") {
+        if let Some((hash, suffix)) = rest.split_once('_') {
+            if hash.len() == 16 && hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return format!("execsel_<stable>_{suffix}");
+            }
+        }
+    }
+    name.to_string()
+}
+
 fn disasm_function_names(disasm: &str) -> Vec<String> {
     disasm
         .lines()
         .filter_map(|line| {
             line.strip_prefix("fn ")
                 .and_then(|rest| rest.split(": code=").next())
-                .map(|name| name.to_string())
+                .map(normalize_selected_import_name)
         })
         .collect()
 }
@@ -56,11 +67,14 @@ fn execution_summary(rel: &str) -> String {
     magic.copy_from_slice(&bytes[..8]);
     let header = header_spec_from_magic(&magic).expect("known header");
 
-    let mut ir_names: Vec<String> = ir.iter().map(|func| func.name.clone()).collect();
+    let mut ir_names: Vec<String> = ir
+        .iter()
+        .map(|func| normalize_selected_import_name(&func.name))
+        .collect();
     let mut verified_names: Vec<String> = verified
         .functions
         .iter()
-        .map(|func| func.name.clone())
+        .map(|func| normalize_selected_import_name(&func.name))
         .collect();
     let mut disasm_names = disasm_function_names(&disasm);
 
@@ -138,10 +152,10 @@ run=ok
 
 program=positive_selected_import
 sema:warnings=0 laws=0
-ir:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+ir:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
 semcode:magic=SEMCODE0 rev=1
-verify:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
-disasm:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+verify:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
+disasm:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
 run=ok
 
 ";

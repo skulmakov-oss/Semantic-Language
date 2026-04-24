@@ -99,10 +99,10 @@ run=ok
 
 program=positive_selected_import
 sema:warnings=0 laws=0
-ir:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+ir:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
 semcode:magic=SEMCODE0 rev=1
-verify:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
-disasm:names=execsel_009b0c640fd25d8f_scale,execsel_009b0c640fd25d8f_score,main,score
+verify:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
+disasm:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
 run=ok
 ```
 
