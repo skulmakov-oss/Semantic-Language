@@ -243,8 +243,8 @@ Current message families include:
   post-stable `fx` arithmetic slice
 - explicit gap messages for text concatenation or text arithmetic beyond the
   current `M8.1` Wave 3 literal/equality/runtime surface
-- explicit gap messages for ordered sequence iteration or collection-helper
-  forms beyond the current `M8.3` first-wave carrier/index/equality surface
+- explicit gap messages for collection-helper forms beyond the current `M8.3`
+  first-wave iterable/carrier/index/equality surface
 - explicit source/runtime failures for non-`i32` sequence indexes, negative
   sequence indexes, or out-of-bounds sequence indexes in the current `M8.3`
   first-wave execution path
@@ -258,8 +258,8 @@ Current honest limit:
 - current `main` now also admits verified runtime execution for the same narrow
   text literal/equality surface
 - current `main` now also admits executable ordered sequence literals,
-  same-family equality, and `expr[index]` through the current `M8.3`
-  first-wave carrier path
+  same-family equality, `expr[index]`, and `for value in sequence` through the
+  current `M8.3` first-wave carrier/iterable path
 - current `main` still reports explicit gap messages for text arithmetic beyond
   equality until later `M8.1` waves land
 - generated validation failures are currently documented as deterministic plan

@@ -108,7 +108,9 @@ Current honest baseline:
 
 Current first-wave limits:
 
-- immutable capture only is the intended direction for the first-wave family
+- current `main` admits immutable capture inventory for that first-wave family
+- immutable capture only remains the intended direction for the first-wave
+  family
 - direct invocation only is the intended call model for that family
 - direct invocation currently requires exactly one positional argument
 - closure equality is not part of the current contract
@@ -320,8 +322,10 @@ Current active collections checkpoint on `main`:
   sequence family
 - current `main` now admits `expr[index]` when the base is an admitted ordered
   sequence and the index is `i32`
-- current `main` still does not admit iteration, `len`, or `is_empty` for
-  that sequence family in the current `M8.3` first-wave surface
+- current `main` now admits `for value in sequence { ... }` for that sequence
+  family through the current first-wave iterable loop surface
+- current `main` still does not admit `len` or `is_empty` for that sequence
+  family in the current `M8.3` first-wave surface
 
 Current active closures checkpoint on `main`:
 
