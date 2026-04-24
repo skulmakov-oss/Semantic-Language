@@ -79,6 +79,11 @@ High-signal landed post-stable families include:
   - a new explicit scope decision
   - and a Gate amendment or new qualification cycle
 
+Current explicit next-track proposal, if the repository chooses to widen from
+the completed readiness cycle:
+
+- `docs/roadmap/application_completeness_pr_ledger.md`
+
 ## Execution Rule
 
 - one PR = one logical step
