@@ -1,7 +1,10 @@
 use std::{fs, path::PathBuf};
 
+#[path = "support/executable_bundle_support.rs"]
+mod executable_bundle_support;
+
 use semantic_language::{
-    frontend::{compile_program_to_ir, compile_program_to_semcode, parse_program_with_profile, ParserProfile},
+    frontend::{compile_program_to_ir, compile_program_to_semcode},
     semantics::check_source,
     semcode_format::header_spec_from_magic,
     semcode_verify::{verify_semcode, VerificationCode},
@@ -21,58 +24,6 @@ fn source_text(rel: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|err| panic!("read failed for {path}: {err}"))
 }
 
-fn bundle_source(rel: &str) -> String {
-    let root = PathBuf::from(repo_path(rel));
-    let parser_profile = ParserProfile::foundation_default();
-    let mut loaded = Vec::new();
-    let mut visiting = Vec::new();
-    let mut modules = Vec::new();
-    collect_bundle_modules(&root, &parser_profile, &mut loaded, &mut visiting, &mut modules);
-    modules.join("\n\n")
-}
-
-fn collect_bundle_modules(
-    path: &PathBuf,
-    parser_profile: &ParserProfile,
-    loaded: &mut Vec<PathBuf>,
-    visiting: &mut Vec<PathBuf>,
-    modules: &mut Vec<String>,
-) {
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|err| panic!("resolve failed for {}: {err}", path.display()));
-    if loaded.iter().any(|entry| entry == &canonical) {
-        return;
-    }
-    if visiting.iter().any(|entry| entry == &canonical) {
-        panic!("cyclic executable helper import detected at {}", canonical.display());
-    }
-    visiting.push(canonical.clone());
-    let source = fs::read_to_string(&canonical)
-        .unwrap_or_else(|err| panic!("read failed for {}: {err}", canonical.display()));
-    let program = parse_program_with_profile(&source, parser_profile)
-        .unwrap_or_else(|err| panic!("parse failed for {}: {err}", canonical.display()));
-    for import in &program.imports {
-        assert!(
-            !import.reexport
-                && !import.wildcard
-                && import.alias.is_none()
-                && import.select_items.is_empty()
-                && !import.spec.contains("::"),
-            "out-of-scope executable import leaked into bundled contour for {}",
-            canonical.display()
-        );
-        let child = canonical
-            .parent()
-            .expect("module parent")
-            .join(&import.spec);
-        collect_bundle_modules(&child, parser_profile, loaded, visiting, modules);
-    }
-    let _ = visiting.pop();
-    loaded.push(canonical);
-    modules.push(source);
-}
-
 fn label_for(rel: &str) -> &str {
     rel.split('/').rev().nth(2).expect("fixture folder name")
 }
@@ -81,19 +32,30 @@ fn csv(values: &[String]) -> String {
     values.join(",")
 }
 
+fn normalize_selected_import_name(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("execsel_") {
+        if let Some((hash, suffix)) = rest.split_once('_') {
+            if hash.len() == 16 && hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return format!("execsel_<stable>_{suffix}");
+            }
+        }
+    }
+    name.to_string()
+}
+
 fn disasm_function_names(disasm: &str) -> Vec<String> {
     disasm
         .lines()
         .filter_map(|line| {
             line.strip_prefix("fn ")
                 .and_then(|rest| rest.split(": code=").next())
-                .map(|name| name.to_string())
+                .map(normalize_selected_import_name)
         })
         .collect()
 }
 
 fn execution_summary(rel: &str) -> String {
-    let src = bundle_source(rel);
+    let src = executable_bundle_support::bundle_source(rel);
     let sema = check_source(&src).expect("semantic check");
     let ir = compile_program_to_ir(&src).expect("compile ir");
     let bytes = compile_program_to_semcode(&src).expect("compile semcode");
@@ -105,11 +67,14 @@ fn execution_summary(rel: &str) -> String {
     magic.copy_from_slice(&bytes[..8]);
     let header = header_spec_from_magic(&magic).expect("known header");
 
-    let mut ir_names: Vec<String> = ir.iter().map(|func| func.name.clone()).collect();
+    let mut ir_names: Vec<String> = ir
+        .iter()
+        .map(|func| normalize_selected_import_name(&func.name))
+        .collect();
     let mut verified_names: Vec<String> = verified
         .functions
         .iter()
-        .map(|func| func.name.clone())
+        .map(|func| normalize_selected_import_name(&func.name))
         .collect();
     let mut disasm_names = disasm_function_names(&disasm);
 
@@ -146,6 +111,7 @@ fn g1_execution_integrity_stage_summaries_match_current_baseline() {
         "examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm",
         "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm",
         "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
+        "examples/qualification/executable_module_entry/positive_selected_import/src/main.sm",
     ] {
         observed.push_str(&execution_summary(rel));
         observed.push('\n');
@@ -184,6 +150,14 @@ verify:names=main,score
 disasm:names=main,score
 run=ok
 
+program=positive_selected_import
+sema:warnings=0 laws=0
+ir:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
+semcode:magic=SEMCODE0 rev=1
+verify:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
+disasm:names=execsel_<stable>_scale,execsel_<stable>_score,main,score
+run=ok
+
 ";
     assert_eq!(observed, expected);
 }
@@ -195,8 +169,9 @@ fn g1_execution_integrity_repeated_compiles_are_byte_stable() {
         "examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm",
         "examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm",
         "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
+        "examples/qualification/executable_module_entry/positive_selected_import/src/main.sm",
     ] {
-        let src = bundle_source(rel);
+        let src = executable_bundle_support::bundle_source(rel);
 
         let first = compile_program_to_semcode(&src).expect("first compile");
         let second = compile_program_to_semcode(&src).expect("second compile");

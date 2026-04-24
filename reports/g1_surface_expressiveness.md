@@ -42,16 +42,16 @@ The current language surface reads naturally for:
 - explicit `Option` / `Result` handling through contextual constructors and
   exhaustive `match`
 - narrow direct-record iterable dispatch with `for x in collection`
-- narrow helper-module executable authoring through direct local-path bare
-  imports
+- narrow helper-module executable authoring through direct local-path bare and
+  selected imports
 
 Evidence:
 
 - `reports/g1_real_program_trial.md` marked the rule/state program as
   `natural`
 - `reports/g1_frontend_trust.md` marked sequence loops, direct-record iterable
-  admission, where-clause source sugar, and direct local-path bare helper-module
-  imports as `trusted`
+  admission, where-clause source sugar, and direct local-path bare/selected
+  helper-module imports as `trusted`
 - `reports/g1_execution_integrity.md` confirmed end-to-end semantic
   preservation on the representative admitted programs
 
@@ -83,14 +83,13 @@ Why this is only `tolerable`:
 ### Blocked zone
 
 The current surface is still blocked for broader executable-module authoring
-beyond the admitted bare local-path helper-module slice.
+beyond the admitted bare/selected local-path helper-module slice.
 
 Evidence:
 
-- `reports/g1_real_program_trial.md` preserved the selected-import helper-module
-  probe as an explicit blocked boundary
-- `reports/g1_frontend_trust.md` confirms that selected/alias/wildcard/re-export
-  executable import forms remain out of scope with deterministic diagnostics
+- `reports/g1_frontend_trust.md` confirms that alias/wildcard/re-export and
+  broader executable import forms remain out of scope with deterministic
+  diagnostics
 
 This matters because a language can be technically executable while still
 impose a much narrower practical-authoring contour than a broader public-release
@@ -102,7 +101,7 @@ Current trust-reducing friction that does not break the admitted contour, but
 still matters for practical readiness:
 
 - broader executable-module entry remains outside the admitted contour beyond
-  the direct local-path bare-import slice
+  the direct local-path bare/selected-import slice
 - CLI-style programs remain core-only rather than fully user-facing
 - integer arithmetic ergonomics still show rough edges, as seen in the `i32`
   `+=` probe noted in `Q1`

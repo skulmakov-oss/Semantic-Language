@@ -54,7 +54,7 @@ The evidence does **not** support a broader practical-programming claim because:
 
 - practical CLI-style authoring remains incomplete
 - executable-module authoring is now admitted only for the narrow direct
-  local-path bare-import helper-module slice
+  local-path bare/selected-import helper-module slice
 - the admitted contour is still narrow enough that broader ecosystem/program
   authoring would be overstated
 
@@ -64,6 +64,7 @@ The currently qualified release contour is:
 
 - single-file executable programs on the admitted current source surface
 - narrow helper-module executable programs using direct local-path bare imports
+  and direct local-path selected imports over function-only helper modules
 - rule/state-oriented programs using records, `quad`, and explicit
   `Option` / `Result` handling
 - built-in `Sequence(T)` iteration
@@ -78,10 +79,10 @@ The currently qualified release contour is:
 The following are **not** qualified by this Gate 1 cycle and must remain
 outside the release promise:
 
-- alias, selected, wildcard, public re-export, package-qualified, and
+- alias, wildcard, public re-export, package-qualified, and
   namespace-qualified executable import forms
 - broader practical-programming claims beyond the admitted single-file plus
-  bare helper-module contour
+  bare/selected helper-module contour
 - full CLI application authoring with admitted argv/stdout/file IO
 - UI, which remains outside the current qualification contour
 - ADT iterable dispatch

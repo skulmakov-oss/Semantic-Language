@@ -36,6 +36,7 @@ Canonical committed trial programs:
 - `examples/qualification/g1_real_program_trial/rule_state_decision/src/main.sm`
 - `examples/qualification/g1_real_program_trial/data_audit_record_iterable/src/main.sm`
 - `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
+- `examples/qualification/executable_module_entry/positive_selected_import/src/main.sm`
 
 Canonical reproducible harness:
 
@@ -136,6 +137,7 @@ Reason:
 Path:
 
 - `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
+- `examples/qualification/executable_module_entry/positive_selected_import/src/main.sm`
 
 Intent:
 
@@ -145,7 +147,7 @@ Observed behavior:
 
 - `smc check` passes
 - `smc run` passes
-- direct local-path helper-module imports now execute through the full
+- direct local-path bare and selected helper-module imports now execute through the full
   `source -> sema -> IR -> SemCode -> verifier -> VM` path on current `main`
 
 Verdict:

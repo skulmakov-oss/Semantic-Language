@@ -1,20 +1,14 @@
-use std::path::PathBuf;
-
-fn repo_path(rel: &str) -> String {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(rel)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
+#[path = "support/executable_bundle_support.rs"]
+mod executable_bundle_support;
 
 fn check_ok(rel: &str) {
-    let path = repo_path(rel);
+    let path = executable_bundle_support::repo_path(rel);
     smc_cli::run(vec!["check".to_string(), path.clone()])
         .unwrap_or_else(|err| panic!("smc check unexpectedly failed for {path}: {err}"));
 }
 
 fn check_err(rel: &str) -> String {
-    let path = repo_path(rel);
+    let path = executable_bundle_support::repo_path(rel);
     smc_cli::run(vec!["check".to_string(), path.clone()])
         .expect_err(&format!("smc check unexpectedly passed for {path}"))
 }
@@ -26,6 +20,7 @@ fn g1_frontend_positive_suite_passes() {
         "examples/qualification/g1_frontend_trust/positive_record_iterable/src/main.sm",
         "examples/qualification/g1_frontend_trust/positive_where_clause/src/main.sm",
         "examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm",
+        "examples/qualification/executable_module_entry/positive_selected_import/src/main.sm",
     ] {
         check_ok(rel);
     }

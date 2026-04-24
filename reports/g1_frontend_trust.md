@@ -36,6 +36,7 @@ Canonical positive fixtures:
 - `examples/qualification/g1_frontend_trust/positive_record_iterable/src/main.sm`
 - `examples/qualification/g1_frontend_trust/positive_where_clause/src/main.sm`
 - `examples/qualification/executable_module_entry/wave2_local_helper_import/src/main.sm`
+- `examples/qualification/executable_module_entry/positive_selected_import/src/main.sm`
 
 Canonical negative fixtures:
 
@@ -208,7 +209,7 @@ Trusted zones on current `main`:
 - sequence-loop admission
 - direct-record iterable trait/impl admission
 - where-clause source sugar
-- direct local-path bare executable helper-module imports
+- direct local-path bare and selected executable helper-module imports
 - contextual `Option` / `Result` match admission
 - negative diagnostics for iterable contract shape, standard-form scope, and
   out-of-scope executable import forms
