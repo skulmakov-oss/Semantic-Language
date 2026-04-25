@@ -154,6 +154,24 @@ fn tokenize_line(
                     i += 1;
                 }
             }
+            b'<' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::Le, "<=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::LAngle, "<", abs_pos, line_no, col);
+                    i += 1;
+                }
+            }
+            b'>' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::Ge, ">=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::RAngle, ">", abs_pos, line_no, col);
+                    i += 1;
+                }
+            }
             b'&' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'&' {
                     if i + 2 < bytes.len() && bytes[i + 2] == b'=' {
@@ -338,14 +356,6 @@ fn tokenize_line(
                 };
                 push_tok(out, kind, text, abs_pos, line_no, col);
             }
-            b'<' => {
-                push_tok(out, TokenKind::LAngle, "<", abs_pos, line_no, col);
-                i += 1;
-            }
-            b'>' => {
-                push_tok(out, TokenKind::RAngle, ">", abs_pos, line_no, col);
-                i += 1;
-            }
             _ => {
                 return Err(fmt_mark_error(
                     "E0001",
@@ -488,5 +498,14 @@ mod tests {
         let toks = lex_tokens(src).expect("frontend lexer");
         assert!(toks.iter().any(|t| t.kind == TokenKind::KwEntity));
         assert!(toks.iter().any(|t| t.kind == TokenKind::Indent));
+    }
+
+    #[test]
+    fn lexer_recognizes_relational_operator_pairs() {
+        let src = "fn main() { let ok: bool = 3 <= 4 && 5 >= 2; return; }";
+        let toks = lex_tokens(src).expect("frontend lexer");
+        let kinds: Vec<_> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&TokenKind::Le));
+        assert!(kinds.contains(&TokenKind::Ge));
     }
 }

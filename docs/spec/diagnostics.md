@@ -149,6 +149,8 @@ Current message families include:
   `M8.4` first-wave surface
 - closure equality is not part of the current `M8.4` first-wave surface
 - for-range requires `i32` range expression
+- relational operators beyond plain same-family `i32` operands remain outside the
+  first application-completeness wave
 - iterable `for x in collection` loop over a non-iterable value
 - iterable `for x in collection` loop whose explicit `Iterable` impl does not
   satisfy the executable contract `fn next(self: Self, index: i32) -> Option(Item)`
@@ -260,6 +262,10 @@ Current honest limit:
 - current `main` now also admits executable ordered sequence literals,
   same-family equality, `expr[index]`, and `for value in sequence` through the
   current `M8.3` first-wave carrier/iterable path
+- current `main` now also admits plain same-family `i32` relational typing and
+  lowering through the existing verified compare path
+- current `main` still reports explicit gap messages for non-`i32` relational
+  operators until later application-completeness waves land
 - current `main` still reports explicit gap messages for text arithmetic beyond
   equality until later `M8.1` waves land
 - generated validation failures are currently documented as deterministic plan

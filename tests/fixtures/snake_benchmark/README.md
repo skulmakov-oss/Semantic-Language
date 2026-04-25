@@ -7,6 +7,14 @@ Purpose:
 - freeze the current fail baseline for still-missing snake blockers that
   already have a meaningful current source spelling
 
+Current landed positive baseline includes:
+
+- same-family text equality
+- enum/control-flow basics
+- same-family plain `i32` relational operators
+- ordered `Sequence(T)` indexing and iteration
+- first-class closure capture
+
 This fixture pack intentionally does not yet freeze syntax for two blocker
 families:
 

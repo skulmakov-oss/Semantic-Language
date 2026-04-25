@@ -64,7 +64,6 @@ Current `main` already admits these benchmark-relevant surfaces:
 
 Current `main` still fails this benchmark family at the following points:
 
-- relational operators such as `>`, `<`, `>=`, `<=`
 - public integer arithmetic as a normal `i32` / `u32` application surface
 - `let mut`
 - plain reassignment
@@ -122,11 +121,12 @@ Current `main` still fails this benchmark family at the following points:
 ### B — Imperative Core Completion
 
 - `PR-B1` [required]
-  Title: `frontend/types: admit relational operators for scalar families`
+  Title: `frontend/types: admit same-family i32 relational operators`
   Goal:
   - allow ordinary grid/comparison logic in application programs
   Scope:
-  - admit `>`, `<`, `>=`, `<=` for the intended scalar families
+  - admit `>`, `<`, `>=`, `<=` for plain same-family `i32` operands only
+  - do not widen `u32`, `f64`, `fx`, or measured numeric relationals in this PR
   Files:
   - frontend/type/spec/tests layers as required
   Gate:

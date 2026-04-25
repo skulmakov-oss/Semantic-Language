@@ -1276,23 +1276,46 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_eq(&mut self) -> Result<ExprId, FrontendError> {
-        let mut left = self.parse_range()?;
+        let mut left = self.parse_cmp()?;
         loop {
             if self.eat(TokenKind::EqEq) {
-                let right = self.parse_range()?;
+                let right = self.parse_cmp()?;
                 left = self
                     .arena
                     .alloc_expr(Expr::Binary(left, BinaryOp::Eq, right));
                 continue;
             }
             if self.eat(TokenKind::Ne) {
-                let right = self.parse_range()?;
+                let right = self.parse_cmp()?;
                 left = self
                     .arena
                     .alloc_expr(Expr::Binary(left, BinaryOp::Ne, right));
                 continue;
             }
             break;
+        }
+        Ok(left)
+    }
+
+    fn parse_cmp(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_range()?;
+        loop {
+            let op = if self.eat(TokenKind::LAngle) {
+                Some(BinaryOp::Lt)
+            } else if self.eat(TokenKind::Le) {
+                Some(BinaryOp::Le)
+            } else if self.eat(TokenKind::RAngle) {
+                Some(BinaryOp::Gt)
+            } else if self.eat(TokenKind::Ge) {
+                Some(BinaryOp::Ge)
+            } else {
+                None
+            };
+            let Some(op) = op else {
+                break;
+            };
+            let right = self.parse_range()?;
+            left = self.arena.alloc_expr(Expr::Binary(left, op, right));
         }
         Ok(left)
     }
@@ -6069,6 +6092,60 @@ fn main() { return; }
         let kinds: Vec<_> = tokens.iter().map(|t| t.kind).collect();
         assert!(kinds.contains(&TokenKind::LAngle));
         assert!(kinds.contains(&TokenKind::RAngle));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_i32_relational_operator_surface() {
+        let src = r#"
+fn main() {
+    let ok: bool = 3 >= 2;
+    return;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("i32 relational expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            ty: Some(Type::Bool),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected bool let binding");
+        };
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::Binary(_, BinaryOp::Ge, _)
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_gives_relational_precedence_between_additive_and_equality() {
+        let src = r#"
+fn main() {
+    let ok: bool = 1 + 2 < 4 == true;
+    return;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("relational precedence should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            ty: Some(Type::Bool),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected bool let binding");
+        };
+        let Expr::Binary(lhs, BinaryOp::Eq, rhs) = program.arena.expr(*value) else {
+            panic!("expected equality at the top level");
+        };
+        assert!(matches!(
+            program.arena.expr(*lhs),
+            Expr::Binary(_, BinaryOp::Lt, _)
+        ));
+        assert!(matches!(program.arena.expr(*rhs), Expr::BoolLiteral(true)));
     }
 
     #[test]

@@ -20,6 +20,10 @@ fn iterable_for_gap_message() -> &'static str {
     "iterable 'for x in collection' currently requires built-in Sequence(type), i32 range, or a direct record `Iterable` impl shaped as `fn next(self: Self, index: i32) -> Option(Item)`"
 }
 
+fn first_wave_relational_gap_message() -> &'static str {
+    "relational operators are currently admitted only for same-family i32 operands in the first application-completeness wave"
+}
+
 fn iterable_for_impl_contract_message() -> &'static str {
     "iterable 'for x in collection' over an explicit `Iterable` impl currently requires direct record contract `fn next(self: Self, index: i32) -> Option(Item)`"
 }
@@ -2319,6 +2323,21 @@ fn infer_expr_type(
                         })
                     }
                 }
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                    if lt == Type::I32 && rt == Type::I32 {
+                        Ok(Type::Bool)
+                    } else if lt == rt {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: first_wave_relational_gap_message().to_string(),
+                        })
+                    } else {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: format!("cannot compare {:?} and {:?}", lt, rt),
+                        })
+                    }
+                }
                 BinaryOp::AndAnd | BinaryOp::OrOr => {
                     if lt != rt {
                         return Err(FrontendError {
@@ -2598,6 +2617,38 @@ mod tests {
         assert!(err
             .message
             .contains("range equality is not part of the stable v0 range surface"));
+    }
+
+    #[test]
+    fn i32_relational_surface_typechecks_in_first_wave() {
+        let src = r#"
+            fn main() {
+                let gt: bool = 3 > 2;
+                let lt: bool = 2 < 3;
+                let ge: bool = 3 >= 3;
+                let le: bool = 3 <= 3;
+                assert(gt == true);
+                assert(lt == true);
+                assert(ge == true);
+                assert(le == true);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("same-family i32 relationals should typecheck");
+    }
+
+    #[test]
+    fn non_i32_relational_surface_stays_out_of_scope() {
+        let src = r#"
+            fn main() {
+                let ok: bool = 1.0 < 2.0;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("f64 relational surface must reject");
+        assert!(err.message.contains(first_wave_relational_gap_message()));
     }
 
     #[test]

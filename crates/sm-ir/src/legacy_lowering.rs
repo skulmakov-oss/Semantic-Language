@@ -3078,6 +3078,39 @@ fn lower_expr_with_expected(
                     });
                     return Ok((dst, Type::Bool));
                 }
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                    if lt != Type::I32 || rt != Type::I32 {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "relational lowering currently requires same-family i32 operands"
+                                .to_string(),
+                        });
+                    }
+                    match op {
+                        BinaryOp::Lt => out.push(IrInstr::CmpI32Lt {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
+                        }),
+                        BinaryOp::Le => out.push(IrInstr::CmpI32Le {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
+                        }),
+                        BinaryOp::Gt => out.push(IrInstr::CmpI32Lt {
+                            dst,
+                            lhs: rr,
+                            rhs: lr,
+                        }),
+                        BinaryOp::Ge => out.push(IrInstr::CmpI32Le {
+                            dst,
+                            lhs: rr,
+                            rhs: lr,
+                        }),
+                        _ => unreachable!("covered relational operator arms"),
+                    }
+                    return Ok((dst, Type::Bool));
+                }
                 BinaryOp::Add => {
                     if lt == Type::Fx {
                         out.push(IrInstr::AddFx {
@@ -8633,6 +8666,30 @@ mod opt_tests {
             .instrs
             .iter()
             .any(|instr| matches!(instr, IrInstr::LoadVar { name, .. } if name == "window")));
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpI32Le { .. })));
+    }
+
+    #[test]
+    fn lower_i32_relational_surface_through_existing_cmp_path() {
+        let src = r#"
+            fn main() {
+                let lt: bool = 1 < 2;
+                let ge: bool = 3 >= 3;
+                assert(lt == true);
+                assert(ge == true);
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("i32 relational surface should lower");
+        let main = ir.iter().find(|func| func.name == "main").expect("main fn");
+        assert!(main
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, IrInstr::CmpI32Lt { .. })));
         assert!(main
             .instrs
             .iter()
