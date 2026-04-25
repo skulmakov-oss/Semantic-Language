@@ -175,6 +175,9 @@ Current rules:
 
 - arithmetic operators are expected to stay within the same numeric family
 - equality comparisons are valid inside the same family
+- plain same-family `i32` relational comparisons `>`, `<`, `>=`, `<=` are now
+  admitted on current `main`
+- `u32` remains equality-only in the current first application-completeness wave
 - implicit cross-family numeric coercion is not part of the current contract
 
 ## F64

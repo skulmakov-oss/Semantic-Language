@@ -352,6 +352,7 @@ Current expression forms:
 - binary operators:
   - `*`, `/`
   - `+`, `-`
+  - `<`, `<=`, `>`, `>=`
   - `==`, `!=`
   - `&&`, `||`
   - `->`
@@ -479,11 +480,12 @@ Current precedence, from tighter to looser:
 2. unary `!`, unary `+`, unary `-`
 3. `*`, `/`
 4. `+`, `-`
-5. `==`, `!=`
-6. `&&`
-7. `||`
-8. `->`
-9. `|>`
+5. `<`, `<=`, `>`, `>=`
+6. `==`, `!=`
+7. `&&`
+8. `||`
+9. `->`
+10. `|>`
 
 Current short-lambda rules:
 
@@ -627,7 +629,7 @@ surface is part of the language contract and is specified in `modules.md`.
 
 The current source contract does not yet claim stable support for:
 
-- relational operators such as `>`, `<`, `>=`, `<=`
+- relational operators outside the current plain same-family `i32` first-wave slice
 - user-defined aggregate value operations beyond top-level nominal record declarations
 - collections as first-class language forms
 - generics or trait-like abstraction

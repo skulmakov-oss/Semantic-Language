@@ -366,8 +366,8 @@ Current v0 limit:
   the current stable contract
 - descending ranges, custom step values, `continue`, and a general iterable
   subsystem are not yet part of the stable contract
-- `for ... in range` does not widen the public operator surface to general
-  relational operators
+- `for ... in range` does not widen the public operator surface beyond the
+  current plain same-family `i32` relational slice
 
 ## Scope And Binding Rules
 
@@ -739,6 +739,8 @@ Current active closures checkpoint on `main`:
 Current operator meaning:
 
 - `==` and `!=` produce `bool`
+- plain same-family `i32 <`, `<=`, `>`, and `>=` now produce `bool` on current
+  `main`
 - same-family `text == text` and `text != text` are now admitted on current
   `main`
 - same-family `Sequence(T) == Sequence(T)` and `Sequence(T) != Sequence(T)` are
@@ -777,6 +779,10 @@ Current honest limit:
 - current `main` now also admits one ordered sequence family with bracketed
   literals, same-family equality, and `expr[index]` through the canonical
   `M8.3` first-wave carrier path
+- current `main` now also admits plain same-family `i32` relational operators
+  through the existing verified compare opcodes
+- broader numeric relational surfaces for `u32`, `f64`, `fx`, and measured
+  values remain outside the current application-completeness wave
 - iteration, `len`, `is_empty`, maps, sets, and collection protocol machinery
   remain outside the current `M8.3` first-wave contract
 - current `main` now also admits one first-wave closure family through the
