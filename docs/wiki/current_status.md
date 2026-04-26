@@ -58,7 +58,7 @@ The current owner-split workspace is organized around these layers.
 - `sm-runtime-core` — runtime-safe shared execution vocabulary
 - `sm-vm` — deterministic SemCode VM
 - `smc-cli` — command-line tooling pipeline
-- `ton618-core` — low-level quad/TON618 primitive perimeter
+- low-level quad primitive compatibility perimeter — retained as non-owning historical/support surface; see `docs/legacy-map.md` for the exact inventory
 
 ### PROMETHEUS integration layer
 
@@ -240,12 +240,9 @@ Known benchmark-family blockers remain in the application-completeness stream ra
 
 ## 10. Legacy and compatibility perimeter
 
-The repository intentionally retains a non-owning compatibility perimeter:
+The repository intentionally retains a narrow non-owning compatibility perimeter. The exact path inventory is intentionally kept in the dedicated legacy map rather than repeated here:
 
-- root shim and bins;
-- `ton618-core`;
-- `ton618_legacy/`;
-- selected compatibility re-exports.
+- `docs/legacy-map.md`
 
 This perimeter is historical/compatibility-oriented. It is not a second owner of the `sm-*` Semantic platform contracts.
 
