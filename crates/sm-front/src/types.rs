@@ -397,6 +397,7 @@ pub enum Stmt {
     },
     Let {
         name: SymbolId,
+        is_mut: bool,
         ty: Option<Type>,
         value: ExprId,
     },

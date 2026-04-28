@@ -99,6 +99,7 @@ pub type ImplTable = Vec<ImplDecl>;
 pub struct ScopeBinding {
     pub ty: Type,
     pub is_const: bool,
+    pub is_mutable: bool,
     /// M9.5 Wave C: true after the binding's value has been moved out (whole-variable).
     pub consumed: bool,
     /// M9.7: per-path availability for partial-move tracking.
@@ -144,6 +145,20 @@ impl ScopeEnv {
             ScopeBinding {
                 ty,
                 is_const: false,
+                is_mutable: false,
+                consumed: false,
+                path_state: Vec::new(),
+            },
+        );
+    }
+
+    pub fn insert_mut(&mut self, name: SymbolId, ty: Type) {
+        self.insert_binding(
+            name,
+            ScopeBinding {
+                ty,
+                is_const: false,
+                is_mutable: true,
                 consumed: false,
                 path_state: Vec::new(),
             },
@@ -152,7 +167,7 @@ impl ScopeEnv {
 
     pub fn insert_const(&mut self, name: SymbolId, ty: Type) {
         self.insert_binding(name, ScopeBinding {
-            ty, is_const: true, consumed: false, path_state: Vec::new(),
+            ty, is_const: true, is_mutable: false, consumed: false, path_state: Vec::new(),
         });
     }
 
@@ -326,6 +341,12 @@ impl ScopeEnv {
 
     pub fn is_const(&self, name: SymbolId) -> bool {
         self.binding(name).map(|binding| binding.is_const).unwrap_or(false)
+    }
+
+    pub fn is_mutable(&self, name: SymbolId) -> bool {
+        self.binding(name)
+            .map(|binding| binding.is_mutable)
+            .unwrap_or(false)
     }
 
     fn binding(&self, name: SymbolId) -> Option<&ScopeBinding> {

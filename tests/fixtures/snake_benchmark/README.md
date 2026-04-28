@@ -13,6 +13,7 @@ Current landed positive baseline includes:
 - enum/control-flow basics
 - same-family plain `i32` relational operators
 - same-family plain `i32` unary `-` and binary `+`, `-`, `*`
+- `let mut`, plain reassignment, and compound assignment over mutable locals
 - ordered `Sequence(T)` indexing and iteration
 - first-class closure capture
 
