@@ -8,7 +8,9 @@ Semantic is a deterministic verified execution platform with native quad logic, 
 
 ## Demo
 
-[![Semantic Snake AI Demo](https://img.youtube.com/vi/SKV-TfaJ0Fg/hqdefault.jpg)](https://www.youtube.com/watch?v=SKV-TfaJ0Fg)
+[![Semantic Snake AI Demo](https://img.youtube.com/vi/SKV-TfaJ0Fg/maxresdefault.jpg)](https://www.youtube.com/watch?v=SKV-TfaJ0Fg)
+
+> Demo: Semantic program running a self-learning Snake AI through the verified execution pipeline.
 
 Semantic is a deterministic compiler/runtime system for contract-bound
 source-to-execution workflows. Current repository `main` includes broader
