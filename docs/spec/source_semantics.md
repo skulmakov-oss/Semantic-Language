@@ -749,7 +749,10 @@ Current operator meaning:
   same family
 - `!` works on `bool` and `quad`
 - `->` is quad implication and returns `quad`
-- `+`, `-`, `*`, `/` currently have stable arithmetic meaning only on `f64`
+- `+`, `-`, `*`, `/` currently have stable arithmetic meaning on `f64`
+- current `main` now also admits the first same-family `i32` arithmetic slice:
+  unary `-`, binary `+`, `-`, `*`
+- `i32 / i32` remains outside the current first arithmetic wave
 
 Current first-wave units operator rules:
 
@@ -781,8 +784,12 @@ Current honest limit:
   `M8.3` first-wave carrier path
 - current `main` now also admits plain same-family `i32` relational operators
   through the existing verified compare opcodes
+- current `main` now also admits plain same-family `i32` unary `-` and binary
+  `+`, `-`, `*` through explicit lowering, verified opcodes, and VM execution
 - broader numeric relational surfaces for `u32`, `f64`, `fx`, and measured
   values remain outside the current application-completeness wave
+- broader integer arithmetic for `u32`, mixed numeric families, and `i32`
+  division remains outside the current first arithmetic wave
 - iteration, `len`, `is_empty`, maps, sets, and collection protocol machinery
   remain outside the current `M8.3` first-wave contract
 - current `main` now also admits one first-wave closure family through the

@@ -466,6 +466,53 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                     }
                 }
             }
+            IrInstr::SubI32 { dst, lhs, rhs } => {
+                match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
+                    (Some(ConstVal::I32(a)), Some(ConstVal::I32(b))) => {
+                        rewrites = rewrites.saturating_add(1);
+                        cst.insert(dst, ConstVal::I32(a.wrapping_sub(b)));
+                        out.push(IrInstr::LoadI32 {
+                            dst,
+                            val: a.wrapping_sub(b),
+                        });
+                    }
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::I32(v)) if *v == 0) =>
+                    {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ => {
+                        cst.remove(&dst);
+                        out.push(IrInstr::SubI32 { dst, lhs, rhs });
+                    }
+                }
+            }
+            IrInstr::MulI32 { dst, lhs, rhs } => {
+                match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
+                    (Some(ConstVal::I32(a)), Some(ConstVal::I32(b))) => {
+                        rewrites = rewrites.saturating_add(1);
+                        cst.insert(dst, ConstVal::I32(a.wrapping_mul(b)));
+                        out.push(IrInstr::LoadI32 {
+                            dst,
+                            val: a.wrapping_mul(b),
+                        });
+                    }
+                    _ if dst == lhs
+                        && matches!(cst.get(&rhs), Some(ConstVal::I32(v)) if *v == 1) =>
+                    {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ if dst == rhs
+                        && matches!(cst.get(&lhs), Some(ConstVal::I32(v)) if *v == 1) =>
+                    {
+                        rewrites = rewrites.saturating_add(1);
+                    }
+                    _ => {
+                        cst.remove(&dst);
+                        out.push(IrInstr::MulI32 { dst, lhs, rhs });
+                    }
+                }
+            }
             IrInstr::AddF64 { dst, lhs, rhs } => {
                 match (cst.get(&lhs).copied(), cst.get(&rhs).copied()) {
                     (Some(ConstVal::F64(a)), Some(ConstVal::F64(b))) => {

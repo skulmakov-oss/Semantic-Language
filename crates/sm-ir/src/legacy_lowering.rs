@@ -195,6 +195,16 @@ pub enum IrInstr {
         lhs: u16,
         rhs: u16,
     },
+    SubI32 {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
+    MulI32 {
+        dst: u16,
+        lhs: u16,
+        rhs: u16,
+    },
     AddF64 {
         dst: u16,
         lhs: u16,
@@ -1155,6 +1165,8 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         | IrInstr::CmpI32Lt { .. }
         | IrInstr::CmpI32Le { .. }
         | IrInstr::AddI32 { .. }
+        | IrInstr::SubI32 { .. }
+        | IrInstr::MulI32 { .. }
         | IrInstr::AddF64 { .. }
         | IrInstr::SubF64 { .. }
         | IrInstr::MulF64 { .. }
@@ -1388,6 +1400,8 @@ fn emit_instr(
         IrInstr::CmpI32Lt { dst, lhs, rhs } => emit_3reg(Opcode::CmpI32Lt, *dst, *lhs, *rhs, out),
         IrInstr::CmpI32Le { dst, lhs, rhs } => emit_3reg(Opcode::CmpI32Le, *dst, *lhs, *rhs, out),
         IrInstr::AddI32 { dst, lhs, rhs } => emit_3reg(Opcode::AddI32, *dst, *lhs, *rhs, out),
+        IrInstr::SubI32 { dst, lhs, rhs } => emit_3reg(Opcode::SubI32, *dst, *lhs, *rhs, out),
+        IrInstr::MulI32 { dst, lhs, rhs } => emit_3reg(Opcode::MulI32, *dst, *lhs, *rhs, out),
         IrInstr::AddF64 { dst, lhs, rhs } => emit_3reg(Opcode::AddF64, *dst, *lhs, *rhs, out),
         IrInstr::SubF64 { dst, lhs, rhs } => emit_3reg(Opcode::SubF64, *dst, *lhs, *rhs, out),
         IrInstr::MulF64 { dst, lhs, rhs } => emit_3reg(Opcode::MulF64, *dst, *lhs, *rhs, out),
@@ -2923,6 +2937,8 @@ fn lower_expr_with_expected(
                 UnaryOp::Pos => {
                     if ty == Type::F64 {
                         Ok((src, Type::F64))
+                    } else if ty == Type::I32 {
+                        Ok((src, Type::I32))
                     } else if ty == Type::Fx {
                         Ok((src, Type::Fx))
                     } else if matches!(ty.measured_parts(), Some((base, _)) if *base == Type::F64) {
@@ -2935,7 +2951,9 @@ fn lower_expr_with_expected(
                     }
                 }
                 UnaryOp::Neg => {
-                    let result_ty = if ty == Type::Fx {
+                    let result_ty = if ty == Type::I32 {
+                        Type::I32
+                    } else if ty == Type::Fx {
                         Type::Fx
                     } else if ty == Type::F64 {
                         Type::F64
@@ -2948,7 +2966,9 @@ fn lower_expr_with_expected(
                         });
                     };
                     let zero = alloc(next);
-                    if ty == Type::Fx {
+                    if ty == Type::I32 {
+                        out.push(IrInstr::LoadI32 { dst: zero, val: 0 });
+                    } else if ty == Type::Fx {
                         out.push(IrInstr::LoadFx { dst: zero, val: 0 });
                     } else {
                         out.push(IrInstr::LoadF64 {
@@ -2957,7 +2977,13 @@ fn lower_expr_with_expected(
                         });
                     }
                     let dst = alloc(next);
-                    if ty == Type::Fx {
+                    if ty == Type::I32 {
+                        out.push(IrInstr::SubI32 {
+                            dst,
+                            lhs: zero,
+                            rhs: src,
+                        });
+                    } else if ty == Type::Fx {
                         out.push(IrInstr::SubFx {
                             dst,
                             lhs: zero,
@@ -3112,6 +3138,14 @@ fn lower_expr_with_expected(
                     return Ok((dst, Type::Bool));
                 }
                 BinaryOp::Add => {
+                    if lt == Type::I32 {
+                        out.push(IrInstr::AddI32 {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
+                        });
+                        return Ok((dst, Type::I32));
+                    }
                     if lt == Type::Fx {
                         out.push(IrInstr::AddFx {
                             dst,
@@ -3140,6 +3174,14 @@ fn lower_expr_with_expected(
                     return Ok((dst, lt));
                 }
                 BinaryOp::Sub => {
+                    if lt == Type::I32 {
+                        out.push(IrInstr::SubI32 {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
+                        });
+                        return Ok((dst, Type::I32));
+                    }
                     if lt == Type::Fx {
                         out.push(IrInstr::SubFx {
                             dst,
@@ -3168,6 +3210,14 @@ fn lower_expr_with_expected(
                     return Ok((dst, lt));
                 }
                 BinaryOp::Mul => {
+                    if lt == Type::I32 {
+                        out.push(IrInstr::MulI32 {
+                            dst,
+                            lhs: lr,
+                            rhs: rr,
+                        });
+                        return Ok((dst, Type::I32));
+                    }
                     if lt == Type::Fx {
                         out.push(IrInstr::MulFx {
                             dst,
