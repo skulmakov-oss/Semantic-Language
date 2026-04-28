@@ -17,22 +17,6 @@ source-to-execution workflows. Current repository `main` includes broader
 language and platform work than the currently published stable line, so release
 reading must follow the canonical status model rather than assuming all landed
 behavior is promised.
-<section class="project-demo">
-  <h2>Demo</h2>
-
-  <div class="video-frame">
-    <iframe
-      width="560"
-      height="315"
-      src="https://www.youtube.com/embed/SKV-TfaJ0Fg?si=Yugp9o4M2mU8ZkX0"
-      title="Semantic Snake AI Demo"
-      frameborder="0"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-      referrerpolicy="strict-origin-when-cross-origin"
-      allowfullscreen>
-    </iframe>
-  </div>
-</section>
 The public contract is centered in `docs/spec/*`. Historical roadmap notes and legacy compatibility shims remain in the repository, but they are not the primary source of truth for the current toolchain surface.
 
 ## Current Status
