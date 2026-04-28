@@ -12,7 +12,9 @@ reading must follow the canonical status model rather than assuming all landed
 behavior is promised.
 
 The public contract is centered in `docs/spec/*`. Historical roadmap notes and legacy compatibility shims remain in the repository, but they are not the primary source of truth for the current toolchain surface.
+
 <iframe width="560" height="315" src="https://www.youtube.com/embed/SKV-TfaJ0Fg?si=Yugp9o4M2mU8ZkX0" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
 ## Current Status
 Status: current-main orientation page
 Audience: repository Wiki / first-contact project readers
