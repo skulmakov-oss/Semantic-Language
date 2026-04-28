@@ -5,6 +5,8 @@
 # Semantic
 Deterministic, contract-driven compiler/runtime system with SemCode emission, verifier admission, and VM execution.
 
+https://youtu.be/SKV-TfaJ0Fg?si=Yugp9o4M2mU8ZkX0
+
 Semantic is a deterministic compiler/runtime system for contract-bound
 source-to-execution workflows. Current repository `main` includes broader
 language and platform work than the currently published stable line, so release
