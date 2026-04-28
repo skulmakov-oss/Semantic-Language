@@ -89,7 +89,6 @@ Purpose: close the practical programming layer.
 Capabilities to finish or classify:
 
 - public integer arithmetic;
-- mutable locals and reassignment;
 - `while`;
 - statement loops and control exits;
 - block expression consistency;

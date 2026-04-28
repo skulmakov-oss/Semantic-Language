@@ -4368,7 +4368,12 @@ fn lower_stmt(
             });
             Ok(())
         }
-        Stmt::Let { name, ty, value } => {
+        Stmt::Let {
+            name,
+            is_mut,
+            ty,
+            value,
+        } => {
             append_record_update_write_events_from_expr(*value, arena, &mut ctx.ownership_events);
             let (reg, vty) = lower_expr_with_expected(
                 *value,
@@ -4385,7 +4390,11 @@ fn lower_stmt(
                 &mut ctx.closure_state,
             )?;
             let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
-            env.insert(*name, final_ty);
+            if *is_mut {
+                env.insert_mut(*name, final_ty);
+            } else {
+                env.insert(*name, final_ty);
+            }
             ctx.instrs.push(IrInstr::StoreVar {
                 name: resolve_symbol_name(arena, *name)?.to_string(),
                 src: reg,
@@ -5273,7 +5282,12 @@ fn lower_value_block_expr(
                     src: reg,
                 });
             }
-            Stmt::Let { name, ty, value } => {
+            Stmt::Let {
+                name,
+                is_mut,
+                ty,
+                value,
+            } => {
                 let (reg, vty) = lower_expr_with_expected(
                     *value,
                     arena,
@@ -5289,7 +5303,11 @@ fn lower_value_block_expr(
                     closure_state,
                 )?;
                 let final_ty = if let Some(ann) = ty { ann.clone() } else { vty };
-                block_env.insert(*name, final_ty);
+                if *is_mut {
+                    block_env.insert_mut(*name, final_ty);
+                } else {
+                    block_env.insert(*name, final_ty);
+                }
                 out.push(IrInstr::StoreVar {
                     name: resolve_symbol_name(arena, *name)?.to_string(),
                     src: reg,
@@ -8206,7 +8224,7 @@ mod opt_tests {
     fn lower_compound_assignment_to_read_modify_write() {
         let src = r#"
             fn main() {
-                let total: f64 = 1.0;
+                let mut total: f64 = 1.0;
                 total += 2.0;
                 return;
             }
@@ -8226,6 +8244,48 @@ mod opt_tests {
             main.instrs
                 .iter()
                 .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "total"))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn lower_mutable_local_reassignment_to_store_path() {
+        let src = r#"
+            fn main() {
+                let mut score: i32 = 0;
+                score = 1;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("mutable local reassignment should lower");
+        let main = &ir[0];
+        assert!(
+            main.instrs
+                .iter()
+                .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "score"))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn lower_plain_local_reassignment_to_store_path() {
+        let src = r#"
+            fn main() {
+                let score: i32 = 0;
+                score = 1;
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("plain local reassignment should lower");
+        let main = &ir[0];
+        assert!(
+            main.instrs
+                .iter()
+                .filter(|instr| matches!(instr, IrInstr::StoreVar { name, .. } if name == "score"))
                 .count()
                 >= 2
         );

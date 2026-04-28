@@ -230,7 +230,6 @@ Current benchmark-positive baseline includes:
 Known benchmark-family blockers remain in the application-completeness stream rather than the cleanup milestone, including:
 
 - public integer arithmetic;
-- mutable locals / reassignment;
 - statement loops and control exits;
 - sequence utility layer;
 - first-wave map surface;

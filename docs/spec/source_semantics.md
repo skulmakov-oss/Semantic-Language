@@ -425,6 +425,13 @@ Current statement meaning:
 - `assert(condition);` terminates through the core fail-fast trap path when
   `condition` is `false`
 - expression statements evaluate for effect and then discard any produced value
+- `let name: T = expr;` introduces a local binding
+- `let mut name: T = expr;` is admitted as an explicit writable-local spelling in
+  the current Rust-like path
+- plain reassignment `name = expr;` is admitted for local bindings
+- compound assignment `name += expr;`, `name -= expr;`, `name *= expr;`,
+  `name /= expr;`, `name &&= expr;`, and `name ||= expr;` desugar through the
+  same assignment path
 - `return expr;` terminates the current function with that value
 - `return;` terminates a `unit`-returning function
 
@@ -433,7 +440,6 @@ Current non-goal:
 - the source contract does not claim deferred execution, generators, or
   coroutine-style statement behavior
 - `guard` does not yet support arbitrary `else { ... }` recovery blocks
-- plain reassignment `name = expr;` is not yet part of the public surface
 
 Current generated wire-contract limit:
 

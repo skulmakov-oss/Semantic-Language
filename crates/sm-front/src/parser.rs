@@ -720,7 +720,14 @@ impl<'a> Parser<'a> {
             return Ok(self.arena.alloc_stmt(Stmt::Const { name, ty, value }));
         }
         if self.eat(TokenKind::KwLet) {
+            let let_is_mut = self.eat_ident_text("mut");
             if self.eat(TokenKind::Underscore) {
+                if let_is_mut {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "let mut currently requires a plain binding target".to_string(),
+                    });
+                }
                 let ty = if self.eat(TokenKind::Colon) {
                     Some(self.parse_type()?)
                 } else {
@@ -740,6 +747,12 @@ impl<'a> Parser<'a> {
                 return Ok(self.arena.alloc_stmt(Stmt::Discard { ty, value }));
             }
             if self.eat(TokenKind::LParen) {
+                if let_is_mut {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "let mut currently requires a plain binding target".to_string(),
+                    });
+                }
                 let items = self.parse_tuple_pattern_items_after_lparen()?;
                 let ty = if self.eat(TokenKind::Colon) {
                     Some(self.parse_type()?)
@@ -786,6 +799,12 @@ impl<'a> Parser<'a> {
             }
             let name = self.expect_symbol()?;
             if self.check(TokenKind::LBrace) {
+                if let_is_mut {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "let mut currently requires a plain binding target".to_string(),
+                    });
+                }
                 self.expect(TokenKind::LBrace, "expected '{' after record pattern name")?;
                 let items = self.parse_record_pattern_items_after_lbrace()?;
                 self.expect(TokenKind::Assign, "expected '='")?;
@@ -823,7 +842,12 @@ impl<'a> Parser<'a> {
                 });
             }
             self.expect(TokenKind::Semi, "expected ';'")?;
-            return Ok(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
+            return Ok(self.arena.alloc_stmt(Stmt::Let {
+                name,
+                is_mut: let_is_mut,
+                ty,
+                value,
+            }));
         }
         if self.check(TokenKind::Ident) {
             if let Some(op) = self.peek_compound_assign_op() {
@@ -833,6 +857,13 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 let lhs = self.arena.alloc_expr(Expr::Var(name));
                 let value = self.arena.alloc_expr(Expr::Binary(lhs, op, rhs));
+                return Ok(self.arena.alloc_stmt(Stmt::Assign { name, value }));
+            }
+            if self.peek_next_non_layout_kind() == Some(TokenKind::Assign) {
+                let name = self.expect_symbol()?;
+                self.expect(TokenKind::Assign, "expected '='")?;
+                let value = self.parse_expr()?;
+                self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::Assign { name, value }));
             }
         }
@@ -1197,6 +1228,12 @@ impl<'a> Parser<'a> {
             TokenKind::OrOrAssign => Some(BinaryOp::OrOr),
             _ => None,
         }
+    }
+
+    fn peek_next_non_layout_kind(&self) -> Option<TokenKind> {
+        let current = self.next_non_layout_idx();
+        let next = self.next_non_layout_idx_from(current + 1);
+        self.tokens.get(next).map(|t| t.kind)
     }
 
     fn parse_if_after_kw_if(&mut self) -> Result<Stmt, FrontendError> {
@@ -1733,7 +1770,12 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::Assign, "expected '=' in where binding")?;
             let value = self.parse_expr()?;
-            statements.push(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
+            statements.push(self.arena.alloc_stmt(Stmt::Let {
+                name,
+                is_mut: false,
+                ty,
+                value,
+            }));
             if self.eat(TokenKind::Comma) {
                 continue;
             }
@@ -1831,6 +1873,7 @@ impl<'a> Parser<'a> {
     ) -> Result<ExprId, FrontendError> {
         let binding = self.arena.alloc_stmt(Stmt::Let {
             name: param,
+            is_mut: false,
             ty: None,
             value: arg,
         });
@@ -3697,7 +3740,7 @@ fn main() { return; }
     fn rustlike_parser_accepts_compound_assignment() {
         let src = r#"
 fn main() {
-    let total: f64 = 1.0;
+    let mut total: f64 = 1.0;
     total += 2.0;
     return;
 }
@@ -3717,6 +3760,54 @@ fn main() {
         assert!(matches!(
             program.arena.expr(*rhs),
             Expr::NumericLiteral(NumericLiteral::F64(_))
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_mutable_let_binding() {
+        let src = r#"
+fn main() {
+    let mut score: i32 = 0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("let mut should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            name,
+            is_mut,
+            ty: Some(Type::I32),
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected mutable let binding");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "score");
+        assert!(*is_mut, "let mut binding should record mutability");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_plain_reassignment_statement() {
+        let src = r#"
+fn main() {
+    let mut score: i32 = 0;
+    score = 1;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("plain reassignment should parse");
+        let func = &program.functions[0];
+        let Stmt::Assign { name, value } = program.arena.stmt(func.body[1]) else {
+            panic!("expected plain assignment statement");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "score");
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::NumericLiteral(NumericLiteral::I32(1))
         ));
     }
 
@@ -3809,6 +3900,7 @@ fn main() {
             name,
             ty: Some(Type::Text),
             value,
+            ..
         } = program.arena.stmt(func.body[0])
         else {
             panic!("expected text-typed let binding");
@@ -3841,6 +3933,7 @@ fn main() {
             name,
             ty: Some(Type::Sequence(sequence_ty)),
             value,
+            ..
         } = program.arena.stmt(func.body[0])
         else {
             panic!("expected sequence-typed let binding");

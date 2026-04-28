@@ -720,7 +720,12 @@ fn check_stmt(
             env.insert_const(*name, final_ty);
             Ok(())
         }
-        Stmt::Let { name, ty, value } => {
+        Stmt::Let {
+            name,
+            is_mut,
+            ty,
+            value,
+        } => {
             if let Some(ann) = ty {
                 ensure_type_resolved(
                     ann,
@@ -771,7 +776,11 @@ fn check_stmt(
                 )?;
                 vt
             };
-            env.insert(*name, final_ty);
+            if *is_mut {
+                env.insert_mut(*name, final_ty);
+            } else {
+                env.insert(*name, final_ty);
+            }
             Ok(())
         }
         Stmt::LetTuple { items, ty, value } => {
@@ -3500,9 +3509,9 @@ mod tests {
     fn compound_assignment_typechecks_for_existing_scalar_rules() {
         let src = r#"
             fn main() {
-                let total: f64 = 1.0;
+                let mut total: f64 = 1.0;
                 total += 2.0;
-                let ready: bool = true;
+                let mut ready: bool = true;
                 ready &&= false;
                 return;
             }
@@ -3528,7 +3537,7 @@ mod tests {
     fn compound_assignment_reuses_operator_type_rules() {
         let src = r#"
             fn main() {
-                let total: f64 = 1.0;
+                let mut total: f64 = 1.0;
                 total += true;
                 return;
             }
@@ -3537,6 +3546,33 @@ mod tests {
         let err =
             typecheck_source(src).expect_err("compound assignment operator mismatch must reject");
         assert!(err.message.contains("f64 arithmetic requires f64 operands"));
+    }
+
+    #[test]
+    fn mutable_local_reassignment_typechecks() {
+        let src = r#"
+            fn main() {
+                let mut score: i32 = 0;
+                score = 1;
+                score += 2;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("mutable local reassignment should typecheck");
+    }
+
+    #[test]
+    fn plain_local_reassignment_typechecks() {
+        let src = r#"
+            fn main() {
+                let score: i32 = 0;
+                score = 1;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("plain local reassignment should typecheck");
     }
 
     #[test]
