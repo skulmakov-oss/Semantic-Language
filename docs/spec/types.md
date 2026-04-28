@@ -177,6 +177,9 @@ Current rules:
 - equality comparisons are valid inside the same family
 - plain same-family `i32` relational comparisons `>`, `<`, `>=`, `<=` are now
   admitted on current `main`
+- plain same-family `i32` unary `-` and binary `+`, `-`, `*` are now admitted
+  on current `main`
+- same-family `i32 / i32` remains outside the current first arithmetic wave
 - `u32` remains equality-only in the current first application-completeness wave
 - implicit cross-family numeric coercion is not part of the current contract
 

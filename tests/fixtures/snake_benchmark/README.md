@@ -12,6 +12,7 @@ Current landed positive baseline includes:
 - same-family text equality
 - enum/control-flow basics
 - same-family plain `i32` relational operators
+- same-family plain `i32` unary `-` and binary `+`, `-`, `*`
 - ordered `Sequence(T)` indexing and iteration
 - first-class closure capture
 

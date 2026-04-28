@@ -66,6 +66,7 @@ fn snake_benchmark_positive_surface_passes_end_to_end() {
         "tests/fixtures/snake_benchmark/positive_text_equality.sm",
         "tests/fixtures/snake_benchmark/positive_enum_match.sm",
         "tests/fixtures/snake_benchmark/positive_i32_relational.sm",
+        "tests/fixtures/snake_benchmark/negative_i32_arithmetic.sm",
         "tests/fixtures/snake_benchmark/positive_sequence_indexing.sm",
         "tests/fixtures/snake_benchmark/positive_sequence_iteration.sm",
         "tests/fixtures/snake_benchmark/positive_closure_capture.sm",
@@ -77,11 +78,6 @@ fn snake_benchmark_positive_surface_passes_end_to_end() {
 #[test]
 fn snake_benchmark_negative_gap_suite_reports_current_blockers() {
     let cases = [
-        (
-            "tests/fixtures/snake_benchmark/negative_i32_arithmetic.sm",
-            "E0201",
-            "f64 arithmetic requires f64 operands",
-        ),
         (
             "tests/fixtures/snake_benchmark/negative_let_mut.sm",
             "E0000",

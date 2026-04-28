@@ -550,6 +550,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::SubI32 | Opcode::MulI32 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadU32 => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1096,6 +1101,26 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
                 let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
                 let out = l.wrapping_add(r);
+                set_reg(vm, frame_idx, dst, Value::I32(out))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SubI32 => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
+                let out = l.wrapping_sub(r);
+                set_reg(vm, frame_idx, dst, Value::I32(out))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::MulI32 => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
+                let out = l.wrapping_mul(r);
                 set_reg(vm, frame_idx, dst, Value::I32(out))?;
                 next_pc = cur - f.instr_start;
             }
@@ -2047,6 +2072,18 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("ADD_I32 r{}, r{}, r{}", d, l, r)
         }
+        Opcode::SubI32 => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SUB_I32 r{}, r{}, r{}", d, l, r)
+        }
+        Opcode::MulI32 => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("MUL_I32 r{}, r{}, r{}", d, l, r)
+        }
         Opcode::LoadU32 => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let n = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -2242,6 +2279,8 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 Opcode::BoolOr => "BOOL_OR",
                 Opcode::CmpI32Lt => "CMP_I32_LT",
                 Opcode::CmpI32Le => "CMP_I32_LE",
+                Opcode::SubI32 => "SUB_I32",
+                Opcode::MulI32 => "MUL_I32",
                 Opcode::AddF64 => "ADD_F64",
                 Opcode::SubF64 => "SUB_F64",
                 Opcode::MulF64 => "MUL_F64",

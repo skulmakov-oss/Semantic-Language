@@ -2244,7 +2244,9 @@ fn infer_expr_type(
                     }),
                 },
                 UnaryOp::Pos | UnaryOp::Neg => {
-                    if t == Type::F64 {
+                    if t == Type::I32 {
+                        Ok(Type::I32)
+                    } else if t == Type::F64 {
                         Ok(Type::F64)
                     } else if t == Type::Fx {
                         Ok(Type::Fx)
@@ -2384,6 +2386,18 @@ fn infer_expr_type(
                             pos: 0,
                             message: message.to_string(),
                         });
+                    }
+                    if lt == Type::I32 && rt == Type::I32 {
+                        return match op {
+                            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => Ok(Type::I32),
+                            BinaryOp::Div => Err(FrontendError {
+                                pos: 0,
+                                message:
+                                    "same-family i32 arithmetic currently admits only unary -, +, -, and *"
+                                        .to_string(),
+                            }),
+                            _ => unreachable!("covered arithmetic operator arms"),
+                        };
                     }
                     if measured_numeric_parts(&lt).is_some()
                         || measured_numeric_parts(&rt).is_some()
@@ -3523,6 +3537,45 @@ mod tests {
         let err =
             typecheck_source(src).expect_err("compound assignment operator mismatch must reject");
         assert!(err.message.contains("f64 arithmetic requires f64 operands"));
+    }
+
+    #[test]
+    fn i32_arithmetic_typechecks_for_add_sub_mul_and_neg() {
+        let src = r#"
+            fn main() {
+                let a: i32 = 4;
+                let b: i32 = 2;
+                let add: i32 = a + b;
+                let sub: i32 = a - b;
+                let mul: i32 = a * b;
+                let neg: i32 = -a;
+                let folded: i32 = (a + b) * neg;
+                if add == sub {
+                    let keep: i32 = folded;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("same-family i32 arithmetic should typecheck");
+    }
+
+    #[test]
+    fn i32_division_remains_rejected_in_first_wave() {
+        let src = r#"
+            fn main() {
+                let a: i32 = 4;
+                let b: i32 = 2;
+                let q: i32 = a / b;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("i32 division must remain deferred");
+        assert!(
+            err.message
+                .contains("same-family i32 arithmetic currently admits only unary -, +, -, and *")
+        );
     }
 
     #[test]

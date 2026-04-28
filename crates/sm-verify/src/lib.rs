@@ -551,6 +551,14 @@ fn decode_operands(
             mark_reg(lhs);
             mark_reg(rhs);
         }
+        Opcode::SubI32 | Opcode::MulI32 => {
+            let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
+            let lhs = read_u16_le(code, cursor).map_err(|_| invalid("truncated lhs register"))?;
+            let rhs = read_u16_le(code, cursor).map_err(|_| invalid("truncated rhs register"))?;
+            mark_reg(dst);
+            mark_reg(lhs);
+            mark_reg(rhs);
+        }
         Opcode::LoadU32 => {
             let dst = read_u16_le(code, cursor).map_err(|_| invalid("truncated dst register"))?;
             mark_reg(dst);
