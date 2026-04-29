@@ -3885,6 +3885,75 @@ fn lower_for_range_stmt(
     )
 }
 
+fn lower_while_stmt(
+    condition: ExprId,
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    append_record_update_write_events_from_expr(condition, arena, &mut ctx.ownership_events);
+    let id = ctx.next_if_id();
+    let test_label = format!("while_{}_test", id);
+    let body_label = format!("while_{}_body", id);
+    let end_label = format!("while_{}_end", id);
+
+    ctx.instrs.push(IrInstr::Label {
+        name: test_label.clone(),
+    });
+    let (cond_reg, cond_ty) = lower_expr(
+        condition,
+        arena,
+        &mut ctx.next_reg,
+        &mut ctx.instrs,
+        env,
+        &mut ctx.loop_stack,
+        fn_table,
+        record_table,
+        adt_table,
+        ret_ty.clone(),
+        &mut ctx.closure_state,
+    )?;
+    if cond_ty != Type::Bool {
+        return Err(FrontendError {
+            pos: 0,
+            message: "while condition must be bool".to_string(),
+        });
+    }
+
+    ctx.instrs.push(IrInstr::JmpIf {
+        cond: cond_reg,
+        label: body_label.clone(),
+    });
+    ctx.instrs.push(IrInstr::Jmp {
+        label: end_label.clone(),
+    });
+
+    ctx.instrs.push(IrInstr::Label { name: body_label });
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    for stmt in body {
+        lower_stmt(
+            *stmt,
+            arena,
+            ctx,
+            &mut body_env,
+            ret_ty.clone(),
+            fn_table,
+            record_table,
+            adt_table,
+        )?;
+    }
+    body_env.pop_scope();
+    ctx.instrs.push(IrInstr::Jmp { label: test_label });
+    ctx.instrs.push(IrInstr::Label { name: end_label });
+    Ok(())
+}
+
 fn lower_for_each_stmt(
     name: SymbolId,
     iterable: ExprId,
@@ -4648,6 +4717,17 @@ fn lower_stmt(
         Stmt::ForRange { name, range, body } => lower_for_range_stmt(
             *name,
             *range,
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        ),
+        Stmt::While { condition, body } => lower_while_stmt(
+            *condition,
             body,
             arena,
             ctx,
@@ -6387,6 +6467,11 @@ fn lower_loop_expr_stmt(
         Stmt::ForRange { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow for-range".to_string(),
+        }),
+        Stmt::While { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow while statement"
+                .to_string(),
         }),
         Stmt::ForEach { .. } => Err(FrontendError {
             pos: 0,
@@ -9507,6 +9592,34 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::LoadVar { name, .. } if name.starts_with("__loop_expr_")
+        )));
+    }
+
+    #[test]
+    fn lower_while_statement_to_test_body_and_end_labels() {
+        let src = r#"
+            fn main() {
+                let mut i: i32 = 0;
+                while i < 3 {
+                    i = i + 1;
+                }
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("while statement should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("while_") && name.ends_with("_test")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("while_") && name.ends_with("_body")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("while_") && name.ends_with("_end")
         )));
     }
 

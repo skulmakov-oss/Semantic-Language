@@ -581,6 +581,9 @@ Current honest limit:
   destructuring is not yet part of the stable `where` contract
 - `loop` is currently expression-only; statement-loop, `continue`, and bare
   `break;` are not yet part of the stable contract
+- `while condition { ... }` is admitted only as a statement form; value
+  `while`, labeled loops, and `continue` are not yet part of the stable
+  contract
 
 Current default-parameter rules:
 

@@ -686,6 +686,12 @@ fn collect_local_calls_from_stmt(
                 collect_local_calls_from_stmt(arena, *stmt, functions_by_name, out);
             }
         }
+        Stmt::While { condition, body } => {
+            collect_local_calls_from_expr(arena, *condition, functions_by_name, out);
+            for stmt in body {
+                collect_local_calls_from_stmt(arena, *stmt, functions_by_name, out);
+            }
+        }
         Stmt::Guard {
             condition,
             else_return,

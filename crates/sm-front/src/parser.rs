@@ -898,6 +898,11 @@ impl<'a> Parser<'a> {
                 }),
             });
         }
+        if self.eat(TokenKind::KwWhile) {
+            let condition = self.parse_expr()?;
+            let body = self.parse_block()?;
+            return Ok(self.arena.alloc_stmt(Stmt::While { condition, body }));
+        }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
             if !self.eat(TokenKind::KwElse) {
@@ -5191,6 +5196,31 @@ fn main() {
                 assert_eq!(program.arena.symbol_name(ctor.variant_name), "Ok");
             }
             other => panic!("expected typed let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_while_statement_surface() {
+        let src = r#"
+fn main() {
+    let mut i: i32 = 0;
+    while i < 3 {
+        i = i + 1;
+    }
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("while statement should parse");
+        let main = &program.functions[0];
+        match program.arena.stmt(main.body[1]) {
+            Stmt::While { condition, body } => {
+                assert!(matches!(program.arena.expr(*condition), Expr::Binary(_, _, _)));
+                assert_eq!(body.len(), 1);
+                assert!(matches!(program.arena.stmt(body[0]), Stmt::Assign { .. }));
+            }
+            other => panic!("expected while statement, got {:?}", other),
         }
     }
 

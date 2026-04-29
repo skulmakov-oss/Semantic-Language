@@ -451,6 +451,10 @@ pub enum Stmt {
         range: ExprId,
         body: Vec<StmtId>,
     },
+    While {
+        condition: ExprId,
+        body: Vec<StmtId>,
+    },
     Guard {
         condition: ExprId,
         else_return: Option<ExprId>,
@@ -869,6 +873,7 @@ pub enum TokenKind {
     KwGuard,
     KwIf,
     KwElse,
+    KwWhile,
     KwLoop,
     KwBreak,
     KwWhere,
