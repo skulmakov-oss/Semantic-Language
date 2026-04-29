@@ -57,6 +57,10 @@ Acceptance:
 
 ### FR-2.3 — while loop
 
+Implementation scope:
+
+- `docs/roadmap/full_readiness/while_statement_scope.md`
+
 Scope:
 
 - define condition type requirements;
