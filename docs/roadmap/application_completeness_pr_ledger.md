@@ -166,11 +166,25 @@ Current `main` still fails this benchmark family at the following points:
   - CI green
 
 - `PR-B4` [required]
-  Title: `frontend/control: admit statement loops and control exits`
+  Title: `frontend/control: admit statement while`
   Goal:
-  - support long-running application/training loops honestly
+  - support ordinary condition-driven loops honestly
   Scope:
   - statement `while`
+  Files:
+  - parser/sema/lowering/spec/tests layers as required
+  Gate:
+  - `cargo test -q`
+  - `cargo test -q --test public_api_contracts`
+  - targeted `while` tests green
+  - CI green
+
+- `PR-B4.5` [required]
+  Title: `frontend/control: admit statement loop and control exits`
+  Goal:
+  - support long-running application/training loops honestly after landed
+    `while`
+  Scope:
   - statement `loop`
   - bare `break;`
   - `continue`
@@ -193,6 +207,7 @@ Current `main` still fails this benchmark family at the following points:
   - `PR-B2`
   - `PR-B3`
   - `PR-B4`
+  - `PR-B4.5`
   Gate:
   - docs/spec/tests sync only
   - `cargo test -q`
