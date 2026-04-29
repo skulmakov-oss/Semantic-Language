@@ -538,8 +538,24 @@ Current `while` statement semantics:
 Current v0 limit:
 
 - `while` is statement-only and does not produce a value
-- `continue`, bare `break;`, labeled loops, and statement `loop` remain
-  deferred
+- labeled loops remain deferred
+
+## Statement Loop And Control Exits
+
+Current statement-loop semantics:
+
+- `loop { ... }` is admitted as a statement form
+- bare `break;` exits the innermost admitted `while` or statement `loop`
+- `continue;` resumes the next iteration of the innermost admitted `while` or
+  statement `loop`
+- lowering reuses the existing label/jump path; no new runtime carrier is
+  introduced for this slice
+
+Current v0 limit:
+
+- statement `loop` does not produce a value
+- `break expr;` remains restricted to loop-expression bodies
+- labeled loops remain deferred
 
 ## Tuple Destructuring Bind
 

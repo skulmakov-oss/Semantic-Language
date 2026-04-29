@@ -15,6 +15,7 @@ Current landed positive baseline includes:
 - same-family plain `i32` unary `-` and binary `+`, `-`, `*`
 - `let mut`, plain reassignment, and compound assignment over mutable locals
 - `while condition { ... }` statement loops with `bool` conditions
+- statement `loop`, bare `break;`, and `continue;` for admitted control-flow
 - ordered `Sequence(T)` indexing and iteration
 - first-class closure capture
 

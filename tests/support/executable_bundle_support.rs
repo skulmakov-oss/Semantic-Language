@@ -596,8 +596,9 @@ fn collect_local_calls_from_stmt(
         | Stmt::Let { value, .. }
         | Stmt::Discard { value, .. }
         | Stmt::Assign { value, .. }
-        | Stmt::AssignTuple { value, .. }
-        | Stmt::Break(value) => collect_local_calls_from_expr(arena, *value, functions_by_name, out),
+        | Stmt::AssignTuple { value, .. } => collect_local_calls_from_expr(arena, *value, functions_by_name, out),
+        Stmt::Break(Some(value)) => collect_local_calls_from_expr(arena, *value, functions_by_name, out),
+        Stmt::Break(None) | Stmt::Continue => {}
         Stmt::LetTuple { value, .. } | Stmt::LetRecord { value, .. } => {
             collect_local_calls_from_expr(arena, *value, functions_by_name, out);
         }
@@ -622,6 +623,11 @@ fn collect_local_calls_from_stmt(
         }
         Stmt::While { condition, body } => {
             collect_local_calls_from_expr(arena, *condition, functions_by_name, out);
+            for stmt in body {
+                collect_local_calls_from_stmt(arena, *stmt, functions_by_name, out);
+            }
+        }
+        Stmt::Loop { body } => {
             for stmt in body {
                 collect_local_calls_from_stmt(arena, *stmt, functions_by_name, out);
             }

@@ -579,11 +579,13 @@ Current honest limit:
 - `where` is currently expression-suffix sugar only
 - `where` bindings currently use ordinary local names only; tuple/record
   destructuring is not yet part of the stable `where` contract
-- `loop` is currently expression-only; statement-loop, `continue`, and bare
-  `break;` are not yet part of the stable contract
+- `loop` is admitted both as a value-producing expression form and as a
+  statement form
+- `break expr;` is currently valid only inside loop-expression bodies
+- bare `break;` and `continue;` are currently valid only inside admitted
+  `while` and statement-loop bodies
 - `while condition { ... }` is admitted only as a statement form; value
-  `while`, labeled loops, and `continue` are not yet part of the stable
-  contract
+  `while` and labeled loops are not yet part of the stable contract
 
 Current default-parameter rules:
 
