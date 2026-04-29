@@ -648,7 +648,14 @@ fn ensure_invariant_result_usage(func: &Function, arena: &AstArena) -> Result<()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum LoopTypeFrameKind {
+    Expression,
+    Control,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LoopTypeFrame {
+    kind: LoopTypeFrameKind,
     break_ty: Option<Type>,
 }
 
@@ -1309,6 +1316,10 @@ fn check_stmt(
             }
             let mut body_env = env.clone();
             body_env.push_scope();
+            loop_stack.push(LoopTypeFrame {
+                kind: LoopTypeFrameKind::Control,
+                break_ty: None,
+            });
             for stmt in body {
                 check_stmt(
                     *stmt,
@@ -1322,6 +1333,31 @@ fn check_stmt(
                     impl_list,
                 )?;
             }
+            let _ = loop_stack.pop().expect("control loop frame must exist");
+            body_env.pop_scope();
+            Ok(())
+        }
+        Stmt::Loop { body } => {
+            let mut body_env = env.clone();
+            body_env.push_scope();
+            loop_stack.push(LoopTypeFrame {
+                kind: LoopTypeFrameKind::Control,
+                break_ty: None,
+            });
+            for stmt in body {
+                check_stmt(
+                    *stmt,
+                    arena,
+                    &mut body_env,
+                    ret_ty.clone(),
+                    table,
+                    record_table,
+                    adt_table,
+                    loop_stack,
+                    impl_list,
+                )?;
+            }
+            let _ = loop_stack.pop().expect("control loop frame must exist");
             body_env.pop_scope();
             Ok(())
         }
@@ -1435,7 +1471,22 @@ fn check_stmt(
                 ),
             })
         }
-        Stmt::Break(value) => {
+        Stmt::Break(None) => {
+            let frame = loop_stack.last().ok_or(FrontendError {
+                pos: 0,
+                message: "bare break is allowed only inside while or statement loop"
+                    .to_string(),
+            })?;
+            if !matches!(frame.kind, LoopTypeFrameKind::Control) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "bare break is allowed only inside while or statement loop"
+                        .to_string(),
+                });
+            }
+            Ok(())
+        }
+        Stmt::Break(Some(value)) => {
             let break_ty = infer_expr_type(
                 *value,
                 arena,
@@ -1445,12 +1496,19 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
-            impl_list,
+                impl_list,
             )?;
             let frame = loop_stack.last_mut().ok_or(FrontendError {
                 pos: 0,
                 message: "break with value is allowed only inside loop expression".to_string(),
             })?;
+            if !matches!(frame.kind, LoopTypeFrameKind::Expression) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "break with value is allowed only inside loop expression"
+                        .to_string(),
+                });
+            }
             if let Some(expected) = &frame.break_ty {
                 if *expected != break_ty {
                     return Err(FrontendError {
@@ -1463,6 +1521,20 @@ fn check_stmt(
                 }
             } else {
                 frame.break_ty = Some(break_ty);
+            }
+            Ok(())
+        }
+        Stmt::Continue => {
+            let frame = loop_stack.last().ok_or(FrontendError {
+                pos: 0,
+                message: "continue is allowed only inside while or statement loop".to_string(),
+            })?;
+            if !matches!(frame.kind, LoopTypeFrameKind::Control) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "continue is allowed only inside while or statement loop"
+                        .to_string(),
+                });
             }
             Ok(())
         }
@@ -3216,6 +3288,49 @@ mod tests {
     }
 
     #[test]
+    fn statement_loop_with_continue_and_bare_break_typechecks() {
+        let src = r#"
+            fn main() {
+                let mut i: i32 = 0;
+                loop {
+                    i = i + 1;
+                    if i < 3 {
+                        continue;
+                    }
+                    break;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("statement loop control exits should typecheck");
+    }
+
+    #[test]
+    fn bare_break_outside_loop_rejects() {
+        let src = r#"
+            fn main() {
+                break;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("bare break outside loop must reject");
+        assert!(err.message.contains("bare break is allowed only inside while or statement loop"));
+    }
+
+    #[test]
+    fn continue_outside_loop_rejects() {
+        let src = r#"
+            fn main() {
+                continue;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("continue outside loop must reject");
+        assert!(err.message.contains("continue is allowed only inside while or statement loop"));
+    }
+
+    #[test]
     fn expression_bodied_function_reuses_return_typing() {
         let src = r#"
             fn id(x: f64) -> f64 = x;
@@ -4454,6 +4569,23 @@ mod tests {
         assert!(err
             .message
             .contains("break with value is allowed only inside loop expression"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_continue_in_body() {
+        let src = r#"
+            fn main() {
+                let value: f64 = loop {
+                    continue;
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("continue in loop expression body must reject");
+        assert!(err
+            .message
+            .contains("loop expression body currently does not allow guard clause or return"));
     }
 
     #[test]
@@ -7162,7 +7294,10 @@ fn infer_loop_expr_type(
 ) -> Result<Type, FrontendError> {
     let mut body_env = env.clone();
     body_env.push_scope();
-    loop_stack.push(LoopTypeFrame { break_ty: None });
+    loop_stack.push(LoopTypeFrame {
+        kind: LoopTypeFrameKind::Expression,
+        break_ty: None,
+    });
     for stmt in &loop_expr.body {
         check_loop_expr_stmt(
             *stmt,
@@ -7209,12 +7344,17 @@ fn check_loop_expr_stmt(
             message: "loop expression body currently does not allow while statement"
                 .to_string(),
         }),
+        Stmt::Loop { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow statement loop"
+                .to_string(),
+        }),
         Stmt::ForEach { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow iterable for-each"
                 .to_string(),
         }),
-        Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
+        Stmt::Guard { .. } | Stmt::Return(..) | Stmt::Continue => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow guard clause or return"
                 .to_string(),

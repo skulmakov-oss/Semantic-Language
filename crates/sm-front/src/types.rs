@@ -455,6 +455,9 @@ pub enum Stmt {
         condition: ExprId,
         body: Vec<StmtId>,
     },
+    Loop {
+        body: Vec<StmtId>,
+    },
     Guard {
         condition: ExprId,
         else_return: Option<ExprId>,
@@ -469,7 +472,8 @@ pub enum Stmt {
         arms: Vec<MatchArm>,
         default: Vec<StmtId>,
     },
-    Break(ExprId),
+    Break(Option<ExprId>),
+    Continue,
     Return(Option<ExprId>),
     Expr(ExprId),
 }
@@ -876,6 +880,7 @@ pub enum TokenKind {
     KwWhile,
     KwLoop,
     KwBreak,
+    KwContinue,
     KwWhere,
     KwWith,
     KwReturn,

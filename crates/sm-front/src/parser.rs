@@ -903,6 +903,10 @@ impl<'a> Parser<'a> {
             let body = self.parse_block()?;
             return Ok(self.arena.alloc_stmt(Stmt::While { condition, body }));
         }
+        if self.eat(TokenKind::KwLoop) {
+            let body = self.parse_block()?;
+            return Ok(self.arena.alloc_stmt(Stmt::Loop { body }));
+        }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
             if !self.eat(TokenKind::KwElse) {
@@ -961,14 +965,16 @@ impl<'a> Parser<'a> {
         }
         if self.eat(TokenKind::KwBreak) {
             if self.check(TokenKind::Semi) {
-                return Err(FrontendError {
-                    pos: self.pos(),
-                    message: "loop expression v0 currently requires break value".to_string(),
-                });
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                return Ok(self.arena.alloc_stmt(Stmt::Break(None)));
             }
             let expr = self.parse_expr()?;
             self.expect(TokenKind::Semi, "expected ';'")?;
-            return Ok(self.arena.alloc_stmt(Stmt::Break(expr)));
+            return Ok(self.arena.alloc_stmt(Stmt::Break(Some(expr))));
+        }
+        if self.eat(TokenKind::KwContinue) {
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Continue));
         }
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semi, "expected ';'")?;
@@ -5922,13 +5928,35 @@ fn main() {
             panic!("expected loop expression");
         };
         assert_eq!(loop_expr.body.len(), 1);
-        let Stmt::Break(expr_id) = program.arena.stmt(loop_expr.body[0]) else {
+        let Stmt::Break(Some(expr_id)) = program.arena.stmt(loop_expr.body[0]) else {
             panic!("expected break statement");
         };
         assert!(matches!(
             program.arena.expr(*expr_id),
             Expr::NumericLiteral(NumericLiteral::F64(_))
         ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_statement_loop_with_continue_and_bare_break() {
+        let src = r#"
+fn main() {
+    loop {
+        continue;
+        break;
+    }
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("statement loop should parse");
+        let func = &program.functions[0];
+        let Stmt::Loop { body } = program.arena.stmt(func.body[0]) else {
+            panic!("expected statement loop");
+        };
+        assert_eq!(body.len(), 2);
+        assert!(matches!(program.arena.stmt(body[0]), Stmt::Continue));
+        assert!(matches!(program.arena.stmt(body[1]), Stmt::Break(None)));
     }
 
     #[test]
@@ -5982,19 +6010,23 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_break_without_value() {
+    fn rustlike_parser_accepts_bare_break_in_statement_loop_only() {
         let src = r#"
 fn main() {
-    let total: f64 = loop {
+    loop {
         break;
-    };
+    }
     return;
 }
 "#;
 
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("break without value must reject");
-        assert!(err.message.contains("requires break value"));
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("bare break in statement loop should parse");
+        let func = &program.functions[0];
+        let Stmt::Loop { body } = program.arena.stmt(func.body[0]) else {
+            panic!("expected statement loop");
+        };
+        assert!(matches!(program.arena.stmt(body[0]), Stmt::Break(None)));
     }
 
     #[test]

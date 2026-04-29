@@ -329,6 +329,7 @@ fn tokenize_line(
                     "while" => TokenKind::KwWhile,
                     "loop" => TokenKind::KwLoop,
                     "break" => TokenKind::KwBreak,
+                    "continue" => TokenKind::KwContinue,
                     "where" => TokenKind::KwWhere,
                     "with" => TokenKind::KwWith,
                     "return" => TokenKind::KwReturn,

@@ -3902,6 +3902,15 @@ fn lower_while_stmt(
     let body_label = format!("while_{}_body", id);
     let end_label = format!("while_{}_end", id);
 
+    ctx.loop_stack.push(LoopLoweringFrame {
+        kind: LoopLoweringFrameKind::Control,
+        end_label: end_label.clone(),
+        continue_label: test_label.clone(),
+        result_name: String::new(),
+        result_ty: None,
+        expected_ty: None,
+    });
+
     ctx.instrs.push(IrInstr::Label {
         name: test_label.clone(),
     });
@@ -3949,7 +3958,53 @@ fn lower_while_stmt(
         )?;
     }
     body_env.pop_scope();
+    let _ = ctx.loop_stack.pop().expect("control loop frame must exist");
     ctx.instrs.push(IrInstr::Jmp { label: test_label });
+    ctx.instrs.push(IrInstr::Label { name: end_label });
+    Ok(())
+}
+
+fn lower_statement_loop(
+    body: &[StmtId],
+    arena: &AstArena,
+    ctx: &mut LoweringCtx,
+    env: &mut ScopeEnv,
+    ret_ty: Type,
+    fn_table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let id = ctx.next_if_id();
+    let start_label = format!("loop_stmt_{}_start", id);
+    let end_label = format!("loop_stmt_{}_end", id);
+    ctx.loop_stack.push(LoopLoweringFrame {
+        kind: LoopLoweringFrameKind::Control,
+        end_label: end_label.clone(),
+        continue_label: start_label.clone(),
+        result_name: String::new(),
+        result_ty: None,
+        expected_ty: None,
+    });
+    ctx.instrs.push(IrInstr::Label {
+        name: start_label.clone(),
+    });
+    let mut body_env = env.clone();
+    body_env.push_scope();
+    for stmt in body {
+        lower_stmt(
+            *stmt,
+            arena,
+            ctx,
+            &mut body_env,
+            ret_ty.clone(),
+            fn_table,
+            record_table,
+            adt_table,
+        )?;
+    }
+    body_env.pop_scope();
+    let _ = ctx.loop_stack.pop().expect("control loop frame must exist");
+    ctx.instrs.push(IrInstr::Jmp { label: start_label });
     ctx.instrs.push(IrInstr::Label { name: end_label });
     Ok(())
 }
@@ -4737,6 +4792,16 @@ fn lower_stmt(
             record_table,
             adt_table,
         ),
+        Stmt::Loop { body } => lower_statement_loop(
+            body,
+            arena,
+            ctx,
+            env,
+            ret_ty,
+            fn_table,
+            record_table,
+            adt_table,
+        ),
         Stmt::ForEach {
             name,
             iterable,
@@ -4755,12 +4820,37 @@ fn lower_stmt(
             record_table,
             adt_table,
         ),
-        Stmt::Break(value) => {
+        Stmt::Break(None) => {
+            let frame = ctx.loop_stack.last().ok_or(FrontendError {
+                pos: 0,
+                message: "bare break is allowed only inside while or statement loop"
+                    .to_string(),
+            })?;
+            if !matches!(frame.kind, LoopLoweringFrameKind::Control) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "bare break is allowed only inside while or statement loop"
+                        .to_string(),
+                });
+            }
+            ctx.instrs.push(IrInstr::Jmp {
+                label: frame.end_label.clone(),
+            });
+            Ok(())
+        }
+        Stmt::Break(Some(value)) => {
             let (expected_break, end_label, result_name, prior_result_ty) = {
                 let frame = ctx.loop_stack.last().ok_or(FrontendError {
                     pos: 0,
                     message: "break with value is allowed only inside loop expression".to_string(),
                 })?;
+                if !matches!(frame.kind, LoopLoweringFrameKind::Expression) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "break with value is allowed only inside loop expression"
+                            .to_string(),
+                    });
+                }
                 (
                     frame.result_ty.clone().or(frame.expected_ty.clone()),
                     frame.end_label.clone(),
@@ -4805,6 +4895,23 @@ fn lower_stmt(
                 src: reg,
             });
             ctx.instrs.push(IrInstr::Jmp { label: end_label });
+            Ok(())
+        }
+        Stmt::Continue => {
+            let frame = ctx.loop_stack.last().ok_or(FrontendError {
+                pos: 0,
+                message: "continue is allowed only inside while or statement loop".to_string(),
+            })?;
+            if !matches!(frame.kind, LoopLoweringFrameKind::Control) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "continue is allowed only inside while or statement loop"
+                        .to_string(),
+                });
+            }
+            ctx.instrs.push(IrInstr::Jmp {
+                label: frame.continue_label.clone(),
+            });
             Ok(())
         }
         Stmt::Guard {
@@ -6391,7 +6498,9 @@ fn lower_loop_expr(
     let result_name = format!("__loop_expr_{}_result", id);
 
     loop_stack.push(LoopLoweringFrame {
+        kind: LoopLoweringFrameKind::Expression,
         end_label: end_label.clone(),
+        continue_label: start_label.clone(),
         result_name: result_name.clone(),
         result_ty: None,
         expected_ty: expected.clone(),
@@ -6473,12 +6582,17 @@ fn lower_loop_expr_stmt(
             message: "loop expression body currently does not allow while statement"
                 .to_string(),
         }),
+        Stmt::Loop { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow statement loop"
+                .to_string(),
+        }),
         Stmt::ForEach { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow iterable for-each"
                 .to_string(),
         }),
-        Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
+        Stmt::Guard { .. } | Stmt::Return(..) | Stmt::Continue => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow guard clause or return"
                 .to_string(),
@@ -7441,10 +7555,18 @@ struct LoweringCtx {
 
 #[derive(Debug, Clone)]
 struct LoopLoweringFrame {
+    kind: LoopLoweringFrameKind,
     end_label: String,
+    continue_label: String,
     result_name: String,
     result_ty: Option<Type>,
     expected_ty: Option<Type>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopLoweringFrameKind {
+    Expression,
+    Control,
 }
 
 impl LoweringCtx {
@@ -9620,6 +9742,34 @@ mod opt_tests {
         assert!(main.instrs.iter().any(|instr| matches!(
             instr,
             IrInstr::Label { name } if name.starts_with("while_") && name.ends_with("_end")
+        )));
+    }
+
+    #[test]
+    fn lower_statement_loop_with_continue_and_bare_break() {
+        let src = r#"
+            fn main() {
+                let mut i: i32 = 0;
+                loop {
+                    i = i + 1;
+                    if i < 3 {
+                        continue;
+                    }
+                    break;
+                }
+                return;
+            }
+        "#;
+
+        let ir = compile_program_to_ir(src).expect("statement loop should lower");
+        let main = &ir[0];
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("loop_stmt_") && name.ends_with("_start")
+        )));
+        assert!(main.instrs.iter().any(|instr| matches!(
+            instr,
+            IrInstr::Label { name } if name.starts_with("loop_stmt_") && name.ends_with("_end")
         )));
     }
 

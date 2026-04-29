@@ -186,6 +186,8 @@ Current message families include:
 - non-`bool` `while` condition
 - `break expr;` outside `loop` expression bodies, including inside `while`
   statements
+- bare `break;` outside admitted `while` or statement-loop context
+- `continue;` outside admitted `while` or statement-loop context
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal
