@@ -1288,6 +1288,43 @@ fn check_stmt(
             body_env.pop_scope();
             Ok(())
         }
+        Stmt::While { condition, body } => {
+            let condition_ty = infer_expr_type(
+                *condition,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            if condition_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "while condition must be bool; explicit compare is required for quad"
+                        .to_string(),
+                });
+            }
+            let mut body_env = env.clone();
+            body_env.push_scope();
+            for stmt in body {
+                check_stmt(
+                    *stmt,
+                    arena,
+                    &mut body_env,
+                    ret_ty.clone(),
+                    table,
+                    record_table,
+                    adt_table,
+                    loop_stack,
+                    impl_list,
+                )?;
+            }
+            body_env.pop_scope();
+            Ok(())
+        }
         Stmt::ForEach {
             name,
             iterable,
@@ -3146,6 +3183,36 @@ mod tests {
 
         let err = typecheck_source(src).expect_err("guard return payload must typecheck");
         assert!(err.message.contains("return type mismatch"));
+    }
+
+    #[test]
+    fn while_statement_with_bool_condition_typechecks() {
+        let src = r#"
+            fn main() {
+                let mut i: i32 = 0;
+                while i < 3 {
+                    i = i + 1;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("while statement with bool condition should typecheck");
+    }
+
+    #[test]
+    fn while_statement_with_non_bool_condition_rejects() {
+        let src = r#"
+            fn main() {
+                while 1 {
+                    return;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-bool while condition must reject");
+        assert!(err.message.contains("while condition must be bool"));
     }
 
     #[test]
@@ -7136,6 +7203,11 @@ fn check_loop_expr_stmt(
         Stmt::ForRange { .. } => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow for-range".to_string(),
+        }),
+        Stmt::While { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow while statement"
+                .to_string(),
         }),
         Stmt::ForEach { .. } => Err(FrontendError {
             pos: 0,

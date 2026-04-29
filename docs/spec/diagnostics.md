@@ -183,6 +183,9 @@ Current message families include:
   source/schema declarations
 - generated wire-contract build failure while canonicalizing tagged-union
   payload or patch-field types into artifact-surface type text
+- non-`bool` `while` condition
+- `break expr;` outside `loop` expression bodies, including inside `while`
+  statements
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal

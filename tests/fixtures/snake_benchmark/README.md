@@ -14,6 +14,7 @@ Current landed positive baseline includes:
 - same-family plain `i32` relational operators
 - same-family plain `i32` unary `-` and binary `+`, `-`, `*`
 - `let mut`, plain reassignment, and compound assignment over mutable locals
+- `while condition { ... }` statement loops with `bool` conditions
 - ordered `Sequence(T)` indexing and iteration
 - first-class closure capture
 

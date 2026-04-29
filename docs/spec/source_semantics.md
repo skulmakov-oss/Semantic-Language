@@ -526,6 +526,21 @@ Current v0 limit:
   `return`
 - `continue`, statement-loop, and richer control interaction are deferred
 
+## While Statement
+
+Current `while` statement semantics:
+
+- `while condition { ... }` is admitted as a statement form
+- the condition must typecheck as `bool`
+- lowering reuses the existing label/jump path; no new runtime carrier is
+  introduced for this slice
+
+Current v0 limit:
+
+- `while` is statement-only and does not produce a value
+- `continue`, bare `break;`, labeled loops, and statement `loop` remain
+  deferred
+
 ## Tuple Destructuring Bind
 
 Current tuple-destructuring semantics:
