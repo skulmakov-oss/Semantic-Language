@@ -76,6 +76,10 @@ Acceptance:
 
 ### FR-2.4 — statement loop and control exits
 
+Implementation scope:
+
+- `docs/roadmap/full_readiness/loop_control_exit_scope.md`
+
 Scope:
 
 - define statement loop syntax;
@@ -88,6 +92,7 @@ Acceptance:
 - control exits are only valid in loop context;
 - nested behavior is deterministic;
 - unsupported value-carrying loop cases are explicit.
+- landed `while` behavior remains separate and unchanged while this slice is in progress.
 
 ### FR-2.5 — block expression consistency
 
