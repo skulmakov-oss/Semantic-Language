@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use semantic_core_capsule::{CoreCapsule, CoreConfig};
+use semantic_core_capsule::{CoreCapsule, CoreConfig, ExecutionMode};
 use semantic_core_exec::{
     CoreFunction, CoreProgram, CoreResultDigest, CoreStatus, CoreValue, Fx, Instr, RegId,
 };
@@ -101,7 +101,7 @@ fn scalar_auto_same_digest() {
     let file = load_program_file(golden_path("i32_arithmetic"));
     let auto = CoreCapsule::new(CoreConfig::default());
     let scalar = CoreCapsule::new(CoreConfig {
-        backend: semantic_core_backend::BackendKind::Scalar,
+        engine: ExecutionMode::Reference,
         ..CoreConfig::default()
     });
     let auto_result = auto.run(&file.program).unwrap();

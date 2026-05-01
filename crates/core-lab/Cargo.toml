@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 semantic-core-backend = { path = "../semantic-core-backend", default-features = false, features = ["std"] }
 semantic-core-bench = { path = "../semantic-core-bench" }
-semantic-core-capsule = { path = "../semantic-core-capsule", default-features = false, features = ["std"] }
+semantic-core-capsule = { path = "../semantic-core-capsule", default-features = false, features = ["std", "serde"] }
 semantic-core-exec = { path = "../semantic-core-exec", default-features = false, features = ["std", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

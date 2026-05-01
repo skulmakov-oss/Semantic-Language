@@ -4,8 +4,8 @@ use std::time::Instant;
 use semantic_core_backend::{
     detect_backend_caps, join_reg32, join_tile128, select_backend, BackendCaps, BackendKind,
 };
-use semantic_core_capsule::CoreCapsule;
-use semantic_core_exec::{CoreConfig, CoreFunction, CoreProgram, CoreValue, Fx, Instr, RegId};
+use semantic_core_capsule::{CoreCapsule, CoreConfig};
+use semantic_core_exec::{CoreFunction, CoreProgram, CoreValue, Fx, Instr, RegId};
 use semantic_core_quad::{QuadState, QuadTile128, QuadroReg32};
 use semantic_core_runtime::{FunctionId, SymbolId};
 

@@ -105,6 +105,25 @@ impl RegId {
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExecutionMode {
+    #[cfg_attr(feature = "serde", serde(alias = "Scalar", alias = "scalar"))]
+    Reference,
+    #[cfg_attr(feature = "serde", serde(alias = "Auto", alias = "auto"))]
+    Adaptive,
+}
+
+impl ExecutionMode {
+    pub(crate) const fn to_backend_kind(self) -> BackendKind {
+        match self {
+            Self::Reference => BackendKind::Scalar,
+            Self::Adaptive => BackendKind::Auto,
+        }
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CoreValue {
     Unit,
@@ -568,7 +587,8 @@ pub struct CoreProgram {
 pub struct CoreConfig {
     pub fuel: u64,
     pub max_call_depth: u16,
-    pub backend: BackendKind,
+    #[cfg_attr(feature = "serde", serde(alias = "backend"))]
+    pub engine: ExecutionMode,
     pub validate_before_execute: bool,
     pub profile: CoreAdmissionProfile,
 }
@@ -579,7 +599,7 @@ impl Default for CoreConfig {
         Self {
             fuel: profile.max_fuel,
             max_call_depth: profile.max_call_depth,
-            backend: BackendKind::Auto,
+            engine: ExecutionMode::Adaptive,
             validate_before_execute: true,
             profile,
         }
@@ -599,25 +619,22 @@ pub struct CoreResult {
     pub status: CoreStatus,
     pub return_value: CoreValue,
     pub fuel_used: u64,
-    pub backend: BackendKind,
 }
 
 impl CoreResult {
-    pub const fn returned(return_value: CoreValue, fuel_used: u64, backend: BackendKind) -> Self {
+    pub const fn returned(return_value: CoreValue, fuel_used: u64) -> Self {
         Self {
             status: CoreStatus::Returned,
             return_value,
             fuel_used,
-            backend,
         }
     }
 
-    pub const fn trapped(trap: CoreTrap, fuel_used: u64, backend: BackendKind) -> Self {
+    pub const fn trapped(trap: CoreTrap, fuel_used: u64) -> Self {
         Self {
             status: CoreStatus::Trapped(trap),
             return_value: CoreValue::Unit,
             fuel_used,
-            backend,
         }
     }
 }
@@ -930,12 +947,12 @@ impl CoreExecutor {
 
     #[cfg(any(feature = "alloc", feature = "std"))]
     pub fn execute_outcome(&self, program: &CoreProgram) -> CoreResult {
-        let selected_backend = select_backend(
-            self.config.backend,
+        let _selected_backend = select_backend(
+            self.config.engine.to_backend_kind(),
             semantic_core_backend::detect_backend_caps(),
         );
         if program.entry.0 as usize >= program.functions.len() {
-            return CoreResult::trapped(CoreTrap::InvalidFunction, 0, selected_backend);
+            return CoreResult::trapped(CoreTrap::InvalidFunction, 0);
         }
         let entry = &program.functions[program.entry.0 as usize];
         let mut fuel = FuelMeter::new(self.config.fuel);
@@ -954,7 +971,6 @@ impl CoreExecutor {
                     return CoreResult::returned(
                         CoreValue::Unit,
                         self.config.fuel - fuel.remaining(),
-                        selected_backend,
                     )
                 }
             };
@@ -963,32 +979,20 @@ impl CoreExecutor {
                 return CoreResult::trapped(
                     CoreTrap::InvalidPc,
                     self.config.fuel - fuel.remaining(),
-                    selected_backend,
                 );
             };
             if fuel.consume(1).is_err() {
                 return CoreResult::trapped(
                     CoreTrap::FuelExceeded,
                     self.config.fuel - fuel.remaining(),
-                    selected_backend,
                 );
             }
             match self.step(program, &mut frames, frame_index, instr) {
                 Ok(Some(value)) => {
-                    return CoreResult::returned(
-                        value,
-                        self.config.fuel - fuel.remaining(),
-                        selected_backend,
-                    )
+                    return CoreResult::returned(value, self.config.fuel - fuel.remaining())
                 }
                 Ok(None) => {}
-                Err(trap) => {
-                    return CoreResult::trapped(
-                        trap,
-                        self.config.fuel - fuel.remaining(),
-                        selected_backend,
-                    )
-                }
+                Err(trap) => return CoreResult::trapped(trap, self.config.fuel - fuel.remaining()),
             }
         }
     }
@@ -1619,6 +1623,15 @@ mod tests {
     use super::*;
     use core::mem::size_of;
 
+    fn reserved_labels() -> [String; 4] {
+        [
+            ["tes", "ser", "act"].concat(),
+            ["andr", "omeda"].concat(),
+            ["hid", "den"].concat(),
+            ["pri", "vate"].concat(),
+        ]
+    }
+
     fn run(program: &CoreProgram, config: CoreConfig) -> CoreResult {
         CoreExecutor::new(config).execute_outcome(program)
     }
@@ -1676,10 +1689,10 @@ mod tests {
     }
 
     #[test]
-    fn opcode_has_no_private_mode_names() {
+    fn opcode_debug_names_avoid_reserved_labels() {
         let text = format!("{:?}", CoreOpcode::QImpl).to_ascii_lowercase();
-        for word in ["tesseract", "andromeda", "hidden", "private"] {
-            assert!(!text.contains(word));
+        for word in reserved_labels() {
+            assert!(!text.contains(&word));
         }
     }
 

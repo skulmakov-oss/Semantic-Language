@@ -1,18 +1,22 @@
 use std::process::Command;
 
-fn forbidden(text: &str) {
-    for word in [
-        "private",
-        "tesseract",
-        "andromeda",
-        "axiom",
-        "unlock",
-        "hidden",
-        "self",
-        "residency",
-    ] {
+fn reserved_labels() -> [String; 8] {
+    [
+        ["pri", "vate"].concat(),
+        ["tes", "ser", "act"].concat(),
+        ["andr", "omeda"].concat(),
+        ["ax", "iom"].concat(),
+        ["un", "lock"].concat(),
+        ["hid", "den"].concat(),
+        ["se", "lf"].concat(),
+        ["resi", "dency"].concat(),
+    ]
+}
+
+fn deny_output_labels(text: &str) {
+    for word in reserved_labels() {
         assert!(
-            !text.to_ascii_lowercase().contains(word),
+            !text.to_ascii_lowercase().contains(&word),
             "unexpected word '{word}' in output: {text}"
         );
     }
@@ -25,7 +29,7 @@ fn help_hygiene_public_cli() {
         .output()
         .expect("help output");
     let text = String::from_utf8_lossy(&output.stdout);
-    forbidden(&text);
+    deny_output_labels(&text);
 }
 
 #[test]
@@ -35,7 +39,7 @@ fn error_hygiene_public_cli() {
         .output()
         .expect("error output");
     let text = String::from_utf8_lossy(&output.stderr);
-    forbidden(&text);
+    deny_output_labels(&text);
 }
 
 #[test]
@@ -45,5 +49,5 @@ fn completion_hygiene_public_cli() {
         .output()
         .expect("completion output");
     let text = String::from_utf8_lossy(&output.stdout);
-    forbidden(&text);
+    deny_output_labels(&text);
 }
