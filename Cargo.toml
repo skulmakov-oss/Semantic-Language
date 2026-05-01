@@ -12,7 +12,6 @@ categories = ["no-std", "science"]
 [workspace]
 members = [
     ".",
-    "crates/core-lab",
     "crates/ton618-core",
     "crates/sm-front",
     "crates/sm-profile",
@@ -33,12 +32,6 @@ members = [
     "crates/prom-ui",
     "crates/prom-ui-runtime",
     "crates/prom-ui-demo",
-    "crates/semantic-core-backend",
-    "crates/semantic-core-bench",
-    "crates/semantic-core-capsule",
-    "crates/semantic-core-exec",
-    "crates/semantic-core-quad",
-    "crates/semantic-core-runtime",
 ]
 resolver = "2"
 
