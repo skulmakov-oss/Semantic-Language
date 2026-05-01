@@ -1,0 +1,16 @@
+[package]
+name = "semantic-core-backend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[dependencies]
+semantic-core-quad = { path = "../semantic-core-quad", default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }

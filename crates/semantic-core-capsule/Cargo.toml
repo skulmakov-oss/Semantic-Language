@@ -1,0 +1,25 @@
+[package]
+name = "semantic-core-capsule"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "dep:serde",
+    "dep:serde_json",
+    "semantic-core-exec/std",
+]
+
+[dependencies]
+semantic-core-exec = { path = "../semantic-core-exec", default-features = false, features = ["std", "serde"] }
+semantic-core-quad = { path = "../semantic-core-quad", default-features = false, features = ["serde"] }
+semantic-core-runtime = { path = "../semantic-core-runtime", default-features = false, features = ["serde"] }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+semantic-core-backend = { path = "../semantic-core-backend", default-features = false, features = ["std"] }

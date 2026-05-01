@@ -32,6 +32,13 @@ members = [
     "crates/prom-ui",
     "crates/prom-ui-runtime",
     "crates/prom-ui-demo",
+    "crates/core-lab",
+    "crates/semantic-core-backend",
+    "crates/semantic-core-bench",
+    "crates/semantic-core-capsule",
+    "crates/semantic-core-exec",
+    "crates/semantic-core-quad",
+    "crates/semantic-core-runtime",
 ]
 resolver = "2"
 

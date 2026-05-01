@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "config": {
+    "fuel": 3,
+    "max_call_depth": 8,
+    "backend": "Auto",
+    "validate_before_execute": true,
+    "profile": {
+      "max_registers": 16,
+      "max_functions": 16,
+      "max_call_depth": 8,
+      "max_instrs_per_function": 32,
+      "max_fuel": 16
+    }
+  },
+  "program": {
+    "functions": [
+      {
+        "name_id": 0,
+        "regs": 1,
+        "instrs": [
+          { "op": "jump", "target": 0 },
+          { "op": "ret", "src": 0 }
+        ]
+      }
+    ],
+    "entry": 0
+  }
+}
