@@ -64,6 +64,16 @@ Current honest limit:
 
 - the repository does not yet claim that every parser diagnostic code or exact
   wording is frozen as a long-term compatibility promise
+- current `main` now admits executable double-quoted text literals and `text`
+  type spelling in the source parser path
+- exact parse wording for text-surface gaps is not yet a long-term frozen
+  compatibility promise
+- current `main` now admits standalone first-class closure literal syntax in
+  contextual source positions
+- current `main` now also admits direct invocation and verified runtime
+  execution for one first-wave closure family
+- exact parse/type wording for closure-surface gaps is not yet a long-term
+  frozen compatibility promise
 
 ## Policy Diagnostics
 
@@ -132,7 +142,20 @@ Current message families include:
 - range literal requires `i32` bounds
 - range equality not part of stable v0 range surface
 - range literal rejected in tuple/user-data position
+- first-class closure literals without contextual `Closure(T -> U)` type
+- direct invocation of first-class closure values requires exactly one
+  positional argument in the current `M8.4` first-wave surface
+- named arguments on direct closure invocation are rejected in the current
+  `M8.4` first-wave surface
+- closure equality is not part of the current `M8.4` first-wave surface
 - for-range requires `i32` range expression
+- relational operators beyond plain same-family `i32` operands remain outside the
+  first application-completeness wave
+- iterable `for x in collection` loop over a non-iterable value
+- iterable `for x in collection` loop whose explicit `Iterable` impl does not
+  satisfy the executable contract `fn next(self: Self, index: i32) -> Option(Item)`
+- iterable `for x in collection` loop that relies on ADT/schema or indirect
+  explicit `Iterable` dispatch beyond the direct-record slice on current `main`
 - duplicate record declaration
 - duplicate schema declaration
 - top-level record/function name collision
@@ -160,6 +183,11 @@ Current message families include:
   source/schema declarations
 - generated wire-contract build failure while canonicalizing tagged-union
   payload or patch-field types into artifact-surface type text
+- non-`bool` `while` condition
+- `break expr;` outside `loop` expression bodies, including inside `while`
+  statements
+- bare `break;` outside admitted `while` or statement-loop context
+- `continue;` outside admitted `while` or statement-loop context
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal
@@ -197,8 +225,8 @@ Current message families include:
 - tuple destructuring assignment to const target
 - malformed or empty `where` binding lists
 - `break expr;` outside `loop` expression context
-- loop-expression bodies that currently use unsupported `for-range`, `guard`,
-  or `return`
+- loop-expression bodies that currently use unsupported `for-range`,
+  iterable `for-each`, `guard`, or `return`
 - UFCS method-call sugar written without explicit `(...)`
 - return type mismatch
 - invalid `guard` condition type
@@ -220,11 +248,31 @@ Current message families include:
   overflow in the widened post-stable execution path
 - explicit gap messages for unit-carrying `fx` arithmetic outside the first
   post-stable `fx` arithmetic slice
+- explicit gap messages for text concatenation or text arithmetic beyond the
+  current `M8.1` Wave 3 literal/equality/runtime surface
+- explicit gap messages for collection-helper forms beyond the current `M8.3`
+  first-wave iterable/carrier/index/equality surface
+- explicit source/runtime failures for non-`i32` sequence indexes, negative
+  sequence indexes, or out-of-bounds sequence indexes in the current `M8.3`
+  first-wave execution path
 
 Current honest limit:
 
 - exact wording of type-check messages is not yet a fully frozen compatibility
   contract
+- current `main` now admits executable text literal typing and same-family
+  equality in the source type-check path
+- current `main` now also admits verified runtime execution for the same narrow
+  text literal/equality surface
+- current `main` now also admits executable ordered sequence literals,
+  same-family equality, `expr[index]`, and `for value in sequence` through the
+  current `M8.3` first-wave carrier/iterable path
+- current `main` now also admits plain same-family `i32` relational typing and
+  lowering through the existing verified compare path
+- current `main` still reports explicit gap messages for non-`i32` relational
+  operators until later application-completeness waves land
+- current `main` still reports explicit gap messages for text arithmetic beyond
+  equality until later `M8.1` waves land
 - generated validation failures are currently documented as deterministic plan
   categories, not yet as a separate runtime or CLI diagnostic family
 - generated API contract failures are currently documented as deterministic

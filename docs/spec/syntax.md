@@ -209,6 +209,7 @@ Current statement forms:
 - `(a, b) = expr;`
 - `for name in 0..10 { ... }`
 - `for name in 0..=10 { ... }`
+- `for name in collection { ... }`
 - `guard condition else return;`
 - `guard condition else return expr;`
 - `assert(condition);`
@@ -268,6 +269,9 @@ Current expression forms:
 - literals:
   - quad literals: `N`, `F`, `T`, `S`
   - bool literals: `true`, `false`
+  - text literals:
+    - double-quoted text `"hello"`
+    - empty text `""`
   - integer literals:
     - decimal `123`
     - decimal with separators `1_000`
@@ -301,6 +305,9 @@ Current expression forms:
 - tuple literals:
   - `(1, true)`
   - `(value, ready, 1.0)`
+- ordered sequence literals:
+  - `[1, 2, 3]`
+  - `["alpha", "beta"]`
 - record literals:
   - `DecisionContext { camera: T, quality: 0.75 }`
   - `DecisionContext { quality: 0.75, camera: T }`
@@ -318,6 +325,10 @@ Current expression forms:
 - tuple types:
   - `(i32, bool)`
   - `(f64, quad, bool)`
+- text type:
+  - `text`
+- ordered sequence type:
+  - `Sequence(i32)`
 - first-wave units-of-measure annotations:
   - `f64[m]`
   - `u32[ms]`
@@ -341,6 +352,7 @@ Current expression forms:
 - binary operators:
   - `*`, `/`
   - `+`, `-`
+  - `<`, `<=`, `>`, `>=`
   - `==`, `!=`
   - `&&`, `||`
   - `->`
@@ -357,6 +369,29 @@ Current v0 numeric-literal limits:
   already documented operator surface
 - tuple literal arity must be at least 2 in the current contract
 
+Current text-literal limits:
+
+- the current executable text surface is only double-quoted same-line text
+- interpolation and multi-line text blocks are not part of the current surface
+- text concatenation is not yet part of the current source contract
+
+Current active collections checkpoint on `main`:
+
+- one ordered sequence family is now admitted in declared type positions as
+  `Sequence(type)`
+- bracketed ordered sequence literals are now admitted in the Rust-like source
+  path
+- postfix indexing `expr[index]` is now admitted when `expr` is an admitted
+  ordered sequence and `index` is `i32`
+- same-family equality is now admitted for ordered sequence values when the
+  item type already supports stable equality
+- `for name in collection { ... }` is now part of the current syntax contract
+  through the narrow `Iterable` owner-layer loop surface described below
+- built-in `Sequence(type)` values now participate in that admitted iterable
+  loop path on current `main`
+- `len`, `is_empty`, maps, sets, and generic collection abstractions are not
+  part of the current `M8.3` first-wave syntax contract
+
 Current v0 range-literal limits:
 
 - range literals currently accept only `i32` bounds
@@ -366,6 +401,18 @@ Current v0 range-literal limits:
 - range equality is not yet part of the stable source contract
 - range literals are not yet part of the stable tuple/user-data surface
 - `for ... in range` currently exposes only the narrow `i32` interval surface
+- `for name in collection { ... }` is source-admitted on current `main` as the
+  `Iterable` owner-layer loop surface
+- built-in `Sequence(type)` collections now execute through the current
+  first-wave iterable loop path on `main`
+- direct record `Iterable` impl dispatch now executes on current `main` when the
+  impl exposes `fn next(self: Self, index: i32) -> Option(Item)`
+- `Self` is admitted only in trait method signatures and impl method type
+  positions on current `main`
+- `Self` outside trait/impl method type positions is not part of the stable
+  syntax contract
+- ADT/schema iterable dispatch and indirect iterable projection are not part of
+  the current syntax contract
 - descending/custom-step/general iterable range forms are not yet part of the
   stable syntax contract
 
@@ -433,23 +480,36 @@ Current precedence, from tighter to looser:
 2. unary `!`, unary `+`, unary `-`
 3. `*`, `/`
 4. `+`, `-`
-5. `==`, `!=`
-6. `&&`
-7. `||`
-8. `->`
-9. `|>`
+5. `<`, `<=`, `>`, `>=`
+6. `==`, `!=`
+7. `&&`
+8. `||`
+9. `->`
+10. `|>`
 
 Current short-lambda rules:
 
 - short lambda syntax is currently single-parameter only: `x => expr`
-- short lambdas are not first-class values in v0
+- the published stable `v1.1.1` line keeps short lambdas as non-first-class
+  call-site sugar only
+- current `main` now admits standalone first-class closure literals in
+  contextual positions such as `let f: Closure(f64 -> f64) = (x => x + 1.0);`
 - the stable v0 surface accepts short lambdas only as:
   - immediate call sugar: `(x => expr)(arg)`
   - pipeline stage sugar: `value |> (x => expr)`
-- short lambdas are capture-free in v0; they may not reference outer local
-  bindings
+- immediate-call and pipeline sugar remain capture-free in the stable line
+- current `main` admits immutable capture inventory for standalone first-class
+  closure literals
+- `Closure(T -> U)` is the current narrow declared type spelling for the
+  admitted first-wave closure family on `main`
 - typed lambda parameters and multi-argument lambda forms are not yet part of
   the stable source contract
+
+Current active closures checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- published `v1.1.1` still keeps short lambdas as non-first-class call-site
+  sugar only
 
 Current named-argument rules:
 
@@ -519,8 +579,13 @@ Current honest limit:
 - `where` is currently expression-suffix sugar only
 - `where` bindings currently use ordinary local names only; tuple/record
   destructuring is not yet part of the stable `where` contract
-- `loop` is currently expression-only; statement-loop, `continue`, and bare
-  `break;` are not yet part of the stable contract
+- `loop` is admitted both as a value-producing expression form and as a
+  statement form
+- `break expr;` is currently valid only inside loop-expression bodies
+- bare `break;` and `continue;` are currently valid only inside admitted
+  `while` and statement-loop bodies
+- `while condition { ... }` is admitted only as a statement form; value
+  `while` and labeled loops are not yet part of the stable contract
 
 Current default-parameter rules:
 
@@ -569,11 +634,15 @@ surface is part of the language contract and is specified in `modules.md`.
 
 The current source contract does not yet claim stable support for:
 
-- relational operators such as `>`, `<`, `>=`, `<=`
+- relational operators outside the current plain same-family `i32` first-wave slice
 - user-defined aggregate value operations beyond top-level nominal record declarations
 - collections as first-class language forms
 - generics or trait-like abstraction
 - exceptions or Python-style dynamic execution
+
+Current active collections checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/collections_surface_full_scope.md`
 - concurrency-oriented source constructs
 
 ## Contract Rule

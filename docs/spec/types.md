@@ -27,6 +27,7 @@ Current source-visible types:
 
 - `quad`
 - `bool`
+- `text`
 - `i32`
 - `u32`
 - `f64`
@@ -67,6 +68,54 @@ Current compile-time-only declaration families:
   - wire patch types from record-shaped `wire schema`
 - generated wire-contract artifacts preserve declaration order and expose
   explicit format-version and generator metadata for reproducible review
+
+## Text
+
+Current honest baseline:
+
+- the published stable `v1.1.1` line does not expose `text` as an executable
+  source-visible type family
+- current `main` now admits `text` in declared source type positions in the
+  Rust-like executable path
+- current `main` also admits a narrow double-quoted UTF-8 text literal family
+  in the same source path
+- current `main` admits same-family equality on `text`
+- current `main` now admits a canonical runtime text carrier for admitted
+  literal/equality programs
+- current `main` still does not admit text concatenation
+- current `main` does not widen the PROMETHEUS host ABI with text values
+
+Current text-surface limits:
+
+- the current literal spelling is narrow: double-quoted same-line UTF-8 text
+  only
+- interpolation, formatting, escape-rich string syntax, and host/runtime text
+  ABI widening are not part of the current contract
+
+## First-Class Closures
+
+Current honest baseline:
+
+- the published stable `v1.1.1` line does not claim first-class closure values
+  or closure types
+- current `main` now owns one first-wave closure family in the frontend owner
+  layer
+- current `main` now admits declared `Closure(T -> U)` type positions and
+  standalone closure literals in contextual closure-typed positions
+- current `main` now admits one canonical runtime closure carrier for the same
+  first-wave family
+- current `main` now admits direct invocation of admitted closure values
+
+Current first-wave limits:
+
+- current `main` admits immutable capture inventory for that first-wave family
+- immutable capture only remains the intended direction for the first-wave
+  family
+- direct invocation only is the intended call model for that family
+- direct invocation currently requires exactly one positional argument
+- closure equality is not part of the current contract
+- generic callable abstractions, traits/protocols, async closures, and host-ABI
+  closure transport are not part of the current contract
 
 ## Unit
 
@@ -126,6 +175,12 @@ Current rules:
 
 - arithmetic operators are expected to stay within the same numeric family
 - equality comparisons are valid inside the same family
+- plain same-family `i32` relational comparisons `>`, `<`, `>=`, `<=` are now
+  admitted on current `main`
+- plain same-family `i32` unary `-` and binary `+`, `-`, `*` are now admitted
+  on current `main`
+- same-family `i32 / i32` remains outside the current first arithmetic wave
+- `u32` remains equality-only in the current first application-completeness wave
 - implicit cross-family numeric coercion is not part of the current contract
 
 ## F64
@@ -259,6 +314,32 @@ The current source type contract does not yet claim stable support for:
 - trait or protocol systems
 - implicit numeric widening across unrelated families
 - a broad collection type ecosystem
+
+Current active collections checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/collections_surface_full_scope.md`
+- current `main` now admits one ordered sequence collection family through
+  `Sequence(type)` in declared source type positions
+- current `main` now admits bracketed ordered sequence literals in the
+  Rust-like source path
+- current `main` now admits same-family equality for ordered sequence values
+  when the item type already supports stable equality
+- current `main` now admits a canonical runtime carrier for the same ordered
+  sequence family
+- current `main` now admits `expr[index]` when the base is an admitted ordered
+  sequence and the index is `i32`
+- current `main` now admits `for value in sequence { ... }` for that sequence
+  family through the current first-wave iterable loop surface
+- current `main` still does not admit `len` or `is_empty` for that sequence
+  family in the current `M8.3` first-wave surface
+
+Current active closures checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- published `v1.1.1` still does not claim first-class closure values or
+  closure types in the public source type contract
+- current `main` now admits one first-wave runtime closure carrier and direct
+  invocation for admitted closure values
 
 ## Contract Rule
 
