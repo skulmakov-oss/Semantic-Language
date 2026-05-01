@@ -16,6 +16,12 @@ Current canonical state types:
 - `StateRecord`
 - `StateUpdate`
 - `StateSnapshot`
+- `StateSnapshotArchive`
+- `StateRollbackAdvance`
+- `StateRollbackCheckpoint`
+- `StateRollbackCode`
+- `StateRollbackError`
+- `StateRollbackArtifact`
 - `StateTransitionMetadata`
 - `SemanticStateStore`
 
@@ -28,6 +34,8 @@ Current canonical state types:
 - context window attachment
 - epoch/version model for state evolution
 - snapshot and restore surface
+- persisted snapshot archive envelope shape
+- rollback artifact envelope shape
 - state validation invariants
 
 `prom-state` does not own:
@@ -55,6 +63,34 @@ Current store behavior:
 - every accepted update produces explicit transition metadata
 - snapshots capture the full visible state at a specific epoch
 - restore replaces visible state with the selected snapshot state
+
+## Persistence Rule
+
+Current persisted state rule:
+
+- `StateSnapshotArchive` wraps one canonical `StateSnapshot`
+- archive metadata is explicit through `format_version`
+- archive materialization/loading uses one canonical deterministic text envelope
+- persisted archive ownership does not widen store validation or runtime
+  recovery semantics by implication
+
+Current post-stable owner-layer widening on `main`:
+
+- `prom-state` now also owns explicit rollback artifact metadata:
+  - `StateRollbackAdvance`
+  - `StateRollbackCheckpoint`
+  - `StateRollbackCode`
+  - `StateRollbackError`
+  - `StateRollbackArtifact`
+- current first admitted rollback path is still narrow:
+  - artifacts must target a linear store history where epoch matches transition
+    count
+  - checkpoint snapshots must carry epochs that match
+    `applied_transition_count`
+  - rollback restores one explicit checkpoint snapshot and truncates transition
+    history to the retained prefix
+- canonical text materialization for rollback artifacts remains a later slice
+  and is not implied by apply/restore admission alone
 
 ## Boundary Rule
 

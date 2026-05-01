@@ -1,93 +1,83 @@
-# Semantic v1 Compatibility Statement
+# Semantic Compatibility Statement
 
-Status: active beta release baseline
+Status: release-facing compatibility reading
 
-This document summarizes the current compatibility commitments for the repository state published on the active Semantic beta line.
+Read this document using the canonical status vocabulary in:
 
-## SemCode Compatibility
+- `docs/roadmap/public_status_model.md`
 
-Current compatible SemCode families:
+This document should be read together with:
 
-- `SEMCODE0`
-- `SEMCODE1`
-- `SEMCODE2`
+- `docs/release_artifact_model.md`
+- `docs/roadmap/v1_readiness.md`
+- `reports/g1_release_scope_statement.md`
 
-Current compatibility rule:
+## Purpose
 
-- standard execution accepts only verified SemCode
-- verifier rejects unknown or unsupported SemCode headers
-- VM must not silently reinterpret unsupported headers
+This statement defines compatibility commitments honestly across three layers:
 
-## ParserProfile Compatibility
+- the published stable line
+- the currently qualified limited-release contour
+- landed-on-`main` behavior that is not yet promoted
 
-Current profile contract baseline:
+## Core Compatibility Rules
 
-- schema owner: `sm-profile`
-- schema family: `ParserProfile`
-- public version baseline: `1.0`
+- standard `.smc` execution is verifier-first
+- unknown or unsupported SemCode headers must reject explicitly
+- VM execution must not silently reinterpret unsupported payloads
+- profile and spec changes that alter meaning require explicit review
+- public CLI ownership remains centered in `smc-cli`
 
-Current compatibility rule:
+## Published Stable Compatibility
 
-- semantic meaning changes require explicit profile contract review
-- contract hash stability is required across canonical serialization roundtrips
+The published stable line is:
 
-## CLI Compatibility
+- `v1.1.1`
 
-Current compatibility-sensitive CLI surfaces:
+Compatibility commitments at that layer apply only to what the stable line and
+its released assets actually promised.
 
-- `smc profile show --json`
-- `smc doctor --json`
+## Qualified Limited-Release Compatibility
 
-Current compatibility rule:
+The current Gate 1 verdict qualifies a narrow practical-programming contour.
+Compatibility-sensitive reading at that layer applies only to the admitted
+qualified contour documented in:
 
-- documented machine-readable fields must not change silently
-- canonical CLI owner remains `smc-cli`; root process entrypoints must not become second CLI owners
+- `reports/g1_release_scope_statement.md`
 
-## PROMETHEUS Runtime Compatibility
+That qualified contour is narrower than current `main`.
 
-Current compatibility-sensitive `prom-*` surfaces:
+## Landed On `main`, Not Yet Promised
 
-- capability manifest schema/version
-- gate registry validation behavior
-- runtime session descriptor fields
-- canonical audit event families used by orchestration helpers
+Current `main` contains widened behavior beyond both the stable line and the
+current qualified contour.
 
-Current compatibility rule:
+Those surfaces must be read as:
 
-- changes to these surfaces require:
-  - spec updates
-  - runtime matrix and golden updates
-  - compatibility review
-- boundary and public API CI guards must remain green for the current contract-sensitive crates
+- landed on `main`, not yet promised
 
-Current `v1` scope commitment:
-
-- compatibility commitments for `prom-*` apply only to the narrow ABI/capability/gate surface already implemented in the repository
-- wider planned calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` are explicitly outside the current `v1` compatibility envelope
+They are not erased, but they also do not inherit compatibility promises
+automatically.
 
 ## Explicit Non-Commitments
 
-The repository does not yet claim final compatibility guarantees for:
+The repository does not currently claim final compatibility guarantees for:
 
-- richer `fx` arithmetic semantics beyond the current canonical value path
-- wider planned PROMETHEUS host-call families beyond `GateRead`, `GateWrite`, and `PulseEmit`
-- persistence backends
-- multi-session replay archives
-- rule-side effect execution semantics beyond the current narrow orchestration contract
-- final stable packaged release layout beyond the current beta assets
+- broader executable-module authoring beyond the admitted bare/selected helper
+  slice
+- full CLI application authoring with admitted argv/stdout/file IO
+- UI beyond any later explicitly qualified contour
+- broader generalized iterable dispatch
+- any landed-on-`main` widening that has not yet been explicitly promoted by a
+  later release or qualification decision
 
 ## Release Honesty Rule
 
-This compatibility statement must stay aligned with:
+Compatibility wording must stay aligned with:
 
 - `docs/spec/`
 - `docs/roadmap/v1_readiness.md`
-- `docs/roadmap/runtime_validation_policy.md`
+- `reports/g1_release_scope_statement.md`
 
-If a surface is not yet fully stabilized, it must remain listed as a non-commitment rather than being implied as release-stable.
-
-Published beta releases should keep this statement aligned with:
-
-- the current tag notes
-- packaged Windows assets (`smc.exe`, `svm.exe`, and bundled zip)
-- the active `main` branch behavior
+If a surface is only landed on current `main`, it must be described that way
+rather than implied as stable or qualified.

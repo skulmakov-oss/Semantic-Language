@@ -1,8 +1,25 @@
 # Roadmap Next (Post-Base Stabilization)
 
+Release-freeze checkpoint after `v0.1`/`v0.2`/`v0.3` close-out:
+
+- `docs/roadmap/language_maturity/release_freeze_post_v03_checkpoint.md`
+- `docs/roadmap/language_maturity/release_version_cut_decision.md`
+- `docs/roadmap/language_maturity/import_reexport_full_scope.md`
+- `docs/roadmap/language_maturity/persistent_incremental_packs_full_scope.md`
+- `docs/roadmap/language_maturity/root_legacy_cleanup_full_scope.md`
+- `docs/roadmap/language_maturity/arena_first_crystalfold_full_scope.md`
+
 This document tracks the next four closure tracks to move Semantic from "working" to "production-disciplined".
 
+Current status:
+- `NEXT-1..NEXT-4` are completed for the current post-`v1.1.1` closure layer.
+- this document now serves as a close-out record for those tracks, not as an
+  active feature queue.
+
 ## NEXT-1: Import / Re-export v0.2 to FULL
+
+Status:
+- completed for the current import/re-export surface
 
 Goal:
 - Close policy edge-cases, symbol-level cycle behavior, collision matrix, and deterministic resolution docs/tests.
@@ -48,15 +65,19 @@ Acceptance:
 Goal:
 - Root contains only shim + bins; no legacy backend sources.
 
-Tasks:
-1. Final inventory and migration/removal.
-2. Strengthen CI and guard tests.
-3. Verify root cleanliness policy.
+Status:
+- completed; see `docs/roadmap/language_maturity/root_legacy_cleanup_full_scope.md`
 
 Acceptance:
 - `root/src` clean by policy; guard tests enforce it.
 
 ## NEXT-4: Arena-first + CrystalFold as Complete Stages
+
+Checkpoint:
+- `docs/roadmap/language_maturity/arena_first_crystalfold_full_scope.md`
+
+Status:
+- completed for the current arena/lowering/optimizer contract
 
 Goal:
 - Arena-first AST/semantic/lowering invariants finalized.

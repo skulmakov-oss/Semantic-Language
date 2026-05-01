@@ -1,0 +1,19 @@
+fn status_text(verdict: quad) -> text {
+    if verdict == T {
+        return "OK";
+    }
+    if verdict == F {
+        return "HOLD";
+    }
+    return "REVIEW";
+}
+
+fn render_notice(short_status: text, banner: text) -> text {
+    if short_status == "ok" && banner == "OK" {
+        return "ok:OK";
+    }
+    if short_status == "hold" && banner == "HOLD" {
+        return "hold:HOLD";
+    }
+    return "review:REVIEW";
+}

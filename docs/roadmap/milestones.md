@@ -1,75 +1,91 @@
-# Semantic v1 Milestones
+# Semantic Readiness Milestones
+
+Status: historical checkpoint map, not release-verdict authority
+
+Read this document using the canonical status vocabulary in:
+
+- `docs/roadmap/public_status_model.md`
+
+For the current release-facing posture, use:
+
+- `docs/roadmap/v1_readiness.md`
+- `reports/g1_release_scope_statement.md`
+
+## Purpose
+
+This document records the major milestone families already landed in the
+repository.
+
+It should not be read as:
+
+- automatic stable publication
+- automatic qualification
+- authority for the current release verdict
+
+Milestones can be completed in code while still remaining only:
+
+- `landed on main, not yet promised`
+- or outside the current qualified contour
+
+## Historical Milestone Families
 
 - `M0 Repository Discipline`
-  - architecture docs
-  - crate map
-  - legacy freeze policy
-  - PR/review governance
-  - PR template
-  - architecture review checklist
-  - current status: baseline largely in place
+  - process baseline
+  - architecture map
+  - ownership/governance conventions
+  - current reading: landed baseline
+
 - `M1 Core Contract`
-  - `sm-verify`
-  - `SymbolId` runtime
-  - quotas and admit-then-execute
-  - current status: strong baseline exists in code and tests
-- `M2 Language Completion`
-  - `u32` / `fx`
-  - optimizer minimum set
-  - `sm-profile`
-  - type completeness matrix
-  - optimizer review checklist
-  - current follow-up gap: tighten remaining `fx` numeric contract notes honestly
-- `M3 Platform Formalization`
+  - verifier-first execution
+  - runtime quotas
+  - owner boundaries for core crates
+  - current reading: landed baseline
+
+- `M2 Language/Core Surface`
+  - source frontend
+  - type completeness work
+  - SemCode family growth
+  - current reading: mixed between published stable and landed-on-`main`
+    widenings
+
+- `M3 Toolchain Formalization`
   - spec bundle
-  - stable CLI
-  - version contracts
-  - current status: broad formalization baseline exists and owner alignment is already reflected in code
-  - optimizer owner is fixed to `sm-ir` for the current `v1` baseline
-  - SemCode format owner is fixed to `sm-ir` for the current `v1` baseline
-  - public CLI owner is fixed to `smc-cli` for the current `v1` baseline
-  - `docs/spec/syntax.md`
-  - `docs/spec/types.md`
-  - `docs/spec/ir.md`
-  - `docs/spec/verifier.md`
-  - `docs/spec/semcode.md`
-  - `docs/spec/profile.md`
-  - `docs/spec/vm.md`
-  - `docs/spec/quotas.md`
-  - `docs/spec/cli.md`
-  - `docs/spec/versioning.md`
-- `M4 PROMETHEUS Boundary`
-  - ABI
-  - capabilities
-  - gates
-  - current state: narrow working boundary exists and is fixed as the official `v1` scope
-  - wider planned ABI scope remains post-`v1` work rather than a release blocker
-  - `docs/spec/abi.md`
-  - `docs/spec/capabilities.md`
-  - `docs/spec/gates.md`
-- `M5 Semantic Runtime`
-  - state
-  - rules
-  - orchestration
-  - audit
-  - semantic runtime integration checklist
-  - `docs/spec/runtime.md`
-  - `docs/spec/state.md`
-  - `docs/spec/rules.md`
-  - `docs/spec/audit.md`
-  - current state: owner-split runtime baseline exists
-  - richer runtime semantics remain non-blocking for the current narrow `v1`
-- `M6 v1 Lockdown`
-  - freezes
-  - golden baselines
-  - validation matrix
-  - `tests/prometheus_runtime_matrix.rs`
-  - `tests/prometheus_runtime_goldens.rs`
-  - `tests/prometheus_runtime_negative_goldens.rs`
-  - `tests/prometheus_runtime_compat_matrix.rs`
-  - `docs/roadmap/runtime_validation_policy.md`
-  - `docs/roadmap/v1_readiness.md`
-  - `docs/roadmap/release_bundle_checklist.md`
-  - `docs/roadmap/compatibility_statement.md`
-  - current state: validation artifacts and CI-enforced release gates exist on the active beta line
-  - current follow-up gap: keep release-facing docs and packaged beta assets aligned with the actual `main` branch state
+  - CLI ownership
+  - SemCode contract ownership
+  - current reading: landed baseline
+
+- `M4 Boundary And Runtime Layering`
+  - `prom-*` owner split
+  - runtime/state/rules/audit layering
+  - current reading: landed baseline, with stable-vs-main commitments governed
+    elsewhere
+
+- `M5 Validation And Qualification`
+  - release bundle checks
+  - compatibility checks
+  - Gate 1 protocol
+  - Gate 1 evidence and synthesis reports
+  - current reading: first Gate 1 cycle completed; current verdict is
+    `qualified limited release`
+
+- `M6 Post-Stable Language Waves`
+  - schemas
+  - package baseline
+  - ordered sequence surface
+  - iterable surface
+  - closures
+  - generics
+  - runtime ownership
+  - UI application boundary
+  - selected-import executable module entry
+  - current reading: landed on `main`, not automatically published stable and
+    not automatically qualified
+
+## Operational Reading
+
+If a milestone family is completed in code:
+
+- check `docs/roadmap/v1_readiness.md` for the release-facing reading
+- check `reports/g1_release_scope_statement.md` for the current practical
+  qualification reading
+- do not infer promotion from this milestone map alone

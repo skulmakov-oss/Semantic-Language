@@ -27,19 +27,41 @@ Wildcard import form is parsed and validated by policy rules.
 5. `Import pub "a/b/c" { Foo }`  
 Re-export selected symbols from dependency module.
 
+Every current `Import` also creates one namespace alias:
+
+- explicit alias from `as X`, or
+- default alias from the imported file stem
+
 ## Resolve Behavior
 
-1. Local symbols
-2. Explicit select imports
-3. Namespace-qualified access (`X.Foo`)
-4. Wildcards by import declaration order
+1. Local symbols always win; conflicting import bindings are rejected with `E0241`.
+2. Explicit select imports create direct local bindings.
+3. Namespace-qualified access (`X.Foo`) stays available for every import alias.
+4. Wildcards are fallback-only and are consulted by import declaration order.
+
+Current clarification:
+
+- `Import "dep.sm" { Foo }` binds both `Foo` and namespace alias `dep`
+- `Import "dep.sm" *` still binds namespace alias `dep`
+- explicit selected bindings outrank wildcard-provided names
+- if multiple wildcard imports can provide the same unresolved name, the first
+  wildcard import by declaration order wins in v0.2
+- the current stable surface does not emit a separate wildcard-ambiguity error
 
 ## Validation Rules
 
 1. Duplicate namespace alias in one module is rejected (`E0241`).
 2. Missing selected symbol is rejected (`E0244`).
-3. Duplicate selected alias in one import statement is rejected (`E0245`).
-4. `*` cannot be combined with `{...}` in one import statement (`E0245`).
+3. Selected kind qualifiers such as `Entity:Foo` must match the dependency
+   export kind; mismatches are rejected (`E0245`).
+4. Duplicate selected alias in one import statement is rejected (`E0245`).
+5. `*` cannot be combined with `{...}` in one import statement (`E0245`).
+
+Current non-error policy:
+
+- multiple wildcard imports may overlap on exported names
+- unqualified fallback stays deterministic by import declaration order
+- this is a policy choice, not a separate diagnostic family in v0.2
 
 ## Examples
 
@@ -63,6 +85,14 @@ Invalid (`E0245`):
 
 ```exo
 Import "dep.sm" { A as X, B as X }
+Law "Root" [priority 1]:
+    When true -> System.recovery()
+```
+
+Invalid (`E0245` kind mismatch):
+
+```exo
+Import "dep.sm" { Entity:A }
 Law "Root" [priority 1]:
     When true -> System.recovery()
 ```

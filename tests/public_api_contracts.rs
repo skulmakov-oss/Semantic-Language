@@ -1,7 +1,14 @@
 use std::fs;
 
 const TARGETS: &[(&str, &str)] = &[
-    ("crates/sm-ir/src/lib.rs", "tests/golden_snapshots/public_api/sm_ir_lib.txt"),
+    (
+        "crates/sm-front/src/lib.rs",
+        "tests/golden_snapshots/public_api/sm_front_lib.txt",
+    ),
+    (
+        "crates/sm-ir/src/lib.rs",
+        "tests/golden_snapshots/public_api/sm_ir_lib.txt",
+    ),
     (
         "crates/sm-profile/src/lib.rs",
         "tests/golden_snapshots/public_api/sm_profile_lib.txt",
@@ -14,18 +21,42 @@ const TARGETS: &[(&str, &str)] = &[
         "crates/sm-verify/src/lib.rs",
         "tests/golden_snapshots/public_api/sm_verify_lib.txt",
     ),
-    ("crates/sm-vm/src/lib.rs", "tests/golden_snapshots/public_api/sm_vm_lib.txt"),
+    (
+        "crates/sm-vm/src/lib.rs",
+        "tests/golden_snapshots/public_api/sm_vm_lib.txt",
+    ),
     (
         "crates/sm-vm/src/semcode_vm.rs",
         "tests/golden_snapshots/public_api/sm_vm_semcode_vm.txt",
     ),
-    ("crates/prom-abi/src/lib.rs", "tests/golden_snapshots/public_api/prom_abi_lib.txt"),
-    ("crates/prom-cap/src/lib.rs", "tests/golden_snapshots/public_api/prom_cap_lib.txt"),
+    (
+        "crates/prom-abi/src/lib.rs",
+        "tests/golden_snapshots/public_api/prom_abi_lib.txt",
+    ),
+    (
+        "crates/prom-cap/src/lib.rs",
+        "tests/golden_snapshots/public_api/prom_cap_lib.txt",
+    ),
+    (
+        "crates/prom-state/src/lib.rs",
+        "tests/golden_snapshots/public_api/prom_state_lib.txt",
+    ),
+    (
+        "crates/prom-audit/src/lib.rs",
+        "tests/golden_snapshots/public_api/prom_audit_lib.txt",
+    ),
     (
         "crates/prom-runtime/src/lib.rs",
         "tests/golden_snapshots/public_api/prom_runtime_lib.txt",
     ),
-    ("crates/smc-cli/src/lib.rs", "tests/golden_snapshots/public_api/smc_cli_lib.txt"),
+    (
+        "crates/prom-rules/src/lib.rs",
+        "tests/golden_snapshots/public_api/prom_rules_lib.txt",
+    ),
+    (
+        "crates/smc-cli/src/lib.rs",
+        "tests/golden_snapshots/public_api/smc_cli_lib.txt",
+    ),
 ];
 
 fn normalize_ws(line: &str) -> String {
@@ -55,7 +86,11 @@ fn normalized_public_surface(path: &str) -> String {
         pending_attrs.clear();
     }
 
-    format!("source: {}\n{}\n", path.replace('\\', "/"), lines.join("\n"))
+    format!(
+        "source: {}\n{}\n",
+        path.replace('\\', "/"),
+        lines.join("\n")
+    )
 }
 
 fn normalize_snapshot_text(text: &str) -> String {

@@ -1,0 +1,17 @@
+[package]
+name = "prom-ui-demo"
+version = "0.1.0"
+edition = "2021"
+description = "Canonical demo application for the Semantic UI application boundary (M7 Wave 3)"
+
+[[bin]]
+name = "prom-ui-demo"
+path = "src/main.rs"
+
+[features]
+default = ["std"]
+std = ["prom-ui-runtime/std", "prom-ui/std"]
+
+[dependencies]
+prom-ui-runtime = { path = "../prom-ui-runtime", default-features = false }
+prom-ui = { path = "../prom-ui", default-features = false }

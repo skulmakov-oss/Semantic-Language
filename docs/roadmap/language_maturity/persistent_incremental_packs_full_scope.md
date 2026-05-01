@@ -9,6 +9,18 @@ Freeze the persistent incremental cache contract so reuse and invalidation
 behavior is explicit, deterministic, and test-backed for the currently
 supported CLI pack flows.
 
+## Why This Is A Post-Stable Track
+
+The repository already shipped stable `v1.1.1` with a usable incremental/cache
+path and `--trace-cache` diagnostics.
+
+The remaining work here is not a release blocker for the shipped stable line.
+It is a tooling-discipline closure track intended to:
+
+- make cache ownership and dependency edges explicit
+- lock rebuild reasons into deterministic named categories
+- prevent stale downstream reuse after dependency changes
+- add inspectable smoke coverage for reuse and invalidation behavior
 ## Included In NEXT-2
 
 - stable on-disk cache layout and pack header validation

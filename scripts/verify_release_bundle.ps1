@@ -16,6 +16,7 @@ $requiredDirectories = @(
 )
 
 $requiredFiles = @(
+    "docs/release_artifact_model.md",
     "docs/roadmap/v1_readiness.md",
     "docs/roadmap/runtime_validation_policy.md",
     "docs/roadmap/release_bundle_checklist.md",
@@ -50,6 +51,7 @@ if ($missing.Count -gt 0) {
 $manifest = [ordered]@{
     generated_at = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
     documentation_bundle = @(
+        "docs/release_artifact_model.md",
         "docs/architecture",
         "docs/spec",
         "docs/roadmap/v1_readiness.md",

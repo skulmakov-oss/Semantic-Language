@@ -34,10 +34,92 @@ impl RuleCondition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleStateWriteEffect {
+    pub key: String,
+    pub value: FactValue,
+    pub context: String,
+    pub reason: String,
+}
+
+impl RuleStateWriteEffect {
+    pub fn new(
+        key: impl Into<String>,
+        value: FactValue,
+        context: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            value,
+            context: context.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleAuditNoteEffect {
+    pub message: String,
+}
+
+impl RuleAuditNoteEffect {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleEffect {
+    StateWrite(RuleStateWriteEffect),
+    AuditNote(RuleAuditNoteEffect),
+}
+
+impl RuleEffect {
+    pub fn state_write(
+        key: impl Into<String>,
+        value: FactValue,
+        context: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self::StateWrite(RuleStateWriteEffect::new(key, value, context, reason))
+    }
+
+    pub fn audit_note(message: impl Into<String>) -> Self {
+        Self::AuditNote(RuleAuditNoteEffect::new(message))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuleEffectPlan {
+    effects: Vec<RuleEffect>,
+}
+
+impl RuleEffectPlan {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_effects(effects: Vec<RuleEffect>) -> Self {
+        Self { effects }
+    }
+
+    pub fn effects(&self) -> &[RuleEffect] {
+        &self.effects
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleDefinition {
     pub id: RuleId,
     pub salience: Salience,
     pub conditions: Vec<RuleCondition>,
+    pub effect_plan: RuleEffectPlan,
 }
 
 impl RuleDefinition {
@@ -46,7 +128,17 @@ impl RuleDefinition {
             id: RuleId::new(id),
             salience: Salience(salience),
             conditions,
+            effect_plan: RuleEffectPlan::new(),
         }
+    }
+
+    pub fn with_effects(mut self, effects: Vec<RuleEffect>) -> Self {
+        self.effect_plan = RuleEffectPlan::from_effects(effects);
+        self
+    }
+
+    pub fn effect_plan(&self) -> &RuleEffectPlan {
+        &self.effect_plan
     }
 }
 
@@ -82,6 +174,10 @@ pub enum RuleValidationCode {
     DuplicateRuleId,
     EmptyConditionKey,
     EmptyConditionSet,
+    EmptyEffectKey,
+    EmptyEffectContext,
+    EmptyEffectReason,
+    EmptyAuditNoteMessage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +279,43 @@ fn validate_rule(rule: &RuleDefinition) -> Result<(), RuleValidationError> {
             "rule condition key must not be empty",
         ));
     }
+    for effect in rule.effect_plan.effects() {
+        validate_effect(effect)?;
+    }
+    Ok(())
+}
+
+fn validate_effect(effect: &RuleEffect) -> Result<(), RuleValidationError> {
+    match effect {
+        RuleEffect::StateWrite(effect) => {
+            if effect.key.trim().is_empty() {
+                return Err(RuleValidationError::new(
+                    RuleValidationCode::EmptyEffectKey,
+                    "rule state-write effect key must not be empty",
+                ));
+            }
+            if effect.context.trim().is_empty() {
+                return Err(RuleValidationError::new(
+                    RuleValidationCode::EmptyEffectContext,
+                    "rule state-write effect context must not be empty",
+                ));
+            }
+            if effect.reason.trim().is_empty() {
+                return Err(RuleValidationError::new(
+                    RuleValidationCode::EmptyEffectReason,
+                    "rule state-write effect reason must not be empty",
+                ));
+            }
+        }
+        RuleEffect::AuditNote(effect) => {
+            if effect.message.trim().is_empty() {
+                return Err(RuleValidationError::new(
+                    RuleValidationCode::EmptyAuditNoteMessage,
+                    "rule audit-note effect message must not be empty",
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -239,6 +372,62 @@ mod tests {
             ))
             .expect_err("duplicate id must reject");
         assert_eq!(err.code, RuleValidationCode::DuplicateRuleId);
+    }
+
+    #[test]
+    fn new_rule_definition_starts_with_empty_effect_plan() {
+        let rule = RuleDefinition::new(
+            "rule.alpha",
+            10,
+            vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+        );
+
+        assert!(rule.effect_plan().is_empty());
+        assert!(rule.effect_plan().effects().is_empty());
+    }
+
+    #[test]
+    fn with_effects_preserves_declared_effect_order() {
+        let rule = RuleDefinition::new(
+            "rule.alpha",
+            10,
+            vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+        )
+        .with_effects(vec![
+            RuleEffect::state_write("fact.beta", FactValue::I32(2), "window.beta", "derive beta"),
+            RuleEffect::audit_note("rule.alpha emitted note"),
+        ]);
+
+        assert!(matches!(
+            &rule.effect_plan().effects()[0],
+            RuleEffect::StateWrite(effect)
+                if effect.key == "fact.beta"
+                    && effect.value == FactValue::I32(2)
+                    && effect.context == "window.beta"
+                    && effect.reason == "derive beta"
+        ));
+        assert!(matches!(
+            &rule.effect_plan().effects()[1],
+            RuleEffect::AuditNote(effect)
+                if effect.message == "rule.alpha emitted note"
+        ));
+    }
+
+    #[test]
+    fn engine_rejects_invalid_effect_payloads() {
+        let mut engine = RuleEngine::new();
+        let err = engine
+            .register(
+                RuleDefinition::new(
+                    "rule.alpha",
+                    10,
+                    vec![RuleCondition::equals("fact.alpha", FactValue::Bool(true))],
+                )
+                .with_effects(vec![RuleEffect::audit_note("  ")]),
+            )
+            .expect_err("invalid effect must reject");
+
+        assert_eq!(err.code, RuleValidationCode::EmptyAuditNoteMessage);
     }
 
     #[test]

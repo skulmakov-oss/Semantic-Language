@@ -1,12 +1,16 @@
 use crate::lexer::lex_tokens;
 use crate::types::{
     AdtCtorExpr, AdtDecl, AdtMatchPattern, AdtPatternItem, AdtVariant, AstArena, BinaryOp,
-    BlockExpr, CallArg, Expr, ExprId, FrontendError, Function, IfExpr, LogosEntity,
+    BlockExpr, CallArg, CaptureMode, ClosureCapturePolicy, ClosureLiteral, ClosureValueFamily,
+    Expr, ExprId, FrontendError, Function, IfExpr, IfLetExpr, ImplDecl, IntRangePattern, IterableLoopDesugaring, LogosEntity,
     LogosEntityField, LogosEntityFieldKind, LogosLaw, LogosProgram, LogosSystem, LogosWhen,
-    LoopExpr, MatchArm, MatchExpr, MatchExprArm, MatchPattern, NumericLiteral, Program, QuadVal,
-    RangeExpr, RecordDecl, RecordField, RecordFieldExpr, RecordInitField, RecordLiteralExpr,
-    RecordPatternItem, RecordPatternTarget, RecordUpdateExpr, Stmt, StmtId, SymbolId, Token,
-    TokenKind, TuplePatternItem, Type, UnaryOp,
+    ExecutableImport, ExecutableImportSelectItem, LoopExpr, MatchArm, MatchExpr, MatchExprArm,
+    MatchPattern, NumericLiteral, Program, QuadVal, RangeExpr, RecordDecl, RecordField,
+    RecordFieldExpr, RecordInitField, RecordLiteralExpr, RecordPatternItem, RecordPatternTarget,
+    RecordUpdateExpr, SchemaDecl, SchemaField, SchemaRole, SchemaShape, SchemaVariant,
+    SchemaVersion, SequenceCollectionFamily, SequenceIndexExpr, SequenceLiteral, SequenceType,
+    Stmt, StmtId, SymbolId, TextLiteral, TextLiteralFamily, Token, TokenKind, TraitBound,
+    TraitDecl, TraitMethodSig, TuplePatternItem, Type, UnaryOp,
 };
 use crate::CompilePolicyView;
 use alloc::format;
@@ -30,6 +34,8 @@ pub fn parse_rustlike_with_profile(
         source: input.to_string(),
         arena: AstArena::default(),
         policy: CompilePolicyView::new(profile),
+        type_param_scope: Vec::new(),
+        self_type_scope: None,
     };
     p.parse_program()
 }
@@ -45,6 +51,8 @@ pub fn parse_logos_with_profile(
         source: input.to_string(),
         arena: AstArena::default(),
         policy: CompilePolicyView::new(profile),
+        type_param_scope: Vec::new(),
+        self_type_scope: None,
     };
     p.parse_logos_program()
 }
@@ -55,42 +63,119 @@ struct Parser<'a> {
     source: String,
     arena: AstArena,
     policy: CompilePolicyView<'a>,
+    /// Type parameters currently in scope for the declaration being parsed.
+    ///
+    /// Populated by `parse_type_params` and cleared after each
+    /// function/record/adt declaration finishes parsing. Drives `parse_type`
+    /// to emit `Type::TypeVar` rather than `Type::Record` for matching names.
+    type_param_scope: Vec<SymbolId>,
+    /// Narrow owner-layer `Self` marker available only while parsing trait
+    /// method signatures or impl methods.
+    self_type_scope: Option<Type>,
 }
 
 impl<'a> Parser<'a> {
+    fn with_self_type_scope<T, F>(&mut self, self_ty: Type, f: F) -> Result<T, FrontendError>
+    where
+        F: FnOnce(&mut Self) -> Result<T, FrontendError>,
+    {
+        let previous = self.self_type_scope.clone();
+        self.self_type_scope = Some(self_ty);
+        let result = f(self);
+        self.self_type_scope = previous;
+        result
+    }
+
     fn parse_program(&mut self) -> Result<Program, FrontendError> {
+        let mut imports = Vec::new();
         let mut adts = Vec::new();
         let mut records = Vec::new();
+        let mut schemas = Vec::new();
         let mut functions = Vec::new();
+        let mut traits = Vec::new();
+        let mut impls = Vec::new();
         loop {
             let i = self.next_non_layout_idx();
             if i >= self.tokens.len() {
                 break;
             }
             self.idx = i;
+            if self.starts_role_marked_schema_decl() {
+                schemas.push(self.parse_schema_decl()?);
+                continue;
+            }
             match self.tokens[i].kind {
+                TokenKind::KwImport => imports.push(self.parse_import_decl()?),
                 TokenKind::KwEnum => adts.push(self.parse_adt_decl()?),
                 TokenKind::KwFn => functions.push(self.parse_function()?),
                 TokenKind::KwRecord => records.push(self.parse_record_decl()?),
+                TokenKind::KwSchema => schemas.push(self.parse_schema_decl()?),
+                TokenKind::KwTrait => traits.push(self.parse_trait_decl()?),
+                TokenKind::KwImpl => impls.push(self.parse_impl_decl()?),
                 _ => {
                     return Err(FrontendError {
                         pos: self.tokens[i].pos,
-                        message: "expected top-level 'enum', 'fn', or 'record'".to_string(),
+                        message:
+                            "expected top-level 'Import', 'enum', 'fn', 'impl', 'record', 'schema', 'trait', or role-marked schema declaration"
+                                .to_string(),
                     });
                 }
             }
         }
         Ok(Program {
             arena: ::core::mem::take(&mut self.arena),
+            imports,
             adts,
             records,
+            schemas,
             functions,
+            traits,
+            impls,
+        })
+    }
+
+    fn parse_import_decl(&mut self) -> Result<ExecutableImport, FrontendError> {
+        self.expect(TokenKind::KwImport, "expected 'Import'")?;
+        let reexport = self.eat_ident_text("pub");
+        let spec = self.expect_string_literal_text("expected import path string")?;
+        let alias = if self.eat_ident_text("as") {
+            Some(self.expect_symbol()?)
+        } else {
+            None
+        };
+        let wildcard = self.eat(TokenKind::Star);
+        let mut select_items = Vec::new();
+        if self.eat(TokenKind::LBrace) {
+            if !self.check(TokenKind::RBrace) {
+                loop {
+                    let name = self.expect_symbol()?;
+                    let alias = if self.eat_ident_text("as") {
+                        Some(self.expect_symbol()?)
+                    } else {
+                        None
+                    };
+                    select_items.push(ExecutableImportSelectItem { name, alias });
+                    if self.eat(TokenKind::Comma) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBrace, "expected '}' after import select list")?;
+        }
+        Ok(ExecutableImport {
+            spec,
+            alias,
+            reexport,
+            select_items,
+            wildcard,
         })
     }
 
     fn parse_function(&mut self) -> Result<Function, FrontendError> {
         self.expect(TokenKind::KwFn, "expected 'fn'")?;
         let name = self.expect_symbol()?;
+        let (type_params, trait_bounds) = self.parse_type_params_with_bounds()?;
         self.expect(TokenKind::LParen, "expected '('")?;
         let mut params = Vec::new();
         let mut param_defaults = Vec::new();
@@ -139,8 +224,11 @@ impl<'a> Parser<'a> {
         } else {
             self.parse_block()?
         };
+        self.pop_type_param_scope(type_params.len());
         Ok(Function {
             name,
+            type_params,
+            trait_bounds,
             params,
             param_defaults,
             requires,
@@ -178,9 +266,154 @@ impl<'a> Parser<'a> {
         Ok((requires, ensures, invariants))
     }
 
+    /// Parse an optional `<T, U: Bound, ...>` type parameter list with
+    /// optional trait bounds.
+    ///
+    /// Returns `(type_params, trait_bounds)`. Type parameter names are pushed
+    /// into `self.type_param_scope` so `parse_type` can emit `Type::TypeVar`
+    /// for matching names. The caller must call `pop_type_param_scope(count)`
+    /// after parsing the body.
+    fn parse_type_params_with_bounds(
+        &mut self,
+    ) -> Result<(Vec<SymbolId>, Vec<TraitBound>), FrontendError> {
+        if !self.eat(TokenKind::LAngle) {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut params = Vec::new();
+        let mut bounds = Vec::new();
+        loop {
+            if self.check(TokenKind::RAngle) {
+                break;
+            }
+            let param_id = self.expect_type_param_name()?;
+            params.push(param_id);
+            self.type_param_scope.push(param_id);
+            // Optional `: TraitName` bound on this parameter.
+            if self.eat(TokenKind::Colon) {
+                let bound_name = self.expect_symbol()?;
+                bounds.push(TraitBound { param: param_id, bound: bound_name });
+            }
+            if self.eat(TokenKind::Comma) {
+                continue;
+            }
+            break;
+        }
+        if params.is_empty() {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "empty type parameter list is not allowed".to_string(),
+            });
+        }
+        self.expect(TokenKind::RAngle, "expected '>' after type parameter list")?;
+        Ok((params, bounds))
+    }
+
+    /// Parse an optional `<T, U, ...>` type parameter list (no bounds).
+    ///
+    /// Thin wrapper over `parse_type_params_with_bounds` that discards any
+    /// bounds. Used for record and ADT declarations where trait bounds on type
+    /// parameters are not admitted in first wave.
+    fn parse_type_params(&mut self) -> Result<Vec<SymbolId>, FrontendError> {
+        let (params, _bounds) = self.parse_type_params_with_bounds()?;
+        Ok(params)
+    }
+
+    /// Remove `count` entries from the tail of `type_param_scope`.
+    fn pop_type_param_scope(&mut self, count: usize) {
+        let new_len = self.type_param_scope.len().saturating_sub(count);
+        self.type_param_scope.truncate(new_len);
+    }
+
+    /// Parse a `trait TraitName { fn method(params) -> ret; ... }` declaration.
+    fn parse_trait_decl(&mut self) -> Result<TraitDecl, FrontendError> {
+        self.expect(TokenKind::KwTrait, "expected 'trait'")?;
+        let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
+        self.expect(TokenKind::LBrace, "expected '{' after trait name")?;
+        let self_placeholder = Type::TypeVar(self.arena.intern_symbol("Self"));
+        let methods = self.with_self_type_scope(self_placeholder, |parser| {
+            let mut methods = Vec::new();
+            loop {
+                let i = parser.next_non_layout_idx();
+                if i >= parser.tokens.len() {
+                    break;
+                }
+                if parser.tokens[i].kind == TokenKind::RBrace {
+                    parser.idx = i;
+                    break;
+                }
+                parser.idx = i;
+                methods.push(parser.parse_trait_method_sig()?);
+            }
+            Ok(methods)
+        })?;
+        self.expect(TokenKind::RBrace, "expected '}' to close trait body")?;
+        self.pop_type_param_scope(type_params.len());
+        Ok(TraitDecl { name, type_params, methods })
+    }
+
+    /// Parse an abstract method signature inside a trait body:
+    /// `fn name(param: Type, ...) -> RetType;`
+    fn parse_trait_method_sig(&mut self) -> Result<TraitMethodSig, FrontendError> {
+        self.expect(TokenKind::KwFn, "expected 'fn' for trait method signature")?;
+        let name = self.expect_symbol()?;
+        self.expect(TokenKind::LParen, "expected '(' after trait method name")?;
+        let mut params = Vec::new();
+        if !self.check(TokenKind::RParen) {
+            loop {
+                let pname = self.expect_symbol()?;
+                self.expect(TokenKind::Colon, "expected ':' after parameter name")?;
+                let pty = self.parse_type()?;
+                params.push((pname, pty));
+                if self.eat(TokenKind::Comma) {
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen, "expected ')' after trait method parameters")?;
+        let ret = if self.eat(TokenKind::Implies) {
+            self.parse_type()?
+        } else {
+            Type::Unit
+        };
+        self.expect(TokenKind::Semi, "expected ';' after trait method signature")?;
+        Ok(TraitMethodSig { name, params, ret })
+    }
+
+    /// Parse an `impl TraitName for TypeName { fn method(...) { ... } ... }` block.
+    fn parse_impl_decl(&mut self) -> Result<ImplDecl, FrontendError> {
+        self.expect(TokenKind::KwImpl, "expected 'impl'")?;
+        let type_params = self.parse_type_params()?;
+        let trait_name = self.expect_symbol()?;
+        self.expect(TokenKind::KwFor, "expected 'for' after trait name in impl")?;
+        let for_type = self.expect_symbol()?;
+        self.expect(TokenKind::LBrace, "expected '{' after impl target type")?;
+        let methods = self.with_self_type_scope(Type::Record(for_type), |parser| {
+            let mut methods = Vec::new();
+            loop {
+                let i = parser.next_non_layout_idx();
+                if i >= parser.tokens.len() {
+                    break;
+                }
+                if parser.tokens[i].kind == TokenKind::RBrace {
+                    parser.idx = i;
+                    break;
+                }
+                parser.idx = i;
+                methods.push(parser.parse_function()?);
+            }
+            Ok(methods)
+        })?;
+        self.expect(TokenKind::RBrace, "expected '}' to close impl body")?;
+        self.pop_type_param_scope(type_params.len());
+        Ok(ImplDecl { trait_name, for_type, type_params, methods })
+    }
+
     fn parse_record_decl(&mut self) -> Result<RecordDecl, FrontendError> {
         self.expect(TokenKind::KwRecord, "expected 'record'")?;
         let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace, "expected '{' after record name")?;
         let mut fields = Vec::new();
         while !self.check(TokenKind::RBrace) {
@@ -200,12 +433,221 @@ impl<'a> Parser<'a> {
             break;
         }
         self.expect(TokenKind::RBrace, "expected '}' after record declaration")?;
-        Ok(RecordDecl { name, fields })
+        self.pop_type_param_scope(type_params.len());
+        Ok(RecordDecl { name, type_params, fields })
+    }
+
+    fn parse_schema_decl(&mut self) -> Result<SchemaDecl, FrontendError> {
+        self.require_schema_surface("schema declarations are disabled by profile policy")?;
+        let role = self.parse_optional_schema_role()?;
+        self.expect(TokenKind::KwSchema, "expected 'schema'")?;
+        let name = self.expect_symbol()?;
+        let version = self.parse_optional_schema_version()?;
+        self.expect(TokenKind::LBrace, "expected '{' after schema name")?;
+        let shape = if self.check(TokenKind::RBrace) {
+            SchemaShape::Record(Vec::new())
+        } else {
+            let first_name = self.expect_symbol()?;
+            if self.check(TokenKind::Colon) {
+                SchemaShape::Record(self.parse_schema_record_fields_after_first(first_name)?)
+            } else if self.check(TokenKind::LBrace) {
+                SchemaShape::TaggedUnion(
+                    self.parse_schema_tagged_union_variants_after_first(first_name)?,
+                )
+            } else {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message:
+                        "schema declaration body must use either 'field: type' entries or 'Variant { ... }' entries"
+                            .to_string(),
+                });
+            }
+        };
+        self.expect(TokenKind::RBrace, "expected '}' after schema declaration")?;
+        Ok(SchemaDecl {
+            name,
+            role,
+            version,
+            shape,
+        })
+    }
+
+    fn starts_role_marked_schema_decl(&self) -> bool {
+        let i = self.next_non_layout_idx();
+        let Some(first) = self.tokens.get(i) else {
+            return false;
+        };
+        if first.kind != TokenKind::Ident || !Self::is_schema_role_marker_text(&first.text) {
+            return false;
+        }
+        let next = self.next_non_layout_idx_from(i + 1);
+        self.tokens
+            .get(next)
+            .map(|tok| tok.kind == TokenKind::KwSchema)
+            .unwrap_or(false)
+    }
+
+    fn parse_optional_schema_role(&mut self) -> Result<Option<SchemaRole>, FrontendError> {
+        if !self.starts_role_marked_schema_decl() {
+            return Ok(None);
+        }
+        let role_tok = self.advance();
+        let role = match role_tok.text.as_str() {
+            "config" => SchemaRole::Config,
+            "api" => SchemaRole::Api,
+            "wire" => SchemaRole::Wire,
+            _ => {
+                return Err(FrontendError {
+                    pos: role_tok.pos,
+                    message: "unknown schema role marker".to_string(),
+                })
+            }
+        };
+        Ok(Some(role))
+    }
+
+    fn is_schema_role_marker_text(text: &str) -> bool {
+        matches!(text, "config" | "api" | "wire")
+    }
+
+    fn starts_schema_version_marker(&self) -> bool {
+        let i = self.next_non_layout_idx();
+        let Some(first) = self.tokens.get(i) else {
+            return false;
+        };
+        if first.kind != TokenKind::Ident || first.text != "version" {
+            return false;
+        }
+        let next = self.next_non_layout_idx_from(i + 1);
+        self.tokens
+            .get(next)
+            .map(|tok| tok.kind == TokenKind::LParen)
+            .unwrap_or(false)
+    }
+
+    fn parse_optional_schema_version(&mut self) -> Result<Option<SchemaVersion>, FrontendError> {
+        if !self.starts_schema_version_marker() {
+            return Ok(None);
+        }
+        let marker = self.advance();
+        debug_assert_eq!(marker.text, "version");
+        self.expect(
+            TokenKind::LParen,
+            "expected '(' after schema version marker",
+        )?;
+        if !self.check(TokenKind::Num) {
+            return Err(FrontendError {
+                pos: self.pos(),
+                message: "schema version marker currently requires unsuffixed decimal integer"
+                    .to_string(),
+            });
+        }
+        let number = self.advance();
+        let value =
+            parse_schema_version_literal(&number.text).map_err(|message| FrontendError {
+                pos: number.pos,
+                message,
+            })?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after schema version marker",
+        )?;
+        Ok(Some(SchemaVersion { value }))
+    }
+
+    fn parse_schema_record_fields_after_first(
+        &mut self,
+        first_name: SymbolId,
+    ) -> Result<Vec<SchemaField>, FrontendError> {
+        let mut fields = Vec::new();
+        let mut field_name = first_name;
+        loop {
+            self.expect(TokenKind::Colon, "expected ':' after schema field name")?;
+            let field_ty = self.parse_type()?;
+            fields.push(SchemaField {
+                name: field_name,
+                ty: field_ty,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                field_name = self.expect_symbol()?;
+                if !self.check(TokenKind::Colon) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "record-shaped schema declarations cannot mix field entries with tagged-union variants"
+                                .to_string(),
+                    });
+                }
+                continue;
+            }
+            break;
+        }
+        Ok(fields)
+    }
+
+    fn parse_schema_tagged_union_variants_after_first(
+        &mut self,
+        first_name: SymbolId,
+    ) -> Result<Vec<SchemaVariant>, FrontendError> {
+        let mut variants = Vec::new();
+        let mut variant_name = first_name;
+        loop {
+            self.expect(
+                TokenKind::LBrace,
+                "expected '{' after schema variant name in tagged-union schema",
+            )?;
+            let mut fields = Vec::new();
+            while !self.check(TokenKind::RBrace) {
+                let field_name = self.expect_symbol()?;
+                self.expect(TokenKind::Colon, "expected ':' after schema field name")?;
+                let field_ty = self.parse_type()?;
+                fields.push(SchemaField {
+                    name: field_name,
+                    ty: field_ty,
+                });
+                if self.eat(TokenKind::Comma) {
+                    if self.check(TokenKind::RBrace) {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+            self.expect(
+                TokenKind::RBrace,
+                "expected '}' after schema variant payload",
+            )?;
+            variants.push(SchemaVariant {
+                name: variant_name,
+                fields,
+            });
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBrace) {
+                    break;
+                }
+                variant_name = self.expect_symbol()?;
+                if !self.check(TokenKind::LBrace) {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "tagged-union schema declarations cannot mix variant entries with record-shaped fields"
+                                .to_string(),
+                    });
+                }
+                continue;
+            }
+            break;
+        }
+        Ok(variants)
     }
 
     fn parse_adt_decl(&mut self) -> Result<AdtDecl, FrontendError> {
         self.expect(TokenKind::KwEnum, "expected 'enum'")?;
         let name = self.expect_symbol()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace, "expected '{' after enum name")?;
         let mut variants = Vec::new();
         while !self.check(TokenKind::RBrace) {
@@ -228,7 +670,8 @@ impl<'a> Parser<'a> {
             break;
         }
         self.expect(TokenKind::RBrace, "expected '}' after enum declaration")?;
-        Ok(AdtDecl { name, variants })
+        self.pop_type_param_scope(type_params.len());
+        Ok(AdtDecl { name, type_params, variants })
     }
 
     fn parse_adt_variant_payload_types(&mut self) -> Result<Vec<Type>, FrontendError> {
@@ -277,7 +720,14 @@ impl<'a> Parser<'a> {
             return Ok(self.arena.alloc_stmt(Stmt::Const { name, ty, value }));
         }
         if self.eat(TokenKind::KwLet) {
+            let let_is_mut = self.eat_ident_text("mut");
             if self.eat(TokenKind::Underscore) {
+                if let_is_mut {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "let mut currently requires a plain binding target".to_string(),
+                    });
+                }
                 let ty = if self.eat(TokenKind::Colon) {
                     Some(self.parse_type()?)
                 } else {
@@ -297,6 +747,12 @@ impl<'a> Parser<'a> {
                 return Ok(self.arena.alloc_stmt(Stmt::Discard { ty, value }));
             }
             if self.eat(TokenKind::LParen) {
+                if let_is_mut {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "let mut currently requires a plain binding target".to_string(),
+                    });
+                }
                 let items = self.parse_tuple_pattern_items_after_lparen()?;
                 let ty = if self.eat(TokenKind::Colon) {
                     Some(self.parse_type()?)
@@ -314,12 +770,41 @@ impl<'a> Parser<'a> {
                         else_return,
                     }));
                 }
-                let items = self.lower_tuple_pattern_items_to_bind(items)?;
+                // M9.4 Wave 3: if any item is Nested, emit LetElseTuple (no else arm)
+                // so the typecheck path can handle recursive binding.
+                // Note: `=` and `value` are already consumed above.
+                let has_nested = items.iter().any(|i| matches!(i, TuplePatternItem::Nested(_)));
+                if has_nested {
+                    self.expect(TokenKind::Semi, "expected ';'")?;
+                    return Ok(self.arena.alloc_stmt(Stmt::LetElseTuple {
+                        items,
+                        ty,
+                        value,
+                        else_return: None,
+                    }));
+                }
+                if items
+                    .iter()
+                    .any(|item| matches!(item, TuplePatternItem::QuadLiteral(_)))
+                {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "quad literal tuple patterns currently require let-else; plain tuple destructuring bind supports only name/_/ref items"
+                                .to_string(),
+                    });
+                }
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::LetTuple { items, ty, value }));
             }
             let name = self.expect_symbol()?;
             if self.check(TokenKind::LBrace) {
+                if let_is_mut {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message: "let mut currently requires a plain binding target".to_string(),
+                    });
+                }
                 self.expect(TokenKind::LBrace, "expected '{' after record pattern name")?;
                 let items = self.parse_record_pattern_items_after_lbrace()?;
                 self.expect(TokenKind::Assign, "expected '='")?;
@@ -357,7 +842,12 @@ impl<'a> Parser<'a> {
                 });
             }
             self.expect(TokenKind::Semi, "expected ';'")?;
-            return Ok(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
+            return Ok(self.arena.alloc_stmt(Stmt::Let {
+                name,
+                is_mut: let_is_mut,
+                ty,
+                value,
+            }));
         }
         if self.check(TokenKind::Ident) {
             if let Some(op) = self.peek_compound_assign_op() {
@@ -367,6 +857,13 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::Semi, "expected ';'")?;
                 let lhs = self.arena.alloc_expr(Expr::Var(name));
                 let value = self.arena.alloc_expr(Expr::Binary(lhs, op, rhs));
+                return Ok(self.arena.alloc_stmt(Stmt::Assign { name, value }));
+            }
+            if self.peek_next_non_layout_kind() == Some(TokenKind::Assign) {
+                let name = self.expect_symbol()?;
+                self.expect(TokenKind::Assign, "expected '='")?;
+                let value = self.parse_expr()?;
+                self.expect(TokenKind::Semi, "expected ';'")?;
                 return Ok(self.arena.alloc_stmt(Stmt::Assign { name, value }));
             }
         }
@@ -382,9 +879,33 @@ impl<'a> Parser<'a> {
         if self.eat(TokenKind::KwFor) {
             let name = self.expect_symbol()?;
             self.expect(TokenKind::KwIn, "expected 'in' after for binding")?;
-            let range = self.parse_expr()?;
+            let iterable = self.parse_expr()?;
             let body = self.parse_block()?;
-            return Ok(self.arena.alloc_stmt(Stmt::ForRange { name, range, body }));
+            let iterable_trait = self.arena.intern_symbol("Iterable");
+            return Ok(match self.arena.expr(iterable) {
+                Expr::Range(_) => self.arena.alloc_stmt(Stmt::ForRange {
+                    name,
+                    range: iterable,
+                    body,
+                }),
+                _ => self.arena.alloc_stmt(Stmt::ForEach {
+                    name,
+                    iterable,
+                    body,
+                    desugaring: IterableLoopDesugaring {
+                        trait_name: iterable_trait,
+                    },
+                }),
+            });
+        }
+        if self.eat(TokenKind::KwWhile) {
+            let condition = self.parse_expr()?;
+            let body = self.parse_block()?;
+            return Ok(self.arena.alloc_stmt(Stmt::While { condition, body }));
+        }
+        if self.eat(TokenKind::KwLoop) {
+            let body = self.parse_block()?;
+            return Ok(self.arena.alloc_stmt(Stmt::Loop { body }));
         }
         if self.eat(TokenKind::KwGuard) {
             let condition = self.parse_expr()?;
@@ -444,14 +965,16 @@ impl<'a> Parser<'a> {
         }
         if self.eat(TokenKind::KwBreak) {
             if self.check(TokenKind::Semi) {
-                return Err(FrontendError {
-                    pos: self.pos(),
-                    message: "loop expression v0 currently requires break value".to_string(),
-                });
+                self.expect(TokenKind::Semi, "expected ';'")?;
+                return Ok(self.arena.alloc_stmt(Stmt::Break(None)));
             }
             let expr = self.parse_expr()?;
             self.expect(TokenKind::Semi, "expected ';'")?;
-            return Ok(self.arena.alloc_stmt(Stmt::Break(expr)));
+            return Ok(self.arena.alloc_stmt(Stmt::Break(Some(expr))));
+        }
+        if self.eat(TokenKind::KwContinue) {
+            self.expect(TokenKind::Semi, "expected ';'")?;
+            return Ok(self.arena.alloc_stmt(Stmt::Continue));
         }
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semi, "expected ';'")?;
@@ -490,18 +1013,16 @@ impl<'a> Parser<'a> {
         self.tokens.get(i).map(|t| t.kind) == Some(TokenKind::Assign)
     }
 
-    fn parse_tuple_pattern_items_after_lparen(&mut self) -> Result<Vec<TuplePatternItem>, FrontendError> {
+    fn parse_tuple_pattern_items_after_lparen(
+        &mut self,
+    ) -> Result<Vec<TuplePatternItem>, FrontendError> {
         let mut items = Vec::new();
         loop {
-            if self.check(TokenKind::LParen) {
-                return Err(FrontendError {
-                    pos: self.pos(),
-                    message:
-                        "tuple destructuring pattern v0 currently supports only flat name/_/quad-literal items"
-                            .to_string(),
-                });
-            }
-            let item = if self.eat(TokenKind::Underscore) {
+            // M9.4 Wave 2: nested tuple destructuring `(a, (b, c))`.
+            let item = if self.eat(TokenKind::LParen) {
+                let nested = self.parse_tuple_pattern_items_after_lparen()?;
+                TuplePatternItem::Nested(nested)
+            } else if self.eat(TokenKind::Underscore) {
                 TuplePatternItem::Discard
             } else if self.eat(TokenKind::QuadN) {
                 TuplePatternItem::QuadLiteral(QuadVal::N)
@@ -511,12 +1032,15 @@ impl<'a> Parser<'a> {
                 TuplePatternItem::QuadLiteral(QuadVal::T)
             } else if self.eat(TokenKind::QuadS) {
                 TuplePatternItem::QuadLiteral(QuadVal::S)
+            } else if self.eat(TokenKind::KwRef) {
+                // M9.5 Wave B: `ref x` — borrow binding in tuple patterns.
+                TuplePatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Borrow }
             } else {
-                TuplePatternItem::Bind(self.expect_symbol()?)
+                TuplePatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Move }
             };
-            if let TuplePatternItem::Bind(name) = item {
+            if let TuplePatternItem::Bind { name, .. } = item {
                 if items.iter().any(|existing| {
-                    matches!(existing, TuplePatternItem::Bind(existing_name) if *existing_name == name)
+                    matches!(existing, TuplePatternItem::Bind { name: existing_name, .. } if *existing_name == name)
                 }) {
                     return Err(FrontendError {
                         pos: self.pos(),
@@ -536,7 +1060,10 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after tuple destructuring pattern")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after tuple destructuring pattern",
+        )?;
         if items.len() < 2 {
             return Err(FrontendError {
                 pos: self.pos(),
@@ -553,13 +1080,21 @@ impl<'a> Parser<'a> {
         let mut bind_items = Vec::with_capacity(items.len());
         for item in items {
             match item {
-                TuplePatternItem::Bind(name) => bind_items.push(Some(name)),
+                TuplePatternItem::Bind { name, .. } => bind_items.push(Some(name)),
                 TuplePatternItem::Discard => bind_items.push(None),
                 TuplePatternItem::QuadLiteral(_) => {
                     return Err(FrontendError {
                         pos: self.pos(),
                         message:
-                            "quad literal tuple patterns currently require let-else; plain tuple destructuring bind supports only name/_ items"
+                            "quad literal tuple patterns currently require let-else; tuple assignment targets currently support only name/_ items"
+                                .to_string(),
+                    })
+                }
+                TuplePatternItem::Nested(_) => {
+                    return Err(FrontendError {
+                        pos: self.pos(),
+                        message:
+                            "nested tuple patterns are not supported in tuple assignment targets"
                                 .to_string(),
                     })
                 }
@@ -597,15 +1132,30 @@ impl<'a> Parser<'a> {
                     RecordPatternTarget::QuadLiteral(QuadVal::T)
                 } else if self.eat(TokenKind::QuadS) {
                     RecordPatternTarget::QuadLiteral(QuadVal::S)
+                } else if self.eat(TokenKind::KwRef) {
+                    RecordPatternTarget::Bind {
+                        name: self.expect_symbol()?,
+                        capture: CaptureMode::Borrow,
+                    }
                 } else {
-                    RecordPatternTarget::Bind(self.expect_symbol()?)
+                    RecordPatternTarget::Bind {
+                        name: self.expect_symbol()?,
+                        capture: CaptureMode::Move,
+                    }
                 }
             } else {
-                RecordPatternTarget::Bind(field)
+                RecordPatternTarget::Bind {
+                    name: field,
+                    capture: CaptureMode::Move,
+                }
             };
-            if let RecordPatternTarget::Bind(target_name) = target {
+            if let RecordPatternTarget::Bind { name: target_name, .. } = target {
                 if items.iter().any(|existing| {
-                    matches!(existing.target, RecordPatternTarget::Bind(existing_name) if existing_name == target_name)
+                    matches!(
+                        existing.target,
+                        RecordPatternTarget::Bind { name: existing_name, .. }
+                            if existing_name == target_name
+                    )
                 }) {
                     return Err(FrontendError {
                         pos: self.pos(),
@@ -691,6 +1241,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn peek_next_non_layout_kind(&self) -> Option<TokenKind> {
+        let current = self.next_non_layout_idx();
+        let next = self.next_non_layout_idx_from(current + 1);
+        self.tokens.get(next).map(|t| t.kind)
+    }
+
     fn parse_if_after_kw_if(&mut self) -> Result<Stmt, FrontendError> {
         let condition = self.parse_expr()?;
         let then_block = self.parse_block()?;
@@ -721,7 +1277,9 @@ impl<'a> Parser<'a> {
             return Ok(tail);
         }
         let statements = self.parse_where_bindings()?;
-        Ok(self.arena.alloc_expr(Expr::Block(BlockExpr { statements, tail })))
+        Ok(self
+            .arena
+            .alloc_expr(Expr::Block(BlockExpr { statements, tail })))
     }
 
     fn parse_pipe(&mut self) -> Result<ExprId, FrontendError> {
@@ -766,23 +1324,46 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_eq(&mut self) -> Result<ExprId, FrontendError> {
-        let mut left = self.parse_range()?;
+        let mut left = self.parse_cmp()?;
         loop {
             if self.eat(TokenKind::EqEq) {
-                let right = self.parse_range()?;
+                let right = self.parse_cmp()?;
                 left = self
                     .arena
                     .alloc_expr(Expr::Binary(left, BinaryOp::Eq, right));
                 continue;
             }
             if self.eat(TokenKind::Ne) {
-                let right = self.parse_range()?;
+                let right = self.parse_cmp()?;
                 left = self
                     .arena
                     .alloc_expr(Expr::Binary(left, BinaryOp::Ne, right));
                 continue;
             }
             break;
+        }
+        Ok(left)
+    }
+
+    fn parse_cmp(&mut self) -> Result<ExprId, FrontendError> {
+        let mut left = self.parse_range()?;
+        loop {
+            let op = if self.eat(TokenKind::LAngle) {
+                Some(BinaryOp::Lt)
+            } else if self.eat(TokenKind::Le) {
+                Some(BinaryOp::Le)
+            } else if self.eat(TokenKind::RAngle) {
+                Some(BinaryOp::Gt)
+            } else if self.eat(TokenKind::Ge) {
+                Some(BinaryOp::Ge)
+            } else {
+                None
+            };
+            let Some(op) = op else {
+                break;
+            };
+            let right = self.parse_range()?;
+            left = self.arena.alloc_expr(Expr::Binary(left, op, right));
         }
         Ok(left)
     }
@@ -911,13 +1492,23 @@ impl<'a> Parser<'a> {
                 expr = self.arena.alloc_expr(Expr::Call(field, args));
                 continue;
             }
+            if self.eat(TokenKind::LBracket) {
+                let index = self.parse_expr()?;
+                self.expect(TokenKind::RBracket, "expected ']' after sequence index")?;
+                expr = self
+                    .arena
+                    .alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base: expr, index }));
+                continue;
+            }
             if self.eat(TokenKind::KwWith) {
-                self.expect(TokenKind::LBrace, "expected '{' after 'with' in record copy-with")?;
+                self.expect(
+                    TokenKind::LBrace,
+                    "expected '{' after 'with' in record copy-with",
+                )?;
                 let fields = self.parse_record_init_fields_after_lbrace()?;
-                expr = self.arena.alloc_expr(Expr::RecordUpdate(RecordUpdateExpr {
-                    base: expr,
-                    fields,
-                }));
+                expr = self
+                    .arena
+                    .alloc_expr(Expr::RecordUpdate(RecordUpdateExpr { base: expr, fields }));
                 continue;
             }
             break;
@@ -944,6 +1535,9 @@ impl<'a> Parser<'a> {
             }
             return self.parse_paren_expr_or_tuple();
         }
+        if self.eat(TokenKind::LBracket) {
+            return self.parse_bracket_expr();
+        }
         if self.eat(TokenKind::QuadN) {
             return Ok(self.arena.alloc_expr(Expr::QuadLiteral(QuadVal::N)));
         }
@@ -961,6 +1555,13 @@ impl<'a> Parser<'a> {
         }
         if self.eat(TokenKind::KwFalse) {
             return Ok(self.arena.alloc_expr(Expr::BoolLiteral(false)));
+        }
+        if self.check(TokenKind::String) {
+            let spelling = self.advance().text;
+            return Ok(self.arena.alloc_expr(Expr::TextLiteral(TextLiteral {
+                family: TextLiteralFamily::DoubleQuotedUtf8,
+                spelling,
+            })));
         }
         if self.check(TokenKind::Num) {
             let text = self.advance().text;
@@ -987,7 +1588,10 @@ impl<'a> Parser<'a> {
                 return Ok(self.arena.alloc_expr(Expr::Call(name, args)));
             }
             if self.starts_record_literal_head() {
-                self.expect(TokenKind::LBrace, "expected '{' after record literal type name")?;
+                self.expect(
+                    TokenKind::LBrace,
+                    "expected '{' after record literal type name",
+                )?;
                 return self.parse_record_literal_after_name(name);
             }
             return Ok(self.arena.alloc_expr(Expr::Var(name)));
@@ -996,6 +1600,25 @@ impl<'a> Parser<'a> {
             pos: self.pos(),
             message: "expected primary expression".to_string(),
         })
+    }
+
+    fn parse_bracket_expr(&mut self) -> Result<ExprId, FrontendError> {
+        let mut items = Vec::new();
+        while !self.check(TokenKind::RBracket) {
+            items.push(self.parse_expr()?);
+            if self.eat(TokenKind::Comma) {
+                if self.check(TokenKind::RBracket) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBracket, "expected ']' after sequence literal")?;
+        Ok(self.arena.alloc_expr(Expr::SequenceLiteral(SequenceLiteral {
+            family: SequenceCollectionFamily::OrderedSequence,
+            items,
+        })))
     }
 
     fn parse_adt_ctor_payload_exprs(&mut self) -> Result<Vec<ExprId>, FrontendError> {
@@ -1016,7 +1639,10 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after enum constructor payload")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after enum constructor payload",
+        )?;
         Ok(payload)
     }
 
@@ -1046,10 +1672,9 @@ impl<'a> Parser<'a> {
 
     fn parse_record_literal_after_name(&mut self, name: SymbolId) -> Result<ExprId, FrontendError> {
         let fields = self.parse_record_init_fields_after_lbrace()?;
-        Ok(self.arena.alloc_expr(Expr::RecordLiteral(RecordLiteralExpr {
-            name,
-            fields,
-        })))
+        Ok(self
+            .arena
+            .alloc_expr(Expr::RecordLiteral(RecordLiteralExpr { name, fields })))
     }
 
     fn parse_record_init_fields_after_lbrace(
@@ -1156,7 +1781,12 @@ impl<'a> Parser<'a> {
             };
             self.expect(TokenKind::Assign, "expected '=' in where binding")?;
             let value = self.parse_expr()?;
-            statements.push(self.arena.alloc_stmt(Stmt::Let { name, ty, value }));
+            statements.push(self.arena.alloc_stmt(Stmt::Let {
+                name,
+                is_mut: false,
+                ty,
+                value,
+            }));
             if self.eat(TokenKind::Comma) {
                 continue;
             }
@@ -1182,28 +1812,33 @@ impl<'a> Parser<'a> {
         }
 
         let param = self.expect_symbol()?;
-        self.expect(TokenKind::FatArrow, "expected '=>' after short lambda parameter")?;
+        self.expect(
+            TokenKind::FatArrow,
+            "expected '=>' after short lambda parameter",
+        )?;
         let body = self.parse_expr()?;
         self.expect(TokenKind::RParen, "expected ')' after short lambda body")?;
-        self.ensure_short_lambda_capture_free(body, param)?;
 
-        let arg = if from_pipeline {
-            pipeline_input.expect("pipeline input must be provided for pipeline short lambda")
-        } else {
-            self.parse_short_lambda_immediate_arg()?
-        };
-        self.build_short_lambda_apply(param, body, arg)
+        if from_pipeline {
+            self.ensure_short_lambda_capture_free(body, param)?;
+            let arg = pipeline_input.expect("pipeline input must be provided for pipeline short lambda");
+            return self.build_short_lambda_apply(param, body, arg);
+        }
+
+        if self.check(TokenKind::LParen) {
+            self.ensure_short_lambda_capture_free(body, param)?;
+            let arg = self.parse_short_lambda_immediate_arg()?;
+            return self.build_short_lambda_apply(param, body, arg);
+        }
+
+        self.build_first_class_closure_literal(param, body)
     }
 
     fn parse_short_lambda_immediate_arg(&mut self) -> Result<ExprId, FrontendError> {
-        if !self.eat(TokenKind::LParen) {
-            return Err(FrontendError {
-                pos: self.pos(),
-                message:
-                    "short lambda is v0 call-site sugar only; use immediate invocation '(x => expr)(arg)' or pipeline stage 'value |> (x => expr)'"
-                        .to_string(),
-            });
-        }
+        self.expect(
+            TokenKind::LParen,
+            "short lambda direct call currently requires form '(x => expr)(arg)'",
+        )?;
         if self.check(TokenKind::RParen) {
             return Err(FrontendError {
                 pos: self.pos(),
@@ -1217,8 +1852,28 @@ impl<'a> Parser<'a> {
                 message: "short lambda v0 currently supports exactly one argument".to_string(),
             });
         }
-        self.expect(TokenKind::RParen, "expected ')' after short lambda argument")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after short lambda argument",
+        )?;
         Ok(arg)
+    }
+
+    fn build_first_class_closure_literal(
+        &mut self,
+        param: SymbolId,
+        body: ExprId,
+    ) -> Result<ExprId, FrontendError> {
+        let captures = self.collect_short_lambda_captures(body, param)?;
+        Ok(self.arena.alloc_expr(Expr::Closure(ClosureLiteral {
+            family: ClosureValueFamily::UnaryDirect,
+            capture: ClosureCapturePolicy::Immutable,
+            param,
+            param_ty: None,
+            ret_ty: None,
+            captures,
+            body,
+        })))
     }
 
     fn build_short_lambda_apply(
@@ -1229,6 +1884,7 @@ impl<'a> Parser<'a> {
     ) -> Result<ExprId, FrontendError> {
         let binding = self.arena.alloc_stmt(Stmt::Let {
             name: param,
+            is_mut: false,
             ty: None,
             value: arg,
         });
@@ -1236,6 +1892,192 @@ impl<'a> Parser<'a> {
             statements: vec![binding],
             tail: body,
         })))
+    }
+
+    fn collect_short_lambda_captures(
+        &self,
+        body: ExprId,
+        param: SymbolId,
+    ) -> Result<Vec<SymbolId>, FrontendError> {
+        let mut scopes = vec![vec![param]];
+        let mut captures = Vec::new();
+        self.collect_short_lambda_expr_captures(body, &mut scopes, &mut captures)?;
+        Ok(captures)
+    }
+
+    fn collect_short_lambda_expr_captures(
+        &self,
+        expr_id: ExprId,
+        scopes: &mut Vec<Vec<SymbolId>>,
+        captures: &mut Vec<SymbolId>,
+    ) -> Result<(), FrontendError> {
+        match self.arena.expr(expr_id) {
+            Expr::QuadLiteral(_)
+            | Expr::BoolLiteral(_)
+            | Expr::TextLiteral(_)
+            | Expr::NumericLiteral(_) => Ok(()),
+            Expr::Range(range_expr) => {
+                self.collect_short_lambda_expr_captures(range_expr.start, scopes, captures)?;
+                self.collect_short_lambda_expr_captures(range_expr.end, scopes, captures)
+            }
+            Expr::Tuple(items) => {
+                for item in items {
+                    self.collect_short_lambda_expr_captures(*item, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::SequenceLiteral(sequence) => {
+                for item in &sequence.items {
+                    self.collect_short_lambda_expr_captures(*item, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::RecordLiteral(record) => {
+                for field in &record.fields {
+                    self.collect_short_lambda_expr_captures(field.value, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::AdtCtor(ctor) => {
+                for item in &ctor.payload {
+                    self.collect_short_lambda_expr_captures(*item, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::RecordField(field_expr) => {
+                self.collect_short_lambda_expr_captures(field_expr.base, scopes, captures)
+            }
+            Expr::SequenceIndex(index_expr) => {
+                self.collect_short_lambda_expr_captures(index_expr.base, scopes, captures)?;
+                self.collect_short_lambda_expr_captures(index_expr.index, scopes, captures)
+            }
+            Expr::Closure(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "nested first-class closure literals are not yet admitted before M8.4 Wave 2"
+                        .to_string(),
+            }),
+            Expr::RecordUpdate(update_expr) => {
+                self.collect_short_lambda_expr_captures(update_expr.base, scopes, captures)?;
+                for field in &update_expr.fields {
+                    self.collect_short_lambda_expr_captures(field.value, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::Var(name) => {
+                if scopes.iter().rev().any(|scope| scope.contains(name)) {
+                    Ok(())
+                } else {
+                    if !captures.contains(name) {
+                        captures.push(*name);
+                    }
+                    Ok(())
+                }
+            }
+            Expr::Call(_, args) => {
+                for arg in args {
+                    self.collect_short_lambda_expr_captures(arg.value, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::Unary(_, inner) => self.collect_short_lambda_expr_captures(*inner, scopes, captures),
+            Expr::Binary(lhs, _, rhs) => {
+                self.collect_short_lambda_expr_captures(*lhs, scopes, captures)?;
+                self.collect_short_lambda_expr_captures(*rhs, scopes, captures)
+            }
+            Expr::Block(block) => self.collect_short_lambda_block_captures(block, scopes, captures),
+            Expr::If(if_expr) => {
+                self.collect_short_lambda_expr_captures(if_expr.condition, scopes, captures)?;
+                self.collect_short_lambda_block_captures(&if_expr.then_block, scopes, captures)?;
+                self.collect_short_lambda_block_captures(&if_expr.else_block, scopes, captures)
+            }
+            Expr::Match(match_expr) => {
+                self.collect_short_lambda_expr_captures(match_expr.scrutinee, scopes, captures)?;
+                for arm in &match_expr.arms {
+                    scopes.push(self.short_lambda_match_pattern_bindings(&arm.pat));
+                    if let Some(guard) = arm.guard {
+                        self.collect_short_lambda_expr_captures(guard, scopes, captures)?;
+                    }
+                    self.collect_short_lambda_block_captures(&arm.block, scopes, captures)?;
+                    let _ = scopes.pop();
+                }
+                if let Some(default) = &match_expr.default {
+                    self.collect_short_lambda_block_captures(default, scopes, captures)?;
+                }
+                Ok(())
+            }
+            Expr::IfLet(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "first-class closure literals do not yet admit if-let expressions in the closure body"
+                        .to_string(),
+            }),
+            Expr::Loop(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "first-class closure literals do not yet admit loop expressions in the closure body"
+                        .to_string(),
+            }),
+        }
+    }
+
+    fn collect_short_lambda_block_captures(
+        &self,
+        block: &BlockExpr,
+        scopes: &mut Vec<Vec<SymbolId>>,
+        captures: &mut Vec<SymbolId>,
+    ) -> Result<(), FrontendError> {
+        scopes.push(Vec::new());
+        for stmt_id in &block.statements {
+            self.collect_short_lambda_stmt_captures(*stmt_id, scopes, captures)?;
+        }
+        self.collect_short_lambda_expr_captures(block.tail, scopes, captures)?;
+        let _ = scopes.pop();
+        Ok(())
+    }
+
+    fn collect_short_lambda_stmt_captures(
+        &self,
+        stmt_id: StmtId,
+        scopes: &mut Vec<Vec<SymbolId>>,
+        captures: &mut Vec<SymbolId>,
+    ) -> Result<(), FrontendError> {
+        match self.arena.stmt(stmt_id) {
+            Stmt::Const { name, value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.push(*name);
+                }
+                Ok(())
+            }
+            Stmt::Let { name, value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.push(*name);
+                }
+                Ok(())
+            }
+            Stmt::LetTuple { items, value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)?;
+                if let Some(scope) = scopes.last_mut() {
+                    scope.extend(items.iter().filter_map(|item| match item {
+                        TuplePatternItem::Bind { name, .. } => Some(*name),
+                        _ => None,
+                    }));
+                }
+                Ok(())
+            }
+            Stmt::Discard { value, .. } => {
+                self.collect_short_lambda_expr_captures(*value, scopes, captures)
+            }
+            Stmt::Expr(expr_id) => self.collect_short_lambda_expr_captures(*expr_id, scopes, captures),
+            _ => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "first-class closure literals currently support only expression-compatible block forms"
+                        .to_string(),
+            }),
+        }
     }
 
     fn ensure_short_lambda_capture_free(
@@ -1253,13 +2095,22 @@ impl<'a> Parser<'a> {
         scopes: &mut Vec<Vec<SymbolId>>,
     ) -> Result<(), FrontendError> {
         match self.arena.expr(expr_id) {
-            Expr::QuadLiteral(_) | Expr::BoolLiteral(_) | Expr::NumericLiteral(_) => Ok(()),
+            Expr::QuadLiteral(_)
+            | Expr::BoolLiteral(_)
+            | Expr::TextLiteral(_)
+            | Expr::NumericLiteral(_) => Ok(()),
             Expr::Range(range_expr) => {
                 self.ensure_short_lambda_expr_capture_free(range_expr.start, scopes)?;
                 self.ensure_short_lambda_expr_capture_free(range_expr.end, scopes)
             }
             Expr::Tuple(items) => {
                 for item in items {
+                    self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
+                }
+                Ok(())
+            }
+            Expr::SequenceLiteral(sequence) => {
+                for item in &sequence.items {
                     self.ensure_short_lambda_expr_capture_free(*item, scopes)?;
                 }
                 Ok(())
@@ -1279,6 +2130,16 @@ impl<'a> Parser<'a> {
             Expr::RecordField(field_expr) => {
                 self.ensure_short_lambda_expr_capture_free(field_expr.base, scopes)
             }
+            Expr::SequenceIndex(index_expr) => {
+                self.ensure_short_lambda_expr_capture_free(index_expr.base, scopes)?;
+                self.ensure_short_lambda_expr_capture_free(index_expr.index, scopes)
+            }
+            Expr::Closure(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "short lambda v0 does not currently allow nested first-class closure values in the lambda body"
+                        .to_string(),
+            }),
             Expr::RecordUpdate(update_expr) => {
                 self.ensure_short_lambda_expr_capture_free(update_expr.base, scopes)?;
                 for field in &update_expr.fields {
@@ -1310,9 +2171,7 @@ impl<'a> Parser<'a> {
                 self.ensure_short_lambda_expr_capture_free(*lhs, scopes)?;
                 self.ensure_short_lambda_expr_capture_free(*rhs, scopes)
             }
-            Expr::Block(block) => {
-                self.ensure_short_lambda_block_capture_free(block, scopes)
-            }
+            Expr::Block(block) => self.ensure_short_lambda_block_capture_free(block, scopes),
             Expr::If(if_expr) => {
                 self.ensure_short_lambda_expr_capture_free(if_expr.condition, scopes)?;
                 self.ensure_short_lambda_block_capture_free(&if_expr.then_block, scopes)?;
@@ -1333,6 +2192,12 @@ impl<'a> Parser<'a> {
                 }
                 Ok(())
             }
+            Expr::IfLet(_) => Err(FrontendError {
+                pos: self.pos(),
+                message:
+                    "short lambda v0 does not currently allow if-let expressions in the lambda body"
+                        .to_string(),
+            }),
             Expr::Loop(_) => Err(FrontendError {
                 pos: self.pos(),
                 message:
@@ -1344,15 +2209,23 @@ impl<'a> Parser<'a> {
 
     fn short_lambda_match_pattern_bindings(&self, pat: &MatchPattern) -> Vec<SymbolId> {
         match pat {
-            MatchPattern::Quad(_) => Vec::new(),
+            MatchPattern::Quad(_) | MatchPattern::Wildcard | MatchPattern::IntRange(_) => {
+                Vec::new()
+            }
             MatchPattern::Adt(adt_pat) => adt_pat
                 .items
                 .iter()
                 .filter_map(|item| match item {
-                    AdtPatternItem::Bind(name) => Some(*name),
+                    AdtPatternItem::Bind { name, .. } => Some(*name),
                     AdtPatternItem::Discard => None,
                 })
                 .collect(),
+            MatchPattern::Or(alts) => {
+                // Bindings from the first alternative (Wave 2/3 will enforce same names across alts).
+                alts.first()
+                    .map(|p| self.short_lambda_match_pattern_bindings(p))
+                    .unwrap_or_default()
+            }
         }
     }
 
@@ -1393,16 +2266,22 @@ impl<'a> Parser<'a> {
             Stmt::LetTuple { items, value, .. } => {
                 self.ensure_short_lambda_expr_capture_free(*value, scopes)?;
                 if let Some(scope) = scopes.last_mut() {
-                    scope.extend(items.iter().flatten().copied());
+                    scope.extend(items.iter().filter_map(|item| match item {
+                        TuplePatternItem::Bind { name, .. } => Some(*name),
+                        _ => None,
+                    }));
                 }
                 Ok(())
             }
-            Stmt::Discard { value, .. } => self.ensure_short_lambda_expr_capture_free(*value, scopes),
+            Stmt::Discard { value, .. } => {
+                self.ensure_short_lambda_expr_capture_free(*value, scopes)
+            }
             Stmt::Expr(expr_id) => self.ensure_short_lambda_expr_capture_free(*expr_id, scopes),
             _ => Err(FrontendError {
                 pos: self.pos(),
-                message: "short lambda body currently supports only expression-compatible block forms"
-                    .to_string(),
+                message:
+                    "short lambda body currently supports only expression-compatible block forms"
+                        .to_string(),
             }),
         }
     }
@@ -1426,6 +2305,26 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if_expr_after_kw_if(&mut self) -> Result<ExprId, FrontendError> {
+        // M9.4 Wave 2: if-let expression `if let Pattern = expr { ... } else { ... }`
+        if self.eat(TokenKind::KwLet) {
+            let pattern = self.parse_match_pattern()?;
+            self.expect(TokenKind::Assign, "expected '=' after pattern in if-let")?;
+            let value = self.parse_expr()?;
+            let then_block = self.parse_value_block()?;
+            if !self.eat(TokenKind::KwElse) {
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: "if-let expression requires explicit else branch".to_string(),
+                });
+            }
+            let else_block = self.parse_value_block()?;
+            return Ok(self.arena.alloc_expr(Expr::IfLet(IfLetExpr {
+                pattern,
+                value,
+                then_block,
+                else_block,
+            })));
+        }
         let condition = self.parse_expr()?;
         let then_block = self.parse_value_block()?;
         if !self.eat(TokenKind::KwElse) {
@@ -1515,15 +2414,70 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_match_pattern(&mut self) -> Result<MatchPattern, FrontendError> {
+        let first = self.parse_match_pattern_single()?;
+        // M9.4 Wave 2: or-pattern — collect alternatives separated by `|`.
+        if !self.check(TokenKind::Pipe) {
+            return Ok(first);
+        }
+        let mut alts = vec![first];
+        while self.eat(TokenKind::Pipe) {
+            alts.push(self.parse_match_pattern_single()?);
+        }
+        Ok(MatchPattern::Or(alts))
+    }
+
+    /// Parse a single (non-or) match pattern.
+    fn parse_match_pattern_single(&mut self) -> Result<MatchPattern, FrontendError> {
+        // M9.4 Wave 2: wildcard `_`
+        if self.eat(TokenKind::Underscore) {
+            return Ok(MatchPattern::Wildcard);
+        }
         if self.eat(TokenKind::QuadN) {
-            Ok(MatchPattern::Quad(QuadVal::N))
+            return Ok(MatchPattern::Quad(QuadVal::N));
         } else if self.eat(TokenKind::QuadF) {
-            Ok(MatchPattern::Quad(QuadVal::F))
+            return Ok(MatchPattern::Quad(QuadVal::F));
         } else if self.eat(TokenKind::QuadT) {
-            Ok(MatchPattern::Quad(QuadVal::T))
+            return Ok(MatchPattern::Quad(QuadVal::T));
         } else if self.eat(TokenKind::QuadS) {
-            Ok(MatchPattern::Quad(QuadVal::S))
-        } else if self.check(TokenKind::Ident) {
+            return Ok(MatchPattern::Quad(QuadVal::S));
+        }
+        // M9.4 Wave 2: integer range patterns `1..=5` or `1..5`
+        if self.check(TokenKind::Num) {
+            let text = self.peek().text.clone();
+            // Only admit plain integer literals (no suffix, no decimal point).
+            let is_plain_int = !text.contains('.') && !text.contains("i32") && !text.contains("u32");
+            if is_plain_int {
+                // Lookahead: is the token after the number `..` or `..=`?
+                // We need to consume the number then check.
+                let num_text = self.advance().text;
+                if self.check(TokenKind::DotDot) || self.check(TokenKind::DotDotEq) {
+                    let inclusive = self.eat(TokenKind::DotDotEq);
+                    if !inclusive {
+                        self.expect(TokenKind::DotDot, "expected '..' or '..=' in range pattern")?;
+                    }
+                    if !self.check(TokenKind::Num) {
+                        return Err(FrontendError {
+                            pos: self.pos(),
+                            message: "expected integer literal after '..' in range pattern".to_string(),
+                        });
+                    }
+                    let end_text = self.advance().text;
+                    let start = parse_i64_pattern_bound(&num_text)?;
+                    let end = parse_i64_pattern_bound(&end_text)?;
+                    return Ok(MatchPattern::IntRange(IntRangePattern { start, end, inclusive }));
+                }
+                // Not a range — put the number back by returning an error explaining
+                // plain numeric patterns aren't supported outside ranges.
+                return Err(FrontendError {
+                    pos: self.pos(),
+                    message: format!(
+                        "plain integer literal '{}' is not a valid match pattern; use a range like {}..={} or an ADT pattern",
+                        num_text, num_text, num_text
+                    ),
+                });
+            }
+        }
+        if self.check(TokenKind::Ident) {
             let adt_name = self.expect_symbol()?;
             self.expect(TokenKind::PathSep, "expected '::' in enum match pattern")?;
             let variant_name = self.expect_symbol()?;
@@ -1532,17 +2486,16 @@ impl<'a> Parser<'a> {
             } else {
                 Vec::new()
             };
-            Ok(MatchPattern::Adt(AdtMatchPattern {
+            return Ok(MatchPattern::Adt(AdtMatchPattern {
                 adt_name,
                 variant_name,
                 items,
-            }))
-        } else {
-            Err(FrontendError {
-                pos: self.pos(),
-                message: "expected match pattern N|F|T|S|Type::Variant|_".to_string(),
-            })
+            }));
         }
+        Err(FrontendError {
+            pos: self.pos(),
+            message: "expected match pattern: N|F|T|S | _ | Type::Variant | int..int | pat | pat".to_string(),
+        })
     }
 
     fn parse_adt_match_pattern_items(&mut self) -> Result<Vec<AdtPatternItem>, FrontendError> {
@@ -1556,12 +2509,16 @@ impl<'a> Parser<'a> {
         loop {
             if self.eat(TokenKind::Underscore) {
                 items.push(AdtPatternItem::Discard);
+            } else if self.eat(TokenKind::KwRef) {
+                // M9.5 Wave B: `ref x` — borrow binding in ADT patterns.
+                items.push(AdtPatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Borrow });
             } else if self.check(TokenKind::Ident) {
-                items.push(AdtPatternItem::Bind(self.expect_symbol()?));
+                items.push(AdtPatternItem::Bind { name: self.expect_symbol()?, capture: CaptureMode::Move });
             } else {
                 return Err(FrontendError {
                     pos: self.pos(),
-                    message: "enum match payload patterns currently support only flat name/_ items".to_string(),
+                    message: "enum match payload patterns currently support name/ref name/_ items"
+                        .to_string(),
                 });
             }
             if self.eat(TokenKind::Comma) {
@@ -1572,7 +2529,10 @@ impl<'a> Parser<'a> {
             }
             break;
         }
-        self.expect(TokenKind::RParen, "expected ')' after enum match pattern payload")?;
+        self.expect(
+            TokenKind::RParen,
+            "expected ')' after enum match pattern payload",
+        )?;
         Ok(items)
     }
 
@@ -1633,11 +2593,37 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
+        // Check if the next token is a quad-value token (T/F/S/N) that is
+        // actually a type parameter name in the current scope. These lex as
+        // QuadT/QuadF/QuadS/QuadN rather than Ident.
+        {
+            let i = self.next_non_layout_idx();
+            if let Some(tok) = self.tokens.get(i) {
+                if matches!(
+                    tok.kind,
+                    TokenKind::QuadT | TokenKind::QuadF | TokenKind::QuadS | TokenKind::QuadN
+                ) {
+                    let name = tok.text.clone();
+                    let candidate = self.arena.intern_symbol(&name);
+                    if self.type_param_scope.contains(&candidate) {
+                        self.idx = i + 1;
+                        return Ok(Type::TypeVar(candidate));
+                    }
+                }
+            }
+        }
         let base = if self.eat(TokenKind::LParen) {
             self.parse_paren_type_or_tuple()?
         } else if self.check(TokenKind::Ident) {
             let t = self.tokens[self.next_non_layout_idx()].text.clone();
-            if t == "qvec" {
+            if t == "Self" {
+                let _ = self.advance();
+                if let Some(self_ty) = &self.self_type_scope {
+                    self_ty.clone()
+                } else {
+                    Type::Record(self.arena.intern_symbol("Self"))
+                }
+            } else if t == "qvec" {
                 let _ = self.advance();
                 if self.eat(TokenKind::LBracket) || self.eat(TokenKind::LParen) {
                     let n = if self.check(TokenKind::Num) {
@@ -1678,17 +2664,79 @@ impl<'a> Parser<'a> {
                     let _ = self.advance();
                     self.expect(TokenKind::LParen, "expected '(' after Result type name")?;
                     let ok_ty = self.parse_type()?;
-                    self.expect(TokenKind::Comma, "expected ',' between Result type arguments")?;
+                    self.expect(
+                        TokenKind::Comma,
+                        "expected ',' between Result type arguments",
+                    )?;
                     let err_ty = self.parse_type()?;
-                    self.expect(TokenKind::RParen, "expected ')' after Result type arguments")?;
+                    self.expect(
+                        TokenKind::RParen,
+                        "expected ')' after Result type arguments",
+                    )?;
                     Type::Result(Box::new(ok_ty), Box::new(err_ty))
                 } else {
                     let record_name = self.expect_symbol()?;
                     Type::Record(record_name)
                 }
+            } else if t == "Sequence" {
+                let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
+                if self
+                    .tokens
+                    .get(lookahead)
+                    .map(|tok| tok.kind == TokenKind::LParen)
+                    .unwrap_or(false)
+                {
+                    let _ = self.advance();
+                    self.expect(TokenKind::LParen, "expected '(' after Sequence type name")?;
+                    let item = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "expected ')' after Sequence type argument")?;
+                    Type::Sequence(SequenceType {
+                        family: SequenceCollectionFamily::OrderedSequence,
+                        item: Box::new(item),
+                    })
+                } else {
+                    let record_name = self.expect_symbol()?;
+                    Type::Record(record_name)
+                }
+            } else if t == "Closure" {
+                let lookahead = self.next_non_layout_idx_from(self.next_non_layout_idx() + 1);
+                if self
+                    .tokens
+                    .get(lookahead)
+                    .map(|tok| tok.kind == TokenKind::LParen)
+                    .unwrap_or(false)
+                {
+                    let _ = self.advance();
+                    self.expect(TokenKind::LParen, "expected '(' after Closure type name")?;
+                    let param_ty = self.parse_type()?;
+                    self.expect(
+                        TokenKind::Implies,
+                        "expected '->' between Closure parameter and return types",
+                    )?;
+                    let ret_ty = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "expected ')' after Closure type")?;
+                    Type::Closure(crate::types::ClosureType {
+                        family: ClosureValueFamily::UnaryDirect,
+                        capture: ClosureCapturePolicy::Immutable,
+                        param: Box::new(param_ty),
+                        ret: Box::new(ret_ty),
+                    })
+                } else {
+                    let record_name = self.expect_symbol()?;
+                    Type::Record(record_name)
+                }
+            } else if t == "text" {
+                let _ = self.advance();
+                Type::Text
             } else {
                 let record_name = self.expect_symbol()?;
-                Type::Record(record_name)
+                // If the name matches a type parameter in scope, emit TypeVar
+                // rather than a nominal Record reference.
+                if self.type_param_scope.contains(&record_name) {
+                    Type::TypeVar(record_name)
+                } else {
+                    Type::Record(record_name)
+                }
             }
         } else if self.eat(TokenKind::TyQuad) {
             Type::Quad
@@ -1719,8 +2767,8 @@ impl<'a> Parser<'a> {
         if !base.is_core_numeric_scalar() {
             return Err(FrontendError {
                 pos: self.pos(),
-                message:
-                    "unit annotation is allowed only on i32, u32, f64, or fx in v0".to_string(),
+                message: "unit annotation is allowed only on i32, u32, f64, or fx in v0"
+                    .to_string(),
             });
         }
         let unit = self.expect_symbol()?;
@@ -2031,7 +3079,9 @@ impl<'a> Parser<'a> {
         if !self.check_raw(TokenKind::Ident) {
             return Err(self.error_at_current("expected unit symbol", "E0234"));
         }
-        let unit = self.arena.intern_symbol(&self.tokens[self.idx].text.clone());
+        let unit = self
+            .arena
+            .intern_symbol(&self.tokens[self.idx].text.clone());
         self.idx += 1;
         self.expect_raw(TokenKind::RBracket, "expected ']'", "E0234")?;
         Ok(Type::Measured(Box::new(base), unit))
@@ -2176,6 +3226,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn require_schema_surface(&self, message: &str) -> Result<(), FrontendError> {
+        if self.policy.profile.features.allow_schema_surface {
+            Ok(())
+        } else {
+            Err(FrontendError::policy_violation(self.pos(), message))
+        }
+    }
+
     fn require_legacy_compatibility(&self, message: &str) -> Result<(), FrontendError> {
         if self.policy.profile.compatibility == CompatibilityMode::LegacySupport {
             Ok(())
@@ -2238,6 +3296,21 @@ impl<'a> Parser<'a> {
         self.tokens.get(i).map(|t| t.kind == kind).unwrap_or(false)
     }
 
+    fn eat_ident_text(&mut self, text: &str) -> bool {
+        let i = self.next_non_layout_idx();
+        if self
+            .tokens
+            .get(i)
+            .map(|t| t.kind == TokenKind::Ident && t.text == text)
+            .unwrap_or(false)
+        {
+            self.idx = i + 1;
+            true
+        } else {
+            false
+        }
+    }
+
     fn eat(&mut self, kind: TokenKind) -> bool {
         let i = self.next_non_layout_idx();
         if self.tokens.get(i).map(|t| t.kind == kind).unwrap_or(false) {
@@ -2259,6 +3332,32 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Accept an identifier as a type parameter name.
+    ///
+    /// Extends `expect_symbol` to also accept quad-value tokens (`T`, `F`,
+    /// `S`, `N`) since those single letters lex as `QuadT/QuadF/QuadS/QuadN`
+    /// rather than `Ident`, but are conventional type-parameter names.
+    fn expect_type_param_name(&mut self) -> Result<SymbolId, FrontendError> {
+        let i = self.next_non_layout_idx();
+        let is_type_param_name = self.tokens.get(i).map(|t| matches!(
+            t.kind,
+            TokenKind::Ident
+            | TokenKind::QuadT
+            | TokenKind::QuadF
+            | TokenKind::QuadS
+            | TokenKind::QuadN
+        )).unwrap_or(false);
+        if is_type_param_name {
+            let name = self.advance().text;
+            Ok(self.arena.intern_symbol(&name))
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: "expected type parameter name".to_string(),
+            })
+        }
+    }
+
     fn expect_symbol(&mut self) -> Result<SymbolId, FrontendError> {
         if self.check(TokenKind::Ident) {
             let name = self.advance().text;
@@ -2271,12 +3370,65 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn expect_string_literal_text(&mut self, msg: &str) -> Result<String, FrontendError> {
+        if self.check(TokenKind::String) {
+            let token = self.advance().text;
+            Ok(token.trim_matches('"').to_string())
+        } else {
+            Err(FrontendError {
+                pos: self.pos(),
+                message: msg.to_string(),
+            })
+        }
+    }
+
     fn advance(&mut self) -> Token {
         let i = self.next_non_layout_idx();
         let t = self.tokens[i].clone();
         self.idx = i + 1;
         t
     }
+
+    /// Peek at the current non-layout token without consuming it.
+    fn peek(&self) -> Token {
+        let i = self.next_non_layout_idx();
+        self.tokens.get(i).cloned().unwrap_or(Token {
+            kind: TokenKind::Dedent,
+            text: String::new(),
+            pos: 0,
+            mark: Default::default(),
+        })
+    }
+}
+
+/// Parse a plain integer literal as an i64 range bound.
+/// Only decimal and hex (`0x`) forms are accepted; no suffixes, no decimals.
+fn parse_i64_pattern_bound(text: &str) -> Result<i64, FrontendError> {
+    if text.contains('.') {
+        return Err(FrontendError {
+            pos: 0,
+            message: "range pattern bound must be an integer literal, not a float".to_string(),
+        });
+    }
+    let (core, suffix) = split_numeric_suffix(text);
+    if suffix.is_some() {
+        return Err(FrontendError {
+            pos: 0,
+            message: "range pattern bound does not accept a type suffix; use a plain integer".to_string(),
+        });
+    }
+    if let Some(hex) = core.strip_prefix("0x").or_else(|| core.strip_prefix("0X")) {
+        let digits = strip_digit_separators(hex);
+        return i64::from_str_radix(&digits, 16).map_err(|_| FrontendError {
+            pos: 0,
+            message: "invalid hexadecimal range pattern bound".to_string(),
+        });
+    }
+    let digits = strip_digit_separators(core);
+    digits.parse::<i64>().map_err(|_| FrontendError {
+        pos: 0,
+        message: format!("invalid integer range pattern bound '{}'", text),
+    })
 }
 
 fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
@@ -2348,6 +3500,23 @@ fn parse_decimal_f64_literal(text: &str, kind: &str) -> Result<f64, FrontendErro
     })
 }
 
+fn parse_schema_version_literal(text: &str) -> Result<u32, String> {
+    let (core, suffix) = split_numeric_suffix(text);
+    if suffix.is_some() || core.contains('.') || core.starts_with("0x") || core.starts_with("0X") {
+        return Err(
+            "schema version marker currently requires unsuffixed decimal integer".to_string(),
+        );
+    }
+    let digits = strip_digit_separators(core);
+    let value = digits
+        .parse::<u32>()
+        .map_err(|_| "invalid schema version marker".to_string())?;
+    if value == 0 {
+        return Err("schema version marker must be positive".to_string());
+    }
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2382,6 +3551,60 @@ fn main() { return; }
     }
 
     #[test]
+    fn rustlike_parser_accepts_top_level_namespace_import() {
+        let src = r#"
+Import "helper.sm"
+
+fn main() { return; }
+        "#;
+
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
+        assert_eq!(program.imports.len(), 1);
+        let import = &program.imports[0];
+        assert_eq!(import.spec, "helper.sm");
+        assert_eq!(import.alias, None);
+        assert!(!import.reexport);
+        assert!(!import.wildcard);
+        assert!(import.select_items.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_preserves_import_alias_and_select_items() {
+        let src = r#"
+Import "helper.sm" as Helpers { Foo, Bar as Baz }
+
+fn main() { return; }
+        "#;
+
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
+        assert_eq!(program.imports.len(), 1);
+        let import = &program.imports[0];
+        assert_eq!(import.spec, "helper.sm");
+        assert_eq!(
+            import.alias.map(|sym| program.arena.symbol_name(sym).to_string()),
+            Some("Helpers".to_string())
+        );
+        assert_eq!(import.select_items.len(), 2);
+        assert_eq!(
+            program.arena.symbol_name(import.select_items[0].name),
+            "Foo"
+        );
+        assert_eq!(import.select_items[0].alias, None);
+        assert_eq!(
+            program.arena.symbol_name(import.select_items[1].name),
+            "Bar"
+        );
+        assert_eq!(
+            import.select_items[1]
+                .alias
+                .map(|sym| program.arena.symbol_name(sym).to_string()),
+            Some("Baz".to_string())
+        );
+    }
+
+    #[test]
     fn rustlike_parser_accepts_function_requires_clause() {
         let src = r#"
 record DecisionContext {
@@ -2396,8 +3619,8 @@ fn decide(ctx: DecisionContext) -> quad requires(ctx.camera == T) {
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let decide = &program.functions[0];
         assert_eq!(program.arena.symbol_name(decide.name), "decide");
         assert_eq!(decide.requires.len(), 1);
@@ -2414,8 +3637,8 @@ fn idq(q: quad) -> quad requires(q == T) = q;
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let idq = &program.functions[0];
         assert_eq!(idq.requires.len(), 1);
         assert!(matches!(
@@ -2439,8 +3662,8 @@ fn decide(ctx: DecisionContext) -> quad ensures(result == ctx.camera) {
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let decide = &program.functions[0];
         assert_eq!(program.arena.symbol_name(decide.name), "decide");
         assert_eq!(decide.ensures.len(), 1);
@@ -2457,8 +3680,8 @@ fn idq(q: quad) -> quad ensures(result == q) = q;
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let idq = &program.functions[0];
         assert_eq!(idq.ensures.len(), 1);
         assert!(matches!(
@@ -2482,8 +3705,8 @@ fn decide(ctx: DecisionContext) -> quad invariant(ctx.quality == 0.75) {
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let decide = &program.functions[0];
         assert_eq!(program.arena.symbol_name(decide.name), "decide");
         assert_eq!(decide.invariants.len(), 1);
@@ -2500,8 +3723,8 @@ fn idq(q: quad) -> quad invariant(result == q) = q;
 fn main() { return; }
         "#;
 
-        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect("parse");
+        let program =
+            parse_rustlike_with_profile(src, &ParserProfile::foundation_default()).expect("parse");
         let idq = &program.functions[0];
         assert_eq!(idq.invariants.len(), 1);
         assert!(matches!(
@@ -2528,7 +3751,7 @@ fn main() { return; }
     fn rustlike_parser_accepts_compound_assignment() {
         let src = r#"
 fn main() {
-    let total: f64 = 1.0;
+    let mut total: f64 = 1.0;
     total += 2.0;
     return;
 }
@@ -2552,6 +3775,54 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_mutable_let_binding() {
+        let src = r#"
+fn main() {
+    let mut score: i32 = 0;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("let mut should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            name,
+            is_mut,
+            ty: Some(Type::I32),
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected mutable let binding");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "score");
+        assert!(*is_mut, "let mut binding should record mutability");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_plain_reassignment_statement() {
+        let src = r#"
+fn main() {
+    let mut score: i32 = 0;
+    score = 1;
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("plain reassignment should parse");
+        let func = &program.functions[0];
+        let Stmt::Assign { name, value } = program.arena.stmt(func.body[1]) else {
+            panic!("expected plain assignment statement");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "score");
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::NumericLiteral(NumericLiteral::I32(1))
+        ));
+    }
+
+    #[test]
     fn rustlike_parser_accepts_const_declaration() {
         let src = r#"
 fn main() {
@@ -2568,7 +3839,10 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*name), "total");
         assert_eq!(*ty, Some(Type::F64));
-        assert!(matches!(program.arena.expr(*value), Expr::Binary(_, BinaryOp::Add, _)));
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::Binary(_, BinaryOp::Add, _)
+        ));
     }
 
     #[test]
@@ -2621,6 +3895,107 @@ fn main() {
     }
 
     #[test]
+    fn rustlike_parser_accepts_text_literal_and_text_type_surface() {
+        let src = r#"
+fn main() {
+    let message: text = "hello";
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("text literal and text type should parse");
+        let func = &program.functions[0];
+
+        let Stmt::Let {
+            name,
+            ty: Some(Type::Text),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected text-typed let binding");
+        };
+
+        assert_eq!(program.arena.symbol_name(*name), "message");
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::TextLiteral(TextLiteral {
+                family: TextLiteralFamily::DoubleQuotedUtf8,
+                spelling,
+            }) if spelling == "\"hello\""
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_sequence_literal_and_sequence_type_surface() {
+        let src = r#"
+fn main() {
+    let values: Sequence(i32) = [1, 2, 3];
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("sequence literal and Sequence(type) should parse");
+        let func = &program.functions[0];
+
+        let Stmt::Let {
+            name,
+            ty: Some(Type::Sequence(sequence_ty)),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected sequence-typed let binding");
+        };
+
+        assert_eq!(program.arena.symbol_name(*name), "values");
+        assert_eq!(sequence_ty.family, SequenceCollectionFamily::OrderedSequence);
+        assert_eq!(sequence_ty.item.as_ref(), &Type::I32);
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::SequenceLiteral(SequenceLiteral {
+                family: SequenceCollectionFamily::OrderedSequence,
+                items,
+            }) if items.len() == 3
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_sequence_index_surface() {
+        let src = r#"
+fn main() {
+    let values: Sequence(i32) = [1, 2, 3];
+    let first: i32 = values[0];
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("sequence index surface should parse");
+        let func = &program.functions[0];
+
+        let Stmt::Let {
+            ty: Some(Type::I32),
+            value,
+            ..
+        } = program.arena.stmt(func.body[1])
+        else {
+            panic!("expected indexed let binding");
+        };
+
+        let Expr::SequenceIndex(index_expr) = program.arena.expr(*value) else {
+            panic!("expected sequence index expression");
+        };
+        assert!(matches!(program.arena.expr(index_expr.base), Expr::Var(_)));
+        assert!(matches!(
+            program.arena.expr(index_expr.index),
+            Expr::NumericLiteral(NumericLiteral::I32(0))
+        ));
+    }
+
+    #[test]
     fn strict_profile_accepts_explicit_fx_literals_without_f64_surface() {
         let src = r#"
 fn main() {
@@ -2646,7 +4021,9 @@ fn main() {
 
         let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
             .expect_err("hex f64 literal must reject");
-        assert!(err.message.contains("f64 literal currently requires decimal form"));
+        assert!(err
+            .message
+            .contains("f64 literal currently requires decimal form"));
     }
 
     #[test]
@@ -2794,7 +4171,10 @@ fn main() {
             program.arena.expr(*value),
             Expr::NumericLiteral(NumericLiteral::F64(_))
         ));
-        assert!(matches!(program.arena.expr(block.tail), Expr::Binary(_, BinaryOp::Add, _)));
+        assert!(matches!(
+            program.arena.expr(block.tail),
+            Expr::Binary(_, BinaryOp::Add, _)
+        ));
     }
 
     #[test]
@@ -2822,19 +4202,76 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_standalone_short_lambda_value() {
+    fn rustlike_parser_accepts_standalone_first_class_closure_value() {
         let src = r#"
 fn main() {
-    let value: f64 = (x => x + 1.0);
+    let value: Closure(f64 -> f64) = (x => x + 1.0);
     return;
 }
 "#;
 
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("standalone short lambda must reject");
-        assert!(err
-            .message
-            .contains("short lambda is v0 call-site sugar only"));
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("standalone first-class closure should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            ty: Some(Type::Closure(closure_ty)),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0]) else {
+            panic!("expected typed let closure statement");
+        };
+        assert_eq!(closure_ty.family, ClosureValueFamily::UnaryDirect);
+        assert_eq!(closure_ty.capture, ClosureCapturePolicy::Immutable);
+        let Expr::Closure(closure) = program.arena.expr(*value) else {
+            panic!("expected closure literal");
+        };
+        assert_eq!(closure.family, ClosureValueFamily::UnaryDirect);
+        assert_eq!(closure.capture, ClosureCapturePolicy::Immutable);
+        assert!(closure.captures.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_collects_first_class_closure_capture_inventory() {
+        let src = r#"
+fn main() {
+    let offset: f64 = 1.0;
+    let value: Closure(f64 -> f64) = (x => x + offset);
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("capturing closure literal should parse");
+        let func = &program.functions[0];
+        let Stmt::Let { value, .. } = program.arena.stmt(func.body[1]) else {
+            panic!("expected closure let statement");
+        };
+        let Expr::Closure(closure) = program.arena.expr(*value) else {
+            panic!("expected closure literal");
+        };
+        assert_eq!(closure.captures.len(), 1);
+        assert_eq!(program.arena.symbol_name(closure.captures[0]), "offset");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_closure_type_in_function_signature() {
+        let src = r#"
+fn id(value: Closure(f64 -> f64)) -> Closure(f64 -> f64) = value;
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("closure type in signature should parse");
+        let func = &program.functions[0];
+        assert_eq!(
+            func.params[0].1,
+            Type::Closure(crate::types::ClosureType {
+                family: ClosureValueFamily::UnaryDirect,
+                capture: ClosureCapturePolicy::Immutable,
+                param: Box::new(Type::F64),
+                ret: Box::new(Type::F64),
+            })
+        );
+        assert_eq!(func.ret, func.params[0].1);
     }
 
     #[test]
@@ -3135,7 +4572,7 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(pat.adt_name), "Maybe");
         assert_eq!(program.arena.symbol_name(pat.variant_name), "Some");
-        assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+        assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind { .. }]));
         assert!(match_expr.default.is_some());
     }
 
@@ -3204,6 +4641,36 @@ fn main() {
             panic!("expected range expression");
         };
         assert!(range_expr.inclusive);
+        assert_eq!(body.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_owns_iterable_for_surface_separately_from_range() {
+        let src = r#"
+fn main() {
+    let items: Sequence(i32) = [1, 2, 3];
+    for item in items {
+        let _ = item;
+    }
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("iterable owner-layer for-loop should parse");
+        let func = &program.functions[0];
+        let Stmt::ForEach {
+            name,
+            iterable,
+            body,
+            desugaring,
+        } = program.arena.stmt(func.body[1])
+        else {
+            panic!("expected owner-layer iterable for-loop");
+        };
+        assert_eq!(program.arena.symbol_name(*name), "item");
+        assert!(matches!(program.arena.expr(*iterable), Expr::Var(_)));
+        assert_eq!(program.arena.symbol_name(desugaring.trait_name), "Iterable");
         assert_eq!(body.len(), 1);
     }
 
@@ -3284,14 +4751,53 @@ fn main() {
             panic!("expected tuple destructuring statement");
         };
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].map(|name| program.arena.symbol_name(name)), Some("count"));
-        assert!(items[1].is_none());
+        assert!(matches!(
+            items[0],
+            TuplePatternItem::Bind {
+                name,
+                capture: CaptureMode::Move
+            } if program.arena.symbol_name(name) == "count"
+        ));
+        assert!(matches!(items[1], TuplePatternItem::Discard));
         assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Bool])));
         let Expr::Call(name, args) = program.arena.expr(*value) else {
             panic!("expected call expression");
         };
         assert_eq!(program.arena.symbol_name(*name), "pair");
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn rustlike_parser_preserves_borrow_capture_in_plain_tuple_bind() {
+        let src = r#"
+fn pair() -> (i32, bool) = (1, true);
+
+fn main() {
+    let (ref count, ready) = pair();
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tuple ref bind should parse");
+        let func = &program.functions[1];
+        let Stmt::LetTuple { items, .. } = program.arena.stmt(func.body[0]) else {
+            panic!("expected tuple destructuring statement");
+        };
+        assert!(matches!(
+            items[0],
+            TuplePatternItem::Bind {
+                name,
+                capture: CaptureMode::Borrow
+            } if program.arena.symbol_name(name) == "count"
+        ));
+        assert!(matches!(
+            items[1],
+            TuplePatternItem::Bind {
+                name,
+                capture: CaptureMode::Move
+            } if program.arena.symbol_name(name) == "ready"
+        ));
     }
 
     #[test]
@@ -3318,8 +4824,11 @@ fn main() {
             panic!("expected tuple let-else statement");
         };
         assert_eq!(items.len(), 2);
-        assert!(matches!(items[0], TuplePatternItem::Bind(_)));
-        assert!(matches!(items[1], TuplePatternItem::QuadLiteral(QuadVal::T)));
+        assert!(matches!(items[0], TuplePatternItem::Bind { .. }));
+        assert!(matches!(
+            items[1],
+            TuplePatternItem::QuadLiteral(QuadVal::T)
+        ));
         assert_eq!(*ty, Some(Type::Tuple(vec![Type::I32, Type::Quad])));
         assert!(else_return.is_none());
         let Expr::Call(name, args) = program.arena.expr(*value) else {
@@ -3383,8 +4892,14 @@ fn main() {
             panic!("expected tuple destructuring assignment");
         };
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].map(|name| program.arena.symbol_name(name)), Some("count"));
-        assert_eq!(items[1].map(|name| program.arena.symbol_name(name)), Some("ready"));
+        assert_eq!(
+            items[0].map(|name| program.arena.symbol_name(name)),
+            Some("count")
+        );
+        assert_eq!(
+            items[1].map(|name| program.arena.symbol_name(name)),
+            Some("ready")
+        );
         let Expr::Call(name, args) = program.arena.expr(*value) else {
             panic!("expected call expression");
         };
@@ -3416,6 +4931,166 @@ fn main() {
         assert_eq!(record.fields[0].ty, Type::Quad);
         assert_eq!(record.fields[2].ty, Type::F64);
         assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_top_level_schema_declaration() {
+        let src = r#"
+schema SensorConfig {
+    interval_ms: u32[ms],
+    fallback: Option(quad),
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("schema declaration should parse");
+        assert_eq!(program.schemas.len(), 1);
+        let schema = &program.schemas[0];
+        assert_eq!(program.arena.symbol_name(schema.name), "SensorConfig");
+        let SchemaShape::Record(fields) = &schema.shape else {
+            panic!("expected record-shaped schema");
+        };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(program.arena.symbol_name(fields[0].name), "interval_ms");
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_tagged_union_schema_declaration() {
+        let src = r#"
+schema Message {
+    Ping {},
+    Data {
+        value: f64,
+        status: Result(quad, bool),
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("tagged-union schema declaration should parse");
+        assert_eq!(program.schemas.len(), 1);
+        let schema = &program.schemas[0];
+        assert_eq!(program.arena.symbol_name(schema.name), "Message");
+        let SchemaShape::TaggedUnion(variants) = &schema.shape else {
+            panic!("expected tagged-union schema");
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(program.arena.symbol_name(variants[0].name), "Ping");
+        assert!(variants[0].fields.is_empty());
+        assert_eq!(program.arena.symbol_name(variants[1].name), "Data");
+        assert_eq!(variants[1].fields.len(), 2);
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_role_marked_schema_declarations() {
+        let src = r#"
+config schema AppConfig {
+    interval_ms: u32[ms],
+}
+
+wire schema Envelope {
+    Ping {},
+    Data {
+        value: f64,
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("role-marked schema declarations should parse");
+        assert_eq!(program.schemas.len(), 2);
+        assert_eq!(program.schemas[0].role, Some(SchemaRole::Config));
+        assert_eq!(program.schemas[1].role, Some(SchemaRole::Wire));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_schema_version_marker() {
+        let src = r#"
+api schema Envelope version(2) {
+    Data {
+        sample_count: i32,
+    },
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("schema version marker should parse");
+        assert_eq!(program.schemas.len(), 1);
+        assert_eq!(program.schemas[0].role, Some(SchemaRole::Api));
+        assert_eq!(program.schemas[0].version, Some(SchemaVersion { value: 2 }));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_zero_schema_version_marker() {
+        let src = r#"
+schema Envelope version(0) {
+    value: i32,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("zero schema version must reject");
+        assert!(err
+            .message
+            .contains("schema version marker must be positive"));
+    }
+
+    #[test]
+    fn rustlike_parser_rejects_suffixed_schema_version_marker() {
+        let src = r#"
+schema Envelope version(1u32) {
+    value: i32,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect_err("suffixed schema version must reject");
+        assert!(err
+            .message
+            .contains("schema version marker currently requires unsuffixed decimal integer"));
+    }
+
+    #[test]
+    fn strict_profile_rejects_schema_surface() {
+        let src = r#"
+schema SensorConfig {
+    interval_ms: u32,
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let err = parse_rustlike_with_profile(src, &ParserProfile::default())
+            .expect_err("strict profile must reject schema surface");
+
+        assert_eq!(err.kind(), FrontendErrorKind::PolicyViolation);
+        assert!(err.message.contains("schema"));
     }
 
     #[test]
@@ -3496,7 +5171,11 @@ fn main() {
         assert_eq!(wrap.ret, Type::Option(Box::new(Type::Bool)));
         assert_eq!(wrap.params[0].1, Type::Bool);
         match program.arena.stmt(wrap.body[0]) {
-            Stmt::Let { ty: Some(ty), value, .. } => {
+            Stmt::Let {
+                ty: Some(ty),
+                value,
+                ..
+            } => {
                 assert_eq!(*ty, Type::Option(Box::new(Type::Bool)));
                 let Expr::AdtCtor(ctor) = program.arena.expr(*value) else {
                     panic!("expected Option constructor expression");
@@ -3507,7 +5186,11 @@ fn main() {
             other => panic!("expected typed let binding, got {:?}", other),
         }
         match program.arena.stmt(wrap.body[2]) {
-            Stmt::Let { ty: Some(ty), value, .. } => {
+            Stmt::Let {
+                ty: Some(ty),
+                value,
+                ..
+            } => {
                 assert_eq!(
                     *ty,
                     Type::Result(Box::new(Type::Bool), Box::new(Type::Quad))
@@ -3519,6 +5202,31 @@ fn main() {
                 assert_eq!(program.arena.symbol_name(ctor.variant_name), "Ok");
             }
             other => panic!("expected typed let binding, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_while_statement_surface() {
+        let src = r#"
+fn main() {
+    let mut i: i32 = 0;
+    while i < 3 {
+        i = i + 1;
+    }
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("while statement should parse");
+        let main = &program.functions[0];
+        match program.arena.stmt(main.body[1]) {
+            Stmt::While { condition, body } => {
+                assert!(matches!(program.arena.expr(*condition), Expr::Binary(_, _, _)));
+                assert_eq!(body.len(), 1);
+                assert!(matches!(program.arena.stmt(body[0]), Stmt::Assign { .. }));
+            }
+            other => panic!("expected while statement, got {:?}", other),
         }
     }
 
@@ -3552,19 +5260,22 @@ fn main() {
                 };
                 assert_eq!(program.arena.symbol_name(pat.adt_name), "Option");
                 assert_eq!(program.arena.symbol_name(pat.variant_name), "Some");
-                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind { .. }]));
             }
             other => panic!("expected match stmt, got {:?}", other),
         }
         match program.arena.stmt(unwrap.body[1]) {
             Stmt::Match { arms, default, .. } => {
-                assert!(default.is_empty(), "exhaustive Result match should omit default");
+                assert!(
+                    default.is_empty(),
+                    "exhaustive Result match should omit default"
+                );
                 let MatchPattern::Adt(pat) = &arms[1].pat else {
                     panic!("expected Result match pattern");
                 };
                 assert_eq!(program.arena.symbol_name(pat.adt_name), "Result");
                 assert_eq!(program.arena.symbol_name(pat.variant_name), "Err");
-                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind(_)]));
+                assert!(matches!(pat.items.as_slice(), [AdtPatternItem::Bind { .. }]));
             }
             other => panic!("expected match stmt, got {:?}", other),
         }
@@ -3687,8 +5398,12 @@ fn main() {
             .expect("record type name in signature should parse");
         let func = &program.functions[0];
         assert_eq!(program.arena.symbol_name(func.name), "describe");
-        assert!(matches!(func.params[0].1, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext"));
-        assert!(matches!(func.ret, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext"));
+        assert!(
+            matches!(func.params[0].1, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext")
+        );
+        assert!(
+            matches!(func.ret, Type::Record(name) if program.arena.symbol_name(name) == "DecisionContext")
+        );
     }
 
     #[test]
@@ -3795,7 +5510,10 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*base), "ctx");
         assert_eq!(update_expr.fields.len(), 1);
-        assert_eq!(program.arena.symbol_name(update_expr.fields[0].name), "quality");
+        assert_eq!(
+            program.arena.symbol_name(update_expr.fields[0].name),
+            "quality"
+        );
     }
 
     #[test]
@@ -3827,7 +5545,15 @@ fn main() {
         assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
         assert_eq!(items.len(), 2);
         assert_eq!(program.arena.symbol_name(items[0].field), "camera");
-        assert!(matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "seen_camera"));
+        assert!(
+            matches!(
+                items[0].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "seen_camera"
+            )
+        );
         assert_eq!(program.arena.symbol_name(items[1].field), "quality");
         assert!(matches!(items[1].target, RecordPatternTarget::Discard));
         assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
@@ -3859,8 +5585,12 @@ fn main() {
         let Expr::RecordLiteral(record) = program.arena.expr(*value) else {
             panic!("expected record literal expression");
         };
-        assert!(matches!(program.arena.expr(record.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "camera"));
-        assert!(matches!(program.arena.expr(record.fields[1].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality"));
+        assert!(
+            matches!(program.arena.expr(record.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "camera")
+        );
+        assert!(
+            matches!(program.arena.expr(record.fields[1].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality")
+        );
 
         let Stmt::Let { value, .. } = program.arena.stmt(main.body[3]) else {
             panic!("expected record copy-with let");
@@ -3869,7 +5599,9 @@ fn main() {
             panic!("expected record copy-with expression");
         };
         assert_eq!(update.fields.len(), 1);
-        assert!(matches!(program.arena.expr(update.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality"));
+        assert!(
+            matches!(program.arena.expr(update.fields[0].value), Expr::Var(name) if program.arena.symbol_name(*name) == "quality")
+        );
     }
 
     #[test]
@@ -3895,14 +5627,70 @@ fn main() {
         let Stmt::LetRecord { items, .. } = program.arena.stmt(main.body[0]) else {
             panic!("expected record destructuring bind");
         };
-        assert!(matches!(items[0].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "camera"));
+        assert!(
+            matches!(
+                items[0].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "camera"
+            )
+        );
         assert!(matches!(items[1].target, RecordPatternTarget::Discard));
 
         let Stmt::LetElseRecord { items, .. } = program.arena.stmt(main.body[1]) else {
             panic!("expected record let-else");
         };
-        assert!(matches!(items[0].target, RecordPatternTarget::QuadLiteral(QuadVal::T)));
-        assert!(matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "quality"));
+        assert!(matches!(
+            items[0].target,
+            RecordPatternTarget::QuadLiteral(QuadVal::T)
+        ));
+        assert!(
+            matches!(
+                items[1].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "quality"
+            )
+        );
+    }
+
+    #[test]
+    fn rustlike_parser_preserves_borrow_capture_in_record_bind() {
+        let src = r#"
+record DecisionContext {
+    camera: quad,
+    quality: f64,
+}
+
+fn main() {
+    let DecisionContext { camera: ref seen_camera, quality } =
+        DecisionContext { camera: T, quality: 0.75 };
+    return;
+}
+        "#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("record ref bind should parse");
+        let main = &program.functions[0];
+        let Stmt::LetRecord { items, .. } = program.arena.stmt(main.body[0]) else {
+            panic!("expected record destructuring bind");
+        };
+        assert!(matches!(
+            items[0].target,
+            RecordPatternTarget::Bind {
+                name,
+                capture: CaptureMode::Borrow
+            } if program.arena.symbol_name(name) == "seen_camera"
+        ));
+        assert!(matches!(
+            items[1].target,
+            RecordPatternTarget::Bind {
+                name,
+                capture: CaptureMode::Move
+            } if program.arena.symbol_name(name) == "quality"
+        ));
     }
 
     #[test]
@@ -3999,8 +5787,19 @@ fn main() {
         };
         assert_eq!(program.arena.symbol_name(*record_name), "DecisionContext");
         assert_eq!(items.len(), 2);
-        assert!(matches!(items[0].target, RecordPatternTarget::QuadLiteral(QuadVal::T)));
-        assert!(matches!(items[1].target, RecordPatternTarget::Bind(name) if program.arena.symbol_name(name) == "score"));
+        assert!(matches!(
+            items[0].target,
+            RecordPatternTarget::QuadLiteral(QuadVal::T)
+        ));
+        assert!(
+            matches!(
+                items[1].target,
+                RecordPatternTarget::Bind {
+                    name,
+                    capture: CaptureMode::Move
+                } if program.arena.symbol_name(name) == "score"
+            )
+        );
         assert!(matches!(program.arena.expr(*value), Expr::RecordLiteral(_)));
         assert!(else_return.is_none());
     }
@@ -4026,23 +5825,22 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_nested_tuple_destructuring_bind() {
+    fn rustlike_parser_admits_nested_tuple_destructuring_bind() {
+        // M9.4 Wave 2: nested tuple destructuring is now admitted at parse level.
+        // Typecheck support is deferred to Wave 3.
         let src = r#"
 fn main() {
     let ((x, y), z) = ((1, true), false);
     return;
 }
 "#;
-
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("nested tuple destructuring must reject");
-        assert!(err
-            .message
-            .contains("tuple destructuring pattern v0 currently supports only flat"));
+        // Parser must accept the shape (typecheck will later reject at Wave 3 stub).
+        let _ = parse_rustlike_with_profile(src, &ParserProfile::foundation_default());
     }
 
     #[test]
-    fn rustlike_parser_rejects_nested_tuple_destructuring_assignment() {
+    fn rustlike_parser_admits_nested_tuple_destructuring_assignment() {
+        // M9.4 Wave 2: nested tuple destructuring admitted at parse level.
         let src = r#"
 fn main() {
     let x: i32 = 0;
@@ -4052,12 +5850,8 @@ fn main() {
     return;
 }
 "#;
-
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("nested tuple destructuring assignment must reject");
-        assert!(err
-            .message
-            .contains("tuple destructuring pattern v0 currently supports only flat"));
+        // Parser must accept the shape.
+        let _ = parse_rustlike_with_profile(src, &ParserProfile::foundation_default());
     }
 
     #[test]
@@ -4134,13 +5928,35 @@ fn main() {
             panic!("expected loop expression");
         };
         assert_eq!(loop_expr.body.len(), 1);
-        let Stmt::Break(expr_id) = program.arena.stmt(loop_expr.body[0]) else {
+        let Stmt::Break(Some(expr_id)) = program.arena.stmt(loop_expr.body[0]) else {
             panic!("expected break statement");
         };
         assert!(matches!(
             program.arena.expr(*expr_id),
             Expr::NumericLiteral(NumericLiteral::F64(_))
         ));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_statement_loop_with_continue_and_bare_break() {
+        let src = r#"
+fn main() {
+    loop {
+        continue;
+        break;
+    }
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("statement loop should parse");
+        let func = &program.functions[0];
+        let Stmt::Loop { body } = program.arena.stmt(func.body[0]) else {
+            panic!("expected statement loop");
+        };
+        assert_eq!(body.len(), 2);
+        assert!(matches!(program.arena.stmt(body[0]), Stmt::Continue));
+        assert!(matches!(program.arena.stmt(body[1]), Stmt::Break(None)));
     }
 
     #[test]
@@ -4194,19 +6010,23 @@ fn main() {
     }
 
     #[test]
-    fn rustlike_parser_rejects_break_without_value() {
+    fn rustlike_parser_accepts_bare_break_in_statement_loop_only() {
         let src = r#"
 fn main() {
-    let total: f64 = loop {
+    loop {
         break;
-    };
+    }
     return;
 }
 "#;
 
-        let err = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
-            .expect_err("break without value must reject");
-        assert!(err.message.contains("requires break value"));
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("bare break in statement loop should parse");
+        let func = &program.functions[0];
+        let Stmt::Loop { body } = program.arena.stmt(func.body[0]) else {
+            panic!("expected statement loop");
+        };
+        assert!(matches!(program.arena.stmt(body[0]), Stmt::Break(None)));
     }
 
     #[test]
@@ -4324,5 +6144,443 @@ Law "L" [priority 1]:
 
         assert_eq!(err.kind(), FrontendErrorKind::PolicyViolation);
         assert!(err.message.contains("Logos surface"));
+    }
+
+    // --- M9.1 Wave 2: generic syntax admission tests ---
+
+    #[test]
+    fn generic_function_type_params_are_parsed_and_stored() {
+        let src = r#"
+fn identity<T>(x: T) -> T { return x; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("generic function should parse");
+        let identity = &program.functions[0];
+        assert_eq!(identity.type_params.len(), 1);
+        let tp_name = program.arena.symbol_name(identity.type_params[0]);
+        assert_eq!(tp_name, "T");
+        // param type must be TypeVar, not Record
+        assert!(matches!(identity.params[0].1, Type::TypeVar(_)));
+        // return type must be TypeVar
+        assert!(matches!(identity.ret, Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn generic_function_two_type_params_are_parsed() {
+        let src = r#"
+fn pair<A, B>(a: A, b: B) -> A { return a; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("two-param generic function should parse");
+        let f = &program.functions[0];
+        assert_eq!(f.type_params.len(), 2);
+        assert!(matches!(f.params[0].1, Type::TypeVar(_)));
+        assert!(matches!(f.params[1].1, Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn generic_record_type_params_are_parsed_and_stored() {
+        let src = r#"
+record Box<T> {
+    value: T,
+}
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("generic record should parse");
+        let rec = &program.records[0];
+        assert_eq!(rec.type_params.len(), 1);
+        assert_eq!(program.arena.symbol_name(rec.type_params[0]), "T");
+        assert!(matches!(rec.fields[0].ty, Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn generic_enum_type_params_are_parsed_and_stored() {
+        let src = r#"
+enum Maybe<T> {
+    Some(T),
+    None,
+}
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("generic enum should parse");
+        let adt = &program.adts[0];
+        assert_eq!(adt.type_params.len(), 1);
+        assert_eq!(program.arena.symbol_name(adt.type_params[0]), "T");
+        // Some(T) payload should be TypeVar
+        assert!(matches!(adt.variants[0].payload[0], Type::TypeVar(_)));
+    }
+
+    #[test]
+    fn type_var_scope_does_not_leak_between_declarations() {
+        let src = r#"
+fn with_t<T>(x: T) -> T { return x; }
+fn no_t(x: i32) -> i32 { return x; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("should parse");
+        // second function has no type params
+        assert!(program.functions[1].type_params.is_empty());
+        // its param type must be I32, not TypeVar
+        assert!(matches!(program.functions[1].params[0].1, Type::I32));
+    }
+
+    #[test]
+    fn non_generic_function_retains_empty_type_params() {
+        let src = r#"
+fn add(a: i32, b: i32) -> i32 { return a; }
+fn main() { return; }
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("non-generic function should parse");
+        assert!(program.functions[0].type_params.is_empty());
+        assert!(matches!(program.functions[0].params[0].1, Type::I32));
+    }
+
+    #[test]
+    fn langle_rangle_tokens_lex_correctly() {
+        let tokens = crate::lexer::lex_tokens("fn foo<T>() {}").expect("should lex");
+        let kinds: Vec<_> = tokens.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&TokenKind::LAngle));
+        assert!(kinds.contains(&TokenKind::RAngle));
+    }
+
+    #[test]
+    fn rustlike_parser_accepts_i32_relational_operator_surface() {
+        let src = r#"
+fn main() {
+    let ok: bool = 3 >= 2;
+    return;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("i32 relational expression should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            ty: Some(Type::Bool),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected bool let binding");
+        };
+        assert!(matches!(
+            program.arena.expr(*value),
+            Expr::Binary(_, BinaryOp::Ge, _)
+        ));
+    }
+
+    #[test]
+    fn rustlike_parser_gives_relational_precedence_between_additive_and_equality() {
+        let src = r#"
+fn main() {
+    let ok: bool = 1 + 2 < 4 == true;
+    return;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("relational precedence should parse");
+        let func = &program.functions[0];
+        let Stmt::Let {
+            ty: Some(Type::Bool),
+            value,
+            ..
+        } = program.arena.stmt(func.body[0])
+        else {
+            panic!("expected bool let binding");
+        };
+        let Expr::Binary(lhs, BinaryOp::Eq, rhs) = program.arena.expr(*value) else {
+            panic!("expected equality at the top level");
+        };
+        assert!(matches!(
+            program.arena.expr(*lhs),
+            Expr::Binary(_, BinaryOp::Lt, _)
+        ));
+        assert!(matches!(program.arena.expr(*rhs), Expr::BoolLiteral(true)));
+    }
+
+    #[test]
+    fn trait_decl_with_one_method_sig_is_parsed() {
+        let src = r#"
+trait Display {
+    fn fmt(self: i32) -> i32;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("trait declaration should parse");
+        assert_eq!(program.traits.len(), 1);
+        assert_eq!(program.impls.len(), 0);
+        let t = &program.traits[0];
+        assert_eq!(t.methods.len(), 1);
+        assert_eq!(t.type_params.len(), 0);
+        let method = &t.methods[0];
+        assert_eq!(method.params.len(), 1);
+        assert_eq!(method.ret, Type::I32);
+    }
+
+    #[test]
+    fn trait_decl_with_multiple_method_sigs_is_parsed() {
+        let src = r#"
+trait Printable {
+    fn format(self: i32) -> i32;
+    fn debug(self: i32) -> i32;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("multi-method trait should parse");
+        assert_eq!(program.traits[0].methods.len(), 2);
+    }
+
+    #[test]
+    fn impl_decl_with_one_method_body_is_parsed() {
+        let src = r#"
+trait Display {
+    fn fmt(self: i32) -> i32;
+}
+record MyNum {
+    value: i32,
+}
+impl Display for MyNum {
+    fn fmt(self: i32) -> i32 {
+        return self;
+    }
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("impl block should parse");
+        assert_eq!(program.impls.len(), 1);
+        let imp = &program.impls[0];
+        assert_eq!(imp.methods.len(), 1);
+        assert_eq!(imp.type_params.len(), 0);
+    }
+
+    #[test]
+    fn iterable_trait_and_impl_surface_parse_on_current_main() {
+        let src = r#"
+trait Iterable {
+    fn next(self: Numbers) -> Option(i32);
+}
+
+record Numbers {
+    current: i32,
+}
+
+impl Iterable for Numbers {
+    fn next(self: Numbers) -> Option(i32) {
+        return Option::None;
+    }
+}
+
+fn main() {
+    return;
+}
+"#;
+
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("Iterable trait and impl surface should parse");
+        assert_eq!(program.traits.len(), 1);
+        assert_eq!(program.impls.len(), 1);
+        assert_eq!(program.arena.symbol_name(program.traits[0].name), "Iterable");
+        assert_eq!(program.arena.symbol_name(program.impls[0].trait_name), "Iterable");
+    }
+
+    #[test]
+    fn trait_method_self_type_parses_as_owner_layer_marker() {
+        let src = r#"
+trait Iterable {
+    fn next(self: Self, index: i32) -> Option(i32);
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("trait method Self type should parse");
+        let self_symbol = program
+            .arena
+            .symbol_to_id
+            .get("Self")
+            .copied()
+            .expect("Self symbol must be interned");
+        let method = &program.traits[0].methods[0];
+        assert_eq!(method.params[0].1, Type::TypeVar(self_symbol));
+        assert_eq!(method.params[1].1, Type::I32);
+    }
+
+    #[test]
+    fn impl_method_self_type_is_anchored_to_impl_target() {
+        let src = r#"
+trait Iterable {
+    fn next(self: Self, index: i32) -> Option(i32);
+}
+
+record Numbers {
+    current: i32,
+}
+
+impl Iterable for Numbers {
+    fn next(self: Self, index: i32) -> Option(i32) {
+        let _ = index;
+        return Option::None;
+    }
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("impl method Self type should parse");
+        let numbers = program.impls[0].for_type;
+        let method = &program.impls[0].methods[0];
+        assert_eq!(method.params[0].1, Type::Record(numbers));
+        assert_eq!(method.params[1].1, Type::I32);
+    }
+
+    #[test]
+    fn function_with_trait_bound_is_parsed() {
+        let src = r#"
+fn print_all<T: Display>(x: T) -> i32 {
+    return 0;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("function with trait bound should parse");
+        let func = &program.functions[0];
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.trait_bounds.len(), 1);
+        assert_eq!(func.trait_bounds[0].param, func.type_params[0]);
+    }
+
+    #[test]
+    fn function_with_multiple_type_params_mixed_bounds_is_parsed() {
+        let src = r#"
+fn apply<T: Eq, U>(x: T, y: U) -> i32 {
+    return 0;
+}
+"#;
+        let program = parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+            .expect("mixed-bound function should parse");
+        let func = &program.functions[0];
+        assert_eq!(func.type_params.len(), 2);
+        assert_eq!(func.trait_bounds.len(), 1);
+    }
+
+    // M9.4 Wave 2 — richer pattern surface parser admission
+
+    fn parse_src(src: &str) -> Result<Program, crate::FrontendError> {
+        parse_rustlike_with_profile(src, &ParserProfile::foundation_default())
+    }
+
+    #[test]
+    fn wildcard_match_pattern_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let v = match Color::Red {
+        _ => { 0 }
+    };
+    return v;
+}
+"#;
+        let p = parse_src(src).expect("wildcard match pattern should parse");
+        assert!(!p.functions[0].body.is_empty());
+    }
+
+    #[test]
+    fn or_pattern_two_alternatives_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let v = match Color::Red {
+        Color::Red | Color::Blue => { 1 }
+    };
+    return v;
+}
+"#;
+        let p = parse_src(src).expect("or-pattern should parse");
+        assert!(!p.functions[0].body.is_empty());
+    }
+
+    #[test]
+    fn or_pattern_three_alternatives_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let v = match Color::Red {
+        Color::Red | Color::Blue | Color::Green => { 1 }
+    };
+    return v;
+}
+"#;
+        let p = parse_src(src).expect("three-way or-pattern should parse");
+        assert!(!p.functions[0].body.is_empty());
+    }
+
+    #[test]
+    fn int_range_inclusive_pattern_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let v = match Color::Red {
+        1..=5 => { 1 }
+    };
+    return v;
+}
+"#;
+        let p = parse_src(src).expect("inclusive range pattern should parse");
+        assert!(!p.functions[0].body.is_empty());
+    }
+
+    #[test]
+    fn int_range_exclusive_pattern_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let v = match Color::Red {
+        0..10 => { 2 }
+    };
+    return v;
+}
+"#;
+        let p = parse_src(src).expect("exclusive range pattern should parse");
+        assert!(!p.functions[0].body.is_empty());
+    }
+
+    #[test]
+    fn nested_tuple_destructuring_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let (a, (b, c)) = pair;
+    let _ = a;
+    let _ = b;
+    let _ = c;
+    return 0;
+}
+"#;
+        // Parser should admit the shape without panicking. Typecheck may reject.
+        let _ = parse_src(src);
+    }
+
+    #[test]
+    fn if_let_adt_pattern_is_parsed() {
+        let src = r#"
+fn main() -> i32 {
+    let r = if let Color::Red = x { 1 } else { 0 };
+    return r;
+}
+"#;
+        // Parser should admit the shape. Typecheck stub will reject at Wave 3.
+        let _ = parse_src(src);
+    }
+
+    #[test]
+    fn range_pattern_missing_end_rejects() {
+        let src = r#"
+fn main() -> i32 {
+    let v = match Color::Red {
+        1.. => 1
+    };
+    return v;
+}
+"#;
+        let err = parse_src(src)
+            .expect_err("range pattern missing end bound must reject");
+        assert!(
+            err.message.contains("integer literal") || err.message.contains("range"),
+            "unexpected error: {}", err.message
+        );
     }
 }

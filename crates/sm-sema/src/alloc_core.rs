@@ -182,6 +182,7 @@ impl Default for SymbolTable {
 
 pub trait ModuleProvider {
     fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String>;
+    fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -569,6 +570,13 @@ pub struct ImportDirective {
     pub decl_order: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ImportResolutionPlan {
+    pub selected_bindings: Vec<String>,
+    pub namespace_aliases: Vec<String>,
+    pub wildcard_imports: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportKind {
     System,
@@ -840,6 +848,32 @@ pub fn validate_import_bindings_core(
         }
     }
     Ok(())
+}
+
+pub fn build_import_resolution_plan_core(imports: &[ImportDirective]) -> ImportResolutionPlan {
+    let mut ordered: Vec<&ImportDirective> = imports.iter().collect();
+    ordered.sort_by_key(|import| import.decl_order);
+
+    let mut plan = ImportResolutionPlan::default();
+    for import in &ordered {
+        for (src, dst) in &import.select_items {
+            let (_, base_name) = parse_select_expected_kind(src);
+            plan.selected_bindings
+                .push(dst.clone().unwrap_or_else(|| base_name.to_string()));
+        }
+    }
+    for import in &ordered {
+        plan.namespace_aliases.push(
+            import
+                .alias
+                .clone()
+                .unwrap_or_else(|| default_import_alias(&import.spec)),
+        );
+        if import.wildcard {
+            plan.wildcard_imports.push(import.spec.clone());
+        }
+    }
+    plan
 }
 
 #[derive(Debug, Clone)]
@@ -1201,6 +1235,107 @@ Import "dep.sm" as Foo
         let err = validate_select_imports_core(&modules, &dep_lookup, &export_symbols, &export_kinds)
             .expect_err("must fail");
         assert_eq!(err.code, "E0245");
+    }
+
+    #[test]
+    fn import_resolution_plan_keeps_selected_before_namespace_and_wildcard() {
+        let src = r#"
+Import "dep/wild.sm" *
+Import "dep/select.sm" { Entity:Sensor, Law:Check as Guard }
+Import "dep/core.sm" as Core
+"#;
+        let plan = build_import_resolution_plan_core(&parse_import_directives(src));
+        assert_eq!(plan.selected_bindings, vec!["Sensor", "Guard"]);
+        assert_eq!(plan.namespace_aliases, vec!["wild", "select", "Core"]);
+        assert_eq!(plan.wildcard_imports, vec!["dep/wild.sm"]);
+    }
+
+    #[test]
+    fn import_resolution_plan_keeps_wildcard_fallbacks_in_declaration_order() {
+        let src = r#"
+Import "dep/first.sm" *
+Import "dep/second.sm" *
+Import "dep/third.sm" *
+"#;
+        let plan = build_import_resolution_plan_core(&parse_import_directives(src));
+        assert_eq!(plan.wildcard_imports, vec!["dep/first.sm", "dep/second.sm", "dep/third.sm"]);
+    }
+
+    #[test]
+    fn export_set_keeps_locals_before_reexports_in_import_order() {
+        let modules = vec![
+            ExportBuildModule {
+                module_key: "root.sm".to_string(),
+                source: r#"
+Import pub "b.sm"
+Import pub "a.sm"
+Law "Root" [priority 1]:
+    When true -> System.recovery()
+"#
+                .to_string(),
+                local_exports: collect_local_exports_core(
+                    "root.sm",
+                    &[LocalExportDecl {
+                        public_name: "Root".to_string(),
+                        kind: ExportKind::Law,
+                        span: SourceMark::default(),
+                    }],
+                ),
+                imports: parse_import_directives(
+                    r#"
+Import pub "b.sm"
+Import pub "a.sm"
+"#,
+                ),
+            },
+            ExportBuildModule {
+                module_key: "a.sm".to_string(),
+                source: String::new(),
+                local_exports: collect_local_exports_core(
+                    "a.sm",
+                    &[
+                        LocalExportDecl {
+                            public_name: "A1".to_string(),
+                            kind: ExportKind::Law,
+                            span: SourceMark::default(),
+                        },
+                        LocalExportDecl {
+                            public_name: "A2".to_string(),
+                            kind: ExportKind::Law,
+                            span: SourceMark::default(),
+                        },
+                    ],
+                ),
+                imports: Vec::new(),
+            },
+            ExportBuildModule {
+                module_key: "b.sm".to_string(),
+                source: String::new(),
+                local_exports: collect_local_exports_core(
+                    "b.sm",
+                    &[LocalExportDecl {
+                        public_name: "B1".to_string(),
+                        kind: ExportKind::Law,
+                        span: SourceMark::default(),
+                    }],
+                ),
+                imports: Vec::new(),
+            },
+        ];
+        let mut dep_lookup = BTreeMap::new();
+        dep_lookup.insert(
+            ("root.sm".to_string(), "b.sm".to_string()),
+            "b.sm".to_string(),
+        );
+        dep_lookup.insert(
+            ("root.sm".to_string(), "a.sm".to_string()),
+            "a.sm".to_string(),
+        );
+
+        let export_sets = build_export_sets_core(&modules, &dep_lookup).expect("export sets");
+        let root = export_sets.get("root.sm").expect("root set");
+        let names: Vec<&str> = root.items.iter().map(|item| item.public_name.as_str()).collect();
+        assert_eq!(names, vec!["Root", "B1", "A1", "A2"]);
     }
 
     #[test]

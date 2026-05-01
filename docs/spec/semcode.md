@@ -19,7 +19,10 @@ Ownership rule:
 
 Standard execution rule:
 
-`source -> AST -> sema -> IR -> SemCode -> verify -> execute`
+`frontend -> semantics -> lowering -> IR passes -> emit -> verify -> execute`
+
+SemCode is the downstream binary contract after IR passes and before
+verifier-admitted VM execution.
 
 The VM is not the primary structural admission gate.
 `sm-verify` is the required admission stage for standard SemCode execution.
@@ -31,12 +34,34 @@ Current supported header family:
 - `SEMCODE0`
 - `SEMCODE1`
 - `SEMCODE2`
+- `SEMCODE3`
+- `SEMCODE4`
+- `SEMCODE5`
+- `SEMCODE6`
+- `SEMCODE7`
+- `SEMCODE8`
+- `SEMCODE9`
+- `SEMCOD10`
+- `SEMCOD11`
+- `SEMCOD12`
+- `SEMCOD13`
 
 Observed runtime support in the current toolchain:
 
 - `SEMCODE0`: epoch `0`, revision `1`
 - `SEMCODE1`: epoch `0`, revision `2`
 - `SEMCODE2`: epoch `0`, revision `3`
+- `SEMCODE3`: epoch `0`, revision `4`
+- `SEMCODE4`: epoch `0`, revision `5`
+- `SEMCODE5`: epoch `0`, revision `6`
+- `SEMCODE6`: epoch `0`, revision `7`
+- `SEMCODE7`: epoch `0`, revision `8`
+- `SEMCODE8`: epoch `0`, revision `9`
+- `SEMCODE9`: epoch `0`, revision `10`
+- `SEMCOD10`: epoch `0`, revision `11`
+- `SEMCOD11`: epoch `0`, revision `12`
+- `SEMCOD12`: epoch `0`, revision `13`
+- `SEMCOD13`: epoch `0`, revision `14`
 
 Header responsibilities:
 
@@ -52,6 +77,16 @@ Compatibility rules:
 2. A verifier must reject artifacts with unknown or unsupported headers.
 3. A VM must not silently reinterpret an unsupported header as a supported one.
 4. Any incompatible binary layout or meaning change requires a version bump.
+
+Discipline rules:
+
+- existing admitted header families remain fixed once they ship on `main`
+- capability widening stays additive in the current baseline and must not
+  repurpose existing bits
+- release-facing documents must distinguish the published stable line from the
+  wider admitted line on current `main`
+- SemCode header selection remains derived from actual emitted usage, not from
+  policy permission alone
 
 ## Current Header Semantics
 
@@ -73,6 +108,109 @@ Compatibility rules:
 - extends the supported opcode/header family without changing standard
   admit-then-execute rules
 
+`SEMCODE3`
+
+- promoted contract used when emitted program usage requires canonical plain
+  `fx` arithmetic
+- keeps the earlier `SEMCODE2` fixed-point value/equality contract intact for
+  older artifacts
+
+`SEMCODE4`
+
+- promoted contract used when emitted program usage requires admitted
+  post-stable `StateQuery` host calls
+- keeps `SEMCODE0..3` fixed for older artifacts that do not use the widened
+  host-call family
+
+`SEMCODE5`
+
+- promoted contract used when emitted program usage requires admitted
+  post-stable `StateUpdate` host calls
+- keeps `SEMCODE0..4` fixed for older artifacts that do not use the widened
+  write-side host-call family
+
+`SEMCODE6`
+
+- promoted contract used when emitted program usage requires admitted
+  post-stable `EventPost` host calls
+- keeps `SEMCODE0..5` fixed for older artifacts that do not use the widened
+  event-side host-call family
+
+`SEMCODE7`
+
+- promoted contract used when emitted program usage requires admitted
+  post-stable `ClockRead` host calls
+- keeps `SEMCODE0..6` fixed for older artifacts that do not use the widened
+  clock-query host-call family
+
+`SEMCODE8`
+
+- promoted contract used when emitted program usage requires the canonical text
+  value carrier for admitted literal/equality programs
+- keeps `SEMCODE0..7` fixed for older artifacts that do not use executable
+  text values
+
+`SEMCODE9`
+
+- promoted contract used when emitted program usage requires the canonical
+  ordered sequence carrier for the admitted `M8.3` first-wave surface
+- keeps `SEMCODE0..8` fixed for older artifacts that do not use executable
+  sequence values
+
+`SEMCOD10`
+
+- promoted contract used when emitted program usage requires the canonical
+  first-wave closure carrier and direct invocation path for admitted `M8.4`
+  closure values
+- keeps `SEMCODE0..9` fixed for older artifacts that do not use executable
+  closure values
+- uses the fixed-width 8-byte header magic form `SEMCOD10` rather than
+  `SEMCODE10`
+
+`SEMCOD11`
+
+- promoted contract used when emitted program usage requires tuple-only
+  ownership path metadata transport for lowered borrow/write events
+- keeps `SEMCODE0..10` fixed for older artifacts that do not use executable
+  ownership-path metadata
+- uses the fixed-width 8-byte header magic form `SEMCOD11`
+- adds the tagged function-local ownership section `OWN0` after the optional
+  `DBG0` section and before the instruction stream
+- encodes each ownership event deterministically as:
+  - event kind (`Borrow` or `Write`)
+  - root `SymbolId` as little-endian `u32`
+  - ordered tuple-only path components as `TupleIndex(u16)`
+- does not claim record, ADT payload, schema, or release/lifetime transport
+  beyond the current frame-local tuple slice
+
+`SEMCOD12`
+
+- promoted contract used when emitted program usage requires direct
+  record-field ownership path transport
+- keeps `SEMCOD11` fixed for tuple-only ownership-path artifacts
+- uses the fixed-width 8-byte header magic form `SEMCOD12`
+- keeps the tagged function-local ownership section `OWN0`
+- extends the ownership-path component vocabulary with:
+  - `Field(SymbolId)` encoded as component kind + little-endian `u32`
+- transports direct record-field `Borrow` and `Write` paths deterministically
+- requires `CAP_OWNERSHIP_FIELD_PATHS` when direct record-field components are
+  present
+- does not claim ADT payload, schema, or release/lifetime transport beyond the
+  current frame-local tuple+record slice
+
+`SEMCOD13`
+
+- promoted contract used when emitted program usage requires executable
+  first-wave built-in iterable loops over `Sequence(T)`
+- keeps `SEMCOD12` fixed for artifacts that do not use the widened sequence
+  iteration primitive
+- uses the fixed-width 8-byte header magic form `SEMCOD13`
+- adds the deterministic execution opcode `SEQUENCE_LEN` for built-in
+  sequence-loop lowering
+- requires `CAP_SEQUENCE_ITERATION` when `SEQUENCE_LEN` is present
+- does not claim executable user-defined `Iterable` impl dispatch, ADT payload
+  iteration, schema iteration, or non-frame-local iterator state
+
 Important rule:
 
 - header selection is derived from actual emitted usage, not from profile
@@ -93,7 +231,18 @@ Current canonical capability families:
 
 - `CAP_F64_MATH`
 - `CAP_FX_VALUES`
+- `CAP_FX_MATH`
 - `CAP_GATE_SURFACE`
+- `CAP_STATE_QUERY`
+- `CAP_STATE_UPDATE`
+- `CAP_EVENT_POST`
+- `CAP_CLOCK_READ`
+- `CAP_TEXT_VALUES`
+- `CAP_SEQUENCE_VALUES`
+- `CAP_SEQUENCE_ITERATION`
+- `CAP_CLOSURE_VALUES`
+- `CAP_OWNERSHIP_PATHS`
+- `CAP_OWNERSHIP_FIELD_PATHS`
 - `CAP_DEBUG_SYMBOLS`
 
 Contract rule:
@@ -116,6 +265,27 @@ Current SemCode admission validates:
 - string and debug reference validity
 - capability consistency between actual usage and emitted contract
 
+Current ownership-specific structural admission for `SEMCOD11` validates:
+
+- `OWN0` section layout
+- admitted ownership event kinds
+- tuple-only path component kinds under `SEMCOD11`
+- deterministic root/component payload shape
+- capability/header consistency for ownership transport
+
+Current `SEMCOD12` format extension in this slice:
+
+- producer transport may encode direct record-field `Borrow` and `Write` paths
+  in `OWN0`
+- verifier admits direct record-field ownership payload structurally
+- VM consumes admitted direct record-field ownership payload for frame-local
+  borrow tracking and overlap enforcement
+- ownership execution semantics remain specified separately in
+  `runtime_ownership.md`
+
+Execution semantics for admitted ownership payload are specified separately in
+`runtime_ownership.md`.
+
 ## Backward Compatibility Rule
 
 The following changes require a SemCode version review:
@@ -130,9 +300,11 @@ The following changes require a SemCode version review:
 Required follow-up:
 
 1. update this specification
-2. update verifier compatibility tests
-3. update VM compatibility tests
-4. update golden or compatibility fixtures if public behavior changed
+2. update `docs/roadmap/compatibility_statement.md`
+3. update `docs/roadmap/v1_readiness.md`
+4. update verifier compatibility tests
+5. update VM compatibility tests
+6. update golden or compatibility fixtures if public behavior changed
 
 ## No Silent Mutation Rule
 

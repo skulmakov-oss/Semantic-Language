@@ -1,0 +1,10 @@
+Import "left.sm" { score as left_score }
+Import "right.sm" { score as right_score }
+
+fn main() {
+    let left: i32 = left_score(2);
+    let right: i32 = right_score(3);
+    assert(left == 12);
+    assert(right == 103);
+    return;
+}

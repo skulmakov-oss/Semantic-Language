@@ -1,0 +1,5 @@
+Import "alpha.sm"
+
+fn left_score() -> i32 {
+    return alpha_score();
+}

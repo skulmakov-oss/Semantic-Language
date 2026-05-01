@@ -13,6 +13,16 @@ Current canonical host calls:
 - `GateWrite`
 - `PulseEmit`
 
+Current admitted post-stable host-call expansion:
+
+- `StateQuery`
+- `StateUpdate`
+- `EventPost`
+- `ClockRead`
+
+Current owned planned post-stable call identities:
+- none in the current first-wave admission pack
+
 Current `v1` scope decision:
 
 - the narrow ABI surface above is the official `v1` boundary
@@ -55,3 +65,7 @@ Current consumer:
 Current rule:
 
 - host-effect opcodes in the VM must cross the `prom-abi` trait boundary rather than embedding ad hoc host logic
+- `StateQuery`, `StateUpdate`, and `EventPost` are the currently admitted post-stable widenings
+  of that trait boundary
+- `ClockRead` is now also admitted post-stable as a narrow query-side `u32`
+  return family without widening the current stable `v1` gate surface

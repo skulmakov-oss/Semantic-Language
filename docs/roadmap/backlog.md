@@ -1,43 +1,92 @@
-# Semantic v1 Backlog Seed
+# Semantic Readiness Backlog
 
-Current release-control wave:
+Status: release-maintenance backlog for the current repository truth
 
-- keep the active beta release line stable on `main`
-- keep new feature work paused while release-facing docs, asset smoke checks, and packaging stay aligned
+Read this document using the canonical status vocabulary in:
 
-Current release-maintenance wave:
+- `docs/roadmap/public_status_model.md`
 
-- keep `blueprint`, `milestones`, `backlog`, and `v1_readiness` aligned with the published beta line
-- keep published release assets validated against representative source programs
-- keep release notes and compatibility statements honest about current narrow `v1` limits
+This backlog is not a promise to open a new language track by default.
+It exists to keep the published stable line, the qualified limited-release
+reading, and current-`main` reality aligned without silent scope widening.
 
-Current remaining `v1` wave:
+## Current Release-Control Wave
 
-- tighten remaining `fx` numeric contract notes now that the canonical value path is end-to-end
-- keep stable release/tag policy explicit as the repository moves from beta to final
+- keep the published stable line `v1.1.1` honest
+- keep the current practical-programming verdict honest:
+  `qualified limited release`, not `public release`
+- keep current-`main` landed widenings described as landed, not silently
+  promoted
 
-Current post-`v1` wave:
+## Current Required Maintenance Wave
 
-- richer `fx` arithmetic beyond the current value path
-- wider PROMETHEUS host-call families beyond the narrow `v1` boundary
-- persistence and replay backends
-- richer rule-side effect execution semantics
-- keep the explicit `ton618_core` / `support` / `ton618-core` compatibility perimeter narrow and documented
+- keep `README.md`, `milestones.md`, `v1_readiness.md`,
+  `compatibility_statement.md`, and `stable_release_policy.md` aligned with:
+  - `docs/roadmap/public_status_model.md`
+  - `reports/g1_release_scope_statement.md`
+  - the actual published stable line
+- keep release bundle guidance and smoke validation aligned with the current
+  stable asset story
+- keep qualification reports and release-facing docs in sync after each
+  completed Gate amendment or rerun
 
-Foundational work already in place:
+## Current Practical-Programming Reading
 
-- repository discipline and architecture baseline
-- verifier and admit-then-execute baseline
-- `SymbolId` runtime model and quota enforcement
-- type completeness matrix and `u32` completion
-- `fx` end-to-end value path and verified-path `f64` builtin coverage
-- canonical `sm-profile`
-- narrow PROMETHEUS boundary and owner-split semantic runtime baseline
-- CI-enforced release bundle and compatibility checks
+Qualified limited-release contour currently includes:
 
-Rule of execution:
+- single-file executable programs on the admitted source surface
+- narrow helper-module executable programs through direct local-path bare
+  imports
+- narrow helper-module executable programs through direct local-path selected
+  imports over function-only helper modules
+- rule/state-oriented programs over records, `quad`, and explicit
+  `Option` / `Result`
+- built-in `Sequence(T)` iteration
+- direct-record user-defined `Iterable` dispatch
+- verified execution through the admitted
+  `source -> sema -> IR -> SemCode -> verifier -> VM` path
 
-- do not start semantic runtime before verifier, runtime purity, and quotas are in place;
-- do not reopen scope while the active beta line is being validated;
-- one PR equals one logical step;
-- contract/spec/tests come before cleanup and optimization.
+Still explicitly outside the current qualified contour:
+
+- broader executable-module authoring beyond the admitted bare/selected slice
+- full CLI application authoring with admitted argv/stdout/file IO
+- UI
+- broader generalized iterable dispatch
+
+## Landed On `main`, Not Yet Promised
+
+Current `main` contains widened surfaces beyond the published stable line.
+These remain landed and unpromoted unless a later explicit decision qualifies
+or publishes them.
+
+High-signal landed post-stable families include:
+
+- schema/boundary-core work
+- package baseline work
+- ordered sequence surface
+- built-in iterable surface and direct-record iterable dispatch
+- first-wave closures
+- first-wave generics
+- runtime ownership for tuple + direct record-field paths
+- first-wave UI application boundary
+- selected-import executable module entry
+
+## Default Rule For New Work
+
+- do not open a new feature track by inertia
+- do not treat landed-on-`main` behavior as automatically release-promised
+- if broader practical-programming widening is desired, require:
+  - a new explicit scope decision
+  - and a Gate amendment or new qualification cycle
+
+Current explicit next-track proposal, if the repository chooses to widen from
+the completed readiness cycle:
+
+- `docs/roadmap/application_completeness_pr_ledger.md`
+
+## Execution Rule
+
+- one PR = one logical step
+- docs/spec/tests/report truth must move together
+- no silent scope movement
+- merge only on green local validation where applicable and green CI

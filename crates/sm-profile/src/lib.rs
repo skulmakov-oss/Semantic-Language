@@ -67,6 +67,7 @@ pub struct FeaturePolicy {
     pub allow_f64_math: bool,
     pub allow_gate_surface: bool,
     pub allow_logos_surface: bool,
+    pub allow_schema_surface: bool,
 }
 
 impl FeaturePolicy {
@@ -76,6 +77,7 @@ impl FeaturePolicy {
             allow_f64_math: false,
             allow_gate_surface: false,
             allow_logos_surface: false,
+            allow_schema_surface: false,
         }
     }
 }
@@ -148,6 +150,7 @@ impl ParserProfile {
                 allow_f64_math: true,
                 allow_gate_surface: true,
                 allow_logos_surface: true,
+                allow_schema_surface: true,
             },
             capabilities: CapabilityExpectations::permissive(),
             aliases: BTreeMap::new(),

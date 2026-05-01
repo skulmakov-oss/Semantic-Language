@@ -14,6 +14,30 @@ fn collect_rs_files(root: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn collect_files_with_extensions(root: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
+    let Ok(rd) = fs::read_dir(root) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            let rel = p.to_string_lossy().replace('\\', "/");
+            if rel.starts_with("./.git")
+                || rel.starts_with(".git/")
+                || rel.starts_with("./target")
+                || rel.starts_with("target/")
+                || rel.starts_with("./artifacts/release")
+                || rel.starts_with("artifacts/release/")
+            {
+                continue;
+            }
+            collect_files_with_extensions(&p, exts, out);
+        } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+            if exts.contains(&ext) {
+                out.push(p);
+            }
+        }
+    }
+}
+
 #[test]
 fn no_path_adapter_back_to_root_src() {
     let mut files = Vec::new();
@@ -58,6 +82,29 @@ fn root_src_contains_only_lib_and_bin_dir() {
     assert_eq!(
         top, expected,
         "root/src must contain only lib.rs and bin/"
+    );
+}
+
+#[test]
+fn root_src_rust_inventory_is_explicit() {
+    let mut rs_files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut rs_files);
+    let found: BTreeSet<String> = rs_files
+        .into_iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let expected: BTreeSet<String> = [
+        "src/lib.rs",
+        "src/bin/smc.rs",
+        "src/bin/svm.rs",
+        "src/bin/ton618_core.rs",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(
+        found, expected,
+        "root/src rust inventory must stay inside the explicit cleanup allowlist"
     );
 }
 
@@ -118,9 +165,6 @@ fn root_smc_is_thin_wrapper_over_smc_cli() {
 fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
     let explicit_shims = [
         "src/bin/ton618_core.rs",
-        "src/bin/support/mod.rs",
-        "src/bin/support/language.rs",
-        "src/bin/support/parser.rs",
         "crates/ton618-core/src/lib.rs",
     ];
 
@@ -156,5 +200,150 @@ fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
     assert!(
         matches.iter().any(|rel| rel == "src/bin/ton618_core.rs"),
         "legacy compatibility bin must remain explicit"
+    );
+}
+
+#[test]
+fn ton618_named_path_inventory_is_explicit() {
+    let mut matches = BTreeSet::new();
+
+    fn walk(root: &Path, out: &mut BTreeSet<String>) {
+        let Ok(rd) = fs::read_dir(root) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            let rel = p.to_string_lossy().replace('\\', "/");
+            if rel.starts_with("./.git")
+                || rel.starts_with(".git/")
+                || rel.starts_with("./target")
+                || rel.starts_with("target/")
+                || rel.starts_with("./artifacts/release")
+                || rel.starts_with("artifacts/release/")
+            {
+                continue;
+            }
+            if rel.contains("ton618") {
+                out.insert(rel.clone());
+            }
+            if p.is_dir() {
+                walk(&p, out);
+            }
+        }
+    }
+
+    walk(Path::new("."), &mut matches);
+
+    let expected: BTreeSet<String> = [
+        "./crates/ton618-core",
+        "./crates/ton618-core/Cargo.toml",
+        "./crates/ton618-core/src",
+        "./crates/ton618-core/src/arena.rs",
+        "./crates/ton618-core/src/diagnostics.rs",
+        "./crates/ton618-core/src/ids.rs",
+        "./crates/ton618-core/src/lib.rs",
+        "./crates/ton618-core/src/sigtable.rs",
+        "./crates/ton618-core/src/source.rs",
+        "./docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md",
+        "./src/bin/ton618_core.rs",
+        "./ton618_legacy",
+        "./ton618_legacy/.gitignore",
+        "./ton618_legacy/LICENSE-APACHE",
+        "./ton618_legacy/LICENSE-MIT",
+        "./ton618_legacy/README.md",
+        "./ton618_legacy/benches",
+        "./ton618_legacy/benches/bank_soa.rs",
+        "./ton618_legacy/benches/simd_ops.rs",
+        "./ton618_legacy/Cargo.toml",
+        "./ton618_legacy/clippy.toml",
+        "./ton618_legacy/rustfmt.toml",
+        "./ton618_legacy/src",
+        "./ton618_legacy/src/bank.rs",
+        "./ton618_legacy/src/bench",
+        "./ton618_legacy/src/bench/mod.rs",
+        "./ton618_legacy/src/delta.rs",
+        "./ton618_legacy/src/lib.rs",
+        "./ton618_legacy/src/masks.rs",
+        "./ton618_legacy/src/prelude.rs",
+        "./ton618_legacy/src/reg.rs",
+        "./ton618_legacy/src/simd",
+        "./ton618_legacy/src/simd/arm_neon.rs",
+        "./ton618_legacy/src/simd/mod.rs",
+        "./ton618_legacy/src/simd/x86_avx2.rs",
+        "./ton618_legacy/tests",
+        "./ton618_legacy/tests/correctness.rs",
+        "./ton618_legacy/tests/no_msb_leakage.rs",
+        "./ton618_legacy/tests/simd_equivalence.rs",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    assert_eq!(
+        matches, expected,
+        "TON618-named filesystem perimeter must stay inside the explicit allowlist"
+    );
+}
+
+#[test]
+fn ton618_content_inventory_is_explicit() {
+    let mut files = Vec::new();
+    collect_files_with_extensions(
+        Path::new("."),
+        &["rs", "md", "toml", "lock"],
+        &mut files,
+    );
+
+    let mut matches = BTreeSet::new();
+    for file in files {
+        let rel = file.to_string_lossy().replace('\\', "/");
+        let txt = fs::read_to_string(&file).expect("read text file");
+        if txt.contains("ton618_core") || txt.contains("ton618-core") {
+            matches.insert(rel);
+        }
+    }
+
+    let expected: BTreeSet<String> = [
+        "./Cargo.lock",
+        "./Cargo.toml",
+        "./README.md",
+        "./crates/sm-front/Cargo.toml",
+        "./crates/sm-front/src/lexer.rs",
+        "./crates/sm-front/src/parser.rs",
+        "./crates/sm-front/src/types.rs",
+        "./crates/sm-sema/Cargo.toml",
+        "./crates/sm-sema/src/alloc_core.rs",
+        "./crates/sm-sema/src/lib.rs",
+        "./crates/sm-sema/src/std_adapters.rs",
+        "./crates/smc-cli/Cargo.toml",
+        "./crates/smc-cli/src/app.rs",
+        "./crates/smc-cli/src/lib.rs",
+        "./crates/ton618-core/Cargo.toml",
+        "./crates/ton618-core/src/lib.rs",
+        "./docs/NAMING.md",
+        "./docs/NO_STD.md",
+        "./docs/architecture/dependency_boundary_rules.md",
+        "./docs/architecture/module_ownership_map.md",
+        "./docs/legacy-map.md",
+        "./docs/roadmap/language_maturity/root_legacy_cleanup_full_scope.md",
+        "./docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md",
+        "./src/bin/ton618_core.rs",
+        "./src/lib.rs",
+        "./tests/legacy_guards.rs",
+        "./ton618_legacy/Cargo.toml",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    assert_eq!(
+        matches, expected,
+        "files that mention TON618 compatibility names must stay inside the explicit inventory"
+    );
+}
+
+#[test]
+fn legacy_support_directory_is_removed() {
+    assert!(
+        !Path::new("src/bin/support").exists(),
+        "legacy support directory must be removed after inlining compatibility helpers"
     );
 }

@@ -1,11 +1,16 @@
 source: crates/sm-vm/src/semcode_vm.rs
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClosureValue {
+pub function_name: String,
+pub captures: Vec<Value>,
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
 #[derive(Debug, Clone)]
 pub struct Frame {
 pub pc: usize,
 pub regs: Vec<Value>,
 pub locals: HashMap<SymbolId, Value>,
+pub borrowed_paths: Vec<AccessPath>,
 pub func: String,
 pub return_dst: Option<u16>,
 #[derive(Debug, Clone)]
@@ -14,6 +19,7 @@ pub name: String,
 pub strings: Vec<String>,
 pub symbol_ids: Vec<SymbolId>,
 pub debug_symbols: Vec<DebugSymbol>,
+pub borrowed_paths: Vec<AccessPath>,
 pub code: Vec<u8>,
 pub instr_start: usize,
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,10 +41,10 @@ pub fn run_verified_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
 pub fn run_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
 pub fn run_semcode_with_config(bytes: &[u8], config: ExecutionConfig) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_with_config(
-pub fn run_verified_semcode_with_entry(
+pub fn run_verified_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
 pub fn run_verified_semcode_with_entry_and_config(
 pub fn run_verified_semcode_with_host_and_capabilities<
 pub fn run_verified_semcode_with_host_and_capabilities_and_config<
+pub fn run_verified_semcode_with_ui_capabilities<
 pub fn run_semcode_with_entry_and_config(
 pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
-

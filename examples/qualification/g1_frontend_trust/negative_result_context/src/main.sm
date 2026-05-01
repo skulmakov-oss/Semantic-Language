@@ -1,0 +1,5 @@
+fn main() {
+    let value = Result::Ok(true);
+    let _ = value;
+    return;
+}

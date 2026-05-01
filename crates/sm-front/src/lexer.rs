@@ -154,6 +154,24 @@ fn tokenize_line(
                     i += 1;
                 }
             }
+            b'<' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::Le, "<=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::LAngle, "<", abs_pos, line_no, col);
+                    i += 1;
+                }
+            }
+            b'>' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    push_tok(out, TokenKind::Ge, ">=", abs_pos, line_no, col);
+                    i += 2;
+                } else {
+                    push_tok(out, TokenKind::RAngle, ">", abs_pos, line_no, col);
+                    i += 1;
+                }
+            }
             b'&' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'&' {
                     if i + 2 < bytes.len() && bytes[i + 2] == b'=' {
@@ -187,14 +205,9 @@ fn tokenize_line(
                     push_tok(out, TokenKind::PipeForward, "|>", abs_pos, line_no, col);
                     i += 2;
                 } else {
-                    return Err(fmt_mark_error(
-                        "E0003",
-                        line_no,
-                        col,
-                        line_text,
-                        "expected '||' or '|>'",
-                        abs_pos,
-                    ));
+                    // M9.4 Wave 2: bare `|` is the or-pattern separator.
+                    push_tok(out, TokenKind::Pipe, "|", abs_pos, line_no, col);
+                    i += 1;
                 }
             }
             b'+' => {
@@ -302,16 +315,21 @@ fn tokenize_line(
                     "ensures" => TokenKind::KwEnsures,
                     "invariant" => TokenKind::KwInvariant,
                     "record" => TokenKind::KwRecord,
+                    "schema" => TokenKind::KwSchema,
                     "enum" => TokenKind::KwEnum,
                     "const" => TokenKind::KwConst,
+                    "trait" => TokenKind::KwTrait,
+                    "impl" => TokenKind::KwImpl,
                     "let" => TokenKind::KwLet,
                     "for" => TokenKind::KwFor,
                     "in" => TokenKind::KwIn,
                     "guard" => TokenKind::KwGuard,
                     "if" => TokenKind::KwIf,
                     "else" => TokenKind::KwElse,
+                    "while" => TokenKind::KwWhile,
                     "loop" => TokenKind::KwLoop,
                     "break" => TokenKind::KwBreak,
+                    "continue" => TokenKind::KwContinue,
                     "where" => TokenKind::KwWhere,
                     "with" => TokenKind::KwWith,
                     "return" => TokenKind::KwReturn,
@@ -325,6 +343,7 @@ fn tokenize_line(
                     "Pulse" => TokenKind::KwPulse,
                     "Profile" => TokenKind::KwProfile,
                     "Import" => TokenKind::KwImport,
+                    "ref" => TokenKind::KwRef,
                     "quad" => TokenKind::TyQuad,
                     "bool" => TokenKind::TyBool,
                     "i32" => TokenKind::TyI32,
@@ -481,5 +500,14 @@ mod tests {
         let toks = lex_tokens(src).expect("frontend lexer");
         assert!(toks.iter().any(|t| t.kind == TokenKind::KwEntity));
         assert!(toks.iter().any(|t| t.kind == TokenKind::Indent));
+    }
+
+    #[test]
+    fn lexer_recognizes_relational_operator_pairs() {
+        let src = "fn main() { let ok: bool = 3 <= 4 && 5 >= 2; return; }";
+        let toks = lex_tokens(src).expect("frontend lexer");
+        let kinds: Vec<_> = toks.iter().map(|t| t.kind).collect();
+        assert!(kinds.contains(&TokenKind::Le));
+        assert!(kinds.contains(&TokenKind::Ge));
     }
 }

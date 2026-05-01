@@ -1,0 +1,11 @@
+fn main() {
+    let gt: bool = 3 > 2;
+    let lt: bool = 2 < 3;
+    let ge: bool = 3 >= 3;
+    let le: bool = 3 <= 3;
+    assert(gt == true);
+    assert(lt == true);
+    assert(ge == true);
+    assert(le == true);
+    return;
+}

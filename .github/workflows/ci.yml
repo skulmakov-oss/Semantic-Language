@@ -4,16 +4,22 @@ on:
   push:
   pull_request:
 
+env:
+  # Opt into the upcoming GitHub Actions Node 24 runtime now so CI is
+  # validated before the platform-wide default switch.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   boundary-enforcement:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Root cleanliness and legacy perimeter guard
+        run: cargo test --test legacy_guards --quiet
       - name: Boundary and ownership guards
         run: |
-          cargo test --test legacy_guards --quiet
           cargo test --test frontend_boundaries --quiet
           cargo test --test ir_opt_boundaries --quiet
           cargo test --test dependency_boundaries --quiet
@@ -21,7 +27,7 @@ jobs:
   public-api-guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Public API inventory guard
@@ -30,7 +36,7 @@ jobs:
   runtime-release-gates:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Runtime and SemCode release-facing validation gates
@@ -44,7 +50,7 @@ jobs:
   release-bundle-process:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Verify release bundle process
         shell: pwsh
         run: |
@@ -53,7 +59,7 @@ jobs:
   test-std:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test (std)
@@ -62,7 +68,7 @@ jobs:
   check-no-std:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check (no default features)

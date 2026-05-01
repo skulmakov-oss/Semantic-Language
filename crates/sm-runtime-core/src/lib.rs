@@ -39,6 +39,47 @@ impl SymbolId {
     }
 }
 
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AccessPath {
+    pub root: SymbolId,
+    pub components: Vec<PathComponent>,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl AccessPath {
+    pub fn new(root: SymbolId) -> Self {
+        Self {
+            root,
+            components: Vec::new(),
+        }
+    }
+
+    pub fn tuple_index(&self, index: u16) -> Self {
+        let mut components = self.components.clone();
+        components.push(PathComponent::TupleIndex(index));
+        Self {
+            root: self.root,
+            components,
+        }
+    }
+
+    pub fn field(&self, name: SymbolId) -> Self {
+        let mut components = self.components.clone();
+        components.push(PathComponent::Field(name));
+        Self {
+            root: self.root,
+            components,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PathComponent {
+    TupleIndex(u16),
+    Field(SymbolId),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionContext {
     PureCompute,
@@ -70,11 +111,14 @@ pub struct QuotaExceeded {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeTrap {
     AssertionFailed,
+    BorrowWriteConflict,
     StackOverflow,
     StackUnderflow,
     TypeMismatch,
     InvalidOpcode,
     InvalidJump,
+    DivisionByZero,
+    ArithmeticOverflow,
     CapabilityDenied,
     AbiViolation,
     VerifierRejected,
@@ -253,6 +297,41 @@ impl DebugNameMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn access_path_root_starts_with_empty_component_list() {
+        let path = AccessPath::new(SymbolId(7));
+        assert_eq!(path.root, SymbolId(7));
+        assert!(path.components.is_empty());
+    }
+
+    #[test]
+    fn access_path_tuple_indices_preserve_append_order() {
+        let path = AccessPath::new(SymbolId(3)).tuple_index(1).tuple_index(4);
+        assert_eq!(path.root, SymbolId(3));
+        assert_eq!(
+            path.components,
+            vec![PathComponent::TupleIndex(1), PathComponent::TupleIndex(4)]
+        );
+    }
+
+    #[test]
+    fn access_path_record_field_can_be_represented() {
+        let camera = SymbolId(11);
+        let path = AccessPath::new(SymbolId(3)).field(camera);
+        assert_eq!(path.root, SymbolId(3));
+        assert_eq!(path.components, vec![PathComponent::Field(camera)]);
+    }
+
+    #[test]
+    fn access_path_component_order_is_deterministic() {
+        let field = SymbolId(12);
+        let left = AccessPath::new(SymbolId(9)).tuple_index(0).field(field);
+        let right = AccessPath::new(SymbolId(9)).tuple_index(0).field(field);
+        let different = AccessPath::new(SymbolId(9)).field(field).tuple_index(0);
+        assert_eq!(left, right);
+        assert_ne!(left, different);
+    }
 
     #[test]
     fn runtime_symbol_table_assigns_deterministic_ids() {

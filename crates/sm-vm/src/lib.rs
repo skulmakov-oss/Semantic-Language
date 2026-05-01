@@ -4,7 +4,10 @@
 mod semcode_format {
     pub use sm_emit::{
         header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
-        read_utf8, supported_headers, SemcodeFormatError, SemcodeHeaderSpec, Opcode,
+        read_utf8, supported_headers, Opcode, SemcodeFormatError, SemcodeHeaderSpec,
+        OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
+        OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
+        OWNERSHIP_SECTION_TAG,
     };
 }
 

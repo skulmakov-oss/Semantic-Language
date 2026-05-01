@@ -1,0 +1,3 @@
+fn main() {
+    let visits: Map(text, i32) = Map::empty();
+}

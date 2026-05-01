@@ -1,0 +1,4 @@
+format 1
+package negative_transitive_duplicate_symbol_collision
+manifest_dir .
+module_root src

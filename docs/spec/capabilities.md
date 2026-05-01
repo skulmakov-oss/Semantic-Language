@@ -13,6 +13,16 @@ Current canonical capability kinds:
 - `GateWrite`
 - `PulseEmit`
 
+Current admitted post-stable capability kind:
+
+- `StateQuery`
+- `StateUpdate`
+- `EventPost`
+- `ClockRead`
+
+Current owned planned post-stable capability kinds:
+- none in the current first-wave admission pack
+
 Current `v1` scope rule:
 
 - capability policy is frozen to the narrow host-call family used by the current `v1` ABI
@@ -30,10 +40,21 @@ Current canonical mapping:
 - `GateRead` call -> `GateRead` capability
 - `GateWrite` call -> `GateWrite` capability
 - `PulseEmit` call -> `PulseEmit` capability
+- `StateQuery` call -> `StateQuery` capability
+- `StateUpdate` call -> `StateUpdate` capability
+- `EventPost` call -> `EventPost` capability
+- `ClockRead` call -> `ClockRead` capability
 
 Non-`v1` note:
 
-- capability mapping for `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` is intentionally out of scope for the current `v1`
+- capability mapping for `StateQuery` is admitted post-stable without changing
+  the narrow `v1` manifest baseline
+- capability mapping for `StateUpdate` is also admitted post-stable without
+  changing the narrow `v1` manifest baseline
+- capability mapping for `EventPost` is also admitted post-stable without
+  changing the narrow `v1` manifest baseline
+- capability mapping for `ClockRead` is now also admitted post-stable without
+  changing the narrow `v1` manifest baseline
 
 ## Enforcement Rule
 

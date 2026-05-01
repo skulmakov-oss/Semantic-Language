@@ -1,0 +1,4 @@
+fn main() {
+    let score: i32 = 0;
+    score = 1;
+}

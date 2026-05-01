@@ -1,59 +1,90 @@
 # Semantic Stable Release Policy
 
-Status: beta-to-stable release rule
+Status: release-governance policy for the published stable line
 
-This document defines how the current beta line is allowed to move to a stable release without reopening scope.
+Read this document using the canonical status vocabulary in:
 
-## Scope Freeze
+- `docs/roadmap/public_status_model.md`
 
-While the repository is on an active beta line:
+Read this policy together with:
 
-- do not add new ABI calls
-- do not widen the current PROMETHEUS `v1` scope
-- do not expand runtime semantics beyond the current narrow contract
-- do not turn post-`v1` items into release blockers
+- `docs/release_artifact_model.md`
 
-Allowed changes during the beta-to-stable window:
+This policy governs:
+
+- the published stable line
+
+It does not automatically promote:
+
+- landed-on-`main` behavior
+- or the current qualified limited-release contour
+
+## Current Stable Reading
+
+The current published stable line is:
+
+- `v1.1.1`
+
+Current practical-programming qualification is separate and remains:
+
+- `qualified limited release`
+
+Those are distinct decisions.
+
+## Scope Freeze Rule
+
+While maintaining or validating the stable line:
+
+- do not silently widen the stable promise
+- do not treat landed-on-`main` work as stable by default
+- do not reopen broader feature scope through release-maintenance PRs
+
+Allowed stable-line work:
 
 - release-facing docs sync
 - release asset validation
 - packaging fixes
-- emergency correctness fixes that are rerun through the full validation contour
+- narrow correctness fixes that are rerun through the full validation contour
 
 ## Stable Tag Preconditions
 
-A stable tag is allowed only if all of the following remain true on `main`:
+A stable tag or stable-line refresh is allowed only if all relevant release
+validation remains green, including:
 
-- `cargo test --workspace` is green
-- boundary and ownership guard tests are green
-- public API inventory is green
-- runtime matrix, goldens, negative goldens, and compatibility matrix are green
-- `pwsh -File scripts/verify_release_bundle.ps1` is green
-- published release assets pass the smoke matrix in `docs/roadmap/release_asset_smoke_matrix.md`
-- readiness and compatibility documents match actual repository behavior
+- workspace tests
+- boundary and ownership guards
+- public API compatibility checks
+- release bundle verification
+- release asset smoke verification
+- release-facing docs matching actual repository behavior
 
-## Tag Rule
+## Promotion Rule
 
-- do not rewrite or force-move published stable tags
-- beta tags may advance as forward-only prerelease markers
-- the first stable tag after a beta line must use a non-conflicting stable version
-- if any older stable tag already exists, choose the next forward version rather than rewriting history
+Behavior should be described as `published stable` only when:
+
+- the stable line explicitly promises it
+- supporting release assets and validation cover it
+
+Landed behavior on current `main` remains unpromoted until an explicit later
+decision promotes it.
 
 ## Publish Rule
 
-The stable release notes should include:
+Stable release notes should state:
 
-- the exact source commit on `main`
+- the exact released commit
+- the artifact model for the published asset set
 - the validated asset set
-- current ready surfaces
-- explicit known limits that remain outside the stable commitment
+- the stable-ready surfaces
+- the known limits that remain outside the stable promise
 
 ## Non-Commitments
 
-The following remain outside the stable-release critical path unless explicitly promoted by a separate decision:
+The following remain outside the stable-release critical path unless explicitly
+promoted later:
 
-- richer `fx` arithmetic beyond the current value path
-- wider PROMETHEUS host-call families
-- persistence and replay backends
-- richer rule-side effect execution semantics
-- broad naming or branding rewrites
+- broader practical-programming widening beyond the current stable promise
+- broader executable-module authoring
+- UI
+- broader runtime and ecosystem work already landed on `main` but not yet
+  promoted

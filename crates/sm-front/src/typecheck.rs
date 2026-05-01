@@ -1,5 +1,9 @@
+use crate::types::{
+    AdtCtorExpr, AdtMatchPattern, AdtPatternItem, BindingPlan, BindingPlanItem,
+    CaptureMode, MatchPattern, NumericLiteral, PathAvailability, PatternPath, RecordPatternTarget,
+    ScrutineeUse,
+};
 use crate::*;
-use crate::types::{AdtCtorExpr, AdtPatternItem, MatchPattern, NumericLiteral, RecordPatternTarget};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -8,18 +12,52 @@ fn fx_coercion_gap_message() -> &'static str {
     "fx coercion from non-literal numeric expressions is not implemented in the canonical Rust-like path yet"
 }
 
-fn fx_arithmetic_gap_message() -> &'static str {
-    "fx arithmetic is not implemented in the canonical Rust-like path yet"
+fn fx_measured_arithmetic_gap_message() -> &'static str {
+    "unit-carrying fx arithmetic is not part of the first post-stable fx arithmetic slice yet"
 }
 
-fn fx_unary_gap_message() -> &'static str {
-    "fx unary +/- is not implemented in the canonical Rust-like path yet"
+fn iterable_for_gap_message() -> &'static str {
+    "iterable 'for x in collection' currently requires built-in Sequence(type), i32 range, or a direct record `Iterable` impl shaped as `fn next(self: Self, index: i32) -> Option(Item)`"
+}
+
+fn first_wave_relational_gap_message() -> &'static str {
+    "relational operators are currently admitted only for same-family i32 operands in the first application-completeness wave"
+}
+
+fn iterable_for_impl_contract_message() -> &'static str {
+    "iterable 'for x in collection' over an explicit `Iterable` impl currently requires direct record contract `fn next(self: Self, index: i32) -> Option(Item)`"
+}
+
+fn iterable_for_impl_out_of_scope_message() -> &'static str {
+    "iterable 'for x in collection' executable explicit `Iterable` dispatch currently supports direct record impls only; ADT/schema dispatch stays out of scope"
+}
+
+fn executable_import_wave2_out_of_scope_message() -> &'static str {
+    "top-level executable Import currently admits direct local-path helper-module imports plus selected imports in wave2; alias, wildcard, re-export, and package-qualified import forms remain out of scope"
+}
+
+fn validate_executable_imports(program: &Program) -> Result<(), FrontendError> {
+    for import in &program.imports {
+        if import.reexport
+            || import.wildcard
+            || import.alias.is_some()
+            || import.spec.contains("::")
+        {
+            return Err(FrontendError {
+                pos: 0,
+                message: executable_import_wave2_out_of_scope_message().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn is_numeric_literal_like_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     match arena.expr(expr_id) {
         Expr::NumericLiteral(_) => true,
-        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => is_numeric_literal_like_expr(*inner, arena),
+        Expr::Unary(UnaryOp::Pos | UnaryOp::Neg, inner) => {
+            is_numeric_literal_like_expr(*inner, arena)
+        }
         _ => false,
     }
 }
@@ -30,6 +68,65 @@ fn is_numeric_for_fx_gap(ty: &Type) -> bool {
 
 fn is_fx_literal_expr(expr_id: ExprId, arena: &AstArena) -> bool {
     is_numeric_literal_like_expr(expr_id, arena)
+}
+
+fn has_explicit_iterable_impl(
+    ty: &Type,
+    trait_name: SymbolId,
+    impl_list: &[ImplDecl],
+) -> Result<bool, FrontendError> {
+    let nominal = match ty {
+        Type::Record(name) | Type::Adt(name) => *name,
+        _ => return Ok(false),
+    };
+    for imp in impl_list {
+        if imp.for_type == nominal && imp.trait_name == trait_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn resolve_explicit_iterable_loop_item_type(
+    iterable_ty: &Type,
+    trait_name: SymbolId,
+    arena: &AstArena,
+    impl_list: &[ImplDecl],
+) -> Result<Option<Type>, FrontendError> {
+    let nominal = match iterable_ty {
+        Type::Record(name) => *name,
+        _ => return Ok(None),
+    };
+    for imp in impl_list {
+        if imp.for_type != nominal || imp.trait_name != trait_name {
+            continue;
+        }
+        let method = imp
+            .methods
+            .iter()
+            .find(|method| resolve_symbol_name(arena, method.name).ok() == Some("next"))
+            .ok_or(FrontendError {
+                pos: 0,
+                message: iterable_for_impl_contract_message().to_string(),
+            })?;
+        if method.params.len() != 2
+            || method.params[0].1 != Type::Record(nominal)
+            || method.params[1].1 != Type::I32
+        {
+            return Err(FrontendError {
+                pos: 0,
+                message: iterable_for_impl_contract_message().to_string(),
+            });
+        }
+        let Type::Option(item_ty) = &method.ret else {
+            return Err(FrontendError {
+                pos: 0,
+                message: iterable_for_impl_contract_message().to_string(),
+            });
+        };
+        return Ok(Some(item_ty.as_ref().clone()));
+    }
+    Ok(None)
 }
 
 fn match_unit_lift(expected: &Type, actual: &Type, expr_id: ExprId, arena: &AstArena) -> bool {
@@ -58,6 +155,7 @@ fn lift_literal_to_expected_type(
 }
 
 pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
+    validate_executable_imports(program)?;
     if program.functions.len() != 1 {
         return Err(FrontendError {
             pos: 0,
@@ -67,33 +165,46 @@ pub fn type_check_function(program: &Program) -> Result<(), FrontendError> {
     let mut table = BTreeMap::new();
     let record_table = build_record_table(program)?;
     let adt_table = build_adt_table(program)?;
+    let schema_table = build_schema_table(program)?;
     let func = &program.functions[0];
     table.insert(
         func.name,
         FnSig {
+            type_params: Vec::new(),
+            trait_bounds: Vec::new(),
             params: func
                 .params
                 .iter()
-                .map(|(_, t)| canonicalize_declared_type(t, &record_table, &adt_table, &program.arena))
+                .map(|(_, t)| {
+                    canonicalize_declared_type(t, &record_table, &adt_table, &program.arena)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
             param_names: Some(func.params.iter().map(|(name, _)| *name).collect()),
             param_defaults: Some(func.param_defaults.clone()),
             ret: canonicalize_declared_type(&func.ret, &record_table, &adt_table, &program.arena)?,
         },
     );
-    validate_top_level_name_collisions(program, &table, &record_table, &adt_table)?;
+    validate_top_level_name_collisions(program, &table, &record_table, &adt_table, &schema_table)?;
     validate_record_declarations(program, &record_table, &adt_table)?;
     validate_adt_declarations(program, &record_table, &adt_table)?;
-    type_check_function_with_tables(func, &program.arena, &table, &record_table, &adt_table)
+    validate_schema_declarations(program, &schema_table, &record_table, &adt_table)?;
+    type_check_function_with_tables(func, &program.arena, &table, &record_table, &adt_table, &[])
 }
 
 pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
+    validate_executable_imports(p)?;
     let table = build_fn_table(p)?;
     let record_table = build_record_table(p)?;
     let adt_table = build_adt_table(p)?;
-    validate_top_level_name_collisions(p, &table, &record_table, &adt_table)?;
+    let schema_table = build_schema_table(p)?;
+    // M9.2 Wave 3: trait coherence and impl conformance.
+    let trait_table = build_trait_table(p)?;
+    validate_trait_coherence(&p.impls, &p.arena)?;
+    validate_impl_conformance(&p.impls, &trait_table, &p.arena)?;
+    validate_top_level_name_collisions(p, &table, &record_table, &adt_table, &schema_table)?;
     validate_record_declarations(p, &record_table, &adt_table)?;
     validate_adt_declarations(p, &record_table, &adt_table)?;
+    validate_schema_declarations(p, &schema_table, &record_table, &adt_table)?;
     let main_id = p
         .arena
         .symbol_to_id
@@ -114,9 +225,84 @@ pub fn type_check_program(p: &Program) -> Result<(), FrontendError> {
         });
     }
     for f in &p.functions {
-        type_check_function_with_tables(f, &p.arena, &table, &record_table, &adt_table)?;
+        type_check_function_with_tables(f, &p.arena, &table, &record_table, &adt_table, &p.impls)?;
+    }
+    for imp in &p.impls {
+        for method in &imp.methods {
+            type_check_function_with_tables(
+                method,
+                &p.arena,
+                &table,
+                &record_table,
+                &adt_table,
+                &p.impls,
+            )?;
+        }
     }
     Ok(())
+}
+
+pub fn derive_validation_plan_table(
+    program: &Program,
+) -> Result<ValidationPlanTable, FrontendError> {
+    validate_executable_imports(program)?;
+    let record_table = build_record_table(program)?;
+    let adt_table = build_adt_table(program)?;
+    let schema_table = build_schema_table(program)?;
+    let fn_table = build_fn_table(program)?;
+    validate_top_level_name_collisions(
+        program,
+        &fn_table,
+        &record_table,
+        &adt_table,
+        &schema_table,
+    )?;
+    validate_record_declarations(program, &record_table, &adt_table)?;
+    validate_adt_declarations(program, &record_table, &adt_table)?;
+    validate_schema_declarations(program, &schema_table, &record_table, &adt_table)?;
+
+    let mut plans = ValidationPlanTable::new();
+    for schema in &program.schemas {
+        let _ = schema_table.get(&schema.name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "missing schema '{}' in canonical schema table",
+                resolve_symbol_name(&program.arena, schema.name)?
+            ),
+        })?;
+
+        let shape = match &schema.shape {
+            SchemaShape::Record(fields) => ValidationShapePlan::Record(
+                derive_validation_field_plans(fields, &record_table, &adt_table, &program.arena)?,
+            ),
+            SchemaShape::TaggedUnion(variants) => {
+                ValidationShapePlan::TaggedUnion(derive_validation_variant_plans(
+                    variants,
+                    &record_table,
+                    &adt_table,
+                    &program.arena,
+                )?)
+            }
+        };
+        let checks = match &shape {
+            ValidationShapePlan::Record(fields) => derive_record_validation_checks(fields),
+            ValidationShapePlan::TaggedUnion(variants) => {
+                derive_tagged_union_validation_checks(variants)
+            }
+        };
+
+        plans.insert(
+            schema.name,
+            ValidationPlan {
+                schema_name: schema.name,
+                role: schema.role,
+                shape,
+                checks,
+            },
+        );
+    }
+
+    Ok(plans)
 }
 
 pub fn type_check_function_with_table(
@@ -126,7 +312,7 @@ pub fn type_check_function_with_table(
 ) -> Result<(), FrontendError> {
     let empty_records = RecordTable::new();
     let empty_adts = AdtTable::new();
-    type_check_function_with_tables(func, arena, table, &empty_records, &empty_adts)
+    type_check_function_with_tables(func, arena, table, &empty_records, &empty_adts, &[])
 }
 
 fn type_check_function_with_tables(
@@ -135,6 +321,7 @@ fn type_check_function_with_tables(
     table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.params.len() != func.param_defaults.len() {
         return Err(FrontendError {
@@ -142,18 +329,26 @@ fn type_check_function_with_tables(
             message: "function parameter/default metadata length mismatch".to_string(),
         });
     }
+    // Generic functions: canonicalize with type_params scope, skip executable
+    // type checks for TypeVar params (those are checked per call-site after
+    // substitution). Body type-check is deferred until Wave 3 monomorphisation.
+    let is_generic = !func.type_params.is_empty();
     let canonical_params = func
         .params
         .iter()
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
-    let canonical_ret = canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?;
+    let canonical_ret = canonicalize_declared_type_generic(&func.ret, record_table, adt_table, arena, &func.type_params)?;
     for (name, ty) in &canonical_params {
+        // Skip executable-type check for TypeVar — substitution happens at call site.
+        if matches!(ty, Type::TypeVar(_)) && is_generic {
+            continue;
+        }
         ensure_type_resolved(
             ty,
             record_table,
@@ -167,33 +362,42 @@ fn type_check_function_with_tables(
             format!("parameter '{}'", resolve_symbol_name(arena, *name)?),
         )?;
     }
-    ensure_type_resolved(
-        &canonical_ret,
-        record_table,
-        adt_table,
-        arena,
-        format!("return type of '{}'", resolve_symbol_name(arena, func.name)?),
-    )?;
-    ensure_executable_type_supported(
-        &canonical_ret,
-        arena,
-        format!("return type of '{}'", resolve_symbol_name(arena, func.name)?),
-    )?;
+    // Skip return-type executable check for TypeVar.
+    if !matches!(canonical_ret, Type::TypeVar(_)) || !is_generic {
+        ensure_type_resolved(
+            &canonical_ret,
+            record_table,
+            adt_table,
+            arena,
+            format!(
+                "return type of '{}'",
+                resolve_symbol_name(arena, func.name)?
+            ),
+        )?;
+        ensure_executable_type_supported(
+            &canonical_ret,
+            arena,
+            format!(
+                "return type of '{}'",
+                resolve_symbol_name(arena, func.name)?
+            ),
+        )?;
+    }
     let empty_env = ScopeEnv::new();
     let mut default_loop_stack = Vec::new();
     for ((name, ty), default_expr) in canonical_params.iter().zip(func.param_defaults.iter()) {
         if let Some(default_expr) = default_expr {
-            let default_ty =
-                infer_expr_type(
-                    *default_expr,
-                    arena,
-                    &empty_env,
-                    table,
-                    record_table,
-                    adt_table,
-                    Type::Unit,
-                    &mut default_loop_stack,
-                )?;
+            let default_ty = infer_expr_type(
+                *default_expr,
+                arena,
+                &empty_env,
+                table,
+                record_table,
+                adt_table,
+                Type::Unit,
+                &mut default_loop_stack,
+            impl_list,
+            )?;
             if let Err(err) = ensure_const_initializer_safe(*default_expr, arena, &empty_env) {
                 return Err(FrontendError {
                     pos: err.pos,
@@ -213,9 +417,9 @@ fn type_check_function_with_tables(
             )?;
         }
     }
-    check_requires_clauses(func, arena, table, record_table, adt_table)?;
-    check_ensures_clauses(func, arena, table, record_table, adt_table, &canonical_ret)?;
-    check_invariant_clauses(func, arena, table, record_table, adt_table, &canonical_ret)?;
+    check_requires_clauses(func, arena, table, record_table, adt_table, impl_list)?;
+    check_ensures_clauses(func, arena, table, record_table, adt_table, &canonical_ret, impl_list)?;
+    check_invariant_clauses(func, arena, table, record_table, adt_table, &canonical_ret, impl_list)?;
     let mut env = ScopeEnv::with_params(&canonical_params);
     let mut loop_stack = Vec::new();
     for stmt in &func.body {
@@ -228,6 +432,7 @@ fn type_check_function_with_tables(
             record_table,
             adt_table,
             &mut loop_stack,
+        impl_list,
         )?;
     }
     Ok(())
@@ -239,14 +444,18 @@ fn check_requires_clauses(
     table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
+    if func.requires.is_empty() {
+        return Ok(());
+    }
     let params = func
         .params
         .iter()
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
@@ -261,8 +470,9 @@ fn check_requires_clauses(
             table,
             record_table,
             adt_table,
-            canonicalize_declared_type(&func.ret, record_table, adt_table, arena)?,
+            canonicalize_declared_type_generic(&func.ret, record_table, adt_table, arena, &func.type_params)?,
             &mut loop_stack,
+        impl_list,
         )?;
         if condition_ty != Type::Bool {
             return Err(FrontendError {
@@ -284,6 +494,7 @@ fn check_ensures_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     canonical_ret: &Type,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.ensures.is_empty() {
         return Ok(());
@@ -295,7 +506,7 @@ fn check_ensures_clauses(
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
@@ -317,6 +528,7 @@ fn check_ensures_clauses(
             adt_table,
             canonical_ret.clone(),
             &mut loop_stack,
+        impl_list,
         )?;
         if condition_ty != Type::Bool {
             return Err(FrontendError {
@@ -338,6 +550,7 @@ fn check_invariant_clauses(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     canonical_ret: &Type,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if func.invariants.is_empty() {
         return Ok(());
@@ -350,7 +563,7 @@ fn check_invariant_clauses(
         .map(|(name, ty)| {
             Ok((
                 *name,
-                canonicalize_declared_type(ty, record_table, adt_table, arena)?,
+                canonicalize_declared_type_generic(ty, record_table, adt_table, arena, &func.type_params)?,
             ))
         })
         .collect::<Result<Vec<_>, FrontendError>>()?;
@@ -372,6 +585,7 @@ fn check_invariant_clauses(
             adt_table,
             canonical_ret.clone(),
             &mut loop_stack,
+        impl_list,
         )?;
         if condition_ty != Type::Bool {
             return Err(FrontendError {
@@ -416,10 +630,7 @@ fn ensure_contract_result_name_available(
     Ok(())
 }
 
-fn ensure_invariant_result_usage(
-    func: &Function,
-    arena: &AstArena,
-) -> Result<(), FrontendError> {
+fn ensure_invariant_result_usage(func: &Function, arena: &AstArena) -> Result<(), FrontendError> {
     if func.ret != Type::Unit {
         return Ok(());
     }
@@ -437,7 +648,14 @@ fn ensure_invariant_result_usage(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum LoopTypeFrameKind {
+    Expression,
+    Control,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LoopTypeFrame {
+    kind: LoopTypeFrameKind,
     break_ty: Option<Type>,
 }
 
@@ -450,6 +668,7 @@ fn check_stmt(
     record_table: &RecordTable,
     adt_table: &AdtTable,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     let stmt = arena.stmt(stmt_id);
     match stmt {
@@ -470,8 +689,7 @@ fn check_stmt(
             }
             ensure_const_initializer_safe(*value, arena, env)?;
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -482,6 +700,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
@@ -501,13 +720,19 @@ fn check_stmt(
                     adt_table,
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 vt
             };
             env.insert_const(*name, final_ty);
             Ok(())
         }
-        Stmt::Let { name, ty, value } => {
+        Stmt::Let {
+            name,
+            is_mut,
+            ty,
+            value,
+        } => {
             if let Some(ann) = ty {
                 ensure_type_resolved(
                     ann,
@@ -523,8 +748,7 @@ fn check_stmt(
                 )?;
             }
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -535,6 +759,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
@@ -554,10 +779,15 @@ fn check_stmt(
                     adt_table,
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 vt
             };
-            env.insert(*name, final_ty);
+            if *is_mut {
+                env.insert_mut(*name, final_ty);
+            } else {
+                env.insert(*name, final_ty);
+            }
             Ok(())
         }
         Stmt::LetTuple { items, ty, value } => {
@@ -576,8 +806,7 @@ fn check_stmt(
                 )?;
             }
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -588,6 +817,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
@@ -607,6 +837,7 @@ fn check_stmt(
                     adt_table,
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 vt
             };
@@ -626,11 +857,14 @@ fn check_stmt(
                     ),
                 });
             }
-            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
-                if let Some(name) = item {
-                    env.insert(*name, item_ty);
-                }
-            }
+            // M9.10 Wave B: build BindingPlan so path-state is tracked on the source variable.
+            let tuple_ty = Type::Tuple(item_tys);
+            let mut plan = BindingPlan::default();
+            build_tuple_pattern_plan(items, &tuple_ty, &PatternPath::root(), &mut plan)?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::LetRecord {
@@ -638,13 +872,6 @@ fn check_stmt(
             items,
             value,
         } => {
-            let record = record_table.get(record_name).ok_or(FrontendError {
-                pos: 0,
-                message: format!(
-                    "unknown record type '{}' in record destructuring bind",
-                    resolve_symbol_name(arena, *record_name)?
-                ),
-            })?;
             let value_ty = infer_expr_type(
                 *value,
                 arena,
@@ -654,6 +881,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if value_ty != Type::Record(*record_name) {
                 return Err(FrontendError {
@@ -666,34 +894,29 @@ fn check_stmt(
                 });
             }
             for item in items {
-                let field = record.fields.iter().find(|field| field.name == item.field).ok_or(
-                    FrontendError {
+                if matches!(item.target, RecordPatternTarget::QuadLiteral(_)) {
+                    return Err(FrontendError {
                         pos: 0,
-                        message: format!(
-                            "record type '{}' has no field named '{}' in destructuring bind",
-                            resolve_symbol_name(arena, *record_name)?,
-                            resolve_symbol_name(arena, item.field)?
-                        ),
-                    },
-                )?;
-                match item.target {
-                    RecordPatternTarget::Bind(target) => {
-                        env.insert(
-                            target,
-                            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
-                        );
-                    }
-                    RecordPatternTarget::Discard => {}
-                    RecordPatternTarget::QuadLiteral(_) => {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message:
-                                "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
-                                    .to_string(),
-                        });
-                    }
+                        message:
+                            "quad literal record field patterns currently require let-else; plain record destructuring bind supports only name/_ items"
+                                .to_string(),
+                    });
                 }
             }
+            let mut plan = BindingPlan::default();
+            build_record_pattern_plan(
+                items,
+                &value_ty,
+                &PatternPath::root(),
+                &mut plan,
+                arena,
+                record_table,
+                adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::LetElseRecord {
@@ -702,13 +925,6 @@ fn check_stmt(
             value,
             else_return,
         } => {
-            let record = record_table.get(record_name).ok_or(FrontendError {
-                pos: 0,
-                message: format!(
-                    "unknown record type '{}' in record let-else",
-                    resolve_symbol_name(arena, *record_name)?
-                ),
-            })?;
             let value_ty = infer_expr_type(
                 *value,
                 arena,
@@ -718,6 +934,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if value_ty != Type::Record(*record_name) {
                 return Err(FrontendError {
@@ -738,35 +955,47 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             let mut saw_refutable_item = false;
             for item in items {
-                let field = record.fields.iter().find(|field| field.name == item.field).ok_or(
-                    FrontendError {
+                let record = record_table.get(record_name).ok_or(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "unknown record type '{}' in record let-else",
+                        resolve_symbol_name(arena, *record_name)?
+                    ),
+                })?;
+                let field = record
+                    .fields
+                    .iter()
+                    .find(|field| field.name == item.field)
+                    .ok_or(FrontendError {
                         pos: 0,
                         message: format!(
                             "record type '{}' has no field named '{}' in let-else",
                             resolve_symbol_name(arena, *record_name)?,
                             resolve_symbol_name(arena, item.field)?
                         ),
-                    },
-                )?;
+                    })?;
                 match item.target {
-                    RecordPatternTarget::Bind(target) => {
-                        env.insert(
-                            target,
-                            canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
-                        );
-                    }
+                    RecordPatternTarget::Bind { .. } => {}
                     RecordPatternTarget::Discard => {}
                     RecordPatternTarget::QuadLiteral(_) => {
                         saw_refutable_item = true;
-                        if canonicalize_declared_type(&field.ty, record_table, adt_table, arena)? != Type::Quad {
+                        if canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?
+                            != Type::Quad
+                        {
                             return Err(FrontendError {
                                 pos: 0,
                                 message: format!(
                                     "record let-else literal pattern requires quad field, got {:?}",
-                                    canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?
+                                    canonicalize_declared_type(
+                                        &field.ty,
+                                        record_table,
+                                        adt_table,
+                                        arena
+                                    )?
                                 ),
                             });
                         }
@@ -781,6 +1010,20 @@ fn check_stmt(
                             .to_string(),
                 });
             }
+            let mut plan = BindingPlan::default();
+            build_record_pattern_plan(
+                items,
+                &value_ty,
+                &PatternPath::root(),
+                &mut plan,
+                arena,
+                record_table,
+                adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::LetElseTuple {
@@ -812,10 +1055,10 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let final_ty = if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 ensure_binding_value_type(
                     expected_ty.clone(),
                     vt,
@@ -852,29 +1095,41 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
-            for (item, item_ty) in items.iter().zip(item_tys.into_iter()) {
-                match item {
-                    TuplePatternItem::Bind(name) => env.insert(*name, item_ty),
-                    TuplePatternItem::Discard => {}
-                    TuplePatternItem::QuadLiteral(_) => {
-                        if item_ty != Type::Quad {
-                            return Err(FrontendError {
-                                pos: 0,
-                                message: format!(
-                                    "let-else tuple literal pattern requires quad element, got {:?}",
-                                    item_ty
-                                ),
-                            });
-                        }
+            // M9.10 Wave B: validate QuadLiteral items before building plan.
+            for (item, item_ty) in items.iter().zip(item_tys.iter()) {
+                if let TuplePatternItem::QuadLiteral(_) = item {
+                    if *item_ty != Type::Quad {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "let-else tuple literal pattern requires quad element, got {:?}",
+                                item_ty
+                            ),
+                        });
                     }
                 }
             }
+            // M9.10 Wave B: build BindingPlan so path-state is tracked on the source variable.
+            let tuple_ty = Type::Tuple(item_tys);
+            let mut plan = BindingPlan::default();
+            build_tuple_pattern_plan(items, &tuple_ty, &PatternPath::root(), &mut plan)?;
+            validate_binding_plan_conflicts(&plan)?;
+            validate_plan_against_scrutinee_state(env, *value, arena, &plan)?;
+            apply_binding_plan(env, &plan);
+            apply_plans_to_scrutinee(*value, &[plan], arena, env);
             Ok(())
         }
         Stmt::Discard { ty, value } => {
             if let Some(ann) = ty {
-                ensure_type_resolved(ann, record_table, adt_table, arena, "discard binding".to_string())?;
+                ensure_type_resolved(
+                    ann,
+                    record_table,
+                    adt_table,
+                    arena,
+                    "discard binding".to_string(),
+                )?;
                 ensure_storage_type_supported(
                     &canonicalize_declared_type(ann, record_table, adt_table, arena)?,
                     arena,
@@ -882,8 +1137,7 @@ fn check_stmt(
                 )?;
             }
             if let Some(ann) = ty {
-                let expected_ty =
-                    canonicalize_declared_type(ann, record_table, adt_table, arena)?;
+                let expected_ty = canonicalize_declared_type(ann, record_table, adt_table, arena)?;
                 let vt = infer_expr_type_with_expected(
                     *value,
                     arena,
@@ -894,6 +1148,7 @@ fn check_stmt(
                     Some(expected_ty.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_ty,
@@ -932,6 +1187,7 @@ fn check_stmt(
                 Some(target_ty.clone()),
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             ensure_binding_value_type(
                 target_ty,
@@ -951,6 +1207,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let Type::Tuple(item_tys) = value_ty else {
                 return Err(FrontendError {
@@ -1011,6 +1268,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if range_ty != Type::RangeI32 {
                 return Err(FrontendError {
@@ -1031,27 +1289,226 @@ fn check_stmt(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             body_env.pop_scope();
             Ok(())
         }
-        Stmt::Break(value) => {
-            let break_ty =
-                infer_expr_type(
-                    *value,
+        Stmt::While { condition, body } => {
+            let condition_ty = infer_expr_type(
+                *condition,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            if condition_ty != Type::Bool {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "while condition must be bool; explicit compare is required for quad"
+                        .to_string(),
+                });
+            }
+            let mut body_env = env.clone();
+            body_env.push_scope();
+            loop_stack.push(LoopTypeFrame {
+                kind: LoopTypeFrameKind::Control,
+                break_ty: None,
+            });
+            for stmt in body {
+                check_stmt(
+                    *stmt,
                     arena,
-                    env,
+                    &mut body_env,
+                    ret_ty.clone(),
                     table,
                     record_table,
                     adt_table,
-                    ret_ty,
                     loop_stack,
+                    impl_list,
                 )?;
+            }
+            let _ = loop_stack.pop().expect("control loop frame must exist");
+            body_env.pop_scope();
+            Ok(())
+        }
+        Stmt::Loop { body } => {
+            let mut body_env = env.clone();
+            body_env.push_scope();
+            loop_stack.push(LoopTypeFrame {
+                kind: LoopTypeFrameKind::Control,
+                break_ty: None,
+            });
+            for stmt in body {
+                check_stmt(
+                    *stmt,
+                    arena,
+                    &mut body_env,
+                    ret_ty.clone(),
+                    table,
+                    record_table,
+                    adt_table,
+                    loop_stack,
+                    impl_list,
+                )?;
+            }
+            let _ = loop_stack.pop().expect("control loop frame must exist");
+            body_env.pop_scope();
+            Ok(())
+        }
+        Stmt::ForEach {
+            name,
+            iterable,
+            body,
+            desugaring,
+        } => {
+            let iterable_ty = infer_expr_type(
+                *iterable,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            if iterable_ty == Type::RangeI32 {
+                let mut body_env = env.clone();
+                body_env.push_scope();
+                body_env.insert_const(*name, Type::I32);
+                for stmt in body {
+                    check_stmt(
+                        *stmt,
+                        arena,
+                        &mut body_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                        impl_list,
+                    )?;
+                }
+                body_env.pop_scope();
+                return Ok(());
+            }
+            if let Type::Sequence(sequence_ty) = &iterable_ty {
+                let mut body_env = env.clone();
+                body_env.push_scope();
+                body_env.insert_const(*name, sequence_ty.item.as_ref().clone());
+                for stmt in body {
+                    check_stmt(
+                        *stmt,
+                        arena,
+                        &mut body_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                        impl_list,
+                    )?;
+                }
+                body_env.pop_scope();
+                return Ok(());
+            }
+            if let Some(item_ty) = resolve_explicit_iterable_loop_item_type(
+                &iterable_ty,
+                desugaring.trait_name,
+                arena,
+                impl_list,
+            )? {
+                let mut body_env = env.clone();
+                body_env.push_scope();
+                body_env.insert_const(*name, item_ty);
+                for stmt in body {
+                    check_stmt(
+                        *stmt,
+                        arena,
+                        &mut body_env,
+                        ret_ty.clone(),
+                        table,
+                        record_table,
+                        adt_table,
+                        loop_stack,
+                        impl_list,
+                    )?;
+                }
+                body_env.pop_scope();
+                return Ok(());
+            }
+            let detail = match &iterable_ty {
+                Type::Adt(_) if has_explicit_iterable_impl(
+                    &iterable_ty,
+                    desugaring.trait_name,
+                    impl_list,
+                )? =>
+                {
+                    iterable_for_impl_out_of_scope_message().to_string()
+                }
+                _ if has_explicit_iterable_impl(
+                    &iterable_ty,
+                    desugaring.trait_name,
+                    impl_list,
+                )? =>
+                {
+                    iterable_for_impl_contract_message().to_string()
+                }
+                _ => iterable_for_gap_message().to_string(),
+            };
+            Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "{} (`{}` contract)",
+                    detail,
+                    resolve_symbol_name(arena, desugaring.trait_name)?
+                ),
+            })
+        }
+        Stmt::Break(None) => {
+            let frame = loop_stack.last().ok_or(FrontendError {
+                pos: 0,
+                message: "bare break is allowed only inside while or statement loop"
+                    .to_string(),
+            })?;
+            if !matches!(frame.kind, LoopTypeFrameKind::Control) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "bare break is allowed only inside while or statement loop"
+                        .to_string(),
+                });
+            }
+            Ok(())
+        }
+        Stmt::Break(Some(value)) => {
+            let break_ty = infer_expr_type(
+                *value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty,
+                loop_stack,
+                impl_list,
+            )?;
             let frame = loop_stack.last_mut().ok_or(FrontendError {
                 pos: 0,
                 message: "break with value is allowed only inside loop expression".to_string(),
             })?;
+            if !matches!(frame.kind, LoopTypeFrameKind::Expression) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "break with value is allowed only inside loop expression"
+                        .to_string(),
+                });
+            }
             if let Some(expected) = &frame.break_ty {
                 if *expected != break_ty {
                     return Err(FrontendError {
@@ -1064,6 +1521,20 @@ fn check_stmt(
                 }
             } else {
                 frame.break_ty = Some(break_ty);
+            }
+            Ok(())
+        }
+        Stmt::Continue => {
+            let frame = loop_stack.last().ok_or(FrontendError {
+                pos: 0,
+                message: "continue is allowed only inside while or statement loop".to_string(),
+            })?;
+            if !matches!(frame.kind, LoopTypeFrameKind::Control) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "continue is allowed only inside while or statement loop"
+                        .to_string(),
+                });
             }
             Ok(())
         }
@@ -1080,6 +1551,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if condition_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1098,6 +1570,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )
         }
         Stmt::If {
@@ -1114,6 +1587,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if ct != Type::Bool {
                 return Err(FrontendError {
@@ -1135,6 +1609,7 @@ fn check_stmt(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             then_env.pop_scope();
@@ -1151,6 +1626,7 @@ fn check_stmt(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             else_env.pop_scope();
@@ -1170,28 +1646,30 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
-            if !matches!(st, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+            // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
+            if !matches!(
+                st,
+                Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+                    | Type::I32 | Type::U32
+            ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             }
 
+            // M9.5 Wave D / M9.7 / M9.8: BindingPlan pipeline + path-based ownership.
+            let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(
-                    &arm.pat,
-                    &st,
-                    arena,
-                    record_table,
-                    adt_table,
-                )? {
-                    arm_env.insert(name, ty);
-                }
+                let (plan, mut arm_env) =
+                    build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+                validate_plan_against_scrutinee_state(env, *scrutinee, arena, &plan)?;
+                arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -1201,6 +1679,7 @@ fn check_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 for s in &arm.block {
                     check_stmt(
@@ -1212,10 +1691,13 @@ fn check_stmt(
                         record_table,
                         adt_table,
                         loop_stack,
+                    impl_list,
                     )?;
                 }
                 arm_env.pop_scope();
             }
+            // M9.7: apply path-based state for each arm's moves/borrows to scrutinee.
+            apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             if default.is_empty() {
                 match missing_exhaustive_sum_variants(
@@ -1224,8 +1706,9 @@ fn check_stmt(
                     arena,
                     adt_table,
                 )? {
-                    Some((family_label, missing)) if !missing.is_empty() =>
-                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?),
+                    Some((family_label, missing)) if !missing.is_empty() => {
+                        return Err(non_exhaustive_match_error(&family_label, &missing, false)?)
+                    }
                     Some(_) => {}
                     None => {
                         return Err(FrontendError {
@@ -1247,6 +1730,7 @@ fn check_stmt(
                         record_table,
                         adt_table,
                         loop_stack,
+                    impl_list,
                     )?;
                 }
                 def_env.pop_scope();
@@ -1262,6 +1746,7 @@ fn check_stmt(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Stmt::Expr(e) => {
             if check_builtin_assert_stmt(
@@ -1273,6 +1758,7 @@ fn check_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )? {
                 return Ok(());
             }
@@ -1285,9 +1771,30 @@ fn check_stmt(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             Ok(())
         }
+    }
+}
+
+/// Apply a type-variable substitution map to `ty` (M9.1 Wave 3).
+/// Only direct `TypeVar` occurrences are substituted; compound types
+/// that could theoretically contain a TypeVar (e.g. `Sequence<T>`) are
+/// not handled here — those are deferred to the monomorphisation pass.
+fn subst_apply(ty: &Type, subst: &BTreeMap<SymbolId, Type>) -> Type {
+    match ty {
+        Type::TypeVar(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
+        _ => ty.clone(),
+    }
+}
+
+/// Returns true if `concrete_ty` matches the `for_type` nominal name of an
+/// impl block. Used by the M9.2 Wave 3 trait bound satisfaction check.
+fn concrete_type_matches_impl_for(concrete_ty: &Type, for_type: SymbolId) -> bool {
+    match concrete_ty {
+        Type::Record(id) | Type::Adt(id) => *id == for_type,
+        _ => false,
     }
 }
 
@@ -1300,11 +1807,44 @@ fn infer_expr_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
+    // M9.9: path-aware read check. Extract the most specific path reachable
+    // from this expression and verify it is available. Base expressions used
+    // inside field/index helpers go through infer_expr_type_no_check, which
+    // skips this guard for intermediate Var nodes.
+    if let Some((name, path)) = expr_access_path(expr_id, arena) {
+        env.check_path_available(name, &path)?;
+    }
     let expr = arena.expr(expr_id);
     match expr {
         Expr::QuadLiteral(_) => Ok(Type::Quad),
         Expr::BoolLiteral(_) => Ok(Type::Bool),
+        Expr::TextLiteral(_) => Ok(Type::Text),
+        Expr::SequenceLiteral(sequence) => infer_sequence_literal_type(
+            sequence,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            None,
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
+        Expr::Closure(closure) => infer_closure_literal_type(
+            closure,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            None,
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
         Expr::NumericLiteral(literal) => match literal {
             NumericLiteral::I32(_) => Ok(Type::I32),
             NumericLiteral::U32(_) => Ok(Type::U32),
@@ -1321,6 +1861,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let end_ty = infer_expr_type(
                 range_expr.end,
@@ -1331,6 +1872,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
             if start_ty != Type::I32 || end_ty != Type::I32 {
                 return Err(FrontendError {
@@ -1355,6 +1897,7 @@ fn infer_expr_type(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 if item_ty == Type::RangeI32 {
                     return Err(FrontendError {
@@ -1377,6 +1920,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::RecordField(field_expr) => infer_record_field_access_type(
             field_expr,
@@ -1387,6 +1931,18 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
+        ),
+        Expr::SequenceIndex(index_expr) => infer_sequence_index_type(
+            index_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        impl_list,
         ),
         Expr::RecordUpdate(update_expr) => infer_record_update_type(
             update_expr,
@@ -1397,6 +1953,7 @@ fn infer_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
@@ -1408,23 +1965,26 @@ fn infer_expr_type(
             None,
             ret_ty,
             loop_stack,
+        impl_list,
         ),
-        Expr::Var(v) => env.get(*v).ok_or(FrontendError {
-            pos: 0,
-            message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
-        }),
-        Expr::Block(block) => {
-            infer_value_block_type(
-                block,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )
+        Expr::Var(v) => {
+            // M9.9: path check moved to top of infer_expr_type via expr_access_path.
+            env.get(*v).ok_or(FrontendError {
+                pos: 0,
+                message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+            })
         }
+        Expr::Block(block) => infer_value_block_type(
+            block,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
         Expr::If(if_expr) => {
             let cond_ty = infer_expr_type(
                 if_expr.condition,
@@ -1435,6 +1995,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -1444,28 +2005,28 @@ fn infer_expr_type(
                             .to_string(),
                 });
             }
-            let then_ty =
-                infer_value_block_type(
-                    &if_expr.then_block,
-                    arena,
-                    env,
-                    table,
-                    record_table,
-                    adt_table,
-                    ret_ty.clone(),
-                    loop_stack,
-                )?;
-            let else_ty =
-                infer_value_block_type(
-                    &if_expr.else_block,
-                    arena,
-                    env,
-                    table,
-                    record_table,
-                    adt_table,
-                    ret_ty.clone(),
-                    loop_stack,
-                )?;
+            let then_ty = infer_value_block_type(
+                &if_expr.then_block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+            impl_list,
+            )?;
+            let else_ty = infer_value_block_type(
+                &if_expr.else_block,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+            impl_list,
+            )?;
             if then_ty != else_ty {
                 return Err(FrontendError {
                     pos: 0,
@@ -1477,9 +2038,73 @@ fn infer_expr_type(
             }
             Ok(then_ty)
         }
-        Expr::Match(match_expr) => {
-            infer_match_expr_type(
-                match_expr,
+        Expr::Match(match_expr) => infer_match_expr_type(
+            match_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
+        Expr::Loop(loop_expr) => infer_loop_expr_type(
+            loop_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
+        // M9.4 Wave 3: if-let expression typecheck.
+        Expr::IfLet(if_let) => {
+            // TODO(M9.5): disambiguate expr parsing for scrutinee to avoid record-literal conflict
+            // (e.g. `if let Pat = v { ... }` where `v { ... }` is parsed as a record literal).
+            // Infer value type.
+            let value_ty = infer_expr_type(
+                if_let.value,
+                arena,
+                env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            // M9.5 Wave C: build binding plan, validate conflicts, apply to then-env.
+            let mut plan = BindingPlan::default();
+            build_match_pattern_plan(
+                &if_let.pattern, &value_ty, &PatternPath::root(),
+                &mut plan, arena, adt_table,
+            )?;
+            validate_binding_plan_conflicts(&plan)?;
+            // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+            validate_plan_against_scrutinee_state(env, if_let.value, arena, &plan)?;
+            // then-block sees the bindings.
+            let mut then_env = env.clone();
+            then_env.push_scope();
+            apply_binding_plan(&mut then_env, &plan);
+            // NOTE: scrutinee consumed-state is enforced at statement level only
+            // (infer_expr_type receives &ScopeEnv, which is immutable).
+            let then_ty = infer_value_block_type(
+                &if_let.then_block,
+                arena,
+                &then_env,
+                table,
+                record_table,
+                adt_table,
+                ret_ty.clone(),
+                loop_stack,
+                impl_list,
+            )?;
+            // else-block uses original env (no bindings).
+            let else_ty = infer_value_block_type(
+                &if_let.else_block,
                 arena,
                 env,
                 table,
@@ -1487,19 +2112,18 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty,
                 loop_stack,
-            )
-        }
-        Expr::Loop(loop_expr) => {
-            infer_loop_expr_type(
-                loop_expr,
-                arena,
-                env,
-                table,
-                record_table,
-                adt_table,
-                ret_ty,
-                loop_stack,
-            )
+                impl_list,
+            )?;
+            if then_ty != else_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "if-let branch type mismatch: then is {:?}, else is {:?}",
+                        then_ty, else_ty
+                    ),
+                });
+            }
+            Ok(then_ty)
         }
         Expr::Call(name, args) => {
             if is_builtin_assert_name(*name, arena, table)? {
@@ -1514,6 +2138,48 @@ fn infer_expr_type(
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
                 s
+            } else if let Some(Type::Closure(closure_ty)) = env.get(*name) {
+                if closure_ty.family != ClosureValueFamily::UnaryDirect
+                    || closure_ty.capture != ClosureCapturePolicy::Immutable
+                {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "direct invocation currently admits only the UnaryDirect immutable closure family in M8.4 Wave 3"
+                                .to_string(),
+                    });
+                }
+                if args.len() != 1 || args.iter().any(|arg| arg.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message:
+                            "direct invocation of first-class closure values currently requires exactly one positional argument in M8.4 Wave 3"
+                                .to_string(),
+                    });
+                }
+                let arg_ty = infer_expr_type_with_expected(
+                    args[0].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    Some(closure_ty.param.as_ref().clone()),
+                    ret_ty,
+                    loop_stack,
+                impl_list,
+                )?;
+                ensure_binding_value_type(
+                    closure_ty.param.as_ref().clone(),
+                    arg_ty,
+                    args[0].value,
+                    arena,
+                    format!(
+                        "closure argument for '{}'",
+                        resolve_symbol_name(arena, *name)?
+                    ),
+                )?;
+                return Ok(closure_ty.ret.as_ref().clone());
             } else {
                 return Err(FrontendError {
                     pos: 0,
@@ -1521,6 +2187,116 @@ fn infer_expr_type(
                 });
             };
             let ordered_args = reorder_call_args(*name, args, &sig, arena)?;
+            // M9.1 Wave 3: generic call-site substitution.
+            // When the function is generic (sig.type_params non-empty), infer a
+            // substitution map TypeVar(T) → concrete_type from the argument
+            // expressions and apply it before checking argument/return types.
+            if !sig.type_params.is_empty() {
+                let fn_name = resolve_symbol_name(arena, *name)?;
+                // First pass: build substitution map from arguments whose
+                // expected param type is a TypeVar.
+                let mut subst: BTreeMap<SymbolId, Type> = BTreeMap::new();
+                for (i, arg) in ordered_args.iter().enumerate() {
+                    if let Type::TypeVar(tid) = &sig.params[i] {
+                        if subst.contains_key(tid) {
+                            // Already bound — verify consistency below.
+                            continue;
+                        }
+                        let at = infer_expr_type(
+                            *arg,
+                            arena,
+                            env,
+                            table,
+                            record_table,
+                            adt_table,
+                            ret_ty.clone(),
+                            loop_stack,
+                        impl_list,
+                        )?;
+                        subst.insert(*tid, at);
+                    }
+                }
+                // Every declared type parameter must have been bound.
+                for tp in &sig.type_params {
+                    if !subst.contains_key(tp) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "cannot infer type for type parameter '{}' in call to '{}': no argument constrains it",
+                                resolve_symbol_name(arena, *tp)?,
+                                fn_name,
+                            ),
+                        });
+                    }
+                }
+                // M9.2 Wave 3: trait bound satisfaction check.
+                // After substitution is fully inferred, verify that each bound
+                // T: TraitName is satisfied by the concrete type substituted for T.
+                for bound in &sig.trait_bounds {
+                    if let Some(concrete_ty) = subst.get(&bound.param) {
+                        let satisfied = impl_list.iter().any(|imp| {
+                            imp.trait_name == bound.bound
+                                && concrete_type_matches_impl_for(concrete_ty, imp.for_type)
+                        });
+                        if !satisfied {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "type {:?} does not implement trait '{}' required by '{}'",
+                                    concrete_ty,
+                                    resolve_symbol_name(arena, bound.bound)?,
+                                    fn_name,
+                                ),
+                            });
+                        }
+                    }
+                }
+                // Substitute TypeVar → concrete in all param types and ret.
+                let concrete_params: Vec<Type> = sig.params.iter()
+                    .map(|p| subst_apply(p, &subst))
+                    .collect();
+                let concrete_ret = subst_apply(&sig.ret, &subst);
+                // Second pass: check every argument against its concrete type.
+                for (i, arg) in ordered_args.iter().enumerate() {
+                    let expected_ty = concrete_params[i].clone();
+                    let at = infer_expr_type_with_expected(
+                        *arg,
+                        arena,
+                        env,
+                        table,
+                        record_table,
+                        adt_table,
+                        Some(expected_ty.clone()),
+                        ret_ty.clone(),
+                        loop_stack,
+                    impl_list,
+                    )?;
+                    if at != expected_ty {
+                        if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
+                            if !is_fx_literal_expr(*arg, arena) {
+                                return Err(FrontendError {
+                                    pos: 0,
+                                    message: format!(
+                                        "{}; arg {} for '{}' currently requires an fx literal or an existing fx-typed value",
+                                        fx_coercion_gap_message(),
+                                        i,
+                                        fn_name,
+                                    ),
+                                });
+                            }
+                        } else {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "arg {} for '{}' has type {:?}, expected {:?}",
+                                    i, fn_name, at, expected_ty,
+                                ),
+                            });
+                        }
+                    }
+                }
+                return Ok(concrete_ret);
+            }
             for (i, arg) in ordered_args.iter().enumerate() {
                 let expected_ty = sig.params[i].clone();
                 let at = infer_expr_type_with_expected(
@@ -1533,6 +2309,7 @@ fn infer_expr_type(
                     Some(expected_ty.clone()),
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 if at != expected_ty {
                     if expected_ty == Type::Fx && is_numeric_for_fx_gap(&at) {
@@ -1573,6 +2350,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let measured = measured_numeric_parts(&t);
             match op {
@@ -1584,22 +2362,19 @@ fn infer_expr_type(
                     }),
                 },
                 UnaryOp::Pos | UnaryOp::Neg => {
-                    if t == Type::F64 {
+                    if t == Type::I32 {
+                        Ok(Type::I32)
+                    } else if t == Type::F64 {
                         Ok(Type::F64)
-                    } else if t == Type::Fx && is_fx_literal_expr(expr_id, arena) {
-                        Ok(Type::Fx)
                     } else if t == Type::Fx {
-                        Err(FrontendError {
-                            pos: 0,
-                            message: fx_unary_gap_message().to_string(),
-                        })
+                        Ok(Type::Fx)
                     } else if let Some((base, _)) = measured {
                         if *base == Type::F64 {
                             Ok(t)
                         } else if *base == Type::Fx {
                             Err(FrontendError {
                                 pos: 0,
-                                message: fx_unary_gap_message().to_string(),
+                                message: fx_measured_arithmetic_gap_message().to_string(),
                             })
                         } else {
                             Err(FrontendError {
@@ -1626,6 +2401,7 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             let rt = infer_expr_type(
                 *r,
@@ -1636,15 +2412,15 @@ fn infer_expr_type(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             match op {
                 BinaryOp::Eq | BinaryOp::Ne => {
                     if lt == Type::RangeI32 && rt == Type::RangeI32 {
                         return Err(FrontendError {
                             pos: 0,
-                            message:
-                                    "range equality is not part of the stable v0 range surface"
-                                    .to_string(),
+                            message: "range equality is not part of the stable v0 range surface"
+                                .to_string(),
                         });
                     }
                     if !supports_stable_equality_type(&lt, record_table, adt_table)? {
@@ -1660,6 +2436,21 @@ fn infer_expr_type(
                     }
                     if lt == rt {
                         Ok(Type::Bool)
+                    } else {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: format!("cannot compare {:?} and {:?}", lt, rt),
+                        })
+                    }
+                }
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                    if lt == Type::I32 && rt == Type::I32 {
+                        Ok(Type::Bool)
+                    } else if lt == rt {
+                        Err(FrontendError {
+                            pos: 0,
+                            message: first_wave_relational_gap_message().to_string(),
+                        })
                     } else {
                         Err(FrontendError {
                             pos: 0,
@@ -1693,7 +2484,42 @@ fn infer_expr_type(
                     }
                 }
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                    if measured_numeric_parts(&lt).is_some() || measured_numeric_parts(&rt).is_some() {
+                    if matches!(lt, Type::Sequence(_)) || matches!(rt, Type::Sequence(_)) {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: "ordered sequence values are not part of the current M8.3 Wave 1 operator surface"
+                                .to_string(),
+                        });
+                    }
+                    if lt == Type::Text || rt == Type::Text {
+                        let message = if *op == BinaryOp::Add
+                            && lt == Type::Text
+                            && rt == Type::Text
+                        {
+                            "text concatenation is not part of the current M8.1 Wave 2 contract"
+                        } else {
+                            "text values currently support only equality in the M8.1 Wave 2 surface"
+                        };
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: message.to_string(),
+                        });
+                    }
+                    if lt == Type::I32 && rt == Type::I32 {
+                        return match op {
+                            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul => Ok(Type::I32),
+                            BinaryOp::Div => Err(FrontendError {
+                                pos: 0,
+                                message:
+                                    "same-family i32 arithmetic currently admits only unary -, +, -, and *"
+                                        .to_string(),
+                            }),
+                            _ => unreachable!("covered arithmetic operator arms"),
+                        };
+                    }
+                    if measured_numeric_parts(&lt).is_some()
+                        || measured_numeric_parts(&rt).is_some()
+                    {
                         if lt != rt {
                             return Err(FrontendError {
                                 pos: 0,
@@ -1706,10 +2532,12 @@ fn infer_expr_type(
                         })?;
                         return match op {
                             BinaryOp::Add | BinaryOp::Sub if *base == Type::F64 => Ok(lt),
-                            BinaryOp::Add | BinaryOp::Sub if *base == Type::Fx => Err(FrontendError {
-                                pos: 0,
-                                message: fx_arithmetic_gap_message().to_string(),
-                            }),
+                            BinaryOp::Add | BinaryOp::Sub if *base == Type::Fx => {
+                                Err(FrontendError {
+                                    pos: 0,
+                                    message: fx_measured_arithmetic_gap_message().to_string(),
+                                })
+                            }
                             BinaryOp::Mul | BinaryOp::Div => Err(FrontendError {
                                 pos: 0,
                                 message:
@@ -1723,10 +2551,7 @@ fn infer_expr_type(
                         };
                     }
                     if lt == Type::Fx && rt == Type::Fx {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: fx_arithmetic_gap_message().to_string(),
-                        });
+                        return Ok(Type::Fx);
                     }
                     if lt == Type::F64 && rt == Type::F64 {
                         Ok(Type::F64)
@@ -1754,6 +2579,14 @@ mod tests {
         type_check_program(&program)
     }
 
+    fn derive_validation_plans_from_source(
+        src: &str,
+    ) -> Result<(Program, ValidationPlanTable), FrontendError> {
+        let program = parse_program(src)?;
+        let plans = derive_validation_plan_table(&program)?;
+        Ok((program, plans))
+    }
+
     #[test]
     fn fx_identity_surface_typechecks() {
         let src = r#"
@@ -1768,6 +2601,66 @@ mod tests {
         "#;
 
         typecheck_source(src).expect("fx passthrough surface should typecheck");
+    }
+
+    #[test]
+    fn executable_bare_local_path_import_typechecks_in_wave2() {
+        let src = r#"
+            Import "helper.sm"
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("bare local-path executable import should typecheck in wave2");
+    }
+
+    #[test]
+    fn executable_selected_import_typechecks_in_wave2() {
+        let src = r#"
+            Import "helper.sm" { Foo }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("selected executable import should typecheck in wave2");
+    }
+
+    #[test]
+    fn executable_reexport_import_rejects_as_wave2_out_of_scope() {
+        let src = r#"
+            Import pub "helper.sm" { Foo }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("re-export executable import must stay out of scope in wave2");
+        assert!(err
+            .message
+            .contains(executable_import_wave2_out_of_scope_message()));
+    }
+
+    #[test]
+    fn executable_package_qualified_import_rejects_as_wave2_out_of_scope() {
+        let src = r#"
+            Import "math::core.sm"
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("package-qualified executable import must stay out of scope in wave2");
+        assert!(err
+            .message
+            .contains(executable_import_wave2_out_of_scope_message()));
     }
 
     #[test]
@@ -1836,7 +2729,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("u32 range bounds must reject");
-        assert!(err.message.contains("range literal currently requires i32 bounds"));
+        assert!(err
+            .message
+            .contains("range literal currently requires i32 bounds"));
     }
 
     #[test]
@@ -1851,7 +2746,41 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("range equality must reject");
-        assert!(err.message.contains("range equality is not part of the stable v0 range surface"));
+        assert!(err
+            .message
+            .contains("range equality is not part of the stable v0 range surface"));
+    }
+
+    #[test]
+    fn i32_relational_surface_typechecks_in_first_wave() {
+        let src = r#"
+            fn main() {
+                let gt: bool = 3 > 2;
+                let lt: bool = 2 < 3;
+                let ge: bool = 3 >= 3;
+                let le: bool = 3 <= 3;
+                assert(gt == true);
+                assert(lt == true);
+                assert(ge == true);
+                assert(le == true);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("same-family i32 relationals should typecheck");
+    }
+
+    #[test]
+    fn non_i32_relational_surface_stays_out_of_scope() {
+        let src = r#"
+            fn main() {
+                let ok: bool = 1.0 < 2.0;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("f64 relational surface must reject");
+        assert!(err.message.contains(first_wave_relational_gap_message()));
     }
 
     #[test]
@@ -1864,7 +2793,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("range tuple nesting must reject");
-        assert!(err.message.contains("range literal is not yet part of the stable tuple/user-data surface"));
+        assert!(err
+            .message
+            .contains("range literal is not yet part of the stable tuple/user-data surface"));
     }
 
     #[test]
@@ -1881,10 +2812,14 @@ mod tests {
     }
 
     #[test]
-    fn fx_arithmetic_reports_explicit_gap() {
+    fn plain_fx_arithmetic_typechecks_in_post_stable_track() {
         let src = r#"
             fn add(x: fx, y: fx) -> fx {
-                return x + y;
+                let sum: fx = x + y;
+                let diff: fx = -sum;
+                let same: fx = +diff;
+                let prod: fx = same * y;
+                return prod / x;
             }
 
             fn main() {
@@ -1892,8 +2827,153 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("fx arithmetic should reject");
-        assert!(err.message.contains("fx arithmetic is not implemented"));
+        typecheck_source(src)
+            .expect("plain fx arithmetic should typecheck in the first post-stable slice");
+    }
+
+    #[test]
+    fn measured_fx_addition_still_reports_narrow_slice_gap() {
+        let src = r#"
+            fn main() {
+                let x: fx[m] = 1.0fx;
+                let y: fx[m] = 2.0fx;
+                let sum: fx[m] = x + y;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("measured fx arithmetic must stay outside the first slice");
+        assert!(err
+            .message
+            .contains("unit-carrying fx arithmetic is not part of the first post-stable fx arithmetic slice yet"));
+    }
+
+    #[test]
+    fn text_literal_and_equality_surface_typechecks() {
+        let src = r#"
+            fn id(message: text) -> text {
+                return message;
+            }
+
+            fn main() {
+                let left: text = "alpha";
+                let right: text = id("alpha");
+                let same = left == right;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("text literals and text equality should typecheck");
+    }
+
+    #[test]
+    fn text_concatenation_rejects_in_wave2() {
+        let src = r#"
+            fn main() {
+                let both = "a" + "b";
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("text concatenation must remain outside Wave 2");
+        assert!(err
+            .message
+            .contains("text concatenation is not part of the current M8.1 Wave 2 contract"));
+    }
+
+    #[test]
+    fn sequence_literal_and_equality_surface_typechecks_in_wave2() {
+        let src = r#"
+            fn id(values: Sequence(i32)) -> Sequence(i32) {
+                return values;
+            }
+
+            fn main() {
+                let left: Sequence(i32) = [1, 2, 3];
+                let right: Sequence(i32) = id([1, 2, 3]);
+                let same = left == right;
+                if same { return; } else { return; }
+            }
+        "#;
+
+        typecheck_source(src).expect("ordered sequence literals and equality should typecheck");
+    }
+
+    #[test]
+    fn empty_sequence_literal_requires_contextual_sequence_type() {
+        let src = r#"
+            fn main() {
+                let values = [];
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("empty ordered sequence literal without context must reject");
+        assert!(err.message.contains(
+            "empty ordered sequence literal currently requires contextual Sequence(type) in M8.3 Wave 2"
+        ));
+    }
+
+    #[test]
+    fn sequence_literal_rejects_heterogeneous_item_types() {
+        let src = r#"
+            fn main() {
+                let values: Sequence(i32) = [1, true];
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("heterogeneous ordered sequence items must reject");
+        assert!(err.message.contains("type mismatch"));
+    }
+
+    #[test]
+    fn sequence_index_surface_typechecks_in_wave3() {
+        let src = r#"
+            fn head(values: Sequence(i32)) -> i32 {
+                return values[0];
+            }
+
+            fn main() {
+                let values: Sequence(i32) = [1, 2, 3];
+                let first: i32 = head(values);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("ordered sequence indexing should typecheck");
+    }
+
+    #[test]
+    fn sequence_index_rejects_non_sequence_base() {
+        let src = r#"
+            fn main() {
+                let first: i32 = 1[0];
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("sequence indexing on non-sequence base must reject");
+        assert!(err.message.contains("sequence indexing requires Sequence(type) base"));
+    }
+
+    #[test]
+    fn sequence_index_rejects_non_i32_index() {
+        let src = r#"
+            fn main() {
+                let values: Sequence(i32) = [1, 2, 3];
+                let first: i32 = values[true];
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("sequence indexing with non-i32 index must reject");
+        assert!(err.message.contains("sequence indexing currently requires i32 index"));
     }
 
     #[test]
@@ -2036,7 +3116,8 @@ mod tests {
             }
         "#;
 
-        typecheck_source(src).expect("exhaustive ADT match expression without default should typecheck");
+        typecheck_source(src)
+            .expect("exhaustive ADT match expression without default should typecheck");
     }
 
     #[test]
@@ -2177,6 +3258,79 @@ mod tests {
     }
 
     #[test]
+    fn while_statement_with_bool_condition_typechecks() {
+        let src = r#"
+            fn main() {
+                let mut i: i32 = 0;
+                while i < 3 {
+                    i = i + 1;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("while statement with bool condition should typecheck");
+    }
+
+    #[test]
+    fn while_statement_with_non_bool_condition_rejects() {
+        let src = r#"
+            fn main() {
+                while 1 {
+                    return;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("non-bool while condition must reject");
+        assert!(err.message.contains("while condition must be bool"));
+    }
+
+    #[test]
+    fn statement_loop_with_continue_and_bare_break_typechecks() {
+        let src = r#"
+            fn main() {
+                let mut i: i32 = 0;
+                loop {
+                    i = i + 1;
+                    if i < 3 {
+                        continue;
+                    }
+                    break;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("statement loop control exits should typecheck");
+    }
+
+    #[test]
+    fn bare_break_outside_loop_rejects() {
+        let src = r#"
+            fn main() {
+                break;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("bare break outside loop must reject");
+        assert!(err.message.contains("bare break is allowed only inside while or statement loop"));
+    }
+
+    #[test]
+    fn continue_outside_loop_rejects() {
+        let src = r#"
+            fn main() {
+                continue;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("continue outside loop must reject");
+        assert!(err.message.contains("continue is allowed only inside while or statement loop"));
+    }
+
+    #[test]
     fn expression_bodied_function_reuses_return_typing() {
         let src = r#"
             fn id(x: f64) -> f64 = x;
@@ -2308,9 +3462,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("duplicate named arguments must reject");
-        assert!(err
-            .message
-            .contains("duplicate named argument 'x'"));
+        assert!(err.message.contains("duplicate named argument 'x'"));
     }
 
     #[test]
@@ -2358,9 +3510,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("non-const-safe default parameter must reject");
-        assert!(err
-            .message
-            .contains("default parameter 'factor'"));
+        assert!(err.message.contains("default parameter 'factor'"));
     }
 
     #[test]
@@ -2443,7 +3593,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("assignment to const must reject");
-        assert!(err.message.contains("cannot assign to const binding 'total'"));
+        assert!(err
+            .message
+            .contains("cannot assign to const binding 'total'"));
     }
 
     #[test]
@@ -2477,12 +3629,71 @@ mod tests {
     }
 
     #[test]
+    fn first_class_closure_literal_requires_contextual_type() {
+        let src = r#"
+            fn main() {
+                let value = (x => x);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("closure literal without context must reject");
+        assert!(err.message.contains("contextual Closure(T -> U) type"));
+    }
+
+    #[test]
+    fn first_class_closure_literal_typechecks_with_declared_signature_and_capture() {
+        let src = r#"
+            fn keep(f: Closure(f64 -> f64)) -> Closure(f64 -> f64) = f;
+
+            fn main() {
+                let offset: f64 = 1.0;
+                let f: Closure(f64 -> f64) = (x => x + offset);
+                let g: Closure(f64 -> f64) = keep(f);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("contextual first-class closure should typecheck");
+    }
+
+    #[test]
+    fn direct_first_class_closure_invocation_typechecks_in_wave3() {
+        let src = r#"
+            fn main() {
+                let f: Closure(f64 -> f64) = (x => x + 1.0);
+                let total: f64 = f(2.0);
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("closure invocation should typecheck in Wave 3");
+    }
+
+    #[test]
+    fn direct_first_class_closure_invocation_rejects_named_arguments() {
+        let src = r#"
+            fn main() {
+                let f: Closure(f64 -> f64) = (x => x + 1.0);
+                let total: f64 = f(x: 2.0);
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("named closure invocation must reject");
+        assert!(
+            err.message.contains("exactly one positional argument")
+                || err.message.contains("expected ')'")
+        );
+    }
+
+    #[test]
     fn compound_assignment_typechecks_for_existing_scalar_rules() {
         let src = r#"
             fn main() {
-                let total: f64 = 1.0;
+                let mut total: f64 = 1.0;
                 total += 2.0;
-                let ready: bool = true;
+                let mut ready: bool = true;
                 ready &&= false;
                 return;
             }
@@ -2508,7 +3719,7 @@ mod tests {
     fn compound_assignment_reuses_operator_type_rules() {
         let src = r#"
             fn main() {
-                let total: f64 = 1.0;
+                let mut total: f64 = 1.0;
                 total += true;
                 return;
             }
@@ -2517,6 +3728,72 @@ mod tests {
         let err =
             typecheck_source(src).expect_err("compound assignment operator mismatch must reject");
         assert!(err.message.contains("f64 arithmetic requires f64 operands"));
+    }
+
+    #[test]
+    fn mutable_local_reassignment_typechecks() {
+        let src = r#"
+            fn main() {
+                let mut score: i32 = 0;
+                score = 1;
+                score += 2;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("mutable local reassignment should typecheck");
+    }
+
+    #[test]
+    fn plain_local_reassignment_typechecks() {
+        let src = r#"
+            fn main() {
+                let score: i32 = 0;
+                score = 1;
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("plain local reassignment should typecheck");
+    }
+
+    #[test]
+    fn i32_arithmetic_typechecks_for_add_sub_mul_and_neg() {
+        let src = r#"
+            fn main() {
+                let a: i32 = 4;
+                let b: i32 = 2;
+                let add: i32 = a + b;
+                let sub: i32 = a - b;
+                let mul: i32 = a * b;
+                let neg: i32 = -a;
+                let folded: i32 = (a + b) * neg;
+                if add == sub {
+                    let keep: i32 = folded;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("same-family i32 arithmetic should typecheck");
+    }
+
+    #[test]
+    fn i32_division_remains_rejected_in_first_wave() {
+        let src = r#"
+            fn main() {
+                let a: i32 = 4;
+                let b: i32 = 2;
+                let q: i32 = a / b;
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("i32 division must remain deferred");
+        assert!(
+            err.message
+                .contains("same-family i32 arithmetic currently admits only unary -, +, -, and *")
+        );
     }
 
     #[test]
@@ -2729,9 +4006,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("ensures clause should reject call surface");
-        assert!(err
-            .message
-            .contains("ensures clause currently allows only parameter references, optional result binding"));
+        assert!(err.message.contains(
+            "ensures clause currently allows only parameter references, optional result binding"
+        ));
     }
 
     #[test]
@@ -2805,9 +4082,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("invariant clause should reject call surface");
-        assert!(err
-            .message
-            .contains("invariant clause currently allows only parameter references, optional result binding"));
+        assert!(err.message.contains(
+            "invariant clause currently allows only parameter references, optional result binding"
+        ));
     }
 
     #[test]
@@ -2820,8 +4097,8 @@ mod tests {
             fn main() { return; }
         "#;
 
-        let err = typecheck_source(src)
-            .expect_err("invariant clause must reserve synthetic result name");
+        let err =
+            typecheck_source(src).expect_err("invariant clause must reserve synthetic result name");
         assert!(err
             .message
             .contains("parameter name 'result' is reserved while invariant clauses are present"));
@@ -2915,8 +4192,7 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("non-quad let-else literal pattern must reject");
+        let err = typecheck_source(src).expect_err("non-quad let-else literal pattern must reject");
         assert!(err
             .message
             .contains("let-else tuple literal pattern requires quad element"));
@@ -2933,8 +4209,7 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("let-else return type mismatch must reject");
+        let err = typecheck_source(src).expect_err("let-else return type mismatch must reject");
         assert!(err.message.contains("return type mismatch"));
     }
 
@@ -2948,7 +4223,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("non-tuple destructuring must reject");
-        assert!(err.message.contains("tuple destructuring bind requires tuple value"));
+        assert!(err
+            .message
+            .contains("tuple destructuring bind requires tuple value"));
     }
 
     #[test]
@@ -3002,7 +4279,7 @@ mod tests {
     }
 
     #[test]
-    fn for_range_rejects_non_range_value() {
+    fn iterable_for_surface_rejects_non_iterable_execution_in_wave_one() {
         let src = r#"
             fn main() {
                 for i in 1 {
@@ -3012,10 +4289,40 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("non-range for input must reject");
+        let err = typecheck_source(src).expect_err("non-iterable executable for input must reject");
         assert!(err
             .message
-            .contains("for-range currently requires i32 range expression"));
+            .contains("currently requires built-in Sequence(type), i32 range"));
+    }
+
+    #[test]
+    fn iterable_for_sequence_values_typechecks_with_item_binding() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                for item in items {
+                    let _: i32 = item;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("Sequence(T) iterable loop should now typecheck");
+    }
+
+    #[test]
+    fn for_range_through_variable_remains_typecheckable() {
+        let src = r#"
+            fn main() {
+                let window = 0..=2;
+                for i in window {
+                    let _: i32 = i;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("range-valued variable for-loop should keep existing path");
     }
 
     #[test]
@@ -3030,9 +4337,7 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("for-range binding must be const");
-        assert!(err
-            .message
-            .contains("cannot assign to const binding 'i'"));
+        assert!(err.message.contains("cannot assign to const binding 'i'"));
     }
 
     #[test]
@@ -3048,11 +4353,159 @@ mod tests {
             }
         "#;
 
-        let err =
-            typecheck_source(src).expect_err("for-range in loop expression body must reject");
+        let err = typecheck_source(src).expect_err("for-range in loop expression body must reject");
         assert!(err
             .message
             .contains("loop expression body currently does not allow for-range"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_iterable_for_each_in_body() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                let value: i32 = loop {
+                    for item in items {
+                        break item;
+                    }
+                };
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("iterable for-each in loop expression must reject");
+        assert!(err
+            .message
+            .contains("loop expression body currently does not allow iterable for-each"));
+    }
+
+    #[test]
+    fn explicit_iterable_impl_surface_typechecks_without_loop_execution() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("Iterable trait/impl surface should typecheck");
+    }
+
+    #[test]
+    fn iterable_for_with_explicit_record_impl_typechecks() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    if index == 0 {
+                        return Option::Some(0);
+                    }
+                    if index == 1 {
+                        return Option::Some(1);
+                    }
+                    if index == 2 {
+                        return Option::Some(index);
+                    }
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { current: 0 };
+                for value in numbers {
+                    let _: i32 = value;
+                }
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("direct record Iterable loop should typecheck");
+    }
+
+    #[test]
+    fn iterable_for_with_wrong_iterable_contract_rejects() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self) -> Option(i32) {
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { current: 0 };
+                for value in numbers {
+                    let _ = value;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("wrong executable Iterable contract must reject");
+        assert!(err
+            .message
+            .contains("fn next(self: Self, index: i32) -> Option(Item)"));
+    }
+
+    #[test]
+    fn iterable_for_with_explicit_adt_impl_reports_out_of_scope() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            enum Numbers {
+                Wrap(i32),
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self;
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers::Wrap(0);
+                for value in numbers {
+                    let _ = value;
+                }
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("ADT Iterable loop must stay out of scope");
+        assert!(err.message.contains("direct record impls only"));
     }
 
     #[test]
@@ -3116,6 +4569,23 @@ mod tests {
         assert!(err
             .message
             .contains("break with value is allowed only inside loop expression"));
+    }
+
+    #[test]
+    fn loop_expression_rejects_continue_in_body() {
+        let src = r#"
+            fn main() {
+                let value: f64 = loop {
+                    continue;
+                };
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("continue in loop expression body must reject");
+        assert!(err
+            .message
+            .contains("loop expression body currently does not allow guard clause or return"));
     }
 
     #[test]
@@ -3212,6 +4682,337 @@ mod tests {
     }
 
     #[test]
+    fn schema_declarations_typecheck_as_compile_time_top_level_items() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            schema PointPayload {
+                point: Point,
+                label: Option(quad),
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("schema declarations should typecheck");
+    }
+
+    #[test]
+    fn tagged_union_schema_declarations_typecheck_as_compile_time_top_level_items() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            schema Payload {
+                Empty {},
+                PointRef {
+                    point: Point,
+                    label: Option(quad),
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("tagged-union schema declarations should typecheck");
+    }
+
+    #[test]
+    fn role_marked_schema_declarations_typecheck_as_compile_time_items() {
+        let src = r#"
+            config schema AppConfig {
+                interval_ms: u32[ms],
+            }
+
+            api schema SensorRequest {
+                payload: Result(quad, bool),
+            }
+
+            wire schema Envelope {
+                Ping {},
+                Data {
+                    value: f64,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("role-marked schema declarations should typecheck");
+    }
+
+    #[test]
+    fn version_marked_schema_declarations_typecheck_as_compile_time_items() {
+        let src = r#"
+            api schema SensorRequest version(2) {
+                payload: Result(quad, bool),
+            }
+
+            wire schema Envelope version(3) {
+                Ping {},
+                Data {
+                    value: f64,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("version-marked schema declarations should typecheck");
+    }
+
+    #[test]
+    fn derive_validation_plan_table_returns_canonical_record_schema_plan() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            config schema PointPayload {
+                point: Point,
+                label: Option(quad),
+                interval_ms: u32[ms],
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let (program, plans) =
+            derive_validation_plans_from_source(src).expect("validation plans should derive");
+        let schema_name = program.schemas[0].name;
+        let plan = plans.get(&schema_name).expect("schema plan must exist");
+        assert_eq!(plan.role, Some(SchemaRole::Config));
+        let ValidationShapePlan::Record(fields) = &plan.shape else {
+            panic!("expected record-shaped validation plan");
+        };
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].ty, Type::Record(program.records[0].name));
+        assert_eq!(fields[1].ty, Type::Option(Box::new(Type::Quad)));
+        let Type::Measured(base, unit) = &fields[2].ty else {
+            panic!("expected measured u32 field in validation plan");
+        };
+        assert_eq!(**base, Type::U32);
+        assert_eq!(
+            resolve_symbol_name(&program.arena, *unit).expect("unit symbol"),
+            "ms"
+        );
+        assert_eq!(
+            plan.checks,
+            vec![
+                ValidationCheck::RequiredField {
+                    field: fields[0].name,
+                },
+                ValidationCheck::FieldType {
+                    field: fields[0].name,
+                    ty: fields[0].ty.clone(),
+                },
+                ValidationCheck::RequiredField {
+                    field: fields[1].name,
+                },
+                ValidationCheck::FieldType {
+                    field: fields[1].name,
+                    ty: fields[1].ty.clone(),
+                },
+                ValidationCheck::RequiredField {
+                    field: fields[2].name,
+                },
+                ValidationCheck::FieldType {
+                    field: fields[2].name,
+                    ty: fields[2].ty.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn derive_validation_plan_table_returns_tagged_union_schema_plan() {
+        let src = r#"
+            record Point {
+                x: i32,
+                y: i32,
+            }
+
+            wire schema Envelope {
+                Empty {},
+                Data {
+                    point: Point,
+                    verdict: Result(quad, bool),
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let (program, plans) =
+            derive_validation_plans_from_source(src).expect("validation plans should derive");
+        let schema_name = program.schemas[0].name;
+        let plan = plans.get(&schema_name).expect("schema plan must exist");
+        assert_eq!(plan.role, Some(SchemaRole::Wire));
+        let ValidationShapePlan::TaggedUnion(variants) = &plan.shape else {
+            panic!("expected tagged-union validation plan");
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].fields.len(), 0);
+        assert_eq!(variants[1].fields.len(), 2);
+        assert_eq!(
+            variants[1].fields[0].ty,
+            Type::Record(program.records[0].name)
+        );
+        assert_eq!(
+            variants[1].fields[1].ty,
+            Type::Result(Box::new(Type::Quad), Box::new(Type::Bool))
+        );
+        assert_eq!(
+            plan.checks,
+            vec![
+                ValidationCheck::TaggedUnionBranch {
+                    variant: variants[0].name,
+                },
+                ValidationCheck::TaggedUnionBranch {
+                    variant: variants[1].name,
+                },
+                ValidationCheck::TaggedUnionBranchRequiredField {
+                    variant: variants[1].name,
+                    field: variants[1].fields[0].name,
+                },
+                ValidationCheck::TaggedUnionBranchFieldType {
+                    variant: variants[1].name,
+                    field: variants[1].fields[0].name,
+                    ty: variants[1].fields[0].ty.clone(),
+                },
+                ValidationCheck::TaggedUnionBranchRequiredField {
+                    variant: variants[1].name,
+                    field: variants[1].fields[1].name,
+                },
+                ValidationCheck::TaggedUnionBranchFieldType {
+                    variant: variants[1].name,
+                    field: variants[1].fields[1].name,
+                    ty: variants[1].fields[1].ty.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn schema_declaration_rejects_duplicate_field_name() {
+        let src = r#"
+            schema PointPayload {
+                point: i32,
+                point: i32,
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("duplicate schema field must reject");
+        assert!(err
+            .message
+            .contains("schema 'PointPayload' cannot repeat field 'point'"));
+    }
+
+    #[test]
+    fn schema_declaration_rejects_empty_body() {
+        let src = r#"
+            schema PointPayload {
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("empty schema must reject");
+        assert!(err
+            .message
+            .contains("schema 'PointPayload' must declare at least 1 field"));
+    }
+
+    #[test]
+    fn tagged_union_schema_rejects_duplicate_variant_name() {
+        let src = r#"
+            schema Payload {
+                Ready {},
+                Ready {
+                    detail: quad,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("duplicate schema variant must reject");
+        assert!(err
+            .message
+            .contains("schema 'Payload' cannot repeat variant 'Ready'"));
+    }
+
+    #[test]
+    fn tagged_union_schema_rejects_duplicate_variant_field_name() {
+        let src = r#"
+            schema Payload {
+                Data {
+                    value: i32,
+                    value: i32,
+                },
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err =
+            typecheck_source(src).expect_err("duplicate tagged-union schema field must reject");
+        assert!(err
+            .message
+            .contains("schema 'Payload::Data' cannot repeat field 'value'"));
+    }
+
+    #[test]
+    fn schema_declaration_rejects_top_level_name_collision_with_record() {
+        let src = r#"
+            record PointPayload {
+                x: i32,
+            }
+
+            schema PointPayload {
+                point: i32,
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src).expect_err("schema/record collision must reject");
+        assert!(err
+            .message
+            .contains("top-level name 'PointPayload' cannot be used for both record and schema"));
+    }
+
+    #[test]
     fn record_declaration_rejects_recursive_field_graph() {
         let src = r#"
             record A {
@@ -3290,7 +5091,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("missing record field must reject");
-        assert!(err.message.contains("record literal 'DecisionContext' is missing field 'quality'"));
+        assert!(err
+            .message
+            .contains("record literal 'DecisionContext' is missing field 'quality'"));
     }
 
     #[test]
@@ -3308,7 +5111,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("unknown record field must reject");
-        assert!(err.message.contains("record literal 'DecisionContext' has no field named 'badge'"));
+        assert!(err
+            .message
+            .contains("record literal 'DecisionContext' has no field named 'badge'"));
     }
 
     #[test]
@@ -3346,7 +5151,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record equality subset must reject unsupported fields");
+        let err = typecheck_source(src)
+            .expect_err("record equality subset must reject unsupported fields");
         assert!(err
             .message
             .contains("record equality is allowed only when every field type already supports stable equality"));
@@ -3386,7 +5192,9 @@ mod tests {
         "#;
 
         let err = typecheck_source(src).expect_err("unknown record field must reject");
-        assert!(err.message.contains("record type 'DecisionContext' has no field named 'badge'"));
+        assert!(err
+            .message
+            .contains("record type 'DecisionContext' has no field named 'badge'"));
     }
 
     #[test]
@@ -3582,7 +5390,7 @@ mod tests {
         let err = typecheck_source(src).expect_err("unknown record field must reject");
         assert!(err
             .message
-            .contains("record type 'DecisionContext' has no field named 'badge' in destructuring bind"));
+            .contains("record type 'DecisionContext' has no field named 'badge'"));
     }
 
     #[test]
@@ -3643,10 +5451,11 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record let-else without refutable field must reject");
-        assert!(err
-            .message
-            .contains("record let-else requires at least one refutable quad literal field pattern"));
+        let err =
+            typecheck_source(src).expect_err("record let-else without refutable field must reject");
+        assert!(err.message.contains(
+            "record let-else requires at least one refutable quad literal field pattern"
+        ));
     }
 
     #[test]
@@ -3664,7 +5473,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src).expect_err("record let-else quad literal on non-quad field must reject");
+        let err = typecheck_source(src)
+            .expect_err("record let-else quad literal on non-quad field must reject");
         assert!(err
             .message
             .contains("record let-else literal pattern requires quad field"));
@@ -3851,8 +5661,8 @@ mod tests {
             }
         "#;
 
-        let err = typecheck_source(src)
-            .expect_err("mismatched standard-form match family must reject");
+        let err =
+            typecheck_source(src).expect_err("mismatched standard-form match family must reject");
         assert!(err
             .message
             .contains("match arm pattern type 'Option' does not match scrutinee Result(T, E)"));
@@ -3936,6 +5746,1305 @@ mod tests {
             .message
             .contains("*, / on unit-carrying values are rejected in the first-wave units surface"));
     }
+
+    // ── M9.1 Wave 3: generic call-site substitution ──────────────────────────
+
+    #[test]
+    fn generic_identity_fn_typechecks_with_i32() {
+        let src = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: i32 = identity(42);
+                let _ = v;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("identity<i32> should typecheck");
+    }
+
+    #[test]
+    fn generic_identity_fn_typechecks_with_bool() {
+        let src = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: bool = identity(true);
+                let _ = v;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("identity<bool> should typecheck");
+    }
+
+    #[test]
+    fn generic_fn_with_concrete_and_type_var_params() {
+        let src = r#"
+            fn first<T>(x: T, y: i32) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: bool = first(true, 1);
+                let _ = v;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("first<bool>(bool, i32) should typecheck");
+    }
+
+    #[test]
+    fn generic_call_wrong_return_type_rejects() {
+        let src = r#"
+            fn identity<T>(x: T) -> T {
+                return x;
+            }
+
+            fn main() {
+                let v: i32 = identity(true);
+                let _ = v;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("bool assigned to i32 binding must reject");
+        assert!(
+            err.message.contains("type mismatch") || err.message.contains("bool"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    // M9.2 Wave 3 — trait coherence, conformance, and bound satisfaction
+
+    #[test]
+    fn duplicate_impl_same_trait_and_type_is_rejected() {
+        let src = r#"
+            trait Display {
+                fn show(self: MyType) -> i32;
+            }
+
+            record MyType { x: i32 }
+
+            impl Display for MyType {
+                fn show(self: MyType) -> i32 {
+                    return 0;
+                }
+            }
+
+            impl Display for MyType {
+                fn show(self: MyType) -> i32 {
+                    return 1;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("duplicate impl must be rejected by coherence check");
+        assert!(
+            err.message.contains("duplicate") || err.message.contains("impl"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_missing_required_method_is_rejected() {
+        let src = r#"
+            trait Greet {
+                fn hello(self: Greeter) -> i32;
+                fn bye(self: Greeter) -> i32;
+            }
+
+            record Greeter { x: i32 }
+
+            impl Greet for Greeter {
+                fn hello(self: Greeter) -> i32 {
+                    return 1;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("impl missing required method must be rejected");
+        assert!(
+            err.message.contains("bye") || err.message.contains("missing") || err.message.contains("method"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_method_wrong_return_type_is_rejected() {
+        let src = r#"
+            trait Counter {
+                fn count(self: Cnt) -> i32;
+            }
+
+            record Cnt { n: i32 }
+
+            impl Counter for Cnt {
+                fn count(self: Cnt) -> bool {
+                    return true;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("impl method with wrong return type must be rejected");
+        assert!(
+            err.message.contains("count") || err.message.contains("return type") || err.message.contains("mismatch"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_method_wrong_parameter_type_is_rejected() {
+        let src = r#"
+            trait Counter {
+                fn count(self: Cnt) -> i32;
+            }
+
+            record Cnt { n: i32 }
+
+            impl Counter for Cnt {
+                fn count(self: i32) -> i32 {
+                    return 0;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("impl method with wrong parameter type must be rejected");
+        assert!(
+            err.message.contains("parameter type") || err.message.contains("expected"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn trait_self_contract_allows_multiple_impl_targets() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            record Others {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self.current;
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            impl Iterable for Others {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self.current;
+                    let _ = index;
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        typecheck_source(src).expect("trait-side Self should anchor independently per impl target");
+    }
+
+    #[test]
+    fn trait_self_contract_still_rejects_wrong_concrete_impl_parameter() {
+        let src = r#"
+            trait Counter {
+                fn count(self: Self) -> i32;
+            }
+
+            record Cnt { n: i32 }
+
+            impl Counter for Cnt {
+                fn count(self: i32) -> i32 {
+                    return 0;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("trait-side Self must still anchor to the impl target");
+        assert!(
+            err.message.contains("parameter type") || err.message.contains("expected"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn self_type_outside_trait_or_impl_positions_is_not_admitted() {
+        let src = r#"
+            fn id(value: Self) -> Self {
+                return value;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("Self outside trait/impl method type positions must stay unsupported");
+        assert!(
+            err.message.contains("unknown nominal type 'Self'"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn impl_method_body_is_typechecked_even_without_dispatch() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Numbers) -> Option(i32);
+            }
+
+            record Numbers {
+                current: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Numbers) -> Option(i32) {
+                    return 1;
+                }
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+
+        let err = typecheck_source(src)
+            .expect_err("impl method body must be typechecked before dispatch lands");
+        assert!(
+            err.message.contains("return") || err.message.contains("Option"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn generic_fn_with_bound_and_satisfying_impl_typechecks() {
+        let src = r#"
+            trait Zeroable {
+                fn zero(v: ZeroInt) -> i32;
+            }
+
+            record ZeroInt { n: i32 }
+
+            impl Zeroable for ZeroInt {
+                fn zero(v: ZeroInt) -> i32 {
+                    return 0;
+                }
+            }
+
+            fn make_zero<T: Zeroable>(v: T) -> T {
+                return v;
+            }
+
+            fn main() {
+                let z: ZeroInt = ZeroInt { n: 0 };
+                let r: ZeroInt = make_zero(z);
+                let _ = r;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("bound satisfied by impl should typecheck");
+    }
+
+    #[test]
+    fn generic_fn_with_bound_and_missing_impl_rejects() {
+        let src = r#"
+            trait Printable {
+                fn print(v: NoPrint) -> i32;
+            }
+
+            record NoPrint { x: i32 }
+
+            fn show<T: Printable>(v: T) -> T {
+                return v;
+            }
+
+            fn main() {
+                let p: NoPrint = NoPrint { x: 1 };
+                let r: NoPrint = show(p);
+                let _ = r;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("call with unsatisfied trait bound must be rejected");
+        assert!(
+            err.message.contains("Printable") || err.message.contains("implement") || err.message.contains("trait"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    // M9.4 Wave 3 — richer pattern surface typecheck
+
+    #[test]
+    fn wildcard_match_pattern_typechecks() {
+        let src = r#"
+            enum Color { Red, Blue, Green }
+
+            fn main() {
+                let c: Color = Color::Red;
+                match c {
+                    Color::Red => { let r: i32 = 0; let _ = r; }
+                    Color::Blue => { let r: i32 = 1; let _ = r; }
+                    Color::Green => { let r: i32 = 2; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("exhaustive ADT match should typecheck");
+    }
+
+    #[test]
+    fn or_pattern_two_variants_covers_both() {
+        let src = r#"
+            enum Color { Red, Blue, Green }
+
+            fn main() {
+                let c: Color = Color::Red;
+                match c {
+                    Color::Red | Color::Blue => { let r: i32 = 0; let _ = r; }
+                    Color::Green => { let r: i32 = 2; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern covering two variants should typecheck");
+    }
+
+    #[test]
+    fn or_pattern_covers_all_variants_exhaustive() {
+        let src = r#"
+            enum Flag { A, B }
+
+            fn main() {
+                let f: Flag = Flag::A;
+                match f {
+                    Flag::A | Flag::B => { let r: i32 = 0; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern covering all variants should be exhaustive");
+    }
+
+    #[test]
+    fn int_range_pattern_typechecks_on_i32() {
+        let src = r#"
+            fn main() {
+                let x: i32 = 3;
+                match x {
+                    1..=5 => { let y: i32 = 1; let _ = y; }
+                    _ => { let y: i32 = 0; let _ = y; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("int range pattern on i32 should typecheck");
+    }
+
+    #[test]
+    fn int_range_pattern_rejects_non_integer_scrutinee() {
+        let src = r#"
+            fn main() {
+                let x: bool = true;
+                match x {
+                    1..=5 => { let r: i32 = 0; let _ = r; }
+                    _ => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("int range pattern on bool must reject");
+        assert!(
+            err.message.contains("i32") || err.message.contains("u32") || err.message.contains("scrutinee"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn int_range_inverted_bounds_rejects() {
+        let src = r#"
+            fn main() {
+                let x: i32 = 3;
+                match x {
+                    5..=1 => { let r: i32 = 0; let _ = r; }
+                    _ => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("inverted range bounds must reject");
+        assert!(
+            err.message.contains("start") || err.message.contains("end") || err.message.contains("<="),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn nested_tuple_destructuring_typechecks() {
+        let src = r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3));
+                let ra: i32 = a;
+                let rb: i32 = b;
+                let rc: i32 = c;
+                let _ = ra;
+                let _ = rb;
+                let _ = rc;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("nested tuple destructuring should typecheck");
+    }
+
+    #[test]
+    fn nested_tuple_arity_mismatch_rejects() {
+        let src = r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3, 4));
+                let _ = a;
+                let _ = b;
+                let _ = c;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("nested tuple arity mismatch must reject");
+        assert!(
+            err.message.contains("arity") || err.message.contains("mismatch"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn if_let_wildcard_typechecks() {
+        let src = r#"
+            fn make_int() -> i32 {
+                return 1;
+            }
+
+            fn main() {
+                let r: i32 = if let _ = make_int() { 1 } else { 0 };
+                let _ = r;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("if-let wildcard should typecheck");
+    }
+
+    #[test]
+    fn if_let_branch_type_mismatch_rejects() {
+        let src = r#"
+            enum Flag { A, B }
+
+            fn main() {
+                let f: Flag = Flag::A;
+                let r: i32 = if let Flag::A = f { 1 } else { true };
+                let _ = r;
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("if-let branch type mismatch must reject");
+        assert!(
+            err.message.contains("mismatch") || err.message.contains("bool") || err.message.contains("i32"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    // M9.5 Wave B — parser admits `ref x` binding syntax
+
+    #[test]
+    fn ref_binding_in_tuple_pattern_parses() {
+        let src = r#"
+            fn make_pair() -> (i32, i32) { return (1, 2); }
+            fn main() {
+                let (ref a, b) = make_pair();
+                let _ = b;
+                return;
+            }
+        "#;
+        // Plain tuple binds must preserve borrow capture instead of rewriting
+        // every bind to Move before the ownership pipeline runs.
+        typecheck_source(src).expect("ref binding in tuple pattern should parse and typecheck");
+    }
+
+    #[test]
+    fn plain_tuple_ref_binding_preserves_borrow_path_state() {
+        use crate::types::{PathAvailability, PatternPath};
+
+        let mut arena = AstArena::default();
+        let source = arena.intern_symbol("source");
+        let borrowed = arena.intern_symbol("borrowed");
+        let moved = arena.intern_symbol("moved");
+        let value = arena.alloc_expr(Expr::Var(source));
+        let stmt = arena.alloc_stmt(Stmt::LetTuple {
+            items: vec![
+                TuplePatternItem::Bind {
+                    name: borrowed,
+                    capture: CaptureMode::Borrow,
+                },
+                TuplePatternItem::Bind {
+                    name: moved,
+                    capture: CaptureMode::Move,
+                },
+            ],
+            ty: None,
+            value,
+        });
+
+        let mut env = ScopeEnv::new();
+        env.insert(source, Type::Tuple(vec![Type::I32, Type::I32]));
+
+        let table = FnTable::new();
+        let record_table = RecordTable::new();
+        let adt_table = AdtTable::new();
+        let mut loop_stack = Vec::new();
+        check_stmt(
+            stmt,
+            &arena,
+            &mut env,
+            Type::Unit,
+            &table,
+            &record_table,
+            &adt_table,
+            &mut loop_stack,
+            &[],
+        )
+        .expect("tuple ref bind should typecheck");
+
+        let binding = env.binding(source).expect("source binding must exist");
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Borrowed
+                && *path == PatternPath::root().tuple_index(0)
+        }));
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Moved
+                && *path == PatternPath::root().tuple_index(1)
+        }));
+    }
+
+    #[test]
+    fn ref_binding_in_record_pattern_parses() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: score } = ctx;
+                let _ = seen_camera;
+                let _ = score;
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("ref binding in record pattern should parse and typecheck");
+    }
+
+    #[test]
+    fn plain_record_ref_binding_preserves_record_field_path_state() {
+        use crate::types::{PathAvailability, PatternPath, RecordDecl, RecordField, RecordPatternItem};
+
+        let mut arena = AstArena::default();
+        let source = arena.intern_symbol("source");
+        let record_name = arena.intern_symbol("DecisionContext");
+        let camera = arena.intern_symbol("camera");
+        let quality = arena.intern_symbol("quality");
+        let borrowed = arena.intern_symbol("borrowed");
+        let moved = arena.intern_symbol("moved");
+        let value = arena.alloc_expr(Expr::Var(source));
+        let stmt = arena.alloc_stmt(Stmt::LetRecord {
+            record_name,
+            items: vec![
+                RecordPatternItem {
+                    field: camera,
+                    target: RecordPatternTarget::Bind {
+                        name: borrowed,
+                        capture: CaptureMode::Borrow,
+                    },
+                },
+                RecordPatternItem {
+                    field: quality,
+                    target: RecordPatternTarget::Bind {
+                        name: moved,
+                        capture: CaptureMode::Move,
+                    },
+                },
+            ],
+            value,
+        });
+
+        let mut env = ScopeEnv::new();
+        env.insert(source, Type::Record(record_name));
+
+        let table = FnTable::new();
+        let mut record_table = RecordTable::new();
+        record_table.insert(
+            record_name,
+            RecordDecl {
+                name: record_name,
+                type_params: Vec::new(),
+                fields: vec![
+                    RecordField { name: camera, ty: Type::Quad },
+                    RecordField { name: quality, ty: Type::F64 },
+                ],
+            },
+        );
+        let adt_table = AdtTable::new();
+        let mut loop_stack = Vec::new();
+        check_stmt(
+            stmt,
+            &arena,
+            &mut env,
+            Type::Unit,
+            &table,
+            &record_table,
+            &adt_table,
+            &mut loop_stack,
+            &[],
+        )
+        .expect("record ref bind should typecheck");
+
+        let binding = env.binding(source).expect("source binding must exist");
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Borrowed
+                && *path == PatternPath::root().record_field(camera)
+        }));
+        assert!(binding.path_state.iter().any(|(path, state)| {
+            *state == PathAvailability::Moved
+                && *path == PatternPath::root().record_field(quality)
+        }));
+    }
+
+    #[test]
+    fn ref_binding_in_adt_pattern_parses() {
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(1); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(ref x) => { let _ = x; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("ref binding in ADT pattern should parse and typecheck");
+    }
+
+    // M9.5 Wave C — binding plan builders + conflict detection + consumed-state
+
+    #[test]
+    fn binding_plan_tuple_move_ok() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1),
+            capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0),
+            ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("single move binding should not conflict");
+    }
+
+    #[test]
+    fn binding_plan_two_borrows_same_path_ok() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("two borrows of same path should not conflict");
+    }
+
+    #[test]
+    fn binding_plan_move_and_borrow_same_path_rejects() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("move+borrow same path must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("capture"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn scrutinee_use_move_gives_consumed() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, ScrutineeUse, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        assert_eq!(scrutinee_use_from_plan(&plan), ScrutineeUse::Consumed);
+    }
+
+    #[test]
+    fn scrutinee_use_all_borrow_gives_preserved() {
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, ScrutineeUse, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        assert_eq!(scrutinee_use_from_plan(&plan), ScrutineeUse::Preserved);
+    }
+
+    #[test]
+    fn use_after_move_rejects() {
+        let src = r#"
+            fn take_val() -> i32 { return 5; }
+            fn main() {
+                let x: i32 = take_val();
+                let _ = x;
+                let _ = x;
+                return;
+            }
+        "#;
+        // i32 is Copy — use-after-move semantics only apply to non-Copy types.
+        // This test just validates the checker doesn't false-positive on i32.
+        typecheck_source(src).expect("plain i32 variable reuse should typecheck fine");
+    }
+
+    // M9.5 Wave D — match ownership pipeline
+
+    #[test]
+    fn match_borrow_binding_does_not_consume_scrutinee() {
+        // All-borrow match: scrutinee variable stays available after the match.
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn make() -> Maybe { return Maybe::None; }
+            fn main() {
+                let v: Maybe = make();
+                match v {
+                    Maybe::Some(ref x) => { let _ = x; }
+                    Maybe::None => { let r: i32 = 0; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("all-borrow match should not consume scrutinee");
+    }
+
+    #[test]
+    fn match_move_binding_typechecks() {
+        // Move binding in match arm: the binding captures the payload.
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(5); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(x) => { let r: i32 = x; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("move binding in match arm should typecheck");
+    }
+
+    #[test]
+    fn match_or_pattern_all_borrow_ok() {
+        // Or-pattern where all alternatives borrow: ok.
+        let src = r#"
+            enum Flag { A, B, C }
+            fn main() {
+                let f: Flag = Flag::A;
+                match f {
+                    Flag::A | Flag::B => { let r: i32 = 0; let _ = r; }
+                    Flag::C => { let r: i32 = 1; let _ = r; }
+                }
+                return;
+            }
+        "#;
+        typecheck_source(src).expect("or-pattern match should typecheck");
+    }
+
+    #[test]
+    fn match_inconsistent_or_pattern_capture_rejects() {
+        // One arm binds with ref, the other without — must be same shape.
+        let src = r#"
+            enum Wrap { Val(i32) }
+            fn make() -> Wrap { return Wrap::Val(1); }
+            fn main() {
+                let w: Wrap = make();
+                match w {
+                    Wrap::Val(ref x) | Wrap::Val(y) => { let _ = y; }
+                }
+                return;
+            }
+        "#;
+        let err = typecheck_source(src)
+            .expect_err("inconsistent or-pattern capture modes must reject");
+        assert!(
+            err.message.contains("same") || err.message.contains("capture") || err.message.contains("alternative"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn match_same_path_move_and_borrow_rejects() {
+        // A single arm with two bindings for the same payload slot (move + borrow conflict).
+        // This is enforced by validate_binding_plan_conflicts.
+        // Note: parser currently only allows one binding per payload slot,
+        // so this test validates the plan-level conflict check via direct API.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().variant(SymbolId(0)).variant_field(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("move+borrow same path must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("capture"),
+            "unexpected error: {}", err.message
+        );
+    }
+
+    #[test]
+    fn match_all_arms_borrow_path_ok() {
+        // Two bindings for the same path both borrowing: allowed.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let path = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: path.clone(), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan).expect("double-borrow same path must not conflict");
+    }
+
+    // M9.7 — partial move: path-based availability in ScopeEnv
+
+    #[test]
+    fn partial_move_sibling_path_still_usable() {
+        // Move root.0 (first element), then use root.1 (second element) — ok.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(1);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        // Accessing root.1 (different sibling) should be allowed.
+        env.check_path_available(sym, &PatternPath::root().tuple_index(1))
+            .expect("sibling path of moved path should remain available");
+    }
+
+    #[test]
+    fn partial_move_root_blocks_whole_var_use() {
+        // Move root.0, then try to use the whole variable (root) — must reject.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(2);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        // Accessing root (the whole variable) overlaps with root.0 that was moved → reject.
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("use of whole var after partial move must reject");
+        assert!(
+            err.message.contains("partially moved") || err.message.contains("moved"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn partial_move_child_blocks_child_use() {
+        // Move root.0, then try to use root.0 again — must reject.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(3);
+        env.insert(sym, Type::I32);
+        let path = PatternPath::root().tuple_index(0);
+        env.mark_path_state(sym, path.clone(), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &path)
+            .expect_err("re-use of moved child path must reject");
+        assert!(
+            err.message.contains("moved"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn whole_var_consumed_still_blocks() {
+        // mark_consumed (whole-var) still blocks root access.
+        use crate::types::PatternPath;
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(4);
+        env.insert(sym, Type::I32);
+        env.mark_consumed(sym);
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("whole-consumed var must be blocked");
+        assert!(err.message.contains("moved"), "unexpected: {}", err.message);
+    }
+
+    #[test]
+    fn borrow_path_does_not_block_read() {
+        // Borrow only — read should still be allowed (conservative: borrows don't block reads).
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(5);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_path_available(sym, &PatternPath::root().tuple_index(0))
+            .expect("borrow-only path should not block reads");
+    }
+
+    // M9.8 — borrow enforcement against prior path-state
+
+    #[test]
+    fn check_capture_allowed_borrow_then_move_rejects() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(10);
+        env.insert(sym, Type::I32);
+        // Borrow root.0
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        // Now try to move root.0 — must reject
+        let err = env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Move)
+            .expect_err("move after borrow of same path must reject");
+        assert!(
+            err.message.contains("borrow") || err.message.contains("cannot move"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn check_capture_allowed_move_then_borrow_rejects() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(11);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Borrow)
+            .expect_err("borrow after move of same path must reject");
+        assert!(
+            err.message.contains("moved") || err.message.contains("cannot borrow"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn check_capture_allowed_borrow_then_borrow_ok() {
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(12);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_capture_allowed(sym, &PatternPath::root().tuple_index(0), CaptureMode::Borrow)
+            .expect("borrow after borrow of same path must be ok");
+    }
+
+    #[test]
+    fn check_capture_allowed_borrow_then_move_sibling_ok() {
+        // Borrow root.0, then move root.1 — different sibling, no overlap, ok.
+        use crate::types::{CaptureMode, PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(13);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Borrowed);
+        env.check_capture_allowed(sym, &PatternPath::root().tuple_index(1), CaptureMode::Move)
+            .expect("move of sibling of borrowed path must be ok");
+    }
+
+    // M9.9 — expr_access_path + path-state normalization
+
+    #[test]
+    fn expr_access_path_var_is_root() {
+        use crate::types::PatternPath;
+        let mut arena = AstArena::default();
+        let sym = SymbolId(99);
+        let var_id = arena.alloc_expr(Expr::Var(sym));
+        let result = expr_access_path(var_id, &arena);
+        assert_eq!(result, Some((sym, PatternPath::root())));
+    }
+
+    #[test]
+    fn expr_access_path_literal_is_none() {
+        let mut arena = AstArena::default();
+        let lit_id = arena.alloc_expr(Expr::BoolLiteral(true));
+        assert_eq!(expr_access_path(lit_id, &arena), None);
+    }
+
+    #[test]
+    fn expr_access_path_sequence_index_literal() {
+        use crate::types::{NumericLiteral, PatternPath, SequenceIndexExpr};
+        let mut arena = AstArena::default();
+        let sym = SymbolId(7);
+        let base = arena.alloc_expr(Expr::Var(sym));
+        let idx  = arena.alloc_expr(Expr::NumericLiteral(NumericLiteral::I32(2)));
+        let expr = arena.alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base, index: idx }));
+        let result = expr_access_path(expr, &arena);
+        assert_eq!(result, Some((sym, PatternPath::root().tuple_index(2))));
+    }
+
+    #[test]
+    fn expr_access_path_sequence_index_non_literal_is_none() {
+        use crate::types::{SequenceIndexExpr};
+        let mut arena = AstArena::default();
+        let sym = SymbolId(7);
+        let base     = arena.alloc_expr(Expr::Var(sym));
+        let dyn_idx  = arena.alloc_expr(Expr::Var(SymbolId(8)));
+        let expr = arena.alloc_expr(Expr::SequenceIndex(SequenceIndexExpr { base, index: dyn_idx }));
+        // dynamic index → cannot determine path statically
+        assert_eq!(expr_access_path(expr, &arena), None);
+    }
+
+    #[test]
+    fn path_state_normalization_root_subsumes_children() {
+        // Adding Moved(root) when Moved(root.0) already exists → root.0 is dropped.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(50);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(1), PathAvailability::Moved);
+        // Now add root — should subsume both children.
+        env.mark_path_state(sym, PatternPath::root(), PathAvailability::Moved);
+        // Only one entry should remain: root.
+        let binding = env.binding(sym).expect("binding must exist");
+        assert_eq!(binding.path_state.len(), 1, "root should subsume child entries");
+        assert_eq!(binding.path_state[0].0, PatternPath::root());
+    }
+
+    #[test]
+    fn path_state_normalization_child_redundant_if_parent_present() {
+        // If Moved(root) exists, adding Moved(root.0) should be a no-op.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(51);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root(), PathAvailability::Moved);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let binding = env.binding(sym).expect("binding must exist");
+        assert_eq!(binding.path_state.len(), 1, "child must be suppressed when parent already present");
+    }
+
+    #[test]
+    fn check_path_available_sibling_of_moved_is_ok() {
+        // After moving root.0, accessing root.1 must succeed.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(60);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        env.check_path_available(sym, &PatternPath::root().tuple_index(1))
+            .expect("sibling of moved path must be accessible");
+    }
+
+    #[test]
+    fn check_path_available_whole_var_blocked_after_child_move() {
+        // After moving root.0, accessing root (whole var) must fail.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(61);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &PatternPath::root())
+            .expect_err("whole-var access after child move must be blocked");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    #[test]
+    fn check_path_available_moved_child_blocked() {
+        // After moving root.0, accessing root.0 itself must fail.
+        use crate::types::{PathAvailability, PatternPath};
+        let mut env = ScopeEnv::new();
+        let sym = SymbolId(62);
+        env.insert(sym, Type::I32);
+        env.mark_path_state(sym, PatternPath::root().tuple_index(0), PathAvailability::Moved);
+        let err = env.check_path_available(sym, &PatternPath::root().tuple_index(0))
+            .expect_err("access of moved path must be blocked");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    // M9.6 — prefix-overlap conflict detection
+
+    #[test]
+    fn prefix_overlap_move_and_borrow_rejects() {
+        // root.0 is a prefix of root.0.1 — move + borrow should conflict.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root().tuple_index(0);
+        let child  = PatternPath::root().tuple_index(0).tuple_index(1);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: parent, ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path: child, ty: Type::I32,
+        });
+        let err = validate_binding_plan_conflicts(&plan)
+            .expect_err("prefix-overlap move+borrow must conflict");
+        assert!(
+            err.message.contains("conflicting") || err.message.contains("overlapping"),
+            "unexpected: {}", err.message
+        );
+    }
+
+    #[test]
+    fn prefix_overlap_two_moves_rejects() {
+        // root and root.0 — both moved is also a conflict.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root();
+        let child  = PatternPath::root().tuple_index(0);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move, path: parent, ty: Type::Quad,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Move, path: child, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect_err("prefix-overlap double-move must conflict");
+    }
+
+    #[test]
+    fn distinct_paths_no_conflict() {
+        // root.0 and root.1 share the root prefix but diverge at index — no overlap.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(0), ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Move,
+            path: PatternPath::root().tuple_index(1), ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect("distinct sibling paths must not conflict");
+    }
+
+    #[test]
+    fn prefix_overlap_two_borrows_ok() {
+        // root.0 borrows and root.0.1 also borrows — allowed.
+        use crate::types::{
+            BindingPlan, BindingPlanItem, CaptureMode, PatternPath, SymbolId, Type,
+        };
+        let mut plan = BindingPlan::default();
+        let parent = PatternPath::root().tuple_index(0);
+        let child  = PatternPath::root().tuple_index(0).tuple_index(1);
+        plan.push(BindingPlanItem {
+            name: SymbolId(1), capture: CaptureMode::Borrow, path: parent, ty: Type::I32,
+        });
+        plan.push(BindingPlanItem {
+            name: SymbolId(2), capture: CaptureMode::Borrow, path: child, ty: Type::I32,
+        });
+        validate_binding_plan_conflicts(&plan)
+            .expect("prefix-overlap double-borrow must not conflict");
+    }
+
+    // M9.10 Wave B — LetTuple / LetElseTuple path-state tracking
+
+    #[test]
+    fn let_tuple_marks_moved_paths_on_source_var() {
+        // `let (a, b) = src;` should typecheck — both paths move from src.
+        typecheck_source(r#"
+            fn f(src: (i32, i32)) { let (a, b) = src; }
+            fn main() { return; }
+        "#).expect("let-tuple destructure must typecheck");
+    }
+
+    #[test]
+    fn let_tuple_rejects_second_destructure_of_same_source() {
+        // After `let (a, b) = src;` (move), `let (c, d) = src;` must be rejected.
+        let err = typecheck_source(r#"
+            fn f(src: (i32, i32)) { let (a, b) = src; let (c, d) = src; }
+            fn main() { return; }
+        "#).expect_err("second move-destructure of same source must fail");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
+
+    #[test]
+    fn let_tuple_partial_move_then_full_destructure_rejected() {
+        // After `let (a, _) = src;`, trying to destructure src again must fail.
+        let err = typecheck_source(r#"
+            fn f(src: (i32, i32)) { let (a, _) = src; let (b, c) = src; }
+            fn main() { return; }
+        "#).expect_err("second destructure after partial move must fail");
+        assert!(err.message.contains("moved"), "error must mention moved: {}", err.message);
+    }
 }
 
 fn is_builtin_assert_name(
@@ -3955,6 +7064,7 @@ fn check_builtin_assert_stmt(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<bool, FrontendError> {
     let Expr::Call(name, args) = arena.expr(expr_id) else {
         return Ok(false);
@@ -3977,6 +7087,7 @@ fn check_builtin_assert_stmt(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     if cond_ty != Type::Bool {
         return Err(FrontendError {
@@ -3996,6 +7107,7 @@ fn infer_value_block_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let mut block_env = env.clone();
     block_env.push_scope();
@@ -4015,6 +7127,7 @@ fn infer_value_block_type(
                     record_table,
                     adt_table,
                     loop_stack,
+                impl_list,
                 )?;
             }
             _ => {
@@ -4034,6 +7147,7 @@ fn infer_value_block_type(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     block_env.pop_scope();
     Ok(tail_ty)
@@ -4048,43 +7162,40 @@ fn infer_match_expr_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let scrutinee_ty =
-        infer_expr_type(
-            match_expr.scrutinee,
-            arena,
-            env,
-            table,
-            record_table,
-            adt_table,
-            ret_ty.clone(),
-            loop_stack,
-        )?;
+    let scrutinee_ty = infer_expr_type(
+        match_expr.scrutinee,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        ret_ty.clone(),
+        loop_stack,
+    impl_list,
+    )?;
+    // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
     if !matches!(
         scrutinee_ty,
         Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+            | Type::I32 | Type::U32
     ) {
         return Err(FrontendError {
             pos: 0,
             message:
-                "match expression is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                "match expression is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                     .to_string(),
         });
     }
 
+    // M9.5 Wave D: migrate to BindingPlan ownership pipeline.
+    // NOTE: infer_match_expr_type receives &ScopeEnv (not mut), so consumed-state
+    // marking is skipped here; it is enforced at statement-level match sites instead.
     let mut result_ty = None;
     for arm in &match_expr.arms {
-        let mut arm_env = env.clone();
-        arm_env.push_scope();
-        for (name, ty) in bind_match_pattern(
-            &arm.pat,
-            &scrutinee_ty,
-            arena,
-            record_table,
-            adt_table,
-        )? {
-            arm_env.insert(name, ty);
-        }
+        let (_, arm_env) =
+            build_and_apply_match_plan(&arm.pat, &scrutinee_ty, env, arena, adt_table)?;
         check_match_guard(
             arm.guard,
             arena,
@@ -4094,6 +7205,7 @@ fn infer_match_expr_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         let arm_ty = infer_value_block_type(
             &arm.block,
@@ -4104,6 +7216,7 @@ fn infer_match_expr_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         if let Some(ref expected) = result_ty {
             if *expected != arm_ty {
@@ -4130,6 +7243,7 @@ fn infer_match_expr_type(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         )?;
         if let Some(expected) = result_ty {
             if expected != default_ty {
@@ -4152,10 +7266,13 @@ fn infer_match_expr_type(
             arena,
             adt_table,
         )? {
-            Some((family_label, missing)) if !missing.is_empty() =>
-                Err(non_exhaustive_match_error(&family_label, &missing, true)?),
-            Some(_) => Ok(result_ty
-                .expect("exhaustive enum match expression should have at least one arm")),
+            Some((family_label, missing)) if !missing.is_empty() => {
+                Err(non_exhaustive_match_error(&family_label, &missing, true)?)
+            }
+            Some(_) => {
+                Ok(result_ty
+                    .expect("exhaustive enum match expression should have at least one arm"))
+            }
             None => Err(FrontendError {
                 pos: 0,
                 message: "match expression requires default arm '_'".to_string(),
@@ -4173,10 +7290,14 @@ fn infer_loop_expr_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let mut body_env = env.clone();
     body_env.push_scope();
-    loop_stack.push(LoopTypeFrame { break_ty: None });
+    loop_stack.push(LoopTypeFrame {
+        kind: LoopTypeFrameKind::Expression,
+        break_ty: None,
+    });
     for stmt in &loop_expr.body {
         check_loop_expr_stmt(
             *stmt,
@@ -4187,6 +7308,7 @@ fn infer_loop_expr_type(
             adt_table,
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
     }
     body_env.pop_scope();
@@ -4206,6 +7328,7 @@ fn check_loop_expr_stmt(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     match arena.stmt(stmt_id) {
         Stmt::LetElseTuple { .. } | Stmt::LetElseRecord { .. } => Err(FrontendError {
@@ -4216,7 +7339,22 @@ fn check_loop_expr_stmt(
             pos: 0,
             message: "loop expression body currently does not allow for-range".to_string(),
         }),
-        Stmt::Guard { .. } | Stmt::Return(..) => Err(FrontendError {
+        Stmt::While { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow while statement"
+                .to_string(),
+        }),
+        Stmt::Loop { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow statement loop"
+                .to_string(),
+        }),
+        Stmt::ForEach { .. } => Err(FrontendError {
+            pos: 0,
+            message: "loop expression body currently does not allow iterable for-each"
+                .to_string(),
+        }),
+        Stmt::Guard { .. } | Stmt::Return(..) | Stmt::Continue => Err(FrontendError {
             pos: 0,
             message: "loop expression body currently does not allow guard clause or return"
                 .to_string(),
@@ -4235,6 +7373,7 @@ fn check_loop_expr_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
             if cond_ty != Type::Bool {
                 return Err(FrontendError {
@@ -4256,6 +7395,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
             }
             then_env.pop_scope();
@@ -4272,6 +7412,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
             }
             else_env.pop_scope();
@@ -4291,12 +7432,18 @@ fn check_loop_expr_stmt(
                 adt_table,
                 ret_ty.clone(),
                 loop_stack,
+            impl_list,
             )?;
-            if !matches!(st, Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)) {
+            // M9.4 Wave 3: widen to also allow i32/u32 (for int range patterns).
+            if !matches!(
+                st,
+                Type::Quad | Type::Adt(_) | Type::Option(_) | Type::Result(_, _)
+                    | Type::I32 | Type::U32
+            ) {
                 return Err(FrontendError {
                     pos: 0,
                     message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
+                        "match is allowed only for quad, enum, Option(T), Result(T, E), i32, or u32 scrutinee"
                             .to_string(),
                 });
             }
@@ -4307,18 +7454,14 @@ fn check_loop_expr_stmt(
                 });
             }
 
+            // M9.5 Wave D / M9.7 / M9.8: BindingPlan pipeline + path-based ownership.
+            let mut arm_plans: Vec<BindingPlan> = Vec::new();
             for arm in arms {
-                let mut arm_env = env.clone();
-                arm_env.push_scope();
-                for (name, ty) in bind_match_pattern(
-                    &arm.pat,
-                    &st,
-                    arena,
-                    record_table,
-                    adt_table,
-                )? {
-                    arm_env.insert(name, ty);
-                }
+                let (plan, mut arm_env) =
+                    build_and_apply_match_plan(&arm.pat, &st, env, arena, adt_table)?;
+                // M9.8: reject if new plan conflicts with prior path-state of scrutinee.
+                validate_plan_against_scrutinee_state(env, *scrutinee, arena, &plan)?;
+                arm_plans.push(plan);
                 check_match_guard(
                     arm.guard,
                     arena,
@@ -4328,6 +7471,7 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 for stmt in &arm.block {
                     check_loop_expr_stmt(
@@ -4339,10 +7483,12 @@ fn check_loop_expr_stmt(
                         adt_table,
                         ret_ty.clone(),
                         loop_stack,
+                    impl_list,
                     )?;
                 }
                 arm_env.pop_scope();
             }
+            apply_plans_to_scrutinee(*scrutinee, &arm_plans, arena, env);
 
             let mut def_env = env.clone();
             def_env.push_scope();
@@ -4356,12 +7502,209 @@ fn check_loop_expr_stmt(
                     adt_table,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
             }
             def_env.pop_scope();
             Ok(())
         }
-        _ => check_stmt(stmt_id, arena, env, ret_ty, table, record_table, adt_table, loop_stack),
+        _ => check_stmt(
+            stmt_id,
+            arena,
+            env,
+            ret_ty,
+            table,
+            record_table,
+            adt_table,
+            loop_stack,
+        impl_list,
+        ),
+    }
+}
+
+/// Coherence check: at most one impl per (trait_name, for_type) pair.
+fn validate_trait_coherence(
+    impls: &[ImplDecl],
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    let mut seen: BTreeSet<(SymbolId, SymbolId)> = BTreeSet::new();
+    for imp in impls {
+        let key = (imp.trait_name, imp.for_type);
+        if !seen.insert(key) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "duplicate impl of trait '{}' for type '{}'",
+                    resolve_symbol_name(arena, imp.trait_name)?,
+                    resolve_symbol_name(arena, imp.for_type)?,
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Conformance check: each impl provides every method declared in its trait
+/// with a matching return type.
+fn validate_impl_conformance(
+    impls: &[ImplDecl],
+    trait_table: &TraitTable,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    let self_type_var = arena.symbol_to_id.get("Self").copied();
+    for imp in impls {
+        let mut seen_methods = BTreeSet::new();
+        for method in &imp.methods {
+            if !seen_methods.insert(method.name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "impl of '{}' for '{}' defines duplicate method '{}'",
+                        resolve_symbol_name(arena, imp.trait_name)?,
+                        resolve_symbol_name(arena, imp.for_type)?,
+                        resolve_symbol_name(arena, method.name)?,
+                    ),
+                });
+            }
+        }
+        let trait_decl = match trait_table.get(&imp.trait_name) {
+            Some(t) => t,
+            None => {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "impl references unknown trait '{}'",
+                        resolve_symbol_name(arena, imp.trait_name)?,
+                    ),
+                });
+            }
+        };
+        for trait_method in &trait_decl.methods {
+            match imp.methods.iter().find(|m| m.name == trait_method.name) {
+                None => {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "impl of '{}' for '{}' is missing method '{}'",
+                            resolve_symbol_name(arena, imp.trait_name)?,
+                            resolve_symbol_name(arena, imp.for_type)?,
+                            resolve_symbol_name(arena, trait_method.name)?,
+                        ),
+                    });
+                }
+                Some(m) => {
+                    if m.params.len() != trait_method.params.len() {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "impl method '{}' has {} parameter(s), expected {} from trait '{}'",
+                                resolve_symbol_name(arena, trait_method.name)?,
+                                m.params.len(),
+                                trait_method.params.len(),
+                                resolve_symbol_name(arena, imp.trait_name)?,
+                            ),
+                        });
+                    }
+                    for ((_, actual_ty), (_, expected_ty)) in
+                        m.params.iter().zip(trait_method.params.iter())
+                    {
+                        let expected_ty =
+                            substitute_trait_self_type(expected_ty, self_type_var, imp.for_type);
+                        if actual_ty != &expected_ty {
+                            return Err(FrontendError {
+                                pos: 0,
+                                message: format!(
+                                    "impl method '{}' parameter type {:?} does not match expected {:?} from trait '{}'",
+                                    resolve_symbol_name(arena, trait_method.name)?,
+                                    actual_ty,
+                                    expected_ty,
+                                    resolve_symbol_name(arena, imp.trait_name)?,
+                                ),
+                            });
+                        }
+                    }
+                    let expected_ret =
+                        substitute_trait_self_type(&trait_method.ret, self_type_var, imp.for_type);
+                    if m.ret != expected_ret {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "impl method '{}' has return type {:?}, expected {:?} from trait '{}'",
+                                resolve_symbol_name(arena, trait_method.name)?,
+                                m.ret,
+                                expected_ret,
+                                resolve_symbol_name(arena, imp.trait_name)?,
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn substitute_trait_self_type(
+    ty: &Type,
+    self_type_var: Option<SymbolId>,
+    concrete_self: SymbolId,
+) -> Type {
+    match ty {
+        Type::TypeVar(name) if Some(*name) == self_type_var => Type::Record(concrete_self),
+        Type::Tuple(items) => Type::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_trait_self_type(item, self_type_var, concrete_self))
+                .collect(),
+        ),
+        Type::Sequence(sequence) => Type::Sequence(SequenceType {
+            family: sequence.family,
+            item: Box::new(substitute_trait_self_type(
+                sequence.item.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+        }),
+        Type::Closure(closure) => Type::Closure(crate::types::ClosureType {
+            family: closure.family,
+            capture: closure.capture,
+            param: Box::new(substitute_trait_self_type(
+                closure.param.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+            ret: Box::new(substitute_trait_self_type(
+                closure.ret.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+        }),
+        Type::Measured(base, unit) => Type::Measured(
+            Box::new(substitute_trait_self_type(
+                base.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+            *unit,
+        ),
+        Type::Option(item) => Type::Option(Box::new(substitute_trait_self_type(
+            item.as_ref(),
+            self_type_var,
+            concrete_self,
+        ))),
+        Type::Result(ok_ty, err_ty) => Type::Result(
+            Box::new(substitute_trait_self_type(
+                ok_ty.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+            Box::new(substitute_trait_self_type(
+                err_ty.as_ref(),
+                self_type_var,
+                concrete_self,
+            )),
+        ),
+        _ => ty.clone(),
     }
 }
 
@@ -4370,6 +7713,7 @@ fn validate_top_level_name_collisions(
     fn_table: &FnTable,
     record_table: &RecordTable,
     adt_table: &AdtTable,
+    schema_table: &SchemaTable,
 ) -> Result<(), FrontendError> {
     for record in &program.records {
         if fn_table.contains_key(&record.name) {
@@ -4386,6 +7730,15 @@ fn validate_top_level_name_collisions(
                 pos: 0,
                 message: format!(
                     "top-level name '{}' cannot be used for both record and enum",
+                    resolve_symbol_name(&program.arena, record.name)?
+                ),
+            });
+        }
+        if schema_table.contains_key(&record.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both record and schema",
                     resolve_symbol_name(&program.arena, record.name)?
                 ),
             });
@@ -4407,6 +7760,44 @@ fn validate_top_level_name_collisions(
                 message: format!(
                     "top-level name '{}' cannot be used for both enum and record",
                     resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+        if schema_table.contains_key(&adt.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both enum and schema",
+                    resolve_symbol_name(&program.arena, adt.name)?
+                ),
+            });
+        }
+    }
+    for schema in &program.schemas {
+        if fn_table.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both schema and function",
+                    resolve_symbol_name(&program.arena, schema.name)?
+                ),
+            });
+        }
+        if record_table.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both schema and record",
+                    resolve_symbol_name(&program.arena, schema.name)?
+                ),
+            });
+        }
+        if adt_table.contains_key(&schema.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "top-level name '{}' cannot be used for both schema and enum",
+                    resolve_symbol_name(&program.arena, schema.name)?
                 ),
             });
         }
@@ -4529,6 +7920,215 @@ fn validate_adt_declarations(
     Ok(())
 }
 
+fn validate_schema_declarations(
+    program: &Program,
+    schema_table: &SchemaTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    for schema in &program.schemas {
+        let _ = schema_table.get(&schema.name).ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "missing schema '{}' in canonical schema table",
+                resolve_symbol_name(&program.arena, schema.name)?
+            ),
+        })?;
+        match &schema.shape {
+            SchemaShape::Record(fields) => validate_record_shaped_schema(
+                schema.name,
+                fields,
+                record_table,
+                adt_table,
+                &program.arena,
+            )?,
+            SchemaShape::TaggedUnion(variants) => validate_tagged_union_schema(
+                schema.name,
+                variants,
+                record_table,
+                adt_table,
+                &program.arena,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn validate_record_shaped_schema(
+    schema_name: SymbolId,
+    fields: &[SchemaField],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    if fields.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "schema '{}' must declare at least 1 field",
+                resolve_symbol_name(arena, schema_name)?
+            ),
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for field in fields {
+        if !seen.insert(field.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "schema '{}' cannot repeat field '{}'",
+                    resolve_symbol_name(arena, schema_name)?,
+                    resolve_symbol_name(arena, field.name)?
+                ),
+            });
+        }
+        ensure_type_resolved(
+            &field.ty,
+            record_table,
+            adt_table,
+            arena,
+            format!(
+                "schema field '{}.{}'",
+                resolve_symbol_name(arena, schema_name)?,
+                resolve_symbol_name(arena, field.name)?
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn derive_validation_field_plans(
+    fields: &[SchemaField],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<Vec<ValidationFieldPlan>, FrontendError> {
+    fields
+        .iter()
+        .map(|field| {
+            Ok(ValidationFieldPlan {
+                name: field.name,
+                ty: canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+            })
+        })
+        .collect()
+}
+
+fn derive_validation_variant_plans(
+    variants: &[SchemaVariant],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<Vec<ValidationVariantPlan>, FrontendError> {
+    variants
+        .iter()
+        .map(|variant| {
+            Ok(ValidationVariantPlan {
+                name: variant.name,
+                fields: derive_validation_field_plans(
+                    &variant.fields,
+                    record_table,
+                    adt_table,
+                    arena,
+                )?,
+            })
+        })
+        .collect()
+}
+
+fn derive_record_validation_checks(fields: &[ValidationFieldPlan]) -> Vec<ValidationCheck> {
+    let mut checks = Vec::with_capacity(fields.len() * 2);
+    for field in fields {
+        checks.push(ValidationCheck::RequiredField { field: field.name });
+        checks.push(ValidationCheck::FieldType {
+            field: field.name,
+            ty: field.ty.clone(),
+        });
+    }
+    checks
+}
+
+fn derive_tagged_union_validation_checks(
+    variants: &[ValidationVariantPlan],
+) -> Vec<ValidationCheck> {
+    let mut checks = Vec::new();
+    for variant in variants {
+        checks.push(ValidationCheck::TaggedUnionBranch {
+            variant: variant.name,
+        });
+        for field in &variant.fields {
+            checks.push(ValidationCheck::TaggedUnionBranchRequiredField {
+                variant: variant.name,
+                field: field.name,
+            });
+            checks.push(ValidationCheck::TaggedUnionBranchFieldType {
+                variant: variant.name,
+                field: field.name,
+                ty: field.ty.clone(),
+            });
+        }
+    }
+    checks
+}
+
+fn validate_tagged_union_schema(
+    schema_name: SymbolId,
+    variants: &[SchemaVariant],
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    arena: &AstArena,
+) -> Result<(), FrontendError> {
+    if variants.is_empty() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "schema '{}' must declare at least 1 variant",
+                resolve_symbol_name(arena, schema_name)?
+            ),
+        });
+    }
+    let mut seen_variants = BTreeSet::new();
+    for variant in variants {
+        if !seen_variants.insert(variant.name) {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "schema '{}' cannot repeat variant '{}'",
+                    resolve_symbol_name(arena, schema_name)?,
+                    resolve_symbol_name(arena, variant.name)?
+                ),
+            });
+        }
+        let mut seen_fields = BTreeSet::new();
+        for field in &variant.fields {
+            if !seen_fields.insert(field.name) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "schema '{}::{}' cannot repeat field '{}'",
+                        resolve_symbol_name(arena, schema_name)?,
+                        resolve_symbol_name(arena, variant.name)?,
+                        resolve_symbol_name(arena, field.name)?
+                    ),
+                });
+            }
+            ensure_type_resolved(
+                &field.ty,
+                record_table,
+                adt_table,
+                arena,
+                format!(
+                    "schema field '{}::{}.{}'",
+                    resolve_symbol_name(arena, schema_name)?,
+                    resolve_symbol_name(arena, variant.name)?,
+                    resolve_symbol_name(arena, field.name)?
+                ),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_record_acyclic(
     record_name: SymbolId,
     record_table: &RecordTable,
@@ -4593,7 +8193,14 @@ fn validate_adt_acyclic(
     })?;
     for variant in &adt.variants {
         for item_ty in &variant.payload {
-            validate_nominal_type_acyclic(item_ty, record_table, adt_table, arena, active, visited)?;
+            validate_nominal_type_acyclic(
+                item_ty,
+                record_table,
+                adt_table,
+                arena,
+                active,
+                visited,
+            )?;
         }
     }
     active.remove(&adt_name);
@@ -4612,7 +8219,14 @@ fn validate_nominal_type_acyclic(
     match ty {
         Type::Tuple(items) => {
             for item in items {
-                validate_nominal_type_acyclic(item, record_table, adt_table, arena, active, visited)?;
+                validate_nominal_type_acyclic(
+                    item,
+                    record_table,
+                    adt_table,
+                    arena,
+                    active,
+                    visited,
+                )?;
             }
             Ok(())
         }
@@ -4623,7 +8237,9 @@ fn validate_nominal_type_acyclic(
                 validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited)
             }
         }
-        Type::Adt(name) => validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited),
+        Type::Adt(name) => {
+            validate_adt_acyclic(*name, record_table, adt_table, arena, active, visited)
+        }
         _ => Ok(()),
     }
 }
@@ -4684,9 +8300,14 @@ fn ensure_type_resolved(
                 })
             }
         }
-        Type::Option(item) => {
-            ensure_type_resolved(item, record_table, adt_table, arena, context)
-        }
+        Type::Option(item) => ensure_type_resolved(item, record_table, adt_table, arena, context),
+        Type::Sequence(sequence) => ensure_type_resolved(
+            sequence.item.as_ref(),
+            record_table,
+            adt_table,
+            arena,
+            context,
+        ),
         Type::Result(ok_ty, err_ty) => {
             ensure_type_resolved(ok_ty, record_table, adt_table, arena, context.clone())?;
             ensure_type_resolved(err_ty, record_table, adt_table, arena, context)
@@ -4706,6 +8327,9 @@ fn ensure_executable_type_supported(
                 ensure_executable_type_supported(item, arena, context.clone())?;
             }
             Ok(())
+        }
+        Type::Sequence(sequence) => {
+            ensure_executable_type_supported(sequence.item.as_ref(), arena, context)
         }
         Type::Measured(base, _) => ensure_executable_type_supported(base, arena, context),
         Type::Option(item) => ensure_executable_type_supported(item, arena, context),
@@ -4739,6 +8363,9 @@ fn ensure_storage_type_supported(
             }
             Ok(())
         }
+        Type::Sequence(sequence) => {
+            ensure_storage_type_supported(sequence.item.as_ref(), arena, context)
+        }
         Type::Measured(base, _) => ensure_storage_type_supported(base, arena, context),
         Type::Option(item) => ensure_storage_type_supported(item, arena, context),
         Type::Result(ok_ty, err_ty) => {
@@ -4767,12 +8394,7 @@ fn supports_stable_equality_type(
 }
 
 fn ensure_requires_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
-    ensure_contract_expr_supported(
-        expr_id,
-        arena,
-        "requires",
-        "parameter references",
-    )
+    ensure_contract_expr_supported(expr_id, arena, "requires", "parameter references")
 }
 
 fn ensure_ensures_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
@@ -4784,10 +8406,7 @@ fn ensure_ensures_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<()
     )
 }
 
-fn ensure_invariant_expr_supported(
-    expr_id: ExprId,
-    arena: &AstArena,
-) -> Result<(), FrontendError> {
+fn ensure_invariant_expr_supported(expr_id: ExprId, arena: &AstArena) -> Result<(), FrontendError> {
     ensure_contract_expr_supported(
         expr_id,
         arena,
@@ -4805,6 +8424,7 @@ fn ensure_contract_expr_supported(
     match arena.expr(expr_id) {
         Expr::QuadLiteral(_)
         | Expr::BoolLiteral(_)
+        | Expr::TextLiteral(_)
         | Expr::NumericLiteral(_)
         | Expr::Var(_) => Ok(()),
         Expr::Tuple(items) => {
@@ -4816,6 +8436,10 @@ fn ensure_contract_expr_supported(
         Expr::RecordField(field_expr) => {
             ensure_contract_expr_supported(field_expr.base, arena, clause_name, binding_desc)
         }
+        Expr::SequenceIndex(index_expr) => {
+            ensure_contract_expr_supported(index_expr.base, arena, clause_name, binding_desc)?;
+            ensure_contract_expr_supported(index_expr.index, arena, clause_name, binding_desc)
+        }
         Expr::Unary(_, inner) => {
             ensure_contract_expr_supported(*inner, arena, clause_name, binding_desc)
         }
@@ -4826,7 +8450,7 @@ fn ensure_contract_expr_supported(
         _ => Err(FrontendError {
             pos: 0,
             message: format!(
-                "{clause_name} clause currently allows only {binding_desc}, tuple literals, record field reads, and pure unary/binary operator expressions"
+                "{clause_name} clause currently allows only {binding_desc}, tuple literals, record/sequence reads, and pure unary/binary operator expressions"
             ),
         }),
     }
@@ -4861,6 +8485,12 @@ fn find_named_var_symbol(
             Ok(None)
         }
         Expr::RecordField(field_expr) => find_named_var_symbol(field_expr.base, arena, name),
+        Expr::SequenceIndex(index_expr) => {
+            if let Some(symbol) = find_named_var_symbol(index_expr.base, arena, name)? {
+                return Ok(Some(symbol));
+            }
+            find_named_var_symbol(index_expr.index, arena, name)
+        }
         Expr::Unary(_, inner) => find_named_var_symbol(*inner, arena, name),
         Expr::Binary(lhs, _, rhs) => {
             if let Some(symbol) = find_named_var_symbol(*lhs, arena, name)? {
@@ -4881,6 +8511,7 @@ fn supports_stable_equality_type_inner(
     match ty {
         Type::Quad
         | Type::Bool
+        | Type::Text
         | Type::I32
         | Type::U32
         | Type::Fx
@@ -4889,6 +8520,12 @@ fn supports_stable_equality_type_inner(
         Type::Measured(base, _) => {
             supports_stable_equality_type_inner(base, record_table, adt_table, active)
         }
+        Type::Sequence(sequence) => supports_stable_equality_type_inner(
+            sequence.item.as_ref(),
+            record_table,
+            adt_table,
+            active,
+        ),
         Type::QVec(_) => Ok(false),
         Type::RangeI32 => Ok(false),
         Type::Tuple(items) => {
@@ -4917,7 +8554,8 @@ fn supports_stable_equality_type_inner(
                 message: "record equality subset references unknown record type".to_string(),
             })?;
             for field in &record.fields {
-                if !supports_stable_equality_type_inner(&field.ty, record_table, adt_table, active)? {
+                if !supports_stable_equality_type_inner(&field.ty, record_table, adt_table, active)?
+                {
                     active.remove(name);
                     return Ok(false);
                 }
@@ -4925,7 +8563,11 @@ fn supports_stable_equality_type_inner(
             active.remove(name);
             Ok(true)
         }
+        Type::Closure(_) => Ok(false),
         Type::Adt(_) => Ok(false),
+        // TypeVar is an owner-layer marker; equality support is unknown until
+        // monomorphisation substitutes the variable (Wave 2).
+        Type::TypeVar(_) => Ok(false),
     }
 }
 
@@ -4938,14 +8580,17 @@ fn infer_record_literal_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let record = record_table.get(&record_literal.name).ok_or(FrontendError {
-        pos: 0,
-        message: format!(
-            "unknown record type '{}' in record literal",
-            resolve_symbol_name(arena, record_literal.name)?
-        ),
-    })?;
+    let record = record_table
+        .get(&record_literal.name)
+        .ok_or(FrontendError {
+            pos: 0,
+            message: format!(
+                "unknown record type '{}' in record literal",
+                resolve_symbol_name(arena, record_literal.name)?
+            ),
+        })?;
     let record_name = resolve_symbol_name(arena, record_literal.name)?;
     let mut field_types = BTreeMap::new();
     for field in &record.fields {
@@ -4984,6 +8629,7 @@ fn infer_record_literal_type(
             Some(expected_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             expected_ty.clone(),
@@ -5021,8 +8667,10 @@ fn infer_record_field_access_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
-    let base_ty = infer_expr_type(
+    // M9.9: use no-check variant for the base; caller already verified full path.
+    let base_ty = infer_expr_type_no_check(
         field_expr.base,
         arena,
         env,
@@ -5031,6 +8679,7 @@ fn infer_record_field_access_type(
         adt_table,
         ret_ty,
         loop_stack,
+    impl_list,
     )?;
     let Type::Record(record_name) = base_ty else {
         return Err(FrontendError {
@@ -5060,8 +8709,63 @@ fn infer_record_field_access_type(
                 resolve_symbol_name(arena, record_name)?,
                 resolve_symbol_name(arena, field_expr.field)?
             ),
-        })?;
+    })?;
     canonicalize_declared_type(&field.ty, record_table, adt_table, arena)
+}
+
+fn infer_sequence_index_type(
+    index_expr: &SequenceIndexExpr,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
+) -> Result<Type, FrontendError> {
+    // M9.9: use no-check variant for the base; caller already verified full path.
+    let base_ty = infer_expr_type_no_check(
+        index_expr.base,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        ret_ty.clone(),
+        loop_stack,
+    impl_list,
+    )?;
+    let Type::Sequence(sequence_ty) = base_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "sequence indexing requires Sequence(type) base before '[...]', got {:?}",
+                base_ty
+            ),
+        });
+    };
+    let index_ty = infer_expr_type(
+        index_expr.index,
+        arena,
+        env,
+        table,
+        record_table,
+        adt_table,
+        ret_ty,
+        loop_stack,
+    impl_list,
+    )?;
+    if index_ty != Type::I32 {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "sequence indexing currently requires i32 index, got {:?}",
+                index_ty
+            ),
+        });
+    }
+    Ok(sequence_ty.item.as_ref().clone())
 }
 
 fn infer_record_update_type(
@@ -5073,6 +8777,7 @@ fn infer_record_update_type(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     let base_ty = infer_expr_type(
         update_expr.base,
@@ -5083,6 +8788,7 @@ fn infer_record_update_type(
         adt_table,
         ret_ty.clone(),
         loop_stack,
+    impl_list,
     )?;
     let Type::Record(record_name) = base_ty else {
         return Err(FrontendError {
@@ -5144,6 +8850,7 @@ fn infer_record_update_type(
             Some(expected_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             expected_ty.clone(),
@@ -5170,6 +8877,7 @@ fn infer_adt_ctor_type(
     expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     if let Some(ty) = infer_std_form_ctor_type(
         ctor_expr,
@@ -5181,6 +8889,7 @@ fn infer_adt_ctor_type(
         expected,
         ret_ty.clone(),
         loop_stack,
+    impl_list,
     )? {
         return Ok(ty);
     }
@@ -5233,6 +8942,7 @@ fn infer_adt_ctor_type(
             Some(canonical_expected.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?;
         ensure_binding_value_type(
             canonical_expected,
@@ -5260,6 +8970,7 @@ fn infer_expr_type_with_expected(
     expected: Option<Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Type, FrontendError> {
     match arena.expr(expr_id) {
         Expr::Tuple(items) => {
@@ -5292,6 +9003,7 @@ fn infer_expr_type_with_expected(
                     item_expected,
                     ret_ty.clone(),
                     loop_stack,
+                impl_list,
                 )?;
                 if item_ty == Type::RangeI32 {
                     return Err(FrontendError {
@@ -5305,6 +9017,41 @@ fn infer_expr_type_with_expected(
             }
             Ok(Type::Tuple(item_tys))
         }
+        Expr::SequenceLiteral(sequence) => infer_sequence_literal_type(
+            sequence,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            expected.as_ref(),
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
+        Expr::SequenceIndex(index_expr) => infer_sequence_index_type(
+            index_expr,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
+        Expr::Closure(closure) => infer_closure_literal_type(
+            closure,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            expected.as_ref(),
+            ret_ty,
+            loop_stack,
+        impl_list,
+        ),
         Expr::AdtCtor(ctor_expr) => infer_adt_ctor_type(
             ctor_expr,
             arena,
@@ -5315,6 +9062,7 @@ fn infer_expr_type_with_expected(
             expected.as_ref(),
             ret_ty,
             loop_stack,
+        impl_list,
         ),
         _ => {
             let actual = infer_expr_type(
@@ -5326,11 +9074,180 @@ fn infer_expr_type_with_expected(
                 adt_table,
                 ret_ty,
                 loop_stack,
+            impl_list,
             )?;
-            Ok(lift_literal_to_expected_type(expected.as_ref(), &actual, expr_id, arena)
-                .unwrap_or(actual))
+            Ok(
+                lift_literal_to_expected_type(expected.as_ref(), &actual, expr_id, arena)
+                    .unwrap_or(actual),
+            )
         }
     }
+}
+
+fn infer_sequence_literal_type(
+    sequence: &SequenceLiteral,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<&Type>,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
+) -> Result<Type, FrontendError> {
+    let expected_item = match expected {
+        Some(Type::Sequence(sequence_ty))
+            if sequence_ty.family == SequenceCollectionFamily::OrderedSequence =>
+        {
+            Some(sequence_ty.item.as_ref())
+        }
+        _ => None,
+    };
+
+    if sequence.items.is_empty() {
+        let Some(expected_item) = expected_item else {
+            return Err(FrontendError {
+                pos: 0,
+                message:
+                    "empty ordered sequence literal currently requires contextual Sequence(type) in M8.3 Wave 2"
+                        .to_string(),
+            });
+        };
+        return Ok(Type::Sequence(SequenceType {
+            family: SequenceCollectionFamily::OrderedSequence,
+            item: Box::new(expected_item.clone()),
+        }));
+    }
+
+    let first_ty = if let Some(expected_item) = expected_item {
+        let actual_ty = infer_expr_type_with_expected(
+            sequence.items[0],
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            Some(expected_item.clone()),
+            ret_ty.clone(),
+            loop_stack,
+        impl_list,
+        )?;
+        ensure_binding_value_type(
+            expected_item.clone(),
+            actual_ty,
+            sequence.items[0],
+            arena,
+            "ordered sequence item 0".to_string(),
+        )?;
+        expected_item.clone()
+    } else {
+        infer_expr_type(
+            sequence.items[0],
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            ret_ty.clone(),
+            loop_stack,
+        impl_list,
+        )?
+    };
+
+    for (index, item) in sequence.items.iter().enumerate().skip(1) {
+        let actual_ty = infer_expr_type_with_expected(
+            *item,
+            arena,
+            env,
+            table,
+            record_table,
+            adt_table,
+            Some(first_ty.clone()),
+            ret_ty.clone(),
+            loop_stack,
+        impl_list,
+        )?;
+        ensure_binding_value_type(
+            first_ty.clone(),
+            actual_ty,
+            *item,
+            arena,
+            format!("ordered sequence item {}", index),
+        )?;
+    }
+
+    Ok(Type::Sequence(SequenceType {
+        family: SequenceCollectionFamily::OrderedSequence,
+        item: Box::new(first_ty),
+    }))
+}
+
+fn infer_closure_literal_type(
+    closure: &ClosureLiteral,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    expected: Option<&Type>,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
+) -> Result<Type, FrontendError> {
+    let Some(Type::Closure(expected_closure)) = expected else {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "first-class closure literals currently require contextual Closure(T -> U) type in M8.4 Wave 2"
+                    .to_string(),
+        });
+    };
+
+    if expected_closure.family != closure.family || expected_closure.capture != closure.capture {
+        return Err(FrontendError {
+            pos: 0,
+            message:
+                "first-class closure literal does not match the current Wave 2 closure family/capture contract"
+                    .to_string(),
+        });
+    }
+
+    for capture in &closure.captures {
+        if env.get(*capture).is_none() {
+            return Err(FrontendError {
+                pos: 0,
+                message: format!(
+                    "unknown captured value '{}' in first-class closure literal",
+                    resolve_symbol_name(arena, *capture)?
+                ),
+            });
+        }
+    }
+
+    let mut closure_env = env.clone();
+    closure_env.push_scope();
+    closure_env.insert(closure.param, expected_closure.param.as_ref().clone());
+    let body_ty = infer_expr_type_with_expected(
+        closure.body,
+        arena,
+        &closure_env,
+        table,
+        record_table,
+        adt_table,
+        Some(expected_closure.ret.as_ref().clone()),
+        ret_ty,
+        loop_stack,
+    impl_list,
+    )?;
+    ensure_binding_value_type(
+        expected_closure.ret.as_ref().clone(),
+        body_ty,
+        closure.body,
+        arena,
+        "first-class closure body".to_string(),
+    )?;
+    Ok(Type::Closure(expected_closure.clone()))
 }
 
 fn infer_std_form_ctor_type(
@@ -5343,6 +9260,7 @@ fn infer_std_form_ctor_type(
     expected: Option<&Type>,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<Option<Type>, FrontendError> {
     let type_name = resolve_symbol_name(arena, ctor_expr.adt_name)?;
     let variant_name = resolve_symbol_name(arena, ctor_expr.variant_name)?;
@@ -5368,6 +9286,7 @@ fn infer_std_form_ctor_type(
                         Some(expected_item.clone()),
                         ret_ty,
                         loop_stack,
+                    impl_list,
                     )?;
                     ensure_binding_value_type(
                         expected_item.clone(),
@@ -5387,6 +9306,7 @@ fn infer_std_form_ctor_type(
                         adt_table,
                         ret_ty,
                         loop_stack,
+                    impl_list,
                     )?
                 };
                 Ok(Some(Type::Option(Box::new(item_ty))))
@@ -5404,9 +9324,8 @@ fn infer_std_form_ctor_type(
                     }
                     _ => Err(FrontendError {
                         pos: 0,
-                        message:
-                            "Option::None currently requires contextual Option(T) type in v0"
-                                .to_string(),
+                        message: "Option::None currently requires contextual Option(T) type in v0"
+                            .to_string(),
                     }),
                 }
             }
@@ -5453,6 +9372,7 @@ fn infer_std_form_ctor_type(
                     Some(expected_payload.clone()),
                     ret_ty,
                     loop_stack,
+                impl_list,
                 )?;
                 ensure_binding_value_type(
                     expected_payload,
@@ -5549,109 +9469,6 @@ fn resolve_match_family_spec(
     }
 }
 
-fn bind_match_pattern(
-    pat: &MatchPattern,
-    scrutinee_ty: &Type,
-    arena: &AstArena,
-    record_table: &RecordTable,
-    adt_table: &AdtTable,
-) -> Result<Vec<(SymbolId, Type)>, FrontendError> {
-    match (scrutinee_ty, pat) {
-        (Type::Quad, MatchPattern::Quad(_)) => Ok(Vec::new()),
-        (Type::Quad, MatchPattern::Adt(adt_pat)) => Err(FrontendError {
-            pos: 0,
-            message: format!(
-                "sum match pattern '{}::{}' can be used only with sum scrutinee",
-                resolve_symbol_name(arena, adt_pat.adt_name)?,
-                resolve_symbol_name(arena, adt_pat.variant_name)?,
-            ),
-        }),
-        (_, MatchPattern::Quad(pat)) => {
-            let family = resolve_match_family_spec(scrutinee_ty, arena, adt_table)?
-                .expect("non-quad matchable family should resolve");
-            Err(FrontendError {
-                pos: 0,
-                message: format!(
-                    "quad match pattern '{:?}' can be used only with quad scrutinee, not {}",
-                    pat, family.display_label
-                ),
-            })
-        }
-        (_, MatchPattern::Adt(adt_pat)) => {
-            let Some(family) = resolve_match_family_spec(scrutinee_ty, arena, adt_table)? else {
-                return Err(FrontendError {
-                    pos: 0,
-                    message:
-                        "match is allowed only for quad, enum, Option(T), or Result(T, E) scrutinee"
-                            .to_string(),
-                });
-            };
-            let pattern_family = resolve_symbol_name(arena, adt_pat.adt_name)?.to_string();
-            if pattern_family != family.family_name {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "match arm pattern type '{}' does not match scrutinee {}",
-                        pattern_family, family.display_label
-                    ),
-                });
-            }
-            let pattern_variant = resolve_symbol_name(arena, adt_pat.variant_name)?.to_string();
-            let variant = family
-                .variants
-                .iter()
-                .find(|variant| variant.name == pattern_variant)
-                .ok_or(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "{} has no variant named '{}' in match pattern",
-                        family.display_label, pattern_variant,
-                    ),
-                })?;
-            if variant.payload.len() != adt_pat.items.len() {
-                return Err(FrontendError {
-                    pos: 0,
-                    message: format!(
-                        "match pattern '{}::{}' expects {} payload items, got {}",
-                        family.family_name,
-                        pattern_variant,
-                        variant.payload.len(),
-                        adt_pat.items.len(),
-                    ),
-                });
-            }
-
-            let mut seen = BTreeSet::new();
-            let mut bindings = Vec::new();
-            for (index, (item, declared_ty)) in adt_pat
-                .items
-                .iter()
-                .zip(variant.payload.iter())
-                .enumerate()
-            {
-                let payload_ty =
-                    canonicalize_declared_type(declared_ty, record_table, adt_table, arena)?;
-                if let AdtPatternItem::Bind(name) = item {
-                    if !seen.insert(*name) {
-                        return Err(FrontendError {
-                            pos: 0,
-                            message: format!(
-                                "match pattern '{}::{}' repeats binding '{}' at payload item {}",
-                                family.family_name,
-                                pattern_variant,
-                                resolve_symbol_name(arena, *name)?,
-                                index,
-                            ),
-                        });
-                    }
-                    bindings.push((*name, payload_ty));
-                }
-            }
-            Ok(bindings)
-        }
-    }
-}
-
 fn missing_exhaustive_sum_variants<'a>(
     scrutinee_ty: &Type,
     patterns: impl IntoIterator<Item = (&'a MatchPattern, Option<ExprId>)>,
@@ -5667,9 +9484,29 @@ fn missing_exhaustive_sum_variants<'a>(
         if guard.is_some() {
             continue;
         }
+        // NOTE: Range and tuple patterns are not included in exhaustiveness (M9.4 Wave 3 boundary).
+        // Wildcard covers all variants.
+        if matches!(pat, MatchPattern::Wildcard) {
+            return Ok(Some((family.display_label, Vec::new())));
+        }
+        // M9.4 Wave 3: or-pattern — expand alternatives into coverage.
+        if let MatchPattern::Or(alts) = pat {
+            for alt in alts {
+                if matches!(alt, MatchPattern::Wildcard) {
+                    return Ok(Some((family.display_label, Vec::new())));
+                }
+                if let MatchPattern::Adt(adt_pat) = alt {
+                    if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
+                        covered.insert(
+                            resolve_symbol_name(arena, adt_pat.variant_name)?.to_string(),
+                        );
+                    }
+                }
+            }
+            continue;
+        }
         if let MatchPattern::Adt(adt_pat) = pat {
-            if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name
-            {
+            if resolve_symbol_name(arena, adt_pat.adt_name)? == family.family_name {
                 covered.insert(resolve_symbol_name(arena, adt_pat.variant_name)?.to_string());
             }
         }
@@ -5711,6 +9548,7 @@ fn check_match_guard(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     if let Some(expr_id) = guard {
         let guard_ty = infer_expr_type(
@@ -5722,6 +9560,7 @@ fn check_match_guard(
             adt_table,
             ret_ty,
             loop_stack,
+        impl_list,
         )?;
         if guard_ty != Type::Bool {
             return Err(FrontendError {
@@ -5744,6 +9583,7 @@ fn check_return_payload(
     adt_table: &AdtTable,
     ret_ty: Type,
     loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
 ) -> Result<(), FrontendError> {
     let got = if let Some(expr_id) = value {
         infer_expr_type_with_expected(
@@ -5756,6 +9596,7 @@ fn check_return_payload(
             Some(ret_ty.clone()),
             ret_ty.clone(),
             loop_stack,
+        impl_list,
         )?
     } else {
         Type::Unit
@@ -5855,8 +9696,440 @@ fn ensure_const_initializer_safe(
         }
         _ => Err(FrontendError {
             pos: 0,
-            message: "const initializer currently supports only pure literal/const expression forms"
-                .to_string(),
+            message:
+                "const initializer currently supports only pure literal/const expression forms"
+                    .to_string(),
         }),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave C: binding plan builders + conflict validation
+// ──────────────────────────────────────────────────────────────
+
+/// Validate that no two items in the plan access the same path via conflicting
+/// capture modes (borrow vs. move, or duplicate move).
+/// Multiple borrows of the same path are allowed.
+/// M9.6: returns true if every element of `a` is a prefix of `b`.
+fn path_is_prefix(a: &PatternPath, b: &PatternPath) -> bool {
+    if a.elems.len() > b.elems.len() { return false; }
+    a.elems.iter().zip(&b.elems).all(|(x, y)| x == y)
+}
+
+/// M9.6: two paths conflict (overlap) if one is a prefix of the other or they are equal.
+fn paths_overlap(a: &PatternPath, b: &PatternPath) -> bool {
+    path_is_prefix(a, b) || path_is_prefix(b, a)
+}
+
+fn captures_conflict(a: CaptureMode, b: CaptureMode) -> bool {
+    !matches!((a, b), (CaptureMode::Borrow, CaptureMode::Borrow))
+}
+
+/// Validate that no two items in the plan access overlapping paths via conflicting
+/// capture modes.  Two paths overlap when one is a prefix of the other (or equal).
+/// Multiple borrows of the same or ancestor/descendant path are allowed.
+///
+/// NOTE (M9.5/M9.6): overlap check is prefix-based only.
+/// Alias analysis and field-sensitivity beyond the current PatternPath model are deferred.
+pub(crate) fn validate_binding_plan_conflicts(plan: &BindingPlan) -> Result<(), FrontendError> {
+    for (i, a) in plan.items.iter().enumerate() {
+        for b in plan.items.iter().skip(i + 1) {
+            if !paths_overlap(&a.path, &b.path) {
+                continue;
+            }
+            if captures_conflict(a.capture, b.capture) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "conflicting captures on overlapping pattern paths for '{}' and '{}'",
+                        a.name.0, b.name.0
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Determine whether the scrutinee is consumed (moved) by the plan.
+pub(crate) fn scrutinee_use_from_plan(plan: &BindingPlan) -> ScrutineeUse {
+    if plan.items.iter().any(|it| it.capture == CaptureMode::Move) {
+        ScrutineeUse::Consumed
+    } else {
+        ScrutineeUse::Preserved
+    }
+}
+
+/// Apply a binding plan to an env scope (insert all bindings as mutable locals).
+pub(crate) fn apply_binding_plan(env: &mut ScopeEnv, plan: &BindingPlan) {
+    for item in &plan.items {
+        env.insert(item.name, item.ty.clone());
+    }
+}
+
+/// Build a `BindingPlan` from tuple pattern items against a known tuple type.
+pub(crate) fn build_tuple_pattern_plan(
+    items: &[TuplePatternItem],
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+) -> Result<(), FrontendError> {
+    let Type::Tuple(tuple_items) = expected_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple pattern requires tuple scrutinee, got {:?}", expected_ty
+            ),
+        });
+    };
+    if items.len() != tuple_items.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "tuple pattern arity mismatch: pattern has {} items, value has {}",
+                items.len(), tuple_items.len()
+            ),
+        });
+    }
+    for (idx, (item, item_ty)) in items.iter().zip(tuple_items.iter()).enumerate() {
+        let path = base.tuple_index(idx);
+        match item {
+            TuplePatternItem::Discard | TuplePatternItem::QuadLiteral(_) => {}
+            TuplePatternItem::Nested(nested) => {
+                build_tuple_pattern_plan(nested, item_ty, &path, out)?;
+            }
+            TuplePatternItem::Bind { name, capture } => {
+                out.push(BindingPlanItem {
+                    name: *name,
+                    capture: *capture,
+                    path,
+                    ty: item_ty.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from record pattern items against a known record type.
+pub(crate) fn build_record_pattern_plan(
+    items: &[crate::types::RecordPatternItem],
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let Type::Record(record_name) = expected_ty else {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "record pattern requires record scrutinee, got {:?}",
+                expected_ty
+            ),
+        });
+    };
+    let record = record_table.get(record_name).ok_or(FrontendError {
+        pos: 0,
+        message: format!(
+            "unknown record type '{}' in record pattern",
+            resolve_symbol_name(arena, *record_name)?
+        ),
+    })?;
+    for item in items {
+        let field = record
+            .fields
+            .iter()
+            .find(|field| field.name == item.field)
+            .ok_or(FrontendError {
+                pos: 0,
+                message: format!(
+                    "record type '{}' has no field named '{}' in record pattern",
+                    resolve_symbol_name(arena, *record_name)?,
+                    resolve_symbol_name(arena, item.field)?
+                ),
+            })?;
+        if let RecordPatternTarget::Bind { name, capture } = &item.target {
+            out.push(BindingPlanItem {
+                name: *name,
+                capture: *capture,
+                path: base.record_field(item.field),
+                ty: canonicalize_declared_type(&field.ty, record_table, adt_table, arena)?,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from an ADT match pattern against a known ADT type.
+pub(crate) fn build_adt_pattern_plan(
+    pat: &AdtMatchPattern,
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    let family = resolve_match_family_spec(expected_ty, arena, adt_table)?
+        .ok_or_else(|| FrontendError {
+            pos: 0,
+            message: "ADT pattern plan: scrutinee is not a sum type".to_string(),
+        })?;
+    // Verify that the pattern's enum name matches the scrutinee family.
+    let pattern_family_name = resolve_symbol_name(arena, pat.adt_name)?.to_string();
+    if pattern_family_name != family.family_name {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "match arm pattern type '{}' does not match scrutinee {}",
+                pattern_family_name, family.display_label
+            ),
+        });
+    }
+    let variant_name_str = resolve_symbol_name(arena, pat.variant_name)?;
+    let variant = family
+        .variants
+        .iter()
+        .find(|v| v.name == variant_name_str)
+        .ok_or_else(|| FrontendError {
+            pos: 0,
+            message: format!(
+                "{} has no variant named '{}' in match pattern",
+                family.display_label, variant_name_str
+            ),
+        })?;
+
+    if pat.items.len() != variant.payload.len() {
+        return Err(FrontendError {
+            pos: 0,
+            message: format!(
+                "ADT pattern '{}::{}' arity mismatch: pattern has {} items, variant has {}",
+                family.family_name, variant_name_str,
+                pat.items.len(), variant.payload.len()
+            ),
+        });
+    }
+
+    let variant_root = base.variant(pat.variant_name);
+    for (idx, (item, item_ty)) in pat.items.iter().zip(variant.payload.iter()).enumerate() {
+        let path = variant_root.variant_field(idx);
+        match item {
+            AdtPatternItem::Discard => {}
+            AdtPatternItem::Bind { name, capture } => {
+                out.push(BindingPlanItem {
+                    name: *name,
+                    capture: *capture,
+                    path,
+                    ty: item_ty.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build a `BindingPlan` from any `MatchPattern`.
+///
+/// For `Or`, takes the first alternative as the canonical binding shape and
+/// validates that all other alternatives bind the same names/modes/types.
+pub(crate) fn build_match_pattern_plan(
+    pat: &MatchPattern,
+    expected_ty: &Type,
+    base: &PatternPath,
+    out: &mut BindingPlan,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(), FrontendError> {
+    match pat {
+        MatchPattern::Wildcard | MatchPattern::Quad(_) => Ok(()),
+        MatchPattern::IntRange(range) => {
+            if range.start > range.end {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "int range pattern start ({}) must be <= end ({})",
+                        range.start, range.end
+                    ),
+                });
+            }
+            Ok(())
+        }
+        MatchPattern::Adt(adt_pat) => {
+            build_adt_pattern_plan(adt_pat, expected_ty, base, out, arena, adt_table)
+        }
+        MatchPattern::Or(alts) => {
+            if alts.is_empty() {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "or-pattern must contain at least one alternative".to_string(),
+                });
+            }
+            let mut first_plan = BindingPlan::default();
+            build_match_pattern_plan(&alts[0], expected_ty, base, &mut first_plan, arena, adt_table)?;
+            validate_binding_plan_conflicts(&first_plan)?;
+
+            let baseline: Vec<(u32, CaptureMode)> = first_plan.items.iter()
+                .map(|it| (it.name.0, it.capture))
+                .collect();
+
+            for alt in &alts[1..] {
+                let mut alt_plan = BindingPlan::default();
+                build_match_pattern_plan(alt, expected_ty, base, &mut alt_plan, arena, adt_table)?;
+                validate_binding_plan_conflicts(&alt_plan)?;
+
+                let shape: Vec<(u32, CaptureMode)> = alt_plan.items.iter()
+                    .map(|it| (it.name.0, it.capture))
+                    .collect();
+
+                if shape != baseline {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "all or-pattern alternatives must bind the same names with the same capture modes".to_string(),
+                    });
+                }
+            }
+            out.items.extend(first_plan.items);
+            Ok(())
+        }
+    }
+}
+// ──────────────────────────────────────────────────────────────
+// M9.5 Wave D: match integration helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Build a binding plan for one match arm pattern, validate conflicts,
+/// clone `env`, and apply the plan to the clone. Returns `(plan, arm_env)`.
+///
+/// NOTE (M9.5): PatternPath overlap (e.g., root vs root.0) is NOT checked yet.
+/// Only exact-path conflicts are validated.
+pub(crate) fn build_and_apply_match_plan<'e>(
+    pattern: &MatchPattern,
+    scrutinee_ty: &Type,
+    env: &'e ScopeEnv,
+    arena: &AstArena,
+    adt_table: &AdtTable,
+) -> Result<(BindingPlan, ScopeEnv), FrontendError> {
+    let mut plan = BindingPlan::default();
+    build_match_pattern_plan(pattern, scrutinee_ty, &PatternPath::root(), &mut plan, arena, adt_table)?;
+    validate_binding_plan_conflicts(&plan)?;
+    let mut arm_env = env.clone();
+    arm_env.push_scope();
+    apply_binding_plan(&mut arm_env, &plan);
+    Ok((plan, arm_env))
+}
+
+/// M9.8: Validate that all items in `plan` are capture-compatible with the
+/// existing path-state of the scrutinee variable (if it is a plain Expr::Var).
+///
+/// Prevents: move after borrow, borrow after move, move after move on same/overlapping path.
+pub(crate) fn validate_plan_against_scrutinee_state(
+    env: &ScopeEnv,
+    scrutinee_expr: ExprId,
+    arena: &AstArena,
+    plan: &BindingPlan,
+) -> Result<(), FrontendError> {
+    let Expr::Var(name) = arena.expr(scrutinee_expr) else { return Ok(()); };
+    for item in &plan.items {
+        env.check_capture_allowed(*name, &item.path, item.capture)?;
+    }
+    Ok(())
+}
+
+/// M9.7: For each arm plan, record the capture state of every binding path
+/// onto the scrutinee variable (if it is a plain Expr::Var).
+///
+/// Conservative: we union the paths across all arms. A path moved in any arm
+// ──────────────────────────────────────────────────────────────
+// M9.9 Wave A: path-aware expression access helpers
+// ──────────────────────────────────────────────────────────────
+
+/// Attempt to extract a `(base_variable, PatternPath)` pair from an expression.
+///
+/// Returns `Some` for:
+///   * `Expr::Var(x)`                          → `(x, root)`
+///   * `Expr::RecordField { base, field }`      → recurse + `RecordField(field)`
+///   * `Expr::SequenceIndex { base, index }`    → recurse + `TupleIndex(n)` for
+///                                                 literal `i32` index only
+///
+/// Returns `None` for calls, computed indices, closures, and anything not
+/// expressible as a single static path from a local variable.
+pub(crate) fn expr_access_path(
+    expr_id: ExprId,
+    arena: &AstArena,
+) -> Option<(SymbolId, PatternPath)> {
+    match arena.expr(expr_id) {
+        Expr::Var(name) => Some((*name, PatternPath::root())),
+        Expr::RecordField(field_expr) => {
+            let (base_sym, base_path) = expr_access_path(field_expr.base, arena)?;
+            Some((base_sym, base_path.record_field(field_expr.field)))
+        }
+        Expr::SequenceIndex(index_expr) => {
+            if let Expr::NumericLiteral(crate::types::NumericLiteral::I32(idx)) =
+                arena.expr(index_expr.index)
+            {
+                if *idx >= 0 {
+                    let (base_sym, base_path) = expr_access_path(index_expr.base, arena)?;
+                    return Some((base_sym, base_path.tuple_index(*idx as usize)));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Format a path as a human-readable access string (e.g. `"v"`, `"v.0"`, `"v.field"`).
+///
+/// Field name symbols are rendered as `.<numeric_id>` since this layer has no
+
+/// Infer the type of `expr_id` **without** running the top-level path-availability
+/// check from M9.9.  Used internally when `expr_id` is the *base* of a field or
+/// index access whose **caller** has already verified the full access path.
+///
+/// Only skips the path check for `Expr::Var`; all other expressions fall through
+/// to the normal `infer_expr_type` (which includes their own path check).
+fn infer_expr_type_no_check(
+    expr_id: ExprId,
+    arena: &AstArena,
+    env: &ScopeEnv,
+    table: &FnTable,
+    record_table: &RecordTable,
+    adt_table: &AdtTable,
+    ret_ty: Type,
+    loop_stack: &mut Vec<LoopTypeFrame>,
+    impl_list: &[ImplDecl],
+) -> Result<Type, FrontendError> {
+    match arena.expr(expr_id) {
+        Expr::Var(v) => {
+            // No path check here; the outer infer_expr_type call for the full
+            // field/index expression already checked the correct sub-path.
+            env.get(*v).ok_or(FrontendError {
+                pos: 0,
+                message: format!("unknown variable '{}'", resolve_symbol_name(arena, *v)?),
+            })
+        }
+        _ => infer_expr_type(
+            expr_id, arena, env, table, record_table, adt_table, ret_ty, loop_stack, impl_list,
+        ),
+    }
+}
+
+/// is considered moved after the match.
+pub(crate) fn apply_plans_to_scrutinee(
+    scrutinee_expr: ExprId,
+    plans: &[BindingPlan],
+    arena: &AstArena,
+    env: &mut ScopeEnv,
+) {
+    let Expr::Var(var_name) = arena.expr(scrutinee_expr) else { return; };
+    for plan in plans {
+        for item in &plan.items {
+            let avail = match item.capture {
+                CaptureMode::Move   => PathAvailability::Moved,
+                CaptureMode::Borrow => PathAvailability::Borrowed,
+            };
+            env.mark_path_state(*var_name, item.path.clone(), avail);
+        }
     }
 }

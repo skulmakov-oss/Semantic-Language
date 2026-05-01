@@ -43,6 +43,9 @@ impl From<Type> for SemanticType {
             Type::Quad => SemanticType::QVec(1),
             Type::QVec(n) => SemanticType::QVec(n),
             Type::Bool => SemanticType::Bool,
+            Type::Text => SemanticType::Unknown,
+            Type::Sequence(_) => SemanticType::Unknown,
+            Type::Closure(_) => SemanticType::Unknown,
             Type::U32 => SemanticType::Int,
             Type::Unit => SemanticType::Unit,
             Type::Measured(base, _) => SemanticType::from((*base).clone()),
@@ -52,6 +55,9 @@ impl From<Type> for SemanticType {
             Type::Result(_, _) => SemanticType::Unknown,
             Type::Record(_) => SemanticType::Unknown,
             Type::Adt(_) => SemanticType::Unknown,
+            // TypeVar is an owner-layer marker; semantic type is unknown until
+            // monomorphisation substitutes the variable (M9.1 Wave 2).
+            Type::TypeVar(_) => SemanticType::Unknown,
         }
     }
 }
@@ -143,11 +149,11 @@ pub fn check_file_with_provider_and_profile(
     provider: &dyn crate::alloc_core::ModuleProvider,
     profile: &ParserProfile,
 ) -> Result<SemanticReport, SemanticError> {
-    let mut visiting: Vec<PathBuf> = Vec::new();
+    let mut visiting: Vec<VisitingImport> = Vec::new();
     let mut loaded: HashMap<PathBuf, (String, LogosProgram)> = HashMap::new();
-    load_module_recursive(root, &mut visiting, &mut loaded, provider, profile)?;
-    let export_sets = build_export_sets(&loaded)?;
-    validate_select_imports(&loaded, &export_sets)?;
+    load_module_recursive(root, &mut visiting, &mut loaded, provider, profile, false)?;
+    let export_sets = build_export_sets(&loaded, provider)?;
+    validate_select_imports(&loaded, &export_sets, provider)?;
 
     let mut warnings = Vec::new();
     let mut scheduled_laws = Vec::new();
@@ -197,28 +203,53 @@ fn path_contract_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+#[derive(Debug, Clone)]
+struct VisitingImport {
+    path: PathBuf,
+    via_reexport: bool,
+}
+
 fn load_module_recursive(
     path: &Path,
-    visiting: &mut Vec<PathBuf>,
+    visiting: &mut Vec<VisitingImport>,
     loaded: &mut HashMap<PathBuf, (String, LogosProgram)>,
     provider: &dyn crate::alloc_core::ModuleProvider,
     profile: &ParserProfile,
+    via_reexport: bool,
 ) -> Result<(), SemanticError> {
     let key = normalize_lexical(path);
     if loaded.contains_key(&key) {
         return Ok(());
     }
-    if visiting.contains(&key) {
-        let mut chain = visiting
+    if let Some(pos) = visiting.iter().position(|entry| entry.path == key) {
+        let mut full_chain = visiting
             .iter()
-            .map(|p| path_contract_key(p))
+            .map(|entry| path_contract_key(&entry.path))
             .collect::<Vec<_>>();
-        chain.push(path_contract_key(path));
+        full_chain.push(path_contract_key(path));
+        let mut cycle_chain = visiting[pos..]
+            .iter()
+            .map(|entry| path_contract_key(&entry.path))
+            .collect::<Vec<_>>();
+        cycle_chain.push(path_contract_key(path));
+        let reexport_only_cycle =
+            via_reexport && visiting[(pos + 1)..].iter().all(|entry| entry.via_reexport);
+        let (code, message) = if reexport_only_cycle {
+            (
+                "E0243",
+                format!("symbol re-export cycle detected: {}", cycle_chain.join(" -> ")),
+            )
+        } else {
+            (
+                "E0238",
+                format!("cyclic import detected: {}", full_chain.join(" -> ")),
+            )
+        };
         return Err(SemanticError {
             diag: render_diag(
                 DiagLevel::Error,
-                "E0238",
-                format!("cyclic import detected: {}", chain.join(" -> ")),
+                code,
+                message,
                 SourceMark::default(),
                 "",
             ),
@@ -254,13 +285,34 @@ fn load_module_recursive(
         ),
     })?;
 
-    visiting.push(key.clone());
-    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    visiting.push(VisitingImport {
+        path: key.clone(),
+        via_reexport,
+    });
+    let importer_module_id = path_contract_key(&key);
     let imports = parse_import_directives(&source);
     validate_import_namespace_rules(&imports, &logos, &source)?;
     for import in imports {
-        let import_path = normalize_lexical(&resolve_import_path(base, &import.spec));
-        load_module_recursive(&import_path, visiting, loaded, provider, profile)?;
+        let resolved = provider
+            .resolve_import(&importer_module_id, &import.spec)
+            .map_err(|e| SemanticError {
+                diag: render_diag(
+                    DiagLevel::Error,
+                    "E0239",
+                    format!("failed to resolve import '{}': {}", import.spec, e),
+                    SourceMark::default(),
+                    &source,
+                ),
+            })?;
+        let import_path = normalize_lexical(Path::new(&resolved));
+        load_module_recursive(
+            &import_path,
+            visiting,
+            loaded,
+            provider,
+            profile,
+            import.reexport,
+        )?;
     }
     let _ = visiting.pop();
     loaded.insert(key, (source, logos));
@@ -313,6 +365,7 @@ fn validate_import_namespace_rules(
 fn validate_select_imports(
     loaded: &HashMap<PathBuf, (String, LogosProgram)>,
     export_sets: &HashMap<PathBuf, ExportSet>,
+    provider: &dyn crate::alloc_core::ModuleProvider,
 ) -> Result<(), SemanticError> {
     let mut modules: Vec<PathBuf> = loaded.keys().cloned().collect();
     modules.sort();
@@ -344,9 +397,20 @@ fn validate_select_imports(
         let imports = parse_import_directives(src);
         let module_key = path_contract_key(&module);
         src_by_key.insert(module_key.clone(), src.clone());
-        let base = module.parent().unwrap_or_else(|| Path::new("."));
         for import in &imports {
-            let dep = normalize_lexical(&resolve_import_path(base, &import.spec));
+            let dep = provider
+                .resolve_import(&module_key, &import.spec)
+                .map(PathBuf::from)
+                .map(|path| normalize_lexical(&path))
+                .map_err(|e| SemanticError {
+                    diag: render_diag(
+                        DiagLevel::Error,
+                        "E0239",
+                        format!("failed to resolve import '{}': {}", import.spec, e),
+                        SourceMark::default(),
+                        src,
+                    ),
+                })?;
             dep_lookup.insert(
                 (module_key.clone(), import.spec.clone()),
                 path_contract_key(&dep),
@@ -380,20 +444,9 @@ fn validate_select_imports(
     })
 }
 
-fn resolve_import_path(base: &Path, spec: &str) -> PathBuf {
-    let mut spec_path = PathBuf::from(spec);
-    if spec_path.extension().is_none() {
-        spec_path.set_extension("exo");
-    }
-    if spec_path.is_absolute() {
-        spec_path
-    } else {
-        base.join(spec_path)
-    }
-}
-
 fn build_export_sets(
     loaded: &HashMap<PathBuf, (String, LogosProgram)>,
+    provider: &dyn crate::alloc_core::ModuleProvider,
 ) -> Result<HashMap<PathBuf, ExportSet>, SemanticError> {
     let mut modules = Vec::<ExportBuildModule>::new();
     let mut dep_lookup = std::collections::BTreeMap::<(String, String), String>::new();
@@ -411,9 +464,20 @@ fn build_export_sets(
         })?;
         let module_key = path_contract_key(module);
         let imports = parse_import_directives(source);
-        let base = module.parent().unwrap_or_else(|| Path::new("."));
         for import in &imports {
-            let dep = normalize_lexical(&resolve_import_path(base, &import.spec));
+            let dep = provider
+                .resolve_import(&module_key, &import.spec)
+                .map(PathBuf::from)
+                .map(|path| normalize_lexical(&path))
+                .map_err(|e| SemanticError {
+                    diag: render_diag(
+                        DiagLevel::Error,
+                        "E0239",
+                        format!("failed to resolve import '{}': {}", import.spec, e),
+                        SourceMark::default(),
+                        source,
+                    ),
+                })?;
             dep_lookup.insert(
                 (module_key.clone(), import.spec.clone()),
                 path_contract_key(&dep),
@@ -812,6 +876,10 @@ mod tests {
         fn read_module(&self, module_id: &str) -> Result<Vec<u8>, String> {
             fs::read(module_id).map_err(|e| e.to_string())
         }
+
+        fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String> {
+            Ok(resolve_test_import(importer_module_id, spec))
+        }
     }
 
     fn check_file_fs(path: &std::path::Path) -> Result<SemanticReport, SemanticError> {
@@ -839,6 +907,29 @@ mod tests {
                 .cloned()
                 .ok_or_else(|| format!("missing module '{}'", module_id))
         }
+
+        fn resolve_import(&self, importer_module_id: &str, spec: &str) -> Result<String, String> {
+            if let Some((alias, rest)) = spec.split_once("::") {
+                let resolved = format!("/virtual/deps/{}/{}", alias, rest);
+                return Ok(resolved);
+            }
+            Ok(resolve_test_import(importer_module_id, spec))
+        }
+    }
+
+    fn resolve_test_import(importer_module_id: &str, spec: &str) -> String {
+        let importer = std::path::Path::new(importer_module_id);
+        let base = importer.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let mut spec_path = PathBuf::from(spec);
+        if spec_path.extension().is_none() {
+            spec_path.set_extension("exo");
+        }
+        let joined = if spec_path.is_absolute() {
+            spec_path
+        } else {
+            base.join(spec_path)
+        };
+        joined.to_string_lossy().replace('\\', "/")
     }
 
     #[test]
@@ -909,6 +1000,24 @@ Law "CheckSignal" [priority 10]:
             .scheduled_laws
             .iter()
             .any(|name| name.ends_with("::CheckSignal")));
+    }
+
+    #[test]
+    fn provider_pipeline_uses_provider_import_resolution_hook() {
+        let root = "/virtual/root.sm";
+        let dep = "/virtual/deps/math/core.sm";
+        let src = "Import \"math::core.sm\"\nLaw \"L\" [priority 1]:\n    When true ->\n        System.recovery()\n";
+        let dep_src = "Law \"Core\" [priority 1]:\n    When true ->\n        System.recovery()\n";
+        let mut modules = BTreeMap::new();
+        modules.insert(root.to_string(), src.as_bytes().to_vec());
+        modules.insert(dep.to_string(), dep_src.as_bytes().to_vec());
+        let provider = MapProvider { modules };
+
+        let report = check_file_with_provider(std::path::Path::new(root), &provider).expect("provider");
+        assert!(report
+            .scheduled_laws
+            .iter()
+            .any(|name| name.contains("/virtual/deps/math/core.sm::Core")));
     }
 
     #[test]
@@ -1120,8 +1229,12 @@ Law "A" [priority 1]:
                 .expect("logos b"),
             ),
         );
-        let err = build_export_sets(&loaded).expect_err("must fail cycle");
+        let provider = MapProvider {
+            modules: BTreeMap::new(),
+        };
+        let err = build_export_sets(&loaded, &provider).expect_err("must fail cycle");
         assert!(err.to_string().contains("E0243"));
+        assert!(err.to_string().contains("/virtual/a.sm -> /virtual/b.sm -> /virtual/a.sm"));
     }
 
     #[test]

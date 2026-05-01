@@ -1,30 +1,43 @@
 # Package And Dependency Ecosystem
 
-Status: proposed v0
+Status: historical design note, not current baseline
+
+Current-main truth:
+
+- the first-wave package baseline is already completed on current `main` in
+  `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+- the admitted current-main package contract is the landed `Semantic.package`
+  baseline with deterministic local-path dependency loading
+- this document is retained only as a broader future design note; it does not
+  describe the current admitted package baseline or the published stable line
 
 ## Goal
 
-Move Semantic from file- and module-level imports toward an intentional package
-and dependency story.
+Sketch one possible broader package-manager direction beyond the landed
+`Semantic.package` baseline.
 
-This workstream is about reproducible project structure, dependency
-declaration, and publishing discipline. It is not about replacing the current
-module/import contract.
+This document is about a future manifest/lockfile/versioning/publishing layer.
+It is not about replacing the current module/import contract, and it is not a
+claim that this broader package-manager layer is active today.
 
 ## Current Baseline
 
-Today Semantic has:
+Today current `main` has:
 
 - source-level file/module imports
 - deterministic module resolution and validation
 - import/export/re-export policy
-- no package manifest
+- canonical `Semantic.package` parsing and validation
+- package entry-module admission
+- deterministic local-path dependency loading for package-qualified imports
 - no lockfile
-- no dependency resolver as a public user-facing contract
+- no public registry/publishing contract
+- no lockfile-backed package-manager contract
 
 Current honest constraint:
 
-- file imports are useful, but they are not yet a package ecosystem
+- current `main` has a first-wave package baseline, but it is not yet a full
+  package-manager ecosystem
 
 ## Why This Matters
 
@@ -120,24 +133,18 @@ This workstream is not intended to:
 
 ## Acceptance Criteria
 
-This workstream should be considered materially started only when:
+Any future reopening of this broader package-manager design should be
+considered materially started only when:
 
 - one canonical package model exists in docs
 - import/module behavior is clearly separated from package/dependency behavior
 - project metadata and lockfile expectations are documented
 - publishing and version-compatibility policy are stated explicitly
 
-## Immediate Next Slice
+## Current Decision
 
-This PR now defines:
-
-- the package manifest
-- dependency-resolution rules
-- lockfile expectations
-- one end-to-end worked example
-
-The next slice after this PR should define:
-
-- workspace/package layout expectations
-- update flows that are allowed to rewrite `Semantic.lock`
-- the first stable package-aware CLI entrypoints
+- no active implementation slice is currently open from this document
+- any reopening of manifest/lockfile/versioning/registry work requires a new
+  explicit scope decision from fresh `main`
+- until that happens, the current admitted package truth remains the completed
+  `Semantic.package` baseline and its close-out docs

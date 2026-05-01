@@ -1,113 +1,145 @@
 # Semantic v1 Readiness
 
-Status: active beta release line
+Status: current release-facing posture authority
 
-This document summarizes the current release-facing readiness state for Semantic v1.
+Read this document using the canonical status vocabulary in:
 
-## Current Readiness Position
+- `docs/roadmap/public_status_model.md`
 
-Current repository state has working coverage for:
+Within that authority order, this document is the primary release-facing
+reading for the repository.
 
-- repository governance and ownership rules
-- verified SemCode execution
-- runtime quota contract
-- canonical profile contract
-- IR verification and minimum optimizer pipeline
-- PROMETHEUS ABI, capability, and gate boundaries
-- PROMETHEUS runtime, state, rules, and audit owner crates
-- semantic runtime validation matrix and golden baselines
-- CI-enforced boundary, public API, runtime, and release-bundle gates
+## Current Posture
 
-This means the repository has crossed from architecture-only planning into a published beta release line for the current contract surfaces.
+The repository currently spans four different factual layers:
 
-Current `v1` boundary decision:
+- `published stable`
+  - the stable line is `v1.1.1`
+- `qualified limited release`
+  - the current practical-programming verdict from the completed Gate 1 cycle
+- `landed on main, not yet promised`
+  - widened surfaces present on current `main` but not yet promoted into either
+    the stable line or the qualified contour
+- `out of scope`
+  - surfaces still intentionally excluded from the current qualified contour and
+    current stable promise
 
-- the official `v1` PROMETHEUS scope is the existing narrow ABI/capability/gate boundary
-- wider planned host calls are not part of the current `v1` commitment
-- ownership alignment for optimizer, SemCode, and CLI is already implemented in code
-- the active beta line is published from `main`
+Current top-level reading:
 
-## Current Artifact List
+- Semantic is **not** currently positioned as `public release`
+- Semantic is currently qualified only for a **limited release** practical
+  contour
+- current `main` contains wider landed work than the stable line and wider
+  landed work than the current qualified contour
 
-Current v1-facing artifact families in the repository:
+## Published Stable
 
-- architecture bundle
-  - `docs/architecture/`
-- roadmap bundle
-  - `docs/roadmap/milestones.md`
-  - `docs/roadmap/type_completeness_matrix.md`
-  - `docs/roadmap/runtime_validation_policy.md`
-  - `docs/roadmap/release_bundle_checklist.md`
-  - `docs/roadmap/compatibility_statement.md`
-  - `docs/roadmap/release_asset_smoke_matrix.md`
-  - `docs/roadmap/stable_release_policy.md`
-- spec bundle
-  - `docs/spec/`
-- CLI/tooling surface
-  - `smc`
-  - `svm`
-- published beta assets
-  - `smc.exe`
-  - `svm.exe`
-  - Windows release zip
-- semantic runtime validation
-  - `tests/prometheus_runtime_matrix.rs`
-  - `tests/prometheus_runtime_goldens.rs`
-  - `tests/prometheus_runtime_negative_goldens.rs`
-  - `tests/prometheus_runtime_compat_matrix.rs`
+The published stable line remains:
 
-## Current Ready Surfaces
+- `v1.1.1`
 
-Currently ready or substantially stabilized surfaces:
+It should be read as the stable publication baseline, not as a complete
+description of everything already landed on current `main`.
 
-- `sm-verify`
-- verified-only VM execution path
-- `sm-runtime-core`
-- `sm-profile`
-- `sm-ir` verification and minimum optimizer contract
-- `prom-abi`
-- `prom-cap`
-- `prom-gates`
-- `prom-runtime`
-- `prom-state`
-- `prom-rules`
-- `prom-audit`
+The current published artifact set and platform scope for that stable line are
+defined in:
+
+- `docs/release_artifact_model.md`
+
+## Qualified Limited Release
+
+The completed Gate 1 evidence currently supports a narrow practical-programming
+contour documented in:
+
+- `reports/g1_release_scope_statement.md`
+
+That qualified contour includes:
+
+- single-file executable programs on the admitted source surface
+- narrow helper-module executable programs using direct local-path bare imports
+- narrow helper-module executable programs using direct local-path selected
+  imports over function-only helper modules
+- rule/state-oriented programs over records, `quad`, and explicit
+  `Option` / `Result`
+- built-in `Sequence(T)` iteration
+- direct-record user-defined `Iterable` dispatch
+- verified execution through the admitted
+  `source -> sema -> IR -> SemCode -> verifier -> VM` path
+
+This is enough for:
+
+- `qualified limited release`
+
+It is not enough for:
+
+- `public release`
+
+## Landed On `main`, Not Yet Promised
+
+Current `main` contains widened surfaces beyond both:
+
+- the published stable line
+- and the currently qualified practical-programming contour
+
+High-signal landed families include:
+
+- schema/boundary-core work
+- package baseline work
+- ordered sequence surface
+- iterable surface
+- first-wave closures
+- first-wave generics
+- runtime ownership for tuple + direct record-field paths
+- first-wave UI application boundary
+- selected-import executable module entry
+
+These surfaces must stay explicitly unpromoted until a later scope decision and
+qualification or release decision promotes them.
 
 ## Current Known Limits
 
-The following limits remain explicit and should be treated as release-facing honesty requirements:
+The following release-facing limits remain explicit:
 
-- richer `fx` arithmetic is not yet aligned with the broader `f64` numeric surface, even though the canonical `fx` value path is now end-to-end
-- wider planned PROMETHEUS calls such as `StateQuery`, `StateUpdate`, `EventPost`, and `ClockRead` are intentionally excluded from the current `v1`
-- semantic runtime covers activation/orchestration glue, but not full rule-side effect execution
-- persistence backends are not part of the current runtime/audit contract
-- rollback persistence semantics are not yet formalized beyond current orchestration notes
-- final stable packaging and tag policy remain narrower than the long-term distribution plan
+- broader executable-module authoring beyond the admitted bare/selected slice
+  is not currently qualified
+- full CLI application authoring with admitted argv/stdout/file IO is not
+  currently qualified
+- UI remains outside the current qualified contour
+- broader generalized iterable dispatch remains outside the current qualified
+  contour
+- landed-on-`main` widenings beyond the above admitted contour are not
+  automatically part of the stable line and are not automatically qualified
 
-## Current Release Gate
+## Current Release Gates
 
-The repository should be treated as release-valid only if all of the following stay green:
+Release-facing truth should be treated as valid only while the relevant
+validation remains green:
 
 - `cargo test --workspace`
 - boundary and ownership guard tests
 - `cargo test --test public_api_contracts`
-- `pwsh -File scripts/verify_release_bundle.ps1 -ManifestPath <path>`
-- semantic runtime matrix tests
-- semantic runtime golden tests
-- semantic runtime negative golden tests
-- semantic runtime compatibility matrix tests
+- release bundle verification
+- release asset smoke verification
+- compatibility/runtime validation checks used by the current release process
 
-## Next Remaining Release Steps
+## Next Release-Maintenance Steps
 
-Current highest-signal remaining work before a final stable `v1` tag:
+The highest-signal remaining release-maintenance work is:
 
-1. keep release-facing docs aligned with the actual published beta line on `main`
-2. keep packaged beta assets validated against representative source programs
-3. freeze final stable tag and packaging expectations without reopening scope
-4. perform one final clean validation pass before a stable `v1` tag
+1. keep release-facing docs aligned with:
+   - `docs/roadmap/public_status_model.md`
+   - `reports/g1_release_scope_statement.md`
+   - actual stable assets and actual current-`main` behavior
+2. keep packaged stable assets and smoke validation aligned
+3. avoid reopening scope during release-maintenance work
+4. require a new explicit scope decision plus Gate amendment/new Gate cycle
+   before any broader practical-programming widening is promoted
 
 ## Contract Rule
 
-No document in this readiness summary should be used to silently overstate completeness.
+This document must not:
 
-If a surface is only partially complete, it must remain listed under `Current Known Limits` until tests, docs, and behavior all align.
+- silently promote landed-on-`main` behavior into the stable line
+- silently promote landed-on-`main` behavior into the qualified contour
+- blur the distinction between published stable, qualified, landed, and out of
+  scope

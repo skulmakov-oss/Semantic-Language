@@ -8,10 +8,16 @@ Project zones:
 
 Current pending ownership notes:
 
+- `sm-front` consolidates lexer, AST, and source-level type-check in a single crate; the originally planned `sm-lexer` / `sm-ast` split was not carried forward; a future split would require an explicit decision and code move
 - optimizer surface is owned by `sm-ir` in the current `v1` baseline; a future `sm-opt` split would require an explicit follow-up decision and code move
 - SemCode format contract is owned by `sm-ir` in the current `v1` baseline; `sm-emit` remains a producer-facing facade and compatibility layer
 - public CLI contract is owned by `smc-cli` in the current `v1` baseline; root `smc` is a thin entrypoint wrapper over that owner
-- `ton618_core`, `src/bin/support/**`, and `ton618-core` remain allowlisted compatibility shims only and must not grow into second owners
+- the retained non-owning TON618 compatibility perimeter (`ton618_core`, `ton618-core`) must not grow into second owners
+
+Compatibility checkpoint:
+
+- the remaining TON618-named perimeter is tracked in
+  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
 
 Allowed flow:
 
@@ -21,7 +27,10 @@ Boundary rules:
 
 - construction crates must not depend on VM/runtime state or PROMETHEUS internals;
 - execution crates must not reach back into parser/sema internals;
+- shared runtime vocabulary stays in `sm-runtime-core`; it must not become a
+  second execution authority;
 - integration crates must not rewrite compiler or VM semantics;
+- integration crates must reach execution only through verified VM entrypoints;
 - all host effects must cross ABI and capability checks;
 - public contracts require versioning, tests, and spec updates.
 

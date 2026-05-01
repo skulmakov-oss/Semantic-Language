@@ -189,6 +189,38 @@ impl<'a, B: GateBinding> PrometheusHostAbi for GateHostAdapter<'a, B> {
             format!("pulse emission '{}' is not bound by gate adapter", signal),
         ))
     }
+
+    fn state_query(&mut self, key: &str) -> Result<AbiValue, AbiError> {
+        Err(AbiError::new(
+            HostCallId::StateQuery,
+            AbiFailureKind::Unavailable,
+            format!("state query '{}' is not bound by gate adapter", key),
+        ))
+    }
+
+    fn state_update(&mut self, key: &str, _value: AbiValue) -> Result<(), AbiError> {
+        Err(AbiError::new(
+            HostCallId::StateUpdate,
+            AbiFailureKind::Unavailable,
+            format!("state update '{}' is not bound by gate adapter", key),
+        ))
+    }
+
+    fn event_post(&mut self, signal: &str) -> Result<(), AbiError> {
+        Err(AbiError::new(
+            HostCallId::EventPost,
+            AbiFailureKind::Unavailable,
+            format!("event post '{}' is not bound by gate adapter", signal),
+        ))
+    }
+
+    fn clock_read(&mut self) -> Result<u32, AbiError> {
+        Err(AbiError::new(
+            HostCallId::ClockRead,
+            AbiFailureKind::Unavailable,
+            "clock read is not bound by gate adapter",
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -24,8 +24,28 @@ The current Rust-like executable surface is a deterministic function program.
 
 Current rules:
 
-- top-level source items currently include nominal `record` declarations and executable functions
+- top-level source items currently include executable `Import` directives,
+  nominal `record`, compile-time-only `schema`, and executable function
+  declarations
 - `record` declarations contribute nominal type identity but are not themselves executable entrypoints
+- `schema` declarations contribute compile-time contract metadata only and are
+  not executable entrypoints or value families
+- top-level executable `Import` directives now admit one narrow module-entry
+  slice on current `main`:
+  - direct local-path bare imports such as `Import "helper.sm"`
+  - direct local-path selected imports such as
+    `Import "helper.sm" { Foo, Bar as Baz }` when the imported helper module
+    stays within the current function-only helper slice
+  - deterministic helper-module bundling before executable semantic checking
+  - selected executable helper imports synthesize only the requested public
+    bindings plus the required local helper-function call closure before
+    executable semantic checking
+- the current executable path still does **not** admit:
+  - top-level alias imports
+  - wildcard imports
+  - public re-exports
+  - package-qualified executable imports
+  - namespace-qualified executable access
 - execution begins at `fn main()`
 - `main` must currently have signature `fn main()`
 - there is no dynamic entrypoint discovery or module-level executable code
@@ -70,6 +90,75 @@ Current v0 record declaration semantics:
 - explicit record `let-else` uses `let RecordName { field: target, ... } = value else return ...;`
 - record `let-else` currently treats only explicit `quad` literal field targets as refutable checks
 - record equality is allowed only when every field type already supports stable equality
+
+Current v0 schema declaration semantics:
+
+- `schema Name { ... }` introduces one compile-time-only schema declaration
+- schema identity is nominal by schema name
+- schema declarations currently support:
+  - record-shaped forms `schema Name { field: type, ... }`
+  - tagged-union forms `schema Name { Variant { field: type, ... }, ... }`
+- schema declarations may now also carry one explicit role marker:
+  - `config schema`
+  - `api schema`
+  - `wire schema`
+- schema declarations may now also carry optional `version(<u32>)` metadata
+  immediately after the schema name
+- record-shaped schema declarations must be non-empty and may not repeat field
+  names
+- tagged-union schema declarations must declare at least one variant, may not
+  repeat variant names, and may not repeat field names inside one variant
+- schema field and variant-payload types reuse the current declared-type grammar
+  and resolve against the ordinary nominal/executable type tables
+- schema declarations currently live only in the canonical schema table owned by
+  the frontend/typecheck path
+- schema version metadata currently lives only in that canonical schema table as
+  compile-time/tooling ownership data
+- record-shaped schemas with explicit version metadata may now also participate
+  in deterministic tooling-owned compatibility classification across two schema
+  revisions
+- tagged-union schemas with explicit version metadata may now also participate
+  in deterministic tooling-owned compatibility classification across two schema
+  revisions
+- the current first-wave compatibility classes are `Equivalent`, `Additive`,
+  and `Breaking`
+- canonical schema evolution may now also derive tooling-owned migration
+  metadata artifacts and stable formatted review output from those same
+  compatibility reports
+- canonical schema declarations may now also derive deterministic compile-time
+  validation plans owned by the same frontend/typecheck path
+- record-shaped schemas currently derive first-wave validation checks in
+  declaration order:
+  - required-field checks
+  - field-type compatibility checks
+- tagged-union schemas now also derive first-wave branch checks in variant
+  declaration order:
+  - allowed-branch checks
+  - per-branch required-field checks
+  - per-branch field-type compatibility checks
+- `api schema` and `wire schema` declarations may now also derive one
+  deterministic generated API contract artifact family owned by `smc-cli`
+- generated API contract artifacts preserve schema, variant, and field
+  declaration order for reviewability
+- generated API contract artifacts currently carry explicit format-version and
+  generator metadata for reproducibility
+- `wire schema` declarations may now also derive one deterministic generated
+  wire-contract artifact family owned by `smc-cli`
+- generated wire-contract artifacts currently contain:
+  - tagged wire unions derived from canonical tagged-union `wire schema`
+    declarations
+  - wire patch types derived from canonical record-shaped `wire schema`
+    declarations
+- generated wire-contract artifacts preserve variant, payload-field, and
+  patch-field declaration order for reviewability
+- generated wire-contract artifacts currently carry explicit format-version and
+  generator metadata for reproducibility
+- `config schema` declarations do not participate in generated API artifact
+  derivation in the first-wave contract
+- schema role markers currently contribute compile-time declaration metadata
+  only; they do not imply loading, generation, transport, or runtime behavior
+- schema declarations do not currently introduce executable types, runtime
+  carriers, or host ABI shapes
 
 Current first-wave function-contract semantics:
 
@@ -219,6 +308,10 @@ Current first-wave units-of-measure semantics:
   `Result(T, E)` when those positions contain supported numeric families
 - lowering erases units after semantic validation and reuses the existing
   numeric lowering path
+- `fx` should be read as a stable value-transport and equality family inside the
+  current line; binary arithmetic on `fx` remains outside the current contract
+- unary `+` / unary `-` for `fx` remain limited to literal formation, not
+  general `fx` expression rewriting
 
 Current v0 limits:
 
@@ -259,10 +352,22 @@ Current `for ... in range` semantics:
 Current v0 limit:
 
 - `for ... in range` currently accepts only `RangeI32` values
+- general `for x in collection` source syntax is now admitted on current `main`
+  as an owner-layer desugaring toward the named `Iterable` contract
+- built-in `Sequence(type)` values now execute through the current first-wave
+  iterable loop path on `main`
+- direct record `Iterable` impls now execute through the same loop driver when
+  they expose `fn next(self: Self, index: i32) -> Option(Item)`
+- trait-side `Self` now denotes the impl-anchored receiver contract only inside
+  trait method signatures and impl method type positions
+- `Self` does not widen the general executable type surface beyond that narrow
+  trait/impl contract
+- ADT/schema iterable dispatch and indirect iterable projection remain outside
+  the current stable contract
 - descending ranges, custom step values, `continue`, and a general iterable
   subsystem are not yet part of the stable contract
-- `for ... in range` does not widen the public operator surface to general
-  relational operators
+- `for ... in range` does not widen the public operator surface beyond the
+  current plain same-family `i32` relational slice
 
 ## Scope And Binding Rules
 
@@ -320,6 +425,13 @@ Current statement meaning:
 - `assert(condition);` terminates through the core fail-fast trap path when
   `condition` is `false`
 - expression statements evaluate for effect and then discard any produced value
+- `let name: T = expr;` introduces a local binding
+- `let mut name: T = expr;` is admitted as an explicit writable-local spelling in
+  the current Rust-like path
+- plain reassignment `name = expr;` is admitted for local bindings
+- compound assignment `name += expr;`, `name -= expr;`, `name *= expr;`,
+  `name /= expr;`, `name &&= expr;`, and `name ||= expr;` desugar through the
+  same assignment path
 - `return expr;` terminates the current function with that value
 - `return;` terminates a `unit`-returning function
 
@@ -328,7 +440,12 @@ Current non-goal:
 - the source contract does not claim deferred execution, generators, or
   coroutine-style statement behavior
 - `guard` does not yet support arbitrary `else { ... }` recovery blocks
-- plain reassignment `name = expr;` is not yet part of the public surface
+
+Current generated wire-contract limit:
+
+- generated wire-contract artifacts are review/build outputs only
+- record patch types do not imply a runtime patch application engine
+- tagged wire unions do not imply transport/runtime integration
 
 Current v0 const limit:
 
@@ -408,6 +525,37 @@ Current v0 limit:
 - loop-expression bodies currently do not allow `let-else`, `guard`, or
   `return`
 - `continue`, statement-loop, and richer control interaction are deferred
+
+## While Statement
+
+Current `while` statement semantics:
+
+- `while condition { ... }` is admitted as a statement form
+- the condition must typecheck as `bool`
+- lowering reuses the existing label/jump path; no new runtime carrier is
+  introduced for this slice
+
+Current v0 limit:
+
+- `while` is statement-only and does not produce a value
+- labeled loops remain deferred
+
+## Statement Loop And Control Exits
+
+Current statement-loop semantics:
+
+- `loop { ... }` is admitted as a statement form
+- bare `break;` exits the innermost admitted `while` or statement `loop`
+- `continue;` resumes the next iteration of the innermost admitted `while` or
+  statement `loop`
+- lowering reuses the existing label/jump path; no new runtime carrier is
+  introduced for this slice
+
+Current v0 limit:
+
+- statement `loop` does not produce a value
+- `break expr;` remains restricted to loop-expression bodies
+- labeled loops remain deferred
 
 ## Tuple Destructuring Bind
 
@@ -590,31 +738,58 @@ Current v0 limit:
 
 Current short-lambda semantics:
 
-- short lambdas are currently capture-free call-site sugar only
+- the published stable `v1.1.1` line keeps short lambdas as capture-free
+  call-site sugar only
 - `(x => expr)(arg)` is interpreted as a fresh lexical block equivalent to
   `{ let x = arg; expr }`
 - `value |> (x => expr)` is interpreted as the same block sugar with `value` as
   the bound argument
 - the lambda body is checked and lowered through ordinary block-expression
   semantics; no alternate runtime callable representation is introduced
+- current `main` now also admits standalone first-class closure literals in
+  contextual `Closure(T -> U)` positions
+- admitted standalone closure literals record immutable capture inventory in
+  declaration order of first use
+- current `main` now materializes admitted first-class closures through one
+  canonical runtime closure carrier
+- current `main` now admits direct invocation of admitted closure values
+  through ordinary call syntax using exactly one positional argument
 
-Current v0 limits:
+Current active limits:
 
-- short lambdas are not first-class values
-- short lambdas currently support exactly one parameter and exactly one applied
-  argument
-- outer local-name capture is rejected in the current source contract
+- the published stable line still does not claim first-class closures
+- the current first-wave closure family still supports exactly one parameter
+- named arguments, multi-argument forms, and non-direct callable abstraction
+  remain outside the current contract
+- closure equality is not part of the current first-wave surface
+- typed closure parameters, multi-argument closures, and async closure forms are
+  not part of the current contract
+
+Current active closures checkpoint on `main`:
+
+- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
+- published `v1.1.1` still keeps short lambdas as capture-free sugar rather
+  than as runtime closure values
 
 ## Operator Meaning
 
 Current operator meaning:
 
 - `==` and `!=` produce `bool`
+- plain same-family `i32 <`, `<=`, `>`, and `>=` now produce `bool` on current
+  `main`
+- same-family `text == text` and `text != text` are now admitted on current
+  `main`
+- same-family `Sequence(T) == Sequence(T)` and `Sequence(T) != Sequence(T)` are
+  now admitted on current `main` when `T` already supports stable equality
 - `&&` and `||` work on `bool` and `quad` only when both operands are of the
   same family
 - `!` works on `bool` and `quad`
 - `->` is quad implication and returns `quad`
-- `+`, `-`, `*`, `/` currently have stable arithmetic meaning only on `f64`
+- `+`, `-`, `*`, `/` currently have stable arithmetic meaning on `f64`
+- current `main` now also admits the first same-family `i32` arithmetic slice:
+  unary `-`, binary `+`, `-`, `*`
+- `i32 / i32` remains outside the current first arithmetic wave
 
 Current first-wave units operator rules:
 
@@ -628,8 +803,37 @@ Current first-wave units operator rules:
 
 Current honest limit:
 
-- `fx` value flow is supported, but `fx` arithmetic is intentionally narrower
-  than `f64` arithmetic in the Rust-like source surface
+- the published stable `v1.1.1` line keeps `fx` arithmetic intentionally
+  narrower than `f64` arithmetic in the Rust-like source surface
+- current `main` now admits plain `fx` unary/binary arithmetic at source typing
+  level, and canonical lowering/verified execution now admit that widened
+  surface under a promoted `SEMCODE3` line
+- completed first-wave post-stable widening for general-purpose `fx`
+  arithmetic is documented in
+  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- the published stable `v1.1.1` line still does not expose executable `text`
+- current `main` now admits `text` through the source type/equality layer and
+  through the canonical runtime carrier for those admitted programs
+- text concatenation remains a later `M8.1` wave
+- host-facing text ABI widening is still out of scope
+- current `main` now also admits one ordered sequence family with bracketed
+  literals, same-family equality, and `expr[index]` through the canonical
+  `M8.3` first-wave carrier path
+- current `main` now also admits plain same-family `i32` relational operators
+  through the existing verified compare opcodes
+- current `main` now also admits plain same-family `i32` unary `-` and binary
+  `+`, `-`, `*` through explicit lowering, verified opcodes, and VM execution
+- broader numeric relational surfaces for `u32`, `f64`, `fx`, and measured
+  values remain outside the current application-completeness wave
+- broader integer arithmetic for `u32`, mixed numeric families, and `i32`
+  division remains outside the current first arithmetic wave
+- iteration, `len`, `is_empty`, maps, sets, and collection protocol machinery
+  remain outside the current `M8.3` first-wave contract
+- current `main` now also admits one first-wave closure family through the
+  canonical verified runtime path, including immutable capture materialization
+  and direct invocation with exactly one positional argument
+- closure equality, host-ABI transport, and broader callable abstraction
+  machinery remain outside the current `M8.4` first-wave contract
 
 ## Builtin Call Meaning
 

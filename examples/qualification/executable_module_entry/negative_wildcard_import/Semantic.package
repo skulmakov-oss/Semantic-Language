@@ -1,0 +1,4 @@
+format 1
+package negative_wildcard_import
+manifest_dir .
+module_root src

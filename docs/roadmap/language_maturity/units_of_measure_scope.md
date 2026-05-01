@@ -1,6 +1,6 @@
 # Units Of Measure Scope
 
-Status: proposed first-wave checkpoint
+Status: completed first-wave baseline history
 Related issue: `#118`
 
 ## Goal
@@ -8,6 +8,16 @@ Related issue: `#118`
 Define a narrow, executable first-wave units-of-measure contract for `v0.2`
 without opening a general dimensional-analysis system or widening runtime and
 host boundaries.
+
+This track is now completed on `main` as a narrow compile-time-only source
+contract over the existing core numeric families.
+
+## Decision Check
+
+- [x] This is a new explicit post-stable track with its own scope decision
+- [x] This remains compile-time-only and does not widen the VM/runtime contract
+- [x] This is one stream, not a mixture of multiple tracks
+- [x] This can close with a clear done-boundary
 
 ## Decision
 
@@ -63,11 +73,11 @@ where the bracket payload is a single unit symbol.
 
 ## Done Boundary
 
-`#118` can close when:
+`#118` is complete on `main` because:
 
 1. parser accepts first-wave unit annotations in declared type positions,
 2. sema reports compile-time mismatches on incompatible unit-annotated numeric
    values,
 3. lowering remains unit-erased and reuses the existing numeric execution path,
 4. docs define supported operations and honest non-conversion rules,
-5. verified tests cover assignment/call/return/operator mismatch cases.
+5. verified tests cover assignment, call, return, and operator mismatch cases.

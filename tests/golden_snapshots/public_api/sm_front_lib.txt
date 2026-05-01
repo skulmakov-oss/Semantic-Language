@@ -1,0 +1,112 @@
+source: crates/sm-front/src/lib.rs
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub mod types;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use types::{
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use sm_profile::{CompatibilityMode, ParserProfile};
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub mod lexer;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub mod parser;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub use typecheck::{
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnSig {
+pub type_params: Vec<SymbolId>,
+pub trait_bounds: Vec<TraitBound>,
+pub params: Vec<Type>,
+pub param_names: Option<Vec<SymbolId>>,
+pub param_defaults: Option<Vec<Option<ExprId>>>,
+pub ret: Type,
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type FnTable = BTreeMap<SymbolId, FnSig>;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type RecordTable = BTreeMap<SymbolId, RecordDecl>;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type AdtTable = BTreeMap<SymbolId, AdtDecl>;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type SchemaTable = BTreeMap<SymbolId, SchemaDecl>;
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub type ValidationPlanTable = BTreeMap<SymbolId, ValidationPlan>;
+pub type TraitTable = BTreeMap<SymbolId, TraitDecl>;
+pub type ImplTable = Vec<ImplDecl>;
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeBinding {
+pub ty: Type,
+pub is_const: bool,
+pub is_mutable: bool,
+pub consumed: bool,
+pub path_state: Vec<(crate::types::PatternPath, crate::types::PathAvailability)>,
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeEnv {
+pub fn new() -> Self {
+pub fn with_params(params: &[(SymbolId, Type)]) -> Self {
+pub fn push_scope(&mut self) {
+pub fn pop_scope(&mut self) {
+pub fn insert(&mut self, name: SymbolId, ty: Type) {
+pub fn insert_mut(&mut self, name: SymbolId, ty: Type) {
+pub fn insert_const(&mut self, name: SymbolId, ty: Type) {
+pub fn mark_consumed(&mut self, name: SymbolId) {
+pub fn is_consumed(&self, name: SymbolId) -> bool {
+pub fn mark_path_state(
+pub fn check_path_available(
+pub fn check_capture_allowed(
+pub fn get(&self, name: SymbolId) -> Option<Type> {
+pub fn is_const(&self, name: SymbolId) -> bool {
+pub fn is_mutable(&self, name: SymbolId) -> bool {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_fn_table(program: &Program) -> Result<FnTable, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_record_table(program: &Program) -> Result<RecordTable, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_adt_table(program: &Program) -> Result<AdtTable, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_trait_table(program: &Program) -> Result<TraitTable, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn build_schema_table(program: &Program) -> Result<SchemaTable, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn canonicalize_declared_type(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn canonicalize_declared_type_generic(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn builtin_sig(name: &str) -> Option<FnSig> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn reorder_call_args(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn resolve_symbol_name<'a>(arena: &'a AstArena, id: SymbolId) -> Result<&'a str, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, PartialEq)]
+pub enum AstBundle {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct CompilePolicyView<'a> {
+pub profile: &'a ParserProfile,
+pub const fn new(profile: &'a ParserProfile) -> Self {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_rustlike(input: &str) -> Result<AstBundle, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_rustlike_with_profile(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_logos(input: &str) -> Result<AstBundle, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_logos_with_profile(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_program(input: &str) -> Result<Program, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_program_with_profile(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_logos_program(input: &str) -> Result<LogosProgram, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn parse_logos_program_with_profile(
+#[cfg(any(feature = "alloc", feature = "std"))]
+pub fn lex(input: &str) -> Result<Vec<Token>, FrontendError> {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompileProfile {
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OptLevel {

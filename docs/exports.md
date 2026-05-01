@@ -36,13 +36,20 @@ Each exported item stores provenance:
 
 Export ordering is deterministic by declaration order (`decl_order` ascending).
 
+Current clarification:
+
+- local exports stay first in local declaration order
+- re-exports append after locals in import declaration order
+- within one re-exported dependency set, dependency export order is preserved
+
 ## Collision Policy
 
 If two exports in one module publish the same public name, compilation fails with `E0242`.
 
 ## Symbol-level Cycle Policy
 
-Re-export symbol cycles are detected and rejected with `E0243`, with a chain trace.
+Re-export symbol cycles are detected and rejected with `E0243`, with a
+deterministic chain trace that follows the current re-export recursion order.
 
 ## Examples
 

@@ -57,14 +57,53 @@ Import "a/b/c" *
 Import pub "a/b/c" { Foo }
 ```
 
+## Current Executable-Path Narrowing
+
+The broader module/import source contract above is not yet fully admitted on
+the current executable Rust-like path.
+
+Current executable-path admission is narrower:
+
+- direct local-path bare imports such as `Import "helper.sm"` are admitted for
+  deterministic helper-module loading
+- direct local-path selected imports such as
+  `Import "helper.sm" { Foo, Bar as Baz }` are now also admitted on the
+  executable path when the imported helper module stays within the current
+  function-only helper slice
+- imported helper-module declarations are bundled into the executable semantic
+  path before checking/lowering
+- selected executable helper imports materialize only the requested public
+  bindings plus the required local helper-function call closure before
+  checking/lowering
+
+The following executable import forms remain out of scope on current `main`:
+
+- explicit top-level alias imports
+- wildcard imports
+- public re-exports
+- package-qualified executable imports
+- namespace-qualified executable access such as `X.Foo`
+
 ## Name Resolution Order
 
 Current effective resolution order:
 
 1. local symbols
-2. explicit selected imports
+2. explicit selected imports as direct local bindings
 3. namespace-qualified access such as `X.Foo`
-4. wildcard imports in declaration order
+4. wildcard imports in declaration order as fallback for unresolved names
+
+Clarifications:
+
+- local/import alias conflicts are rejected with `E0241` instead of being
+  resolved by shadowing
+- every `Import` still creates one namespace alias, using either explicit
+  `as X` or the default file-stem alias
+- selected imports participate in unqualified lookup before wildcard imports
+- wildcard imports do not remove namespace-qualified access to the same module
+- if multiple wildcard imports can satisfy one unresolved name, the first
+  matching wildcard import by declaration order wins
+- wildcard overlap does not produce a separate ambiguity diagnostic in v0.2
 
 ## Export Surface
 
@@ -86,9 +125,12 @@ Current export provenance model distinguishes:
 
 Current determinism rules:
 
-- export ordering is deterministic by declaration order
+- local export ordering is deterministic by declaration order
+- re-exports are appended after local exports in import declaration order
+- dependency export order is preserved within each re-exported set
 - wildcard resolution follows import declaration order
 - symbol-cycle detection is explicit rather than best-effort
+- symbol-cycle traces follow the current re-export recursion order
 
 ## Validation Rules
 
@@ -97,7 +139,8 @@ Current module-surface validation includes:
 - duplicate namespace alias rejection (`E0241`)
 - missing selected symbol rejection (`E0244`)
 - duplicate selected alias rejection (`E0245`)
-- public-name collision rejection (`E0242`)
+- selected-import kind mismatch rejection (`E0245`)
+- public re-export collision rejection (`E0242`)
 - symbol-level re-export cycle rejection (`E0243`)
 - invalid wildcard/select combination rejection (`E0245`)
 
@@ -112,6 +155,55 @@ The current module contract does not yet claim stable support for:
 
 Those concerns belong to the future package ecosystem surface rather than the
 current source module baseline.
+
+Current active package-baseline checkpoint:
+
+- `docs/roadmap/language_maturity/package_ecosystem_baseline_scope.md`
+
+Current `main` also now owns a first-wave `Semantic.package` baseline in
+`smc-cli` for:
+
+- package identity
+- package root layout
+- local path dependency inventory
+- canonical package manifest parsing
+- package entry-module admission against `module_root`
+
+Current admitted manifest directives are:
+
+```text
+format <u32>
+package <name>
+manifest_dir <path>
+module_root <path>
+dep <alias> <package_name> <local_path>
+```
+
+Current `main` now also admits one first-wave package-qualified dependency
+import form:
+
+```sm
+Import "math::core.sm"
+Import "ui::widgets/button.sm" as Button
+```
+
+Current first-wave package loading rules:
+
+- the `alias` segment must match a dependency declared in the nearest
+  `Semantic.package`
+- dependency sources are local paths only
+- the dependency path is resolved relative to the importer package root
+- the dependency package manifest must exist and validate successfully
+- the dependency package name must match the declared `package_name`
+- the imported module path is resolved inside the dependency package
+  `module_root`
+
+Current package-baseline limits still remain:
+
+- no registries
+- no semver solving
+- no lockfiles
+- no publishing workflow
 
 ## Validation Evidence
 

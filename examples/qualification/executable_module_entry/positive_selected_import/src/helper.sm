@@ -1,0 +1,17 @@
+fn scale(value: i32) -> i32 {
+    if value == 2 {
+        return 3;
+    }
+    return value;
+}
+
+fn score(value: i32) -> i32 {
+    return scale(value);
+}
+
+fn hidden_bonus(value: i32) -> i32 {
+    if value == 0 {
+        return 100;
+    }
+    return value;
+}

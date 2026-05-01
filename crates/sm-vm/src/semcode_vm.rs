@@ -1,16 +1,20 @@
 use crate::semcode_format::{
-    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
-    read_utf8, supported_headers, SemcodeFormatError, SemcodeHeaderSpec, Opcode,
+    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
+    supported_headers, Opcode, SemcodeFormatError, SemcodeHeaderSpec,
+    OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
+    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
+    OWNERSHIP_SECTION_TAG,
 };
 use crate::QuadVal;
 use prom_abi::{AbiError, AbiValue, HostCallId, PrometheusHostAbi};
-use prom_cap::{CapabilityChecker, CapabilityDenied};
+use prom_cap::{CapabilityChecker, CapabilityDenied, UiCapabilityChecker, UiCapabilityDenied};
+use prom_ui::UiOperationId;
 use sm_runtime_core::{
-    AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RecordCarrier, RuntimeQuotas,
-    RuntimeTrap, RuntimeSymbolTable, SymbolId,
+    AccessPath, AdtCarrier, ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind,
+    RecordCarrier, RuntimeQuotas, RuntimeSymbolTable, RuntimeTrap, SymbolId,
 };
-use sm_verify::RejectReport;
 use sm_verify::verify_semcode;
+use sm_verify::RejectReport;
 use std::collections::{HashMap, HashSet};
 
 const MAX_FUNCTIONS: usize = 4096;
@@ -19,9 +23,18 @@ const MAX_STRING_LEN: usize = 8192;
 const MAX_DEBUG_SYMBOLS_PER_FUNCTION: usize = 8192;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClosureValue {
+    pub function_name: String,
+    pub captures: Vec<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Quad(QuadVal),
     Bool(bool),
+    Text(String),
+    Sequence(Vec<Value>),
+    Closure(ClosureValue),
     I32(i32),
     F64(f64),
     U32(u32),
@@ -37,6 +50,8 @@ pub struct Frame {
     pub pc: usize,
     pub regs: Vec<Value>,
     pub locals: HashMap<SymbolId, Value>,
+    pub borrowed_paths: Vec<AccessPath>,
+    next_write_path: usize,
     pub func: String,
     pub return_dst: Option<u16>,
 }
@@ -47,6 +62,8 @@ pub struct FunctionBytecode {
     pub strings: Vec<String>,
     pub symbol_ids: Vec<SymbolId>,
     pub debug_symbols: Vec<DebugSymbol>,
+    pub borrowed_paths: Vec<AccessPath>,
+    write_paths: Vec<AccessPath>,
     pub code: Vec<u8>,
     pub instr_start: usize,
 }
@@ -83,6 +100,9 @@ pub enum RuntimeError {
     InvalidStringId(u16),
     HostAbi(AbiError),
     CapabilityDenied(CapabilityDenied),
+    /// A UI operation was attempted but the required UI capability was not
+    /// admitted in the manifest. Wired at M7 Wave 1.
+    UiCapabilityDenied(UiCapabilityDenied),
     Trap(RuntimeTrap),
 }
 
@@ -113,7 +133,11 @@ impl core::fmt::Display for RuntimeError {
             RuntimeError::InvalidStringId(id) => write!(f, "invalid string id {}", id),
             RuntimeError::HostAbi(err) => write!(f, "{err}"),
             RuntimeError::CapabilityDenied(err) => write!(f, "{err}"),
+            RuntimeError::UiCapabilityDenied(err) => write!(f, "{err}"),
             RuntimeError::Trap(RuntimeTrap::AssertionFailed) => write!(f, "assertion failed"),
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict) => {
+                write!(f, "write path overlaps active borrow")
+            }
             RuntimeError::Trap(trap) => write!(f, "runtime trap: {:?}", trap),
         }
     }
@@ -122,7 +146,10 @@ impl core::fmt::Display for RuntimeError {
 impl std::error::Error for RuntimeError {}
 
 pub fn run_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
-    run_semcode_with_config(bytes, ExecutionConfig::for_context(ExecutionContext::VerifiedLocal))
+    run_semcode_with_config(
+        bytes,
+        ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+    )
 }
 
 pub fn run_verified_semcode(bytes: &[u8]) -> Result<(), RuntimeError> {
@@ -151,10 +178,7 @@ pub fn run_verified_semcode_with_config(
     run_verified_semcode_with_entry_and_config(bytes, "main", config)
 }
 
-pub fn run_verified_semcode_with_entry(
-    bytes: &[u8],
-    entry: &str,
-) -> Result<(), RuntimeError> {
+pub fn run_verified_semcode_with_entry(bytes: &[u8], entry: &str) -> Result<(), RuntimeError> {
     run_verified_semcode_with_entry_and_config(
         bytes,
         entry,
@@ -212,6 +236,36 @@ pub fn run_verified_semcode_with_host_and_capabilities_and_config<
     exec_loop(&mut vm, &mut bridge)
 }
 
+/// Run verified SemCode with both a standard capability checker and a UI
+/// capability checker.
+///
+/// UI operations attempted without the corresponding `UiCapabilityKind` in
+/// `ui_capabilities` will return `RuntimeError::UiCapabilityDenied`. This is
+/// the Wave 1 denial path for the M7 UI application boundary track.
+pub fn run_verified_semcode_with_ui_capabilities<
+    H: PrometheusHostAbi,
+    C: CapabilityChecker,
+    U: UiCapabilityChecker,
+>(
+    bytes: &[u8],
+    host: &mut H,
+    capabilities: &C,
+    ui_capabilities: &U,
+) -> Result<(), RuntimeError> {
+    verify_semcode(bytes).map_err(RuntimeError::VerifierRejected)?;
+    let (_, symbols, functions) = parse_semcode(bytes)?;
+    let mut vm = VM {
+        functions,
+        callstack: Vec::new(),
+        config: ExecutionConfig::for_context(ExecutionContext::KernelBound),
+        effect_calls: 0,
+        symbols,
+    };
+    push_frame(&mut vm, "main", Vec::new(), None)?;
+    let mut bridge = PrometheusUiVmHost { host, capabilities, ui_capabilities };
+    exec_loop(&mut vm, &mut bridge)
+}
+
 pub fn run_semcode_with_entry_and_config(
     bytes: &[u8],
     entry: &str,
@@ -241,7 +295,9 @@ pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
         spec.rev,
         spec.capabilities
     ));
-    for f in functions.values() {
+    let mut ordered = functions.values().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.name.cmp(&right.name));
+    for f in ordered {
         out.push_str(&format!(
             "fn {}: code={} bytes, strings={}, debug={}\n",
             f.name,
@@ -261,8 +317,14 @@ pub fn disasm_semcode(bytes: &[u8]) -> Result<String, RuntimeError> {
 
 fn parse_semcode(
     bytes: &[u8],
-) -> Result<(SemcodeHeaderSpec, RuntimeSymbolTable, HashMap<String, FunctionBytecode>), RuntimeError>
-{
+) -> Result<
+    (
+        SemcodeHeaderSpec,
+        RuntimeSymbolTable,
+        HashMap<String, FunctionBytecode>,
+    ),
+    RuntimeError,
+> {
     if bytes.len() < 8 {
         return Err(RuntimeError::BadHeader);
     }
@@ -311,16 +373,34 @@ fn parse_semcode(
         let code = bytes[i..i + code_len].to_vec();
         i += code_len;
 
-        let (strings, debug_symbols, instr_start) = parse_string_table_and_debug(&code)?;
+        let (strings, debug_symbols, borrowed_paths, write_paths, instr_start) =
+            parse_string_table_debug_and_ownership(&code)?;
         let symbol_ids = strings
             .iter()
             .map(|name| runtime_symbols.intern(name))
             .collect::<Vec<_>>();
+        let remap_paths = |paths: Vec<AccessPath>| {
+            paths
+                .into_iter()
+                .map(|path| {
+                    let local_root = path.root.raw() as usize;
+                    let root = symbol_ids.get(local_root).copied().unwrap_or(path.root);
+                    Ok(AccessPath {
+                        root,
+                        components: path.components,
+                    })
+                })
+                .collect::<Result<Vec<_>, RuntimeError>>()
+        };
+        let borrowed_paths = remap_paths(borrowed_paths)?;
+        let write_paths = remap_paths(write_paths)?;
         let f = FunctionBytecode {
             name: name.clone(),
             strings,
             symbol_ids,
             debug_symbols,
+            borrowed_paths,
+            write_paths,
             code,
             instr_start,
         };
@@ -335,9 +415,18 @@ fn parse_semcode(
     Ok((header, runtime_symbols, out))
 }
 
-fn parse_string_table_and_debug(
+fn parse_string_table_debug_and_ownership(
     code: &[u8],
-) -> Result<(Vec<String>, Vec<DebugSymbol>, usize), RuntimeError> {
+) -> Result<
+    (
+        Vec<String>,
+        Vec<DebugSymbol>,
+        Vec<AccessPath>,
+        Vec<AccessPath>,
+        usize,
+    ),
+    RuntimeError,
+> {
     let mut i = 0usize;
     let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
     if count > MAX_STRINGS_PER_FUNCTION {
@@ -375,7 +464,48 @@ fn parse_string_table_and_debug(
             debug_symbols.push(DebugSymbol { pc, line, col });
         }
     }
-    Ok((strings, debug_symbols, i))
+    let mut borrowed_paths = Vec::new();
+    let mut write_paths = Vec::new();
+    if i + 4 <= code.len() && &code[i..i + 4] == OWNERSHIP_SECTION_TAG {
+        i += OWNERSHIP_SECTION_TAG.len();
+        let count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+        borrowed_paths.reserve(count);
+        write_paths.reserve(count);
+        for _ in 0..count {
+            let kind = read_u8(code, &mut i).map_err(map_format_err)?;
+            let root = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
+            let component_count = read_u16_le(code, &mut i).map_err(map_format_err)? as usize;
+            let mut path = AccessPath::new(root);
+            for _ in 0..component_count {
+                let component_kind = read_u8(code, &mut i).map_err(map_format_err)?;
+                match component_kind {
+                    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX => {
+                        let index = read_u16_le(code, &mut i).map_err(map_format_err)?;
+                        path = path.tuple_index(index);
+                    }
+                    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL => {
+                        let field = SymbolId(read_u32_le(code, &mut i).map_err(map_format_err)?);
+                        path = path.field(field);
+                    }
+                    _ => {
+                        return Err(RuntimeError::BadFormat(format!(
+                            "unsupported ownership path component kind 0x{component_kind:02x}"
+                        )));
+                    }
+                }
+            }
+            match kind {
+                OWNERSHIP_EVENT_KIND_BORROW => borrowed_paths.push(path),
+                OWNERSHIP_EVENT_KIND_WRITE => write_paths.push(path),
+                _ => {
+                    return Err(RuntimeError::BadFormat(format!(
+                        "unsupported ownership event kind 0x{kind:02x}"
+                    )))
+                }
+            }
+        }
+    }
+    Ok((strings, debug_symbols, borrowed_paths, write_paths, i))
 }
 
 fn map_format_err(err: SemcodeFormatError) -> RuntimeError {
@@ -420,6 +550,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::SubI32 | Opcode::MulI32 => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadU32 => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -432,6 +567,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::MakeTuple => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
@@ -441,6 +581,21 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                         f.name
                     )));
                 }
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
+            Opcode::MakeSequence => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                for _ in 0..count {
+                    let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                }
+            }
+            Opcode::MakeClosure => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
                 for _ in 0..count {
                     let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 }
@@ -491,6 +646,21 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::SequenceGet => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::SequenceLen => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::ClosureCall => {
+                let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::LoadVar => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -500,6 +670,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
             Opcode::QNot | Opcode::BoolNot => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::LoadText => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
@@ -554,6 +728,20 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
             Opcode::PulseEmit => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::StateQuery => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::StateUpdate => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::EventPost => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
+            Opcode::ClockRead => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::Ret => {
                 let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
                 if has_src {
@@ -596,13 +784,45 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
 
 trait VmHostBridge {
     fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError>;
-    fn gate_write(
-        &mut self,
-        device_id: u16,
-        port: u16,
-        value: Value,
-    ) -> Result<(), RuntimeError>;
+    fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError>;
     fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError>;
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError>;
+    fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError>;
+    fn event_post(&mut self, signal: &str) -> Result<(), RuntimeError>;
+    fn clock_read(&mut self) -> Result<Value, RuntimeError>;
+
+    /// UI boundary operations — Wave 1 denial path.
+    ///
+    /// Default implementations return not-admitted. Overridden in
+    /// `PrometheusVmHost` when a `UiCapabilityChecker` is provided.
+    fn ui_window_create(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
+    fn ui_window_run(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
+    fn ui_event_poll(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
+    fn ui_frame_submit(&mut self) -> Result<(), RuntimeError> {
+        Err(RuntimeError::BadFormat(
+            "UI operations are not admitted in the current execution context; \
+             M7 UI boundary requires an explicit UiCapabilityChecker"
+                .to_string(),
+        ))
+    }
 }
 
 struct LegacyVmHost;
@@ -624,6 +844,22 @@ impl VmHostBridge for LegacyVmHost {
     fn pulse_emit(&mut self, _signal: &str) -> Result<(), RuntimeError> {
         Ok(())
     }
+
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
+        Ok(Value::I32(stable_state_query_fallback(key)))
+    }
+
+    fn state_update(&mut self, _key: &str, _value: Value) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn event_post(&mut self, _signal: &str) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn clock_read(&mut self) -> Result<Value, RuntimeError> {
+        Ok(Value::U32(0))
+    }
 }
 
 struct PrometheusVmHost<'a, H: PrometheusHostAbi, C: CapabilityChecker> {
@@ -642,12 +878,7 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
             .map_err(RuntimeError::HostAbi)
     }
 
-    fn gate_write(
-        &mut self,
-        device_id: u16,
-        port: u16,
-        value: Value,
-    ) -> Result<(), RuntimeError> {
+    fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError> {
         self.capabilities
             .require_call(HostCallId::GateWrite)
             .map_err(RuntimeError::CapabilityDenied)?;
@@ -660,9 +891,152 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> VmHostBridge for Prometheus
         self.capabilities
             .require_call(HostCallId::PulseEmit)
             .map_err(RuntimeError::CapabilityDenied)?;
+        self.host.pulse_emit(signal).map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateQuery)
+            .map_err(RuntimeError::CapabilityDenied)?;
         self.host
-            .pulse_emit(signal)
+            .state_query(key)
+            .map(value_from_abi)
             .map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateUpdate)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_update(key, value_to_abi(value)?)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn event_post(&mut self, signal: &str) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::EventPost)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .event_post(signal)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn clock_read(&mut self) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::ClockRead)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .clock_read()
+            .map(Value::U32)
+            .map_err(RuntimeError::HostAbi)
+    }
+}
+
+/// VM host bridge that also carries a `UiCapabilityChecker`.
+///
+/// Created when the caller provides an explicit UI capability manifest.
+/// UI operations check the `UiCapabilityChecker` and return
+/// `RuntimeError::UiCapabilityDenied` when the capability is absent.
+struct PrometheusUiVmHost<'a, H: PrometheusHostAbi, C: CapabilityChecker, U: UiCapabilityChecker> {
+    host: &'a mut H,
+    capabilities: &'a C,
+    ui_capabilities: &'a U,
+}
+
+impl<'a, H: PrometheusHostAbi, C: CapabilityChecker, U: UiCapabilityChecker> VmHostBridge
+    for PrometheusUiVmHost<'a, H, C, U>
+{
+    fn gate_read(&mut self, device_id: u16, port: u16) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::GateRead)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .gate_read(device_id, port)
+            .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn gate_write(&mut self, device_id: u16, port: u16, value: Value) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::GateWrite)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .gate_write(device_id, port, value_to_abi(value)?)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn pulse_emit(&mut self, signal: &str) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::PulseEmit)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host.pulse_emit(signal).map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_query(&mut self, key: &str) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateQuery)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_query(key)
+            .map(value_from_abi)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn state_update(&mut self, key: &str, value: Value) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::StateUpdate)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .state_update(key, value_to_abi(value)?)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn event_post(&mut self, signal: &str) -> Result<(), RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::EventPost)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .event_post(signal)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn clock_read(&mut self) -> Result<Value, RuntimeError> {
+        self.capabilities
+            .require_call(HostCallId::ClockRead)
+            .map_err(RuntimeError::CapabilityDenied)?;
+        self.host
+            .clock_read()
+            .map(Value::U32)
+            .map_err(RuntimeError::HostAbi)
+    }
+
+    fn ui_window_create(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::WindowCreate)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual window creation is deferred to Wave 2 (desktop lifecycle).
+    }
+
+    fn ui_window_run(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::WindowRun)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual event/frame loop is deferred to Wave 2.
+    }
+
+    fn ui_event_poll(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::EventPoll)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual event polling is deferred to Wave 2.
+    }
+
+    fn ui_frame_submit(&mut self) -> Result<(), RuntimeError> {
+        self.ui_capabilities
+            .require_ui_op(UiOperationId::FrameSubmit)
+            .map_err(RuntimeError::UiCapabilityDenied)
+        // Actual frame submission is deferred to Wave 3 (drawing surface).
     }
 }
 
@@ -730,6 +1104,26 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 set_reg(vm, frame_idx, dst, Value::I32(out))?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::SubI32 => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
+                let out = l.wrapping_sub(r);
+                set_reg(vm, frame_idx, dst, Value::I32(out))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::MulI32 => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
+                let out = l.wrapping_mul(r);
+                set_reg(vm, frame_idx, dst, Value::I32(out))?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::LoadU32 => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_u32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -746,6 +1140,45 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let v = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
                 set_reg(vm, frame_idx, dst, Value::Fx(v))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::LoadText => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let value = lookup_str(&f, sid)?.to_string();
+                set_reg(vm, frame_idx, dst, Value::Text(value))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::MakeSequence => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let mut items = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    items.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(vm, frame_idx, dst, Value::Sequence(items))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::MakeClosure => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+                let function_name = lookup_str(&f, sid)?.to_string();
+                let mut captures = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                    captures.push(get_reg(vm, frame_idx, src)?);
+                }
+                set_reg(
+                    vm,
+                    frame_idx,
+                    dst,
+                    Value::Closure(ClosureValue {
+                        function_name,
+                        captures,
+                    }),
+                )?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::MakeTuple => {
@@ -887,6 +1320,46 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 set_reg(vm, frame_idx, dst, item)?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::SequenceGet => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let index_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, src)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_GET source must be sequence".to_string(),
+                    ));
+                };
+                let index = as_i32(get_reg(vm, frame_idx, index_reg)?)?;
+                if index < 0 {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_GET index must be non-negative".to_string(),
+                    ));
+                }
+                let item = items.get(index as usize).cloned().ok_or_else(|| {
+                    RuntimeError::TypeMismatchRuntime(format!(
+                        "SEQUENCE_GET index out of bounds: {}",
+                        index
+                    ))
+                })?;
+                set_reg(vm, frame_idx, dst, item)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequenceLen => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, src)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_LEN source must be sequence".to_string(),
+                    ));
+                };
+                let len = i32::try_from(items.len()).map_err(|_| {
+                    RuntimeError::BadFormat("SEQUENCE_LEN exceeds i32 range".to_string())
+                })?;
+                set_reg(vm, frame_idx, dst, Value::I32(len))?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::LoadVar => {
                 let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -907,6 +1380,23 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let symbol = lookup_symbol(&f, sid)?;
                 let val = get_reg(vm, frame_idx, src)?;
+                let next_write_path = {
+                    let frame = &vm.callstack[frame_idx];
+                    if frame.locals.contains_key(&symbol) {
+                        f.write_paths
+                            .get(frame.next_write_path)
+                            .filter(|path| path.root == symbol)
+                            .cloned()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(write_path) = next_write_path {
+                    let symbol_name = lookup_str(&f, sid).unwrap_or("<unknown>");
+                    let frame = &vm.callstack[frame_idx];
+                    ensure_write_path_allowed(symbol_name, &write_path, &frame.borrowed_paths)?;
+                    vm.callstack[frame_idx].next_write_path += 1;
+                }
                 vm.callstack[frame_idx].locals.insert(symbol, val);
                 next_pc = cur - f.instr_start;
             }
@@ -970,7 +1460,11 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let l = as_i32(get_reg(vm, frame_idx, lhs)?)?;
                 let r = as_i32(get_reg(vm, frame_idx, rhs)?)?;
-                let out = if opcode == Opcode::CmpI32Lt { l < r } else { l <= r };
+                let out = if opcode == Opcode::CmpI32Lt {
+                    l < r
+                } else {
+                    l <= r
+                };
                 set_reg(vm, frame_idx, dst, Value::Bool(out))?;
                 next_pc = cur - f.instr_start;
             }
@@ -988,6 +1482,22 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     _ => unreachable!(),
                 };
                 set_reg(vm, frame_idx, dst, Value::F64(out))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let lhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let rhs = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let l = as_fx(get_reg(vm, frame_idx, lhs)?)?;
+                let r = as_fx(get_reg(vm, frame_idx, rhs)?)?;
+                let out = match opcode {
+                    Opcode::AddFx => fx_add_raw(l, r)?,
+                    Opcode::SubFx => fx_sub_raw(l, r)?,
+                    Opcode::MulFx => fx_mul_raw(l, r)?,
+                    Opcode::DivFx => fx_div_raw(l, r)?,
+                    _ => unreachable!(),
+                };
+                set_reg(vm, frame_idx, dst, Value::Fx(out))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::Jmp => {
@@ -1038,6 +1548,28 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     continue;
                 }
             }
+            Opcode::ClosureCall => {
+                let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let closure_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let arg_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let closure = get_reg(vm, frame_idx, closure_reg)?;
+                let Value::Closure(closure) = closure else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "CLOSURE_CALL source must be closure".to_string(),
+                    ));
+                };
+                let mut args = closure.captures;
+                args.push(get_reg(vm, frame_idx, arg_reg)?);
+                vm.callstack[frame_idx].pc = cur - f.instr_start;
+                push_frame(
+                    vm,
+                    &closure.function_name,
+                    args,
+                    if has_dst { Some(dst) } else { None },
+                )?;
+                continue;
+            }
             Opcode::Assert => {
                 let cond = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 match get_reg(vm, frame_idx, cond)? {
@@ -1080,6 +1612,38 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 host.pulse_emit(signal)?;
                 next_pc = cur - f.instr_start;
             }
+            Opcode::StateQuery => {
+                bump_effect_calls(vm)?;
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let key = lookup_str(&f, sid)?;
+                let value = host.state_query(key)?;
+                set_reg(vm, frame_idx, dst, value)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::StateUpdate => {
+                bump_effect_calls(vm)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let key = lookup_str(&f, sid)?;
+                let value = get_reg(vm, frame_idx, src)?;
+                host.state_update(key, value)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::EventPost => {
+                bump_effect_calls(vm)?;
+                let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let signal = lookup_str(&f, sid)?;
+                host.event_post(signal)?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::ClockRead => {
+                bump_effect_calls(vm)?;
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let value = host.clock_read()?;
+                set_reg(vm, frame_idx, dst, value)?;
+                next_pc = cur - f.instr_start;
+            }
             Opcode::Ret => {
                 let has_src = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
                 let ret_val = if has_src {
@@ -1108,6 +1672,15 @@ fn value_to_abi(value: Value) -> Result<AbiValue, RuntimeError> {
     match value {
         Value::Quad(q) => Ok(AbiValue::Quad(quad_to_u8(q))),
         Value::Bool(v) => Ok(AbiValue::Bool(v)),
+        Value::Text(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "text values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
+        Value::Sequence(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "sequence values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
+        Value::Closure(_) => Err(RuntimeError::TypeMismatchRuntime(
+            "closure values are not part of the PROMETHEUS host ABI surface".to_string(),
+        )),
         Value::I32(v) => Ok(AbiValue::I32(v)),
         Value::F64(v) => Ok(AbiValue::F64(v)),
         Value::U32(v) => Ok(AbiValue::U32(v)),
@@ -1137,6 +1710,12 @@ fn value_from_abi(value: AbiValue) -> Value {
     }
 }
 
+fn stable_state_query_fallback(key: &str) -> i32 {
+    key.bytes().fold(0i32, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(i32::from(byte))
+    })
+}
+
 fn push_frame(
     vm: &mut VM,
     func_name: &str,
@@ -1163,10 +1742,34 @@ fn push_frame(
         pc: 0,
         regs,
         locals: HashMap::new(),
+        borrowed_paths: f.borrowed_paths.clone(),
+        next_write_path: 0,
         func: f.name.clone(),
         return_dst,
     };
     vm.callstack.push(frame);
+    Ok(())
+}
+
+fn access_paths_overlap(lhs: &AccessPath, rhs: &AccessPath) -> bool {
+    if lhs.root != rhs.root {
+        return false;
+    }
+    let shared_len = lhs.components.len().min(rhs.components.len());
+    lhs.components[..shared_len] == rhs.components[..shared_len]
+}
+
+fn ensure_write_path_allowed(
+    _symbol_name: &str,
+    write_path: &AccessPath,
+    borrowed_paths: &[AccessPath],
+) -> Result<(), RuntimeError> {
+    if borrowed_paths
+        .iter()
+        .any(|borrowed_path| access_paths_overlap(write_path, borrowed_path))
+    {
+        return Err(RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict));
+    }
     Ok(())
 }
 
@@ -1214,11 +1817,7 @@ fn write_reg(
     Ok(())
 }
 
-fn enforce_quota(
-    quotas: &RuntimeQuotas,
-    kind: QuotaKind,
-    used: usize,
-) -> Result<(), RuntimeError> {
+fn enforce_quota(quotas: &RuntimeQuotas, kind: QuotaKind, used: usize) -> Result<(), RuntimeError> {
     if let Some(exceeded) = quotas.exceed(kind, used) {
         return Err(RuntimeError::QuotaExceeded(exceeded));
     }
@@ -1272,6 +1871,37 @@ fn as_f64(v: Value) -> Result<f64, RuntimeError> {
     }
 }
 
+fn as_fx(v: Value) -> Result<i32, RuntimeError> {
+    if let Value::Fx(x) = v {
+        Ok(x)
+    } else {
+        Err(RuntimeError::TypeMismatchRuntime("expected fx".to_string()))
+    }
+}
+
+fn fx_add_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    i32::try_from(i64::from(lhs) + i64::from(rhs))
+        .map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
+fn fx_sub_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    i32::try_from(i64::from(lhs) - i64::from(rhs))
+        .map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
+fn fx_mul_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    let scaled = (i64::from(lhs) * i64::from(rhs)) / 1_000;
+    i32::try_from(scaled).map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
+fn fx_div_raw(lhs: i32, rhs: i32) -> Result<i32, RuntimeError> {
+    if rhs == 0 {
+        return Err(RuntimeError::Trap(RuntimeTrap::DivisionByZero));
+    }
+    let scaled = (i64::from(lhs) * 1_000) / i64::from(rhs);
+    i32::try_from(scaled).map_err(|_| RuntimeError::Trap(RuntimeTrap::ArithmeticOverflow))
+}
+
 fn quad_to_u8(q: QuadVal) -> u8 {
     match q {
         QuadVal::N => 0,
@@ -1308,6 +1938,21 @@ fn value_eq(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     match (a, b) {
         (Value::Quad(x), Value::Quad(y)) => Ok(x == y),
         (Value::Bool(x), Value::Bool(y)) => Ok(x == y),
+        (Value::Text(x), Value::Text(y)) => Ok(x == y),
+        (Value::Sequence(xs), Value::Sequence(ys)) => {
+            if xs.len() != ys.len() {
+                return Ok(false);
+            }
+            for (x, y) in xs.iter().zip(ys.iter()) {
+                if !value_eq(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Value::Closure(_), Value::Closure(_)) => Err(RuntimeError::TypeMismatchRuntime(
+            "closure values are not comparable with CmpEq/CmpNe".to_string(),
+        )),
         (Value::I32(x), Value::I32(y)) => Ok(x == y),
         (Value::F64(x), Value::F64(y)) => Ok(x == y),
         (Value::U32(x), Value::U32(y)) => Ok(x == y),
@@ -1410,6 +2055,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let b = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_BOOL r{}, {}", d, b)
         }
+        Opcode::LoadText => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let text = lookup_str(f, sid)?;
+            format!("LOAD_TEXT r{}, {:?}", d, text)
+        }
         Opcode::LoadI32 => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1420,6 +2071,18 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("ADD_I32 r{}, r{}, r{}", d, l, r)
+        }
+        Opcode::SubI32 => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SUB_I32 r{}, r{}, r{}", d, l, r)
+        }
+        Opcode::MulI32 => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("MUL_I32 r{}, r{}, r{}", d, l, r)
         }
         Opcode::LoadU32 => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1435,6 +2098,49 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let n = read_i32_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("LOAD_FX r{}, raw:{}", d, n)
+        }
+        Opcode::MakeSequence => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("MAKE_SEQUENCE r{}, [{}]", d, regs)
+        }
+        Opcode::MakeClosure => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let count = read_u16_le(&f.code, &mut cur).map_err(map_format_err)? as usize;
+            let mut regs = Vec::with_capacity(count);
+            for _ in 0..count {
+                regs.push(read_u16_le(&f.code, &mut cur).map_err(map_format_err)?);
+            }
+            let regs = regs
+                .iter()
+                .map(|reg| format!("r{}", reg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let target = lookup_str(f, sid)?;
+            format!("MAKE_CLOSURE r{}, {}, [{}]", d, target, regs)
+        }
+        Opcode::AddFx | Opcode::SubFx | Opcode::MulFx | Opcode::DivFx => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let l = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let r = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let op = match opcode {
+                Opcode::AddFx => "ADD_FX",
+                Opcode::SubFx => "SUB_FX",
+                Opcode::MulFx => "MUL_FX",
+                Opcode::DivFx => "DIV_FX",
+                _ => unreachable!(),
+            };
+            format!("{} r{}, r{}, r{}", op, d, l, r)
         }
         Opcode::MakeTuple => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1483,7 +2189,10 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 .join(", ");
             let name = lookup_str(f, sid)?;
             let variant = lookup_str(f, variant_sid)?;
-            format!("MAKE_ADT r{}, {}::{}, tag={}, [{}]", d, name, variant, tag, regs)
+            format!(
+                "MAKE_ADT r{}, {}::{}, tag={}, [{}]",
+                d, name, variant, tag, regs
+            )
         }
         Opcode::AdtTag => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1513,6 +2222,28 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("TUPLE_GET r{}, r{}, {}", d, s, i)
+        }
+        Opcode::SequenceGet => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let i = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_GET r{}, r{}, r{}", d, s, i)
+        }
+        Opcode::SequenceLen => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_LEN r{}, r{}", d, s)
+        }
+        Opcode::ClosureCall => {
+            let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let closure = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let arg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            if has_dst {
+                format!("CLOSURE_CALL r{}, r{}, r{}", d, closure, arg)
+            } else {
+                format!("CLOSURE_CALL -, r{}, r{}", closure, arg)
+            }
         }
         Opcode::LoadVar => {
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1548,10 +2279,16 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
                 Opcode::BoolOr => "BOOL_OR",
                 Opcode::CmpI32Lt => "CMP_I32_LT",
                 Opcode::CmpI32Le => "CMP_I32_LE",
+                Opcode::SubI32 => "SUB_I32",
+                Opcode::MulI32 => "MUL_I32",
                 Opcode::AddF64 => "ADD_F64",
                 Opcode::SubF64 => "SUB_F64",
                 Opcode::MulF64 => "MUL_F64",
                 Opcode::DivF64 => "DIV_F64",
+                Opcode::AddFx => "ADD_FX",
+                Opcode::SubFx => "SUB_FX",
+                Opcode::MulFx => "MUL_FX",
+                Opcode::DivFx => "DIV_FX",
                 Opcode::CmpEq => "CMP_EQ",
                 _ => "CMP_NE",
             };
@@ -1606,6 +2343,24 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("PULSE_EMIT s{}", sid)
         }
+        Opcode::StateQuery => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("STATE_QUERY r{}, s{}", d, sid)
+        }
+        Opcode::StateUpdate => {
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("STATE_UPDATE s{}, r{}", sid, src)
+        }
+        Opcode::EventPost => {
+            let sid = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("EVENT_POST s{}", sid)
+        }
+        Opcode::ClockRead => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("CLOCK_READ r{}", d)
+        }
         Opcode::Ret => {
             let has = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
             if has != 0 {
@@ -1623,7 +2378,9 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
 mod tests {
     use super::*;
     use sm_emit::compile_program_to_semcode;
-    use sm_runtime_core::{ExecutionConfig, ExecutionContext, QuotaExceeded, QuotaKind, RuntimeTrap};
+    use sm_runtime_core::{
+        ExecutionConfig, ExecutionContext, PathComponent, QuotaExceeded, QuotaKind, RuntimeTrap,
+    };
 
     #[test]
     fn vm_runs_empty_main() {
@@ -1654,7 +2411,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("assert(false) should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1696,7 +2456,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("requires clause should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1738,7 +2501,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("ensures clause should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1774,7 +2540,10 @@ mod tests {
         "#;
         let bytes = compile_program_to_semcode(src).expect("compile");
         let err = run_semcode(&bytes).expect_err("invariant clause should trap");
-        assert!(matches!(err, RuntimeError::Trap(RuntimeTrap::AssertionFailed)));
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::AssertionFailed)
+        ));
     }
 
     #[test]
@@ -1840,6 +2609,114 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_plain_fx_arithmetic_path() {
+        let src = r#"
+            fn main() {
+                let a: fx = 2.5;
+                let b: fx = 1.5;
+                let sum: fx = a + b;
+                let diff: fx = a - b;
+                let prod: fx = a * b;
+                let quo: fx = a / b;
+                let neg: fx = -a;
+                let expected_sum: fx = 4.0;
+                let expected_diff: fx = 1.0;
+                let expected_prod: fx = 3.75;
+                let expected_quo: fx = 1.666;
+                let expected_neg: fx = -2.5;
+                assert(sum == expected_sum);
+                assert(diff == expected_diff);
+                assert(prod == expected_prod);
+                assert(quo == expected_quo);
+                assert(neg == expected_neg);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("ADD_FX"));
+        assert!(disasm.contains("SUB_FX"));
+        assert!(disasm.contains("MUL_FX"));
+        assert!(disasm.contains("DIV_FX"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_text_literal_and_equality_path() {
+        let src = r#"
+            fn echo(x: text) -> text { return x; }
+
+            fn main() {
+                let a: text = "alpha";
+                let b: text = echo("alpha");
+                assert(a == b);
+                assert(a != "beta");
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("LOAD_TEXT"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_sequence_literal_index_and_equality_path() {
+        let src = r#"
+            fn main() {
+                let values: Sequence(i32) = [1, 2, 3];
+                let head: i32 = values[0];
+                assert(head == 1);
+                assert(values == [1, 2, 3]);
+                assert(values != [1, 2, 4]);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_SEQUENCE"));
+        assert!(disasm.contains("SEQUENCE_GET"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_runs_first_class_closure_direct_invocation_path() {
+        let src = r#"
+            fn main() {
+                let offset: f64 = 1.0;
+                let add: Closure(f64 -> f64) = (x => x + offset);
+                let total: f64 = add(2.0);
+                assert(total == 3.0);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("MAKE_CLOSURE"));
+        assert!(disasm.contains("CLOSURE_CALL"));
+        run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_traps_on_fx_division_by_zero() {
+        let src = r#"
+            fn main() {
+                let a: fx = 1.0;
+                let b: fx = 0.0;
+                let bad: fx = a / b;
+                assert(bad == a);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let err = run_semcode(&bytes).expect_err("fx division by zero should trap");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::DivisionByZero)
+        ));
+    }
+
+    #[test]
     fn vm_runs_u32_literal_compare_path() {
         let src = r#"
             fn main() {
@@ -1892,6 +2769,198 @@ mod tests {
         let disasm = disasm_semcode(&bytes).expect("disasm");
         assert!(disasm.contains("TUPLE_GET"));
         run_semcode(&bytes).expect("run");
+    }
+
+    #[test]
+    fn vm_tracks_borrowed_paths_on_frame_push() {
+        let bytes = ownership_tracking_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push frame");
+
+        assert_eq!(vm.callstack.len(), 1);
+        let frame = &vm.callstack[0];
+        assert_eq!(frame.borrowed_paths.len(), 1);
+        assert_eq!(
+            frame.borrowed_paths[0].components,
+            vec![PathComponent::TupleIndex(0)]
+        );
+        assert_eq!(vm.symbols.resolve(frame.borrowed_paths[0].root), Some("pair"));
+    }
+
+    #[test]
+    fn vm_clears_borrowed_paths_on_frame_exit() {
+        let bytes = helper_borrow_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push main");
+        push_frame(
+            &mut vm,
+            "helper",
+            vec![Value::Tuple(vec![Value::I32(1), Value::Bool(true)])],
+            None,
+        )
+        .expect("push helper");
+
+        assert_eq!(vm.callstack.len(), 2);
+        assert_eq!(vm.callstack[1].borrowed_paths.len(), 1);
+
+        let finished = vm.callstack.pop().expect("helper frame");
+        assert_eq!(finished.borrowed_paths.len(), 1);
+        assert_eq!(vm.callstack.len(), 1);
+        assert!(vm.callstack[0].borrowed_paths.is_empty());
+    }
+
+    #[test]
+    fn vm_tracks_record_field_borrowed_paths_on_frame_push() {
+        let bytes = record_field_borrow_tracking_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push frame");
+
+        assert_eq!(vm.callstack.len(), 1);
+        let frame = &vm.callstack[0];
+        assert_eq!(frame.borrowed_paths.len(), 1);
+        assert!(matches!(
+            frame.borrowed_paths[0].components.as_slice(),
+            [PathComponent::Field(_)]
+        ));
+    }
+
+    #[test]
+    fn vm_clears_record_field_borrowed_paths_on_frame_exit() {
+        let bytes = helper_record_field_borrow_bytes();
+        let (_, symbols, functions) = parse_semcode(&bytes).expect("parse");
+        let mut vm = VM {
+            functions,
+            callstack: Vec::new(),
+            config: ExecutionConfig::for_context(ExecutionContext::VerifiedLocal),
+            effect_calls: 0,
+            symbols,
+        };
+
+        push_frame(&mut vm, "main", Vec::new(), None).expect("push main");
+        push_frame(
+            &mut vm,
+            "helper",
+            vec![Value::Record(RecordCarrier {
+                type_name: "DecisionContext".to_string(),
+                slots: vec![Value::Quad(QuadVal::T), Value::F64(0.75)],
+            })],
+            None,
+        )
+        .expect("push helper");
+
+        assert_eq!(vm.callstack.len(), 2);
+        assert_eq!(vm.callstack[1].borrowed_paths.len(), 1);
+        assert!(matches!(
+            vm.callstack[1].borrowed_paths[0].components.as_slice(),
+            [PathComponent::Field(_)]
+        ));
+
+        let finished = vm.callstack.pop().expect("helper frame");
+        assert_eq!(finished.borrowed_paths.len(), 1);
+        assert_eq!(vm.callstack.len(), 1);
+        assert!(vm.callstack[0].borrowed_paths.is_empty());
+    }
+
+    #[test]
+    fn vm_rejects_write_after_borrow_same_path() {
+        let bytes = ownership_write_overlap_bytes(&[0], &[0]);
+        let err = run_semcode(&bytes).expect_err("overlapping write must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_rejects_write_when_borrowed_parent_overlaps_child_path() {
+        let bytes = ownership_write_overlap_bytes(&[], &[0]);
+        let err = run_semcode(&bytes).expect_err("parent-child overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_rejects_write_when_borrowed_child_overlaps_parent_path() {
+        let bytes = ownership_write_overlap_bytes(&[0], &[]);
+        let err = run_semcode(&bytes).expect_err("child-parent overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_allows_write_to_sibling_path_with_active_borrow() {
+        let bytes = ownership_write_overlap_bytes(&[0], &[1]);
+        run_semcode(&bytes).expect("sibling write must stay allowed");
+    }
+
+    #[test]
+    fn vm_rejects_record_field_write_after_borrow_same_field() {
+        let bytes = record_field_write_overlap_bytes(Some("camera"), Some("camera"));
+        let err = run_semcode(&bytes).expect_err("same-field record write must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_rejects_record_field_write_when_borrowed_parent_overlaps_child_field() {
+        let bytes = record_field_write_overlap_bytes(None, Some("camera"));
+        let err = run_semcode(&bytes).expect_err("record parent-child overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_rejects_record_parent_write_when_borrowed_child_field() {
+        let bytes = record_field_write_overlap_bytes(Some("camera"), None);
+        let err = run_semcode(&bytes).expect_err("record child-parent overlap must fail");
+        assert!(matches!(
+            err,
+            RuntimeError::Trap(RuntimeTrap::BorrowWriteConflict)
+        ));
+        assert_eq!(format!("{err}"), "write path overlaps active borrow");
+    }
+
+    #[test]
+    fn vm_allows_record_field_write_to_sibling_field_with_active_borrow() {
+        let bytes = record_field_write_overlap_bytes(Some("camera"), Some("quality"));
+        run_semcode(&bytes).expect("sibling record field write must stay allowed");
     }
 
     #[test]
@@ -2236,8 +3305,8 @@ mod tests {
                 let override_state: quad = N;
                 let quality: f64 = 0.75;
                 let ctx: DecisionContext = DecisionContext { camera, override_state, quality };
-                let DecisionContext { camera, quality: _ } = ctx;
                 let patched: DecisionContext = ctx with { camera };
+                let DecisionContext { camera, quality: _ } = ctx;
                 let DecisionContext { camera: T, override_state, quality } =
                     patched else return;
                 assert(camera == T);
@@ -2302,6 +3371,75 @@ mod tests {
     }
 
     #[test]
+    fn vm_runs_iterable_for_over_sequence_path() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                let saw_two: bool = false;
+                for item in items {
+                    if item == 2 {
+                        saw_two ||= true;
+                    }
+                }
+                assert(saw_two == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("SEQUENCE_LEN"));
+        assert!(disasm.contains("SEQUENCE_GET"));
+        run_semcode(&bytes).expect("Sequence(T) iterable loop should run");
+    }
+
+    #[test]
+    fn vm_runs_iterable_for_over_explicit_record_impl_path() {
+        let src = r#"
+            trait Iterable {
+                fn next(self: Self, index: i32) -> Option(i32);
+            }
+
+            record Numbers {
+                limit: i32,
+            }
+
+            impl Iterable for Numbers {
+                fn next(self: Self, index: i32) -> Option(i32) {
+                    let _ = self.limit;
+                    if index == 0 {
+                        return Option::Some(0);
+                    }
+                    if index == 1 {
+                        return Option::Some(1);
+                    }
+                    if index == 2 {
+                        return Option::Some(2);
+                    }
+                    return Option::None;
+                }
+            }
+
+            fn main() {
+                let numbers: Numbers = Numbers { limit: 4 };
+                let saw_two: bool = false;
+                for value in numbers {
+                    if value == 2 {
+                        saw_two ||= true;
+                    }
+                }
+                assert(saw_two == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        let disasm = disasm_semcode(&bytes).expect("disasm");
+        assert!(disasm.contains("__impl::Iterable::Numbers::next"));
+        assert!(disasm.contains("ADT_TAG"));
+        assert!(disasm.contains("ADT_GET"));
+        run_semcode(&bytes).expect("direct record Iterable loop should run");
+    }
+
+    #[test]
     fn vm_rejects_unknown_opcode_on_load() {
         let src = "fn main() { return; }";
         let mut bytes = compile_program_to_semcode(src).expect("compile");
@@ -2315,7 +3453,7 @@ mod tests {
     fn vm_rejects_unsupported_bytecode_version_with_hint() {
         let src = "fn main() { return; }";
         let mut bytes = compile_program_to_semcode(src).expect("compile");
-        bytes[7] = b'9';
+        bytes[7] = b'X';
         let err = run_semcode(&bytes).expect_err("must fail");
         match err {
             RuntimeError::UnsupportedBytecodeVersion { found, supported } => {
@@ -2323,6 +3461,17 @@ mod tests {
                 assert!(supported.contains("SEMCODE0"));
                 assert!(supported.contains("SEMCODE1"));
                 assert!(supported.contains("SEMCODE2"));
+                assert!(supported.contains("SEMCODE3"));
+                assert!(supported.contains("SEMCODE4"));
+                assert!(supported.contains("SEMCODE5"));
+                assert!(supported.contains("SEMCODE6"));
+                assert!(supported.contains("SEMCODE7"));
+                assert!(supported.contains("SEMCODE8"));
+                assert!(supported.contains("SEMCODE9"));
+                assert!(supported.contains("SEMCOD10"));
+                assert!(supported.contains("SEMCOD11"));
+                assert!(supported.contains("SEMCOD12"));
+                assert!(supported.contains("SEMCOD13"));
             }
             other => panic!("expected UnsupportedBytecodeVersion, got {other:?}"),
         }
@@ -2373,5 +3522,268 @@ mod tests {
         bytes[opcode_pos] = 0xff;
         let err = run_verified_semcode(&bytes).expect_err("must fail");
         assert!(matches!(err, RuntimeError::VerifierRejected(_)));
+    }
+
+    fn ownership_tracking_bytes() -> Vec<u8> {
+        let src = r#"
+            fn pair(flag: bool) -> (i32, bool) = (1, flag);
+
+            fn main() {
+                let pair: (i32, bool) = pair(true);
+                let (ref left, _): (i32, bool) = pair;
+                let _ = left;
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn helper_borrow_bytes() -> Vec<u8> {
+        let src = r#"
+            fn helper(pair: (i32, bool)) {
+                let (ref left, _): (i32, bool) = pair;
+                let _ = left;
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn record_field_borrow_tracking_bytes() -> Vec<u8> {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                let _ = seen_camera;
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn helper_record_field_borrow_bytes() -> Vec<u8> {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn helper(ctx: DecisionContext) {
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                let _ = seen_camera;
+                return;
+            }
+
+            fn main() {
+                return;
+            }
+        "#;
+        compile_program_to_semcode(src).expect("compile")
+    }
+
+    fn record_field_write_overlap_bytes(
+        borrowed_field: Option<&str>,
+        write_field: Option<&str>,
+    ) -> Vec<u8> {
+        let src = r#"
+            fn main() {
+                let camera: f64 = 0.0;
+                let quality: f64 = 1.0;
+                let ctx: f64 = 1.0;
+                ctx += 2.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        rewrite_record_main_ownership_section(bytes, borrowed_field, write_field)
+    }
+
+    fn rewrite_record_main_ownership_section(
+        bytes: Vec<u8>,
+        borrowed_field: Option<&str>,
+        write_field: Option<&str>,
+    ) -> Vec<u8> {
+        let mut cursor = 8usize;
+        let name_len = read_u16_le(&bytes, &mut cursor).expect("name len") as usize;
+        let name = read_utf8(&bytes, &mut cursor, name_len).expect("name");
+        assert_eq!(name, "main");
+        let code_len_pos = cursor;
+        let code_len = read_u32_le(&bytes, &mut cursor).expect("code len") as usize;
+        let code_start = cursor;
+        let code_end = code_start + code_len;
+        let code = &bytes[code_start..code_end];
+        let (strings, _, _, _, instr_start) =
+            parse_string_table_debug_and_ownership(code).expect("parse");
+        let ctx_root = strings
+            .iter()
+            .position(|s| s == "ctx")
+            .expect("ctx root index") as u32;
+        let ownership_start = code[..instr_start]
+            .windows(OWNERSHIP_SECTION_TAG.len())
+            .position(|window| window == OWNERSHIP_SECTION_TAG)
+            .expect("OWN0 section");
+        let mut new_code = Vec::with_capacity(code.len());
+        new_code.extend_from_slice(&code[..ownership_start]);
+        new_code.extend_from_slice(&record_field_ownership_section_bytes(
+            ctx_root,
+            &strings,
+            borrowed_field,
+            write_field,
+        ));
+        new_code.extend_from_slice(&code[instr_start..]);
+
+        let mut out = Vec::with_capacity(bytes.len() + new_code.len().saturating_sub(code.len()));
+        out.extend_from_slice(&bytes[..code_len_pos]);
+        out.extend_from_slice(&(new_code.len() as u32).to_le_bytes());
+        out.extend_from_slice(&new_code);
+        out.extend_from_slice(&bytes[code_end..]);
+        out
+    }
+
+    fn record_field_ownership_section_bytes(
+        root: u32,
+        strings: &[String],
+        borrowed_field: Option<&str>,
+        write_field: Option<&str>,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&OWNERSHIP_SECTION_TAG);
+        out.extend_from_slice(&2u16.to_le_bytes());
+        append_record_field_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_BORROW,
+            root,
+            strings,
+            borrowed_field,
+        );
+        append_record_field_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_WRITE,
+            root,
+            strings,
+            write_field,
+        );
+        out
+    }
+
+    fn append_record_field_ownership_event(
+        out: &mut Vec<u8>,
+        kind: u8,
+        root: u32,
+        strings: &[String],
+        field: Option<&str>,
+    ) {
+        out.push(kind);
+        out.extend_from_slice(&root.to_le_bytes());
+        match field {
+            Some(field_name) => {
+                out.extend_from_slice(&1u16.to_le_bytes());
+                out.push(OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL);
+                let field_symbol = strings
+                    .iter()
+                    .position(|s| s == field_name)
+                    .expect("field symbol") as u32;
+                out.extend_from_slice(&field_symbol.to_le_bytes());
+            }
+            None => out.extend_from_slice(&0u16.to_le_bytes()),
+        }
+    }
+
+    fn ownership_write_overlap_bytes(
+        borrowed_components: &[u16],
+        write_components: &[u16],
+    ) -> Vec<u8> {
+        let src = r#"
+            fn main() {
+                let total: f64 = 1.0;
+                total += 2.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("compile");
+        rewrite_main_ownership_section(bytes, borrowed_components, write_components)
+    }
+
+    fn rewrite_main_ownership_section(
+        bytes: Vec<u8>,
+        borrowed_components: &[u16],
+        write_components: &[u16],
+    ) -> Vec<u8> {
+        let mut cursor = 8usize;
+        let name_len = read_u16_le(&bytes, &mut cursor).expect("name len") as usize;
+        let name = read_utf8(&bytes, &mut cursor, name_len).expect("name");
+        assert_eq!(name, "main");
+        let code_len_pos = cursor;
+        let code_len = read_u32_le(&bytes, &mut cursor).expect("code len") as usize;
+        let code_start = cursor;
+        let code_end = code_start + code_len;
+        let code = &bytes[code_start..code_end];
+        let (strings, _, _, _, instr_start) =
+            parse_string_table_debug_and_ownership(code).expect("parse");
+        let total_root = strings
+            .iter()
+            .position(|s| s == "total")
+            .expect("total root index") as u32;
+        let ownership_start = code[..instr_start]
+            .windows(OWNERSHIP_SECTION_TAG.len())
+            .position(|window| window == OWNERSHIP_SECTION_TAG)
+            .expect("OWN0 section");
+        let mut new_code = Vec::with_capacity(code.len());
+        new_code.extend_from_slice(&code[..ownership_start]);
+        new_code.extend_from_slice(&ownership_section_bytes(
+            total_root,
+            borrowed_components,
+            write_components,
+        ));
+        new_code.extend_from_slice(&code[instr_start..]);
+
+        let mut out = Vec::with_capacity(bytes.len() + new_code.len().saturating_sub(code.len()));
+        out.extend_from_slice(&bytes[..code_len_pos]);
+        out.extend_from_slice(&(new_code.len() as u32).to_le_bytes());
+        out.extend_from_slice(&new_code);
+        out.extend_from_slice(&bytes[code_end..]);
+        out
+    }
+
+    fn ownership_section_bytes(
+        root: u32,
+        borrowed_components: &[u16],
+        write_components: &[u16],
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&OWNERSHIP_SECTION_TAG);
+        out.extend_from_slice(&2u16.to_le_bytes());
+        append_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_BORROW,
+            root,
+            borrowed_components,
+        );
+        append_ownership_event(
+            &mut out,
+            OWNERSHIP_EVENT_KIND_WRITE,
+            root,
+            write_components,
+        );
+        out
+    }
+
+    fn append_ownership_event(out: &mut Vec<u8>, kind: u8, root: u32, components: &[u16]) {
+        out.push(kind);
+        out.extend_from_slice(&root.to_le_bytes());
+        out.extend_from_slice(&(components.len() as u16).to_le_bytes());
+        for index in components {
+            out.push(OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX);
+            out.extend_from_slice(&index.to_le_bytes());
+        }
     }
 }

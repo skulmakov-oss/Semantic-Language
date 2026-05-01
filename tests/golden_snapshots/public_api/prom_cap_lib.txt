@@ -3,6 +3,9 @@ source: crates/prom-cap/src/lib.rs
 pub enum CapabilityKind {
 pub const fn required_capability_for_call(call: HostCallId) -> CapabilityKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapabilitySurfaceClass {
+pub const fn capability_surface_class(kind: CapabilityKind) -> CapabilitySurfaceClass {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityManifestVersion {
 pub const fn as_str(self) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +23,15 @@ pub manifest: CapabilityManifestMetadata,
 pub message: String,
 pub fn new(
 pub trait CapabilityChecker {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiCapabilityDenied {
+pub capability: UiCapabilityKind,
+pub operation: Option<UiOperationId>,
+pub code: CapabilityDeniedCode,
+pub manifest: CapabilityManifestMetadata,
+pub message: String,
+pub fn new(
+pub trait UiCapabilityChecker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestValidationCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +47,8 @@ pub fn new() -> Self {
 pub fn with_contract(
 pub fn allow(&mut self, capability: CapabilityKind) {
 pub fn allows(&self, capability: CapabilityKind) -> bool {
+pub fn allow_ui(&mut self, capability: UiCapabilityKind) {
+pub fn allows_ui(&self, capability: UiCapabilityKind) -> bool {
 pub fn metadata(&self) -> CapabilityManifestMetadata {
 pub fn validate(&self) -> Result<(), ManifestValidationReport> {
 pub fn gate_surface() -> Self {
-

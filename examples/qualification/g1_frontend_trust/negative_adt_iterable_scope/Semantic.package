@@ -1,0 +1,4 @@
+format 1
+package negative_adt_iterable_scope
+manifest_dir .
+module_root src

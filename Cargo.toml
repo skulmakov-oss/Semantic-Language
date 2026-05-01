@@ -29,6 +29,9 @@ members = [
     "crates/prom-state",
     "crates/prom-rules",
     "crates/prom-audit",
+    "crates/prom-ui",
+    "crates/prom-ui-runtime",
+    "crates/prom-ui-demo",
 ]
 resolver = "2"
 

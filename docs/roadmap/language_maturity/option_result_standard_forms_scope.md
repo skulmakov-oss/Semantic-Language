@@ -1,11 +1,11 @@
 # Option and Result Standard Forms Scope
 
-Status: proposed checkpoint
+Status: completed first-wave baseline history
 
 ## Purpose
 
-Freeze the decision boundary for `V02-06` before opening implementation work
-for first-class `Option` and `Result`.
+Freeze the decision boundary for `V02-06` as completed first-wave baseline
+history for first-class `Option` and `Result`.
 
 This document exists because `#117` is not just "more ADT work". The current
 language now has:
@@ -98,17 +98,15 @@ Do not include any of the following in the first implementation wave:
 If any of those become necessary, they should be treated as a later expansion
 issue, not as part of `V02-06`.
 
-## Binary Decision Rule For `#117`
+## Completed Decision
 
-Close `#117` only if one of these becomes true:
+`#117` is complete on `main` as the narrow standard-forms wave:
 
-1. a narrow standard-forms wave lands in `main` with explicit `Option(T)` /
-   `Result(T, E)` typing, canonical constructors, and verified success/none/error
-   execution tests
-2. `#117` is explicitly reshaped so first-class `Option`/`Result` move out of
-   `v0.2` and into a later generics or stdlib expansion wave
-
-Anything in between is roadmap drift.
+1. explicit `Option(T)` / `Result(T, E)` typing is admitted,
+2. canonical constructors and variant patterns are supported,
+3. verified success/none/error execution coverage exists,
+4. the implementation stays inside the existing ADT-style carrier path rather
+   than widening into a general generic runtime.
 
 ## Acceptance Criteria For A Narrow Standard-Forms Wave
 
@@ -120,14 +118,12 @@ Anything in between is roadmap drift.
 - docs and diagnostics describe the exact first-wave boundary
 - verified-path tests cover success, none, and error flows
 
-## Recommended Next Action
+## Freeze Rule
 
-Before opening a code PR for `#117`, decide intentionally whether `Option` and
-`Result` are being implemented as narrow standard forms inside the current
-language surface.
+The completed first wave remains narrow:
 
-If the answer is yes, the next implementation branch should be a first slice
-for type syntax and constructor semantics only.
-
-If the answer is no, reshape `#117` first and move the wider feature to a later
-wave.
+- `Option(T)` and `Result(T, E)` stay standard forms, not a reopening of
+  general user-defined parameterized ADTs,
+- constructor and pattern ergonomics remain canonical and explicit,
+- any widening into broader generic, prelude-injection, or call-boundary
+  semantics requires a new explicit track.

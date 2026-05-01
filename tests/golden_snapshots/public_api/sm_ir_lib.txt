@@ -10,4 +10,3 @@ pub mod passes;
 pub use frontend::{CompileProfile, OptLevel};
 #[cfg(feature = "std")]
 pub use legacy_lowering::*;
-

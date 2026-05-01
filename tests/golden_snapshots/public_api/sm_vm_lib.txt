@@ -5,4 +5,3 @@ pub use sm_emit::{
 pub enum QuadVal {
 #[cfg(feature = "std")]
 pub use semcode_vm::*;
-

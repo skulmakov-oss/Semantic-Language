@@ -2,26 +2,240 @@
 
 #[cfg(feature = "std")]
 pub use sm_ir::semcode_format::{
-    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8,
-    read_utf8, supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le,
-    CAP_DEBUG_SYMBOLS, CAP_F64_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, SemcodeFormatError,
-    SemcodeHeaderSpec, Opcode, HEADER_V0, HEADER_V1, HEADER_V2, MAGIC0, MAGIC1, MAGIC2,
+    header_spec_from_magic, read_f64_le, read_i32_le, read_u16_le, read_u32_le, read_u8, read_utf8,
+    supported_headers, write_f64_le, write_i32_le, write_u16_le, write_u32_le, Opcode,
+    SemcodeFormatError, SemcodeHeaderSpec, CAP_CLOCK_READ, CAP_DEBUG_SYMBOLS, CAP_EVENT_POST,
+    CAP_F64_MATH, CAP_FX_MATH, CAP_FX_VALUES, CAP_GATE_SURFACE, CAP_OWNERSHIP_FIELD_PATHS,
+    CAP_OWNERSHIP_PATHS, CAP_SEQUENCE_ITERATION, CAP_SEQUENCE_VALUES, CAP_STATE_QUERY,
+    CAP_STATE_UPDATE, CAP_TEXT_VALUES, CAP_CLOSURE_VALUES, HEADER_V0, HEADER_V1, HEADER_V2,
+    HEADER_V3, HEADER_V4, HEADER_V5, HEADER_V6, HEADER_V7, HEADER_V8, HEADER_V9, HEADER_V10,
+    HEADER_V11, HEADER_V12, HEADER_V13, MAGIC0, MAGIC1, MAGIC2, MAGIC3, MAGIC4, MAGIC5, MAGIC6,
+    MAGIC7, MAGIC8, MAGIC9, MAGIC10, MAGIC11, MAGIC12, MAGIC13,
+    OWNERSHIP_EVENT_KIND_BORROW, OWNERSHIP_EVENT_KIND_WRITE,
+    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL, OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX,
+    OWNERSHIP_SECTION_TAG,
 };
 #[cfg(feature = "std")]
 pub use sm_ir::{
-    CompileProfile, OptLevel,
     compile_program_to_semcode, compile_program_to_semcode_with_options,
-    compile_program_to_semcode_with_options_debug, emit_ir_to_semcode,
+    compile_program_to_semcode_with_options_debug, emit_ir_to_semcode, CompileProfile, OptLevel,
 };
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
+    use sm_ir::{compile_program_to_ir, PathComponent};
+
+    fn function_code<'a>(bytes: &'a [u8], target: &str) -> &'a [u8] {
+        let mut cursor = 8usize;
+        while cursor < bytes.len() {
+            let name_len = read_u16_le(bytes, &mut cursor).expect("name length") as usize;
+            let name = std::str::from_utf8(&bytes[cursor..cursor + name_len]).expect("utf8 name");
+            cursor += name_len;
+            let code_len = read_u32_le(bytes, &mut cursor).expect("code length") as usize;
+            if name == target {
+                return &bytes[cursor..cursor + code_len];
+            }
+            cursor += code_len;
+        }
+        panic!("function '{target}' not found");
+    }
+
+    fn skip_string_table(code: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let count = read_u16_le(code, &mut cursor).expect("string count") as usize;
+        for _ in 0..count {
+            let len = read_u16_le(code, &mut cursor).expect("string length") as usize;
+            cursor += len;
+        }
+        cursor
+    }
 
     #[test]
     fn sm_emit_smoke_compile_to_semcode() {
         let src = "fn main() { return; }";
         let bytes = compile_program_to_semcode(src).expect("emit");
         assert_eq!(&bytes[0..8], &MAGIC0);
+    }
+
+    #[test]
+    fn sm_emit_promotes_header_and_encodes_ownership_events_deterministically() {
+        let src = r#"
+            fn pair() -> (i32, i32) = (1, 2);
+
+            fn main() {
+                let pair: (i32, i32) = pair();
+                let (ref left, _): (i32, i32) = pair;
+                let total: f64 = 0.0;
+                total += 1.0;
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("emit");
+        let bytes_again = compile_program_to_semcode(src).expect("emit");
+
+        assert_eq!(bytes, bytes_again);
+        assert_eq!(&bytes[0..8], &MAGIC11);
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[0..8]);
+        let spec = header_spec_from_magic(&magic).expect("known header");
+        assert_eq!(spec.rev, 12);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_PATHS, 0);
+
+        let code = function_code(&bytes, "main");
+        let mut cursor = skip_string_table(code);
+        assert_eq!(&code[cursor..cursor + 4], &OWNERSHIP_SECTION_TAG);
+        cursor += 4;
+        assert_eq!(read_u16_le(code, &mut cursor).expect("event count"), 2);
+
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_BORROW);
+        let borrow_root = read_u32_le(code, &mut cursor).expect("root");
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 1);
+        assert_eq!(
+            read_u8(code, &mut cursor).expect("component kind"),
+            OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX
+        );
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component value"), 0);
+
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_WRITE);
+        let write_root = read_u32_le(code, &mut cursor).expect("root");
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 0);
+        assert_ne!(borrow_root, write_root);
+
+        assert!(code[cursor..].ends_with(&[Opcode::Ret.byte(), 0]));
+    }
+
+    #[test]
+    fn sm_emit_promotes_record_field_borrow_transport_to_v12() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let DecisionContext { camera: ref seen_camera, quality: _ } = ctx;
+                return;
+            }
+        "#;
+        let ir = compile_program_to_ir(src).expect("ir");
+        let main_ir = ir.iter().find(|func| func.name == "main").expect("main");
+        let borrow = main_ir
+            .ownership_events
+            .first()
+            .expect("record borrow ownership event");
+        let field_symbol = match borrow.path.components.as_slice() {
+            [PathComponent::Field(field)] => field.0,
+            other => panic!("expected one field component, got {other:?}"),
+        };
+
+        let bytes = compile_program_to_semcode(src).expect("emit");
+        let bytes_again = compile_program_to_semcode(src).expect("emit");
+
+        assert_eq!(bytes, bytes_again);
+        assert_eq!(&bytes[0..8], &MAGIC12);
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[0..8]);
+        let spec = header_spec_from_magic(&magic).expect("known header");
+        assert_eq!(spec.rev, 13);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_PATHS, 0);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_FIELD_PATHS, 0);
+
+        let code = function_code(&bytes, "main");
+        let mut cursor = skip_string_table(code);
+        assert_eq!(&code[cursor..cursor + 4], &OWNERSHIP_SECTION_TAG);
+        cursor += 4;
+        assert_eq!(read_u16_le(code, &mut cursor).expect("event count"), 1);
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_BORROW);
+        assert_eq!(
+            read_u32_le(code, &mut cursor).expect("root"),
+            borrow.path.root.0
+        );
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 1);
+        assert_eq!(
+            read_u8(code, &mut cursor).expect("component kind"),
+            OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL
+        );
+        assert_eq!(
+            read_u32_le(code, &mut cursor).expect("field symbol"),
+            field_symbol
+        );
+    }
+
+    #[test]
+    fn sm_emit_promotes_record_field_write_transport_to_v12() {
+        let src = r#"
+            record DecisionContext {
+                camera: quad,
+                quality: f64,
+            }
+
+            fn main() {
+                let ctx: DecisionContext = DecisionContext { camera: T, quality: 0.75 };
+                let patched: DecisionContext = ctx with { quality: 1.0 };
+                assert(patched.camera == T);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("emit");
+        let bytes_again = compile_program_to_semcode(src).expect("emit");
+
+        assert_eq!(bytes, bytes_again);
+        assert_eq!(&bytes[0..8], &MAGIC12);
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[0..8]);
+        let spec = header_spec_from_magic(&magic).expect("known header");
+        assert_eq!(spec.rev, 13);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_PATHS, 0);
+        assert_ne!(spec.capabilities & CAP_OWNERSHIP_FIELD_PATHS, 0);
+
+        let code = function_code(&bytes, "main");
+        let mut cursor = skip_string_table(code);
+        assert_eq!(&code[cursor..cursor + 4], &OWNERSHIP_SECTION_TAG);
+        cursor += 4;
+        assert_eq!(read_u16_le(code, &mut cursor).expect("event count"), 1);
+        assert_eq!(read_u8(code, &mut cursor).expect("event kind"), OWNERSHIP_EVENT_KIND_WRITE);
+        let _root = read_u32_le(code, &mut cursor).expect("root");
+        assert_eq!(read_u16_le(code, &mut cursor).expect("component count"), 1);
+        assert_eq!(
+            read_u8(code, &mut cursor).expect("component kind"),
+            OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL
+        );
+        let _field = read_u32_le(code, &mut cursor).expect("field symbol");
+    }
+
+    #[test]
+    fn sm_emit_promotes_sequence_iterable_execution_to_v13() {
+        let src = r#"
+            fn main() {
+                let items: Sequence(i32) = [1, 2, 3];
+                let seen: bool = false;
+                for item in items {
+                    if item == 2 {
+                        seen ||= true;
+                    }
+                }
+                assert(seen == true);
+                return;
+            }
+        "#;
+        let bytes = compile_program_to_semcode(src).expect("emit");
+        let bytes_again = compile_program_to_semcode(src).expect("emit");
+
+        assert_eq!(bytes, bytes_again);
+        assert_eq!(&bytes[0..8], &MAGIC13);
+        let mut magic = [0u8; 8];
+        magic.copy_from_slice(&bytes[0..8]);
+        let spec = header_spec_from_magic(&magic).expect("known header");
+        assert_eq!(spec.rev, 14);
+        assert_ne!(spec.capabilities & CAP_SEQUENCE_VALUES, 0);
+        assert_ne!(spec.capabilities & CAP_SEQUENCE_ITERATION, 0);
+
+        let code = function_code(&bytes, "main");
+        let cursor = skip_string_table(code);
+        assert!(!code[cursor..].starts_with(&OWNERSHIP_SECTION_TAG));
+        assert!(code[cursor..].contains(&Opcode::SequenceLen.byte()));
+        assert!(code[cursor..].contains(&Opcode::SequenceGet.byte()));
     }
 }

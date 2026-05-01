@@ -6,7 +6,9 @@ Root is now **shim + bins only**.
 
 Allowed in `root/src`:
 - `src/lib.rs`
-- `src/bin/**/*.rs`
+- `src/bin/smc.rs`
+- `src/bin/svm.rs`
+- `src/bin/ton618_core.rs`
 
 Everything else was migrated to workspace crates, moved to assets, or removed.
 
@@ -19,10 +21,6 @@ src/
     smc.rs
     svm.rs
     ton618_core.rs
-    support/
-      mod.rs
-      language.rs
-      parser.rs
 ```
 
 ## What Was Removed from Root
@@ -49,24 +47,30 @@ Compatibility re-exports remain in `src/lib.rs` as inline modules:
 
 No external shim files are used.
 
-Remaining compatibility perimeter:
+Retained non-owning TON618 compatibility perimeter:
 
 - `src/bin/ton618_core.rs`
-  - retained as a legacy CLI shim for pre-v1 `ton618_core` workflows
+  - retained as part of the non-owning compatibility perimeter for pre-v1 `ton618_core` workflows
   - not a canonical public CLI owner
-- `src/bin/support/**`
-  - retained only as helper modules for the `ton618_core` shim
-  - not canonical frontend/profile/parser owners
 - `crates/ton618-core`
-  - retained as a compatibility-named low-level primitive crate
+  - retained as a non-owning compatibility-named low-level primitive crate
   - not a second owner for `sm-*` platform contracts
+- `ton618_legacy/`
+  - retained as a non-owning historical source archive for the pre-`sm-*` naming era
+  - not a canonical owner and not an active workspace surface
+
+Perimeter governance note:
+
+- perimeter freeze and close-out history for these retained names is tracked in
+  `docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md`
 
 ## Guards
 
 `tests/legacy_guards.rs` enforces:
 - no path adapters from crates to root (`#[path = "../../../src/..."]`)
-- root/src allowlist policy (`lib.rs` + `bin/**`)
+- exact root/src allowlist policy (`lib.rs`, `smc.rs`, `svm.rs`, `ton618_core.rs`)
 - ban of legacy patterns in root source (`legacy_`, `#[path =`, `include!`, `mod legacy`)
-- explicit compatibility markers on the allowlisted `ton618`/`support` shims
+- explicit compatibility markers on the allowlisted `ton618` shim
 - narrow allowlist for remaining `ton618` naming
+- removal of `src/bin/support/` as a required invariant
 

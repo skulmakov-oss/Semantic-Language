@@ -16,6 +16,17 @@ implementation must not live in `legacy_lowering.rs`.
 - Entry: `run_default_opt_passes()` in `crates/sm-ir/src/passes/mod.rs`
 
 CrystalFold is an IR-stage pass. It is not part of parsing, smc typing, or emit.
+Its frozen `v1` contract is intentionally narrow:
+
+- name: `CrystalFold`
+- version: `1`
+- scope: local constant-fold and identity rewrites over the current IR instruction
+  stream only
+- rewrite order: linear instruction traversal in original instruction order
+- barriers: `Label`, jumps, `Assert`, `Call`, `Ret`, and other explicit effect /
+  control instructions clear fold state before the next instruction
+- diagnostics boundary: CrystalFold emits no warnings and owns no source-span
+  reasoning; semantics-owned hints such as `W0241` stay advisory
 
 ## W0241 Scope
 
@@ -27,7 +38,13 @@ CrystalFold is an IR-stage pass. It is not part of parsing, smc typing, or emit.
 
 - Deterministic: linear instruction traversal, stable rewrite order.
 - Idempotent: applying CrystalFold twice is equivalent to once.
-- Covered by test: `crystalfold_idempotent`.
+- Barrier-safe: constant state does not flow across labels, jumps, calls, or
+  other explicit control/effect boundaries.
+- Covered by tests:
+  - `crystalfold_surface_stays_frozen_at_v1`
+  - `crystalfold_idempotent`
+  - `crystalfold_clears_constant_state_across_barriers`
+  - `crystalfold_rewrite_order_and_report_are_deterministic`
 
 ## Pipeline Order
 
