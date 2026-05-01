@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "program": {
+    "functions": [
+      {
+        "name_id": 0,
+        "regs": 3,
+        "instrs": [
+          { "op": "load_u32", "dst": 0, "value": 100 },
+          { "op": "load_u32", "dst": 1, "value": 5 },
+          { "op": "u32_div", "dst": 2, "lhs": 0, "rhs": 1 },
+          { "op": "ret", "src": 2 }
+        ]
+      }
+    ],
+    "entry": 0
+  }
+}

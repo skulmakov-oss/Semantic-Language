@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "program": {
+    "functions": [
+      {
+        "name_id": 0,
+        "regs": 2,
+        "instrs": [
+          { "op": "load_quad", "dst": 0, "value": "T" },
+          { "op": "q_is_known", "dst": 1, "src": 0 },
+          { "op": "ret", "src": 1 }
+        ]
+      }
+    ],
+    "entry": 0
+  }
+}
