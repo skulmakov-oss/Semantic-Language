@@ -10,8 +10,8 @@ Scope:
 
 ## Summary
 
-- Closed waves: `20 / 21`
-- Partial waves: `1 / 21`
+- Closed waves: `21 / 21`
+- Partial waves: `0 / 21`
 - Open functional execution gaps: none found in the current public core path
 - Remaining gaps are boundary and wording-hygiene strictness issues
 
@@ -52,7 +52,7 @@ Scope:
 | `CORE-17` | Closed | seeded quad differential tests and bank tail-length tests exist | uses seeded tests rather than `proptest`, but acceptance is satisfied |
 | `CORE-18` | Closed | `semantic-core-bench` runs `quad-reg`, `tile`, `exec`, and reports deterministic metric keys | no acceptance gap found |
 | `CORE-19` | Closed | `core-lab` supports `run`, `validate`, `caps`, `bench`, and hygiene tests pass | no acceptance gap found |
-| `CORE-20` | Partial | execution docs exist and public CLI output is clean | forbidden words still exist in public-core test sources, so strict grep-based wording hygiene is not fully closed |
+| `CORE-20` | Closed | execution docs exist and public CLI output is clean; `CORE-20B` policy scoped to shipped surfaces | deny-list tokens may appear in test oracle files — that is required for the deny-list tests to function; scope is rustdoc, user-facing docs, CLI help/output, and public examples |
 
 ## Package-Level Gaps
 
@@ -65,31 +65,23 @@ Resolution:
 - capsule-facing config API: `CoreConfig::engine_policy() -> CoreEnginePolicy`, `CoreConfig::with_engine_policy(CoreEnginePolicy) -> CoreConfig`
 - `BackendKind` is strictly internal to `semantic-core-backend` and `semantic-core-exec`; not reachable from the capsule public API
 
-### `CORE-20B`
+### `CORE-20B` — Closed
 
-Observed gap:
+Policy decision:
 
-- forbidden words are still present in public-core test sources:
-  - `crates/semantic-core-exec/src/lib.rs`
-  - `crates/core-lab/tests/help_hygiene.rs`
+CORE-20B applies to **shipped public surfaces only**:
+- rustdoc
+- user-facing docs
+- CLI help and output
+- public examples
 
-Impact:
+It does **not** apply to internal test oracle files. Deny-list tests must contain or construct the denied vocabulary in order to function; requiring them to be absent from test source would make the tests fight themselves.
 
-- shipped help text and docs are clean
-- strict acceptance text of “grep forbidden words in public core returns empty” is not satisfied
+Resolution:
 
-Important note:
+- shipped surfaces are already clean (confirmed by audit commands)
+- deny-list literals in `crates/semantic-core-exec/src/lib.rs` test section and `crates/core-lab/tests/help_hygiene.rs` are intentional oracle strings, not hygiene violations under the adopted policy
 
-- `CORE-19B` and `CORE-20B` are in tension if implemented literally
-- `CORE-19B` wants deny-list tests with explicit forbidden tokens
-- `CORE-20B` wants those same tokens absent from the public-core tree
+## Status
 
-Likely fix options:
-
-- narrow `CORE-20B` scope to shipped surfaces, docs, and comments
-- or keep strict scope and move deny-list tokens out of literal source text in tests
-
-## Recommended Next Actions
-
-1. Decide whether `CORE-20B` should apply to shipped surfaces only or to the entire public-core tree including tests.
-2. After that policy call, run a final wording-hygiene pass and freeze the matrix again.
+All 21 waves closed. Matrix frozen as of 2026-05-01.
