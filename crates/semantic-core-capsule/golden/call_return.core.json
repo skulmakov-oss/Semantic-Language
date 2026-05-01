@@ -1,0 +1,26 @@
+{
+  "format_version": 1,
+  "program": {
+    "functions": [
+      {
+        "name_id": 0,
+        "regs": 2,
+        "instrs": [
+          { "op": "load_i32", "dst": 0, "value": 41 },
+          { "op": "call", "dst": 1, "function": 1, "arg_base": 0, "arg_count": 1 },
+          { "op": "ret", "src": 1 }
+        ]
+      },
+      {
+        "name_id": 1,
+        "regs": 3,
+        "instrs": [
+          { "op": "load_i32", "dst": 1, "value": 1 },
+          { "op": "i32_add", "dst": 2, "lhs": 0, "rhs": 1 },
+          { "op": "ret", "src": 2 }
+        ]
+      }
+    ],
+    "entry": 0
+  }
+}

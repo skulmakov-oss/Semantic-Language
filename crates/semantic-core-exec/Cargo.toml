@@ -1,0 +1,29 @@
+[package]
+name = "semantic-core-exec"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std", "serde"]
+alloc = []
+std = [
+    "alloc",
+    "semantic-core-backend/std",
+    "semantic-core-runtime/std",
+]
+serde = [
+    "dep:serde",
+    "semantic-core-backend/serde",
+    "semantic-core-quad/serde",
+    "semantic-core-runtime/serde",
+]
+
+[dependencies]
+semantic-core-backend = { path = "../semantic-core-backend", default-features = false }
+semantic-core-quad = { path = "../semantic-core-quad", default-features = false }
+semantic-core-runtime = { path = "../semantic-core-runtime", default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
+static_assertions = "1"

@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "program": {
+    "functions": [
+      {
+        "name_id": 0,
+        "regs": 3,
+        "instrs": [
+          { "op": "load_fx", "dst": 0, "value": 131072 },
+          { "op": "load_fx", "dst": 1, "value": 32768 },
+          { "op": "fx_add", "dst": 2, "lhs": 0, "rhs": 1 },
+          { "op": "ret", "src": 2 }
+        ]
+      }
+    ],
+    "entry": 0
+  }
+}
