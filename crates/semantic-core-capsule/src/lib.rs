@@ -10,7 +10,7 @@ pub struct CoreCapsule {
     inner: sealed::CoreInner,
 }
 
-pub use semantic_core_exec::{CoreConfig, CoreResult, CoreStatus};
+pub use semantic_core_exec::{CoreConfig, CoreEnginePolicy, CoreResult, CoreStatus};
 
 #[derive(Debug)]
 pub enum CoreError {

@@ -10,7 +10,6 @@ use alloc::vec::Vec;
 
 use core::cmp::Ordering;
 
-use semantic_core_backend::{select_backend, BackendKind};
 use semantic_core_quad::QuadState;
 use semantic_core_runtime::{
     CoreAdmissionProfile, CoreProfileError, CoreTrap, FuelMeter, FunctionId, SymbolId,
@@ -19,6 +18,13 @@ use static_assertions::const_assert_eq;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoreEnginePolicy {
+    DeterministicReference,
+    Auto,
+}
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -568,7 +574,7 @@ pub struct CoreProgram {
 pub struct CoreConfig {
     pub fuel: u64,
     pub max_call_depth: u16,
-    backend: BackendKind,
+    engine_policy: CoreEnginePolicy,
     pub validate_before_execute: bool,
     pub profile: CoreAdmissionProfile,
 }
@@ -579,7 +585,7 @@ impl Default for CoreConfig {
         Self {
             fuel: profile.max_fuel,
             max_call_depth: profile.max_call_depth,
-            backend: BackendKind::Auto,
+            engine_policy: CoreEnginePolicy::Auto,
             validate_before_execute: true,
             profile,
         }
@@ -587,12 +593,12 @@ impl Default for CoreConfig {
 }
 
 impl CoreConfig {
-    pub fn backend(&self) -> BackendKind {
-        self.backend
+    pub fn engine_policy(&self) -> CoreEnginePolicy {
+        self.engine_policy
     }
 
-    pub fn with_backend(mut self, backend: BackendKind) -> Self {
-        self.backend = backend;
+    pub fn with_engine_policy(mut self, policy: CoreEnginePolicy) -> Self {
+        self.engine_policy = policy;
         self
     }
 }
@@ -610,30 +616,23 @@ pub struct CoreResult {
     pub status: CoreStatus,
     pub return_value: CoreValue,
     pub fuel_used: u64,
-    backend: BackendKind,
 }
 
 impl CoreResult {
-    pub const fn returned(return_value: CoreValue, fuel_used: u64, backend: BackendKind) -> Self {
+    pub const fn returned(return_value: CoreValue, fuel_used: u64) -> Self {
         Self {
             status: CoreStatus::Returned,
             return_value,
             fuel_used,
-            backend,
         }
     }
 
-    pub const fn trapped(trap: CoreTrap, fuel_used: u64, backend: BackendKind) -> Self {
+    pub const fn trapped(trap: CoreTrap, fuel_used: u64) -> Self {
         Self {
             status: CoreStatus::Trapped(trap),
             return_value: CoreValue::Unit,
             fuel_used,
-            backend,
         }
-    }
-
-    pub fn backend(&self) -> BackendKind {
-        self.backend
     }
 }
 
@@ -945,12 +944,8 @@ impl CoreExecutor {
 
     #[cfg(any(feature = "alloc", feature = "std"))]
     pub fn execute_outcome(&self, program: &CoreProgram) -> CoreResult {
-        let selected_backend = select_backend(
-            self.config.backend,
-            semantic_core_backend::detect_backend_caps(),
-        );
         if program.entry.0 as usize >= program.functions.len() {
-            return CoreResult::trapped(CoreTrap::InvalidFunction, 0, selected_backend);
+            return CoreResult::trapped(CoreTrap::InvalidFunction, 0);
         }
         let entry = &program.functions[program.entry.0 as usize];
         let mut fuel = FuelMeter::new(self.config.fuel);
@@ -969,7 +964,6 @@ impl CoreExecutor {
                     return CoreResult::returned(
                         CoreValue::Unit,
                         self.config.fuel - fuel.remaining(),
-                        selected_backend,
                     )
                 }
             };
@@ -978,14 +972,12 @@ impl CoreExecutor {
                 return CoreResult::trapped(
                     CoreTrap::InvalidPc,
                     self.config.fuel - fuel.remaining(),
-                    selected_backend,
                 );
             };
             if fuel.consume(1).is_err() {
                 return CoreResult::trapped(
                     CoreTrap::FuelExceeded,
                     self.config.fuel - fuel.remaining(),
-                    selected_backend,
                 );
             }
             match self.step(program, &mut frames, frame_index, instr) {
@@ -993,7 +985,6 @@ impl CoreExecutor {
                     return CoreResult::returned(
                         value,
                         self.config.fuel - fuel.remaining(),
-                        selected_backend,
                     )
                 }
                 Ok(None) => {}
@@ -1001,7 +992,6 @@ impl CoreExecutor {
                     return CoreResult::trapped(
                         trap,
                         self.config.fuel - fuel.remaining(),
-                        selected_backend,
                     )
                 }
             }

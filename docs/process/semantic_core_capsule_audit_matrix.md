@@ -10,8 +10,8 @@ Scope:
 
 ## Summary
 
-- Closed waves: `19 / 21`
-- Partial waves: `2 / 21`
+- Closed waves: `20 / 21`
+- Partial waves: `1 / 21`
 - Open functional execution gaps: none found in the current public core path
 - Remaining gaps are boundary and wording-hygiene strictness issues
 
@@ -32,7 +32,7 @@ Scope:
 
 | Wave | Status | Evidence | Notes |
 | --- | --- | --- | --- |
-| `CORE-00` | Partial | workspace members exist; sealed capsule facade exists; `cargo doc -p semantic-core-capsule --no-deps` builds | `BackendKind` still appears in capsule docs through public fields on `CoreConfig` and `CoreResult` |
+| `CORE-00` | Closed | workspace members exist; sealed capsule facade exists; `cargo doc -p semantic-core-capsule --no-deps` builds without `BackendKind` in capsule docs; `CoreEnginePolicy` is the capsule-facing policy vocabulary | `CORE-00B` resolved: `BackendKind` removed from `CoreConfig`/`CoreResult` public surface; replaced by `CoreEnginePolicy` enum with `DeterministicReference` and `Auto` variants |
 | `CORE-01` | Closed | `QuadState` exists with frozen encoding and exhaustive truth-table tests | no acceptance gap found |
 | `CORE-02` | Closed | `QuadroReg32` exists with raw, lane, packed-op, and debug coverage | no acceptance gap found |
 | `CORE-03` | Closed | `QuadMask32`, `QuadMasks32`, and register mask mutation APIs exist with tests | no acceptance gap found |
@@ -56,21 +56,14 @@ Scope:
 
 ## Package-Level Gaps
 
-### `CORE-00B`
+### `CORE-00B` — Closed
 
-Observed gap:
+Resolution:
 
-- `CoreConfig` and `CoreResult` still expose `backend: BackendKind` in the public capsule-facing docs path
-
-Impact:
-
-- the facade no longer exports backend methods, but backend naming still leaks through field types
-- this makes `CORE-00B` only partially closed under the stricter reading of “backend detail does not appear in crate docs”
-
-Likely fix options:
-
-- make those fields private and expose accessor methods through a narrower capsule contract
-- or move backend selection and reporting fully outside capsule-facing result/config types
+- `backend: BackendKind` field removed from `CoreConfig` and `CoreResult`; `BackendKind` no longer appears anywhere in `semantic-core-capsule` docs
+- new public type `CoreEnginePolicy { DeterministicReference, Auto }` defined in `semantic-core-exec` and re-exported from the capsule facade
+- capsule-facing config API: `CoreConfig::engine_policy() -> CoreEnginePolicy`, `CoreConfig::with_engine_policy(CoreEnginePolicy) -> CoreConfig`
+- `BackendKind` is strictly internal to `semantic-core-backend` and `semantic-core-exec`; not reachable from the capsule public API
 
 ### `CORE-20B`
 
@@ -98,6 +91,5 @@ Likely fix options:
 
 ## Recommended Next Actions
 
-1. Resolve the `CORE-00B` boundary leak by removing `BackendKind` from capsule-facing public fields.
-2. Decide whether `CORE-20B` should apply to shipped surfaces only or to the entire public-core tree including tests.
-3. After that policy call, run a final wording-hygiene pass and freeze the matrix again.
+1. Decide whether `CORE-20B` should apply to shipped surfaces only or to the entire public-core tree including tests.
+2. After that policy call, run a final wording-hygiene pass and freeze the matrix again.

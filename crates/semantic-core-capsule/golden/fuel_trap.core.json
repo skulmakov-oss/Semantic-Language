@@ -3,7 +3,7 @@
   "config": {
     "fuel": 3,
     "max_call_depth": 8,
-    "backend": "Auto",
+    "engine_policy": "Auto",
     "validate_before_execute": true,
     "profile": {
       "max_registers": 16,
