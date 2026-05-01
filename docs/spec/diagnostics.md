@@ -47,6 +47,10 @@ Current examples include:
 - `match`-expression parse failures such as invalid literal arm patterns
 - top-level parse failures such as unexpected items other than `fn`, `record`,
   `schema`, or `enum`
+- malformed role-marked schema declarations such as `config`/`api`/`wire`
+  appearing without a following `schema`
+- malformed schema version markers such as missing parentheses, non-decimal
+  forms, suffixed literals, or non-positive values
 - extended numeric-literal parse failures such as invalid typed suffix/body
   combinations or decimal-only `f64`/`fx` requirements
 
@@ -139,8 +143,23 @@ Current message families include:
 - empty schema declaration
 - duplicate record field name
 - duplicate schema field name
+- duplicate tagged-union schema variant name
+- duplicate tagged-union schema field name
 - unknown record field type
 - unknown schema field type
+- generated validation-plan failure for missing required record field
+- generated validation-plan failure for incompatible record field type
+- generated validation-plan failure for disallowed tagged-union branch
+- generated validation-plan failure for missing required tagged-union branch field
+- generated validation-plan failure for incompatible tagged-union branch field type
+- generated API contract build failure while parsing or validating canonical
+  source/schema declarations
+- generated API contract build failure while canonicalizing declared field or
+  payload types into artifact-surface type text
+- generated wire-contract build failure while parsing or validating canonical
+  source/schema declarations
+- generated wire-contract build failure while canonicalizing tagged-union
+  payload or patch-field types into artifact-surface type text
 - recursive record field graph
 - record type declared but not yet available in executable parameter/return annotation positions
 - duplicate field in record literal
@@ -196,12 +215,24 @@ Current message families include:
 - unsupported enum match payload item shape
 - unsupported statement forms inside a value-producing block
 - unsupported operator for a type family
-- explicit `fx` gap messages for still-narrow source cases
+- explicit `fx` coercion gap messages for still-narrow source cases
+- runtime trap / diagnostics for plain `fx` division by zero or arithmetic
+  overflow in the widened post-stable execution path
+- explicit gap messages for unit-carrying `fx` arithmetic outside the first
+  post-stable `fx` arithmetic slice
 
 Current honest limit:
 
 - exact wording of type-check messages is not yet a fully frozen compatibility
   contract
+- generated validation failures are currently documented as deterministic plan
+  categories, not yet as a separate runtime or CLI diagnostic family
+- generated API contract failures are currently documented as deterministic
+  build-error families prefixed as `generated API contract build error: ...`,
+  not yet as a separate numeric-code taxonomy
+- generated wire-contract failures are currently documented as deterministic
+  build-error families prefixed as `generated wire contract build error: ...`,
+  not yet as a separate numeric-code taxonomy
 - users should treat the failure class as stable before treating the full text
   as stable
 
@@ -217,7 +248,7 @@ Current public codes include:
 - `E0240` re-export policy violation
 - `E0241` alias or binding collisions
 - `E0242` public re-export collisions
-- `E0243` symbol re-export cycles
+- `E0243` symbol re-export cycles with deterministic chain traces
 - `E0244` missing selected import symbol
 - `E0245` duplicate select alias, wildcard/select conflict, or kind mismatch
 
@@ -226,6 +257,8 @@ Current guarantees:
 - these diagnostics are rendered as source-level semantic errors
 - line/column information is preserved where available
 - repository tests exercise these failure families directly
+- wildcard overlap is currently resolved by declaration-order fallback rather
+  than by a dedicated ambiguity diagnostic
 
 ## Logos Semantic Diagnostics
 

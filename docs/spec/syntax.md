@@ -54,6 +54,30 @@ schema Name {
 ```
 
 ```sm
+schema Name version(2) {
+    field: type,
+    ...
+}
+```
+
+```sm
+config schema Name {
+    field: type,
+    ...
+}
+```
+
+```sm
+schema Name {
+    Variant {
+        field: type,
+        ...
+    },
+    ...
+}
+```
+
+```sm
 record DecisionContext {
     camera: quad,
     quality: f64,
@@ -106,12 +130,16 @@ Current rules:
 
 - `record` introduces a nominal top-level record declaration
 - `schema` introduces a compile-time-only top-level schema declaration
+- `config schema`, `api schema`, and `wire schema` introduce the same
+  compile-time-only schema declaration family with explicit role metadata
 - record declarations must be non-empty
 - schema declarations must be non-empty
 - record field names must be unique within one declaration
-- schema field names must be unique within one declaration
+- record-shaped schema field names must be unique within one declaration
+- tagged-union schema variant names must be unique within one declaration
+- tagged-union schema field names must be unique within one variant payload
 - record field types currently use the ordinary source type grammar
-- schema field types currently use the ordinary source type grammar
+- schema field and variant-payload types currently use the ordinary source type grammar
 - `fn` introduces a function
 - parameters are named and typed explicitly
 - trailing parameters may attach a default initializer with `= expr`
@@ -142,14 +170,18 @@ Current v0 record limits:
 
 Current v0 schema limits:
 
-- only record-shaped `schema Name { field: type, ... }` declarations are part
-  of the current surface
+- record-shaped `schema Name { field: type, ... }` declarations are part of
+  the current surface
+- tagged-union `schema Name { Variant { ... }, Other { ... } }` declarations
+  are part of the current surface
 - schema declarations are compile-time-only and do not introduce executable
   value carriers
+- schema role markers are currently explicit only as top-level prefixes:
+  `config schema`, `api schema`, and `wire schema`
+- schema declarations may now also attach optional version metadata directly
+  after the schema name: `schema Name version(2) { ... }`
 - schema names are not yet valid in executable local, parameter, return, or
   match type positions
-- tagged-union schemas and role markers such as `config`, `api`, and `wire`
-  remain later `v0.3` slices
 
 ## Statements
 

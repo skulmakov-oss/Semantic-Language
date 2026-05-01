@@ -38,6 +38,35 @@ Current source-visible types:
 Current compile-time-only declaration families:
 
 - nominal `schema Name { ... }` declarations for boundary/model contracts
+- record-shaped and tagged-union schema forms within that compile-time-only
+  declaration family
+- explicit schema-role metadata via `config schema`, `api schema`, and
+  `wire schema`
+- optional schema-version metadata via `version(<u32>)`
+- deterministic record-schema compatibility reports across two explicit schema
+  versions with first-wave classes `Equivalent`, `Additive`, and `Breaking`
+- deterministic tagged-union schema compatibility reports across two explicit
+  schema versions with the same first-wave classes
+- canonical schema migration metadata artifacts and stable review formatting
+  derived from those compatibility reports
+- deterministic compile-time validation plans derived from canonical schema
+  declarations and referenced declared types
+- first-wave record-schema validation checks for required fields and field-type
+  compatibility, kept in declaration order for inspectability
+- first-wave tagged-union schema branch checks for allowed variants, required
+  per-branch fields, and per-branch field-type compatibility, kept in variant
+  declaration order for inspectability
+- deterministic generated API contract artifacts derived only from canonical
+  `api schema` and `wire schema` declarations
+- generated API artifacts preserve declaration order and expose explicit
+  format-version and generator metadata for reproducible review
+- deterministic generated wire-contract artifacts derived only from canonical
+  `wire schema` declarations
+- generated wire-contract artifacts currently expose:
+  - tagged wire unions from tagged-union `wire schema`
+  - wire patch types from record-shaped `wire schema`
+- generated wire-contract artifacts preserve declaration order and expose
+  explicit format-version and generator metadata for reproducible review
 
 ## Unit
 
@@ -124,16 +153,32 @@ Current rules:
 
 - the canonical `fx` value path is end-to-end
 - explicit `fx` annotations are supported
-- `fx` currently accepts literals and existing `fx`-typed values in the public
-  Rust-like path
+- `fx` currently accepts explicit literals and existing `fx`-typed values in
+  the public Rust-like path
+- contextual literal admission into `fx` is supported only where the expected
+  type is already `fx`
+- on current `main`, plain `fx` unary `+` / `-` and plain binary `+`, `-`,
+  `*`, `/` between already-typed `fx` operands are admitted by source typing as
+  part of the post-stable expansion track
+- stable `fx` behavior in the current line is value transport plus equality, not
+  full arithmetic parity with `f64`
 
 Current honest limits:
 
-- richer `fx` arithmetic remains narrower than the `f64` surface
+- the published stable `v1.1.1` line still remains narrower than the `f64`
+  arithmetic surface
+- canonical lowering/verified execution for the widened plain `fx` arithmetic
+  surface has now landed on current `main`
+- emitted plain `fx` arithmetic programs use a promoted `SEMCODE3` header line
+  instead of widening the older `SEMCODE2` artifact contract in place
 - coercion from non-literal non-`fx` expressions is not yet the full intended
   long-term contract
-- unary `+` and unary `-` on `fx` are still intentionally limited in the
-  canonical Rust-like path
+- unary `+` and unary `-` on `fx` are admitted only for literal formation in
+  the published stable `v1.1.1` contract; the widened post-stable path is
+  described separately
+- completed first-wave post-stable widening for general-purpose `fx`
+  arithmetic is documented in
+  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 
 ## Units Of Measure
 

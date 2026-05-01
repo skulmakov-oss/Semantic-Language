@@ -78,11 +78,68 @@ Current v0 schema declaration semantics:
 
 - `schema Name { ... }` introduces one compile-time-only schema declaration
 - schema identity is nominal by schema name
-- schema declarations must be non-empty and may not repeat field names
-- schema field types reuse the current declared-type grammar and resolve
-  against the ordinary nominal/executable type tables
+- schema declarations currently support:
+  - record-shaped forms `schema Name { field: type, ... }`
+  - tagged-union forms `schema Name { Variant { field: type, ... }, ... }`
+- schema declarations may now also carry one explicit role marker:
+  - `config schema`
+  - `api schema`
+  - `wire schema`
+- schema declarations may now also carry optional `version(<u32>)` metadata
+  immediately after the schema name
+- record-shaped schema declarations must be non-empty and may not repeat field
+  names
+- tagged-union schema declarations must declare at least one variant, may not
+  repeat variant names, and may not repeat field names inside one variant
+- schema field and variant-payload types reuse the current declared-type grammar
+  and resolve against the ordinary nominal/executable type tables
 - schema declarations currently live only in the canonical schema table owned by
   the frontend/typecheck path
+- schema version metadata currently lives only in that canonical schema table as
+  compile-time/tooling ownership data
+- record-shaped schemas with explicit version metadata may now also participate
+  in deterministic tooling-owned compatibility classification across two schema
+  revisions
+- tagged-union schemas with explicit version metadata may now also participate
+  in deterministic tooling-owned compatibility classification across two schema
+  revisions
+- the current first-wave compatibility classes are `Equivalent`, `Additive`,
+  and `Breaking`
+- canonical schema evolution may now also derive tooling-owned migration
+  metadata artifacts and stable formatted review output from those same
+  compatibility reports
+- canonical schema declarations may now also derive deterministic compile-time
+  validation plans owned by the same frontend/typecheck path
+- record-shaped schemas currently derive first-wave validation checks in
+  declaration order:
+  - required-field checks
+  - field-type compatibility checks
+- tagged-union schemas now also derive first-wave branch checks in variant
+  declaration order:
+  - allowed-branch checks
+  - per-branch required-field checks
+  - per-branch field-type compatibility checks
+- `api schema` and `wire schema` declarations may now also derive one
+  deterministic generated API contract artifact family owned by `smc-cli`
+- generated API contract artifacts preserve schema, variant, and field
+  declaration order for reviewability
+- generated API contract artifacts currently carry explicit format-version and
+  generator metadata for reproducibility
+- `wire schema` declarations may now also derive one deterministic generated
+  wire-contract artifact family owned by `smc-cli`
+- generated wire-contract artifacts currently contain:
+  - tagged wire unions derived from canonical tagged-union `wire schema`
+    declarations
+  - wire patch types derived from canonical record-shaped `wire schema`
+    declarations
+- generated wire-contract artifacts preserve variant, payload-field, and
+  patch-field declaration order for reviewability
+- generated wire-contract artifacts currently carry explicit format-version and
+  generator metadata for reproducibility
+- `config schema` declarations do not participate in generated API artifact
+  derivation in the first-wave contract
+- schema role markers currently contribute compile-time declaration metadata
+  only; they do not imply loading, generation, transport, or runtime behavior
 - schema declarations do not currently introduce executable types, runtime
   carriers, or host ABI shapes
 
@@ -234,6 +291,10 @@ Current first-wave units-of-measure semantics:
   `Result(T, E)` when those positions contain supported numeric families
 - lowering erases units after semantic validation and reuses the existing
   numeric lowering path
+- `fx` should be read as a stable value-transport and equality family inside the
+  current line; binary arithmetic on `fx` remains outside the current contract
+- unary `+` / unary `-` for `fx` remain limited to literal formation, not
+  general `fx` expression rewriting
 
 Current v0 limits:
 
@@ -344,6 +405,12 @@ Current non-goal:
   coroutine-style statement behavior
 - `guard` does not yet support arbitrary `else { ... }` recovery blocks
 - plain reassignment `name = expr;` is not yet part of the public surface
+
+Current generated wire-contract limit:
+
+- generated wire-contract artifacts are review/build outputs only
+- record patch types do not imply a runtime patch application engine
+- tagged wire unions do not imply transport/runtime integration
 
 Current v0 const limit:
 
@@ -643,8 +710,14 @@ Current first-wave units operator rules:
 
 Current honest limit:
 
-- `fx` value flow is supported, but `fx` arithmetic is intentionally narrower
-  than `f64` arithmetic in the Rust-like source surface
+- the published stable `v1.1.1` line keeps `fx` arithmetic intentionally
+  narrower than `f64` arithmetic in the Rust-like source surface
+- current `main` now admits plain `fx` unary/binary arithmetic at source typing
+  level, and canonical lowering/verified execution now admit that widened
+  surface under a promoted `SEMCODE3` line
+- completed first-wave post-stable widening for general-purpose `fx`
+  arithmetic is documented in
+  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
 
 ## Builtin Call Meaning
 
