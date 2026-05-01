@@ -9,20 +9,20 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-pub mod diagnostics;
-pub mod ids;
-pub mod source;
 #[cfg(feature = "alloc")]
 pub mod arena;
+pub mod diagnostics;
+pub mod ids;
 #[cfg(feature = "alloc")]
 pub mod sigtable;
+pub mod source;
 
 #[cfg(feature = "alloc")]
 pub use arena::{Arena, ArenaId};
-#[cfg(feature = "alloc")]
-pub use sigtable::SigTable;
 pub use diagnostics::{DiagLevel, Diagnostic};
 pub use ids::{ExprId, StmtId, SymbolId};
+#[cfg(feature = "alloc")]
+pub use sigtable::SigTable;
 pub use source::{FileId, SourceMark, Span};
 #[cfg(feature = "alloc")]
 pub use source::{SourceFile, SourceMap};

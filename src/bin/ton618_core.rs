@@ -4,7 +4,7 @@
 //! This binary remains only as part of the retained compatibility perimeter for
 //! pre-v1 `ton618_core` workflows.
 
-pub use semantic_language::{LSB_MASK, MSB_MASK, QuadroReg, F, N, S, T};
+pub use semantic_language::{QuadroReg, F, LSB_MASK, MSB_MASK, N, S, T};
 use serde::Deserialize;
 use sm_profile::{train_profile_in_place, ParserProfile, TrainingSample};
 use std::collections::HashMap;

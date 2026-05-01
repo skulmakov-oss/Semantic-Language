@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Said Kulmakov"]
 license = "MIT OR Apache-2.0"
 description = "Semantic Language Core — Quadro Logic Engine"
-repository = ""
+repository = "https://github.com/skulmakov-oss/Semantic"
 keywords = ["logic", "simd", "reasoning", "agi"]
 categories = ["no-std", "science"]
 

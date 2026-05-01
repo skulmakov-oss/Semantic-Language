@@ -21,7 +21,6 @@ It is a tooling-discipline closure track intended to:
 - lock rebuild reasons into deterministic named categories
 - prevent stale downstream reuse after dependency changes
 - add inspectable smoke coverage for reuse and invalidation behavior
-
 ## Included In NEXT-2
 
 - stable on-disk cache layout and pack header validation

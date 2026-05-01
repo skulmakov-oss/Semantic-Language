@@ -22,7 +22,6 @@ A PR is ready for review only if all of the following are true:
 - partial green is not enough if the affected layer requires a wider validation contour
 - if a test fails, stop and fix the cause before asking for merge
 - do not normalize red tests as acceptable backlog
-- if a change cannot be brought back to green, roll it back before merge
 
 ## Merge Rule
 
@@ -30,7 +29,6 @@ A PR is ready for review only if all of the following are true:
 - merge only when CI is green
 - merge only when documentation is synchronized with the actual change
 - merge only when the PR does not exceed its declared scope
-- merge only when the backup record is explicit: two backups before edits, first backup removed after green, second backup retained or removed with justification
 - if any required gate is red, merge is blocked
 
 ## Recovery Rule
@@ -38,7 +36,6 @@ A PR is ready for review only if all of the following are true:
 - if desired behavior is correct but tests are red, the task is still incomplete
 - if tests are red because expectations are outdated, update the tests and the associated docs explicitly
 - if a fix reveals broader drift, narrow the change or open a new scope rather than hiding the drift inside the same PR
-- if the step cannot be stabilized to green in the current PR, revert the change to the last green state and regroup from there
 
 ## Reviewer Rule
 

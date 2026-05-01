@@ -1,9 +1,9 @@
+use semantic_language::prom_abi::AbiValue;
 use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
+use semantic_language::prom_gates::DeterministicGateMock;
 use semantic_language::prom_gates::{GateDescriptor, GateId, GateRegistry};
 use semantic_language::prom_runtime::GateExecutionSession;
 use semantic_language::runtime_core::ExecutionContext;
-use semantic_language::prom_abi::AbiValue;
-use semantic_language::prom_gates::DeterministicGateMock;
 
 fn read_text(path: &str) -> String {
     let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read '{}': {}", path, e));
@@ -72,9 +72,18 @@ fn render_compat_matrix() -> String {
     out.push_str(&format!(
         "capabilities={:?}\n",
         [
-            (CapabilityKind::GateRead, manifest.allows(CapabilityKind::GateRead)),
-            (CapabilityKind::GateWrite, manifest.allows(CapabilityKind::GateWrite)),
-            (CapabilityKind::PulseEmit, manifest.allows(CapabilityKind::PulseEmit)),
+            (
+                CapabilityKind::GateRead,
+                manifest.allows(CapabilityKind::GateRead)
+            ),
+            (
+                CapabilityKind::GateWrite,
+                manifest.allows(CapabilityKind::GateWrite)
+            ),
+            (
+                CapabilityKind::PulseEmit,
+                manifest.allows(CapabilityKind::PulseEmit)
+            ),
         ]
     ));
     out.push_str(&format!(
@@ -98,8 +107,5 @@ fn render_compat_matrix() -> String {
 #[test]
 fn golden_prometheus_runtime_compat_matrix_snapshot() {
     let got = render_compat_matrix();
-    assert_snapshot(
-        "tests/golden_snapshots/runtime/compat_matrix.txt",
-        &got,
-    );
+    assert_snapshot("tests/golden_snapshots/runtime/compat_matrix.txt", &got);
 }

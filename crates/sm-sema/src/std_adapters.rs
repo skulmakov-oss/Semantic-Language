@@ -1,39 +1,25 @@
-use crate::frontend::{
-    parse_logos_program_with_profile, parse_program_with_profile, type_check_program,
-    LogosEntity, LogosEntityFieldKind, LogosProgram, ParserProfile, SourceMark, Type,
-};
 use crate::alloc_core::{
-    build_export_sets_core,
-    collect_local_exports_core,
-    insert_name_core,
-    insert_scoped_name_core,
-    fold_fx_const_call_core,
-    evaluate_law_header_policy_core,
-    has_magic_number_core,
-    infer_law_entity_core,
-    infer_when_condition_type_core,
-    is_valid_when_result_type_core,
-    LawScheduler,
-    ScopeKind,
-    Symbol,
-    SymbolTable,
-    TypeRegistry,
-    SemanticType,
-    track_entity_field_usage_core,
-    is_dead_when_condition,
-    parse_law_local_decl,
-    parse_import_directives, validate_import_bindings_core,
-    validate_import_namespace_rules as validate_import_namespace_rules_core, validate_select_imports_core,
-    validate_when_non_empty_core, diagnostic_help_core,
-    ExportBuildModule, ExportKind, ExportSet, ImportDirective, LocalExportDecl,
-    SelectImportModule,
+    build_export_sets_core, collect_local_exports_core, diagnostic_help_core,
+    evaluate_law_header_policy_core, fold_fx_const_call_core, has_magic_number_core,
+    infer_law_entity_core, infer_when_condition_type_core, insert_name_core,
+    insert_scoped_name_core, is_dead_when_condition, is_valid_when_result_type_core,
+    parse_import_directives, parse_law_local_decl, track_entity_field_usage_core,
+    validate_import_bindings_core,
+    validate_import_namespace_rules as validate_import_namespace_rules_core,
+    validate_select_imports_core, validate_when_non_empty_core, ExportBuildModule, ExportKind,
+    ExportSet, ImportDirective, LawScheduler, LocalExportDecl, ScopeKind, SelectImportModule,
+    SemanticType, Symbol, SymbolTable, TypeRegistry,
 };
+use crate::frontend::{
+    parse_logos_program_with_profile, parse_program_with_profile, type_check_program, LogosEntity,
+    LogosEntityFieldKind, LogosProgram, ParserProfile, SourceMark, Type,
+};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 use ton618_core::diagnostics::{
     append_help_line, format_diagnostic_header, render_context_with_caret,
 };
 use ton618_core::{Arena, SourceMap};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
 
 impl From<Type> for SemanticType {
     fn from(value: Type) -> Self {
@@ -257,15 +243,17 @@ fn load_module_recursive(
     }
 
     let module_id = path_contract_key(&key);
-    let bytes = provider.read_module(&module_id).map_err(|e| SemanticError {
-        diag: render_diag(
-            DiagLevel::Error,
-            "E0239",
-            format!("failed to read import '{}': {}", path.display(), e),
-            SourceMark::default(),
-            "",
-        ),
-    })?;
+    let bytes = provider
+        .read_module(&module_id)
+        .map_err(|e| SemanticError {
+            diag: render_diag(
+                DiagLevel::Error,
+                "E0239",
+                format!("failed to read import '{}': {}", path.display(), e),
+                SourceMark::default(),
+                "",
+            ),
+        })?;
     let source = String::from_utf8(bytes).map_err(|_| SemanticError {
         diag: render_diag(
             DiagLevel::Error,
@@ -391,9 +379,7 @@ fn validate_select_imports(
     }
 
     for module in modules {
-        let (src, _) = loaded
-            .get(&module)
-            .expect("module key from loaded.keys()");
+        let (src, _) = loaded.get(&module).expect("module key from loaded.keys()");
         let imports = parse_import_directives(src);
         let module_key = path_contract_key(&module);
         src_by_key.insert(module_key.clone(), src.clone());
@@ -423,25 +409,26 @@ fn validate_select_imports(
         });
     }
 
-    validate_select_imports_core(&core_modules, &dep_lookup, &export_symbols, &export_kinds).map_err(|e| {
-        let src = src_by_key
-            .get(&e.module_key)
-            .map(|s| s.as_str())
-            .unwrap_or_default();
-        SemanticError {
-            diag: render_diag(
-                DiagLevel::Error,
-                e.code,
-                e.message,
-                SourceMark {
-                    line: e.line,
-                    col: e.col,
-                    file_id: 0,
-                },
-                src,
-            ),
-        }
-    })
+    validate_select_imports_core(&core_modules, &dep_lookup, &export_symbols, &export_kinds)
+        .map_err(|e| {
+            let src = src_by_key
+                .get(&e.module_key)
+                .map(|s| s.as_str())
+                .unwrap_or_default();
+            SemanticError {
+                diag: render_diag(
+                    DiagLevel::Error,
+                    e.code,
+                    e.message,
+                    SourceMark {
+                        line: e.line,
+                        col: e.col,
+                        file_id: 0,
+                    },
+                    src,
+                ),
+            }
+        })
 }
 
 fn build_export_sets(
@@ -621,11 +608,11 @@ pub fn analyze_logos_program(
             ));
         }
 
-        let owner_entity = infer_law_entity_core(
-            law.whens.first().map(|w| w.condition.as_str()),
-            |name| entity_map.contains_key(name),
-        )
-        .unwrap_or_else(|| "_global".into());
+        let owner_entity =
+            infer_law_entity_core(law.whens.first().map(|w| w.condition.as_str()), |name| {
+                entity_map.contains_key(name)
+            })
+            .unwrap_or_else(|| "_global".into());
         if !insert_scoped_name_core(&mut law_names_by_entity, &owner_entity, &law.name) {
             return Err(SemanticError {
                 diag: render_diag(
@@ -666,8 +653,10 @@ pub fn analyze_logos_program(
 
         let mut law_locals = BTreeSet::new();
         for when in &law.whens {
-            validate_when_non_empty_core(&when.condition, &when.effect).map_err(|e| SemanticError {
-                diag: render_diag(DiagLevel::Error, e.code, e.message, when.mark, source),
+            validate_when_non_empty_core(&when.condition, &when.effect).map_err(|e| {
+                SemanticError {
+                    diag: render_diag(DiagLevel::Error, e.code, e.message, when.mark, source),
+                }
             })?;
             track_entity_field_usage_core(&when.condition, |ent, field| {
                 if entity_map.contains_key(ent) {
@@ -829,10 +818,7 @@ fn render_diag(
 ) -> SemanticDiagnostic {
     let mut sm = SourceMap::new();
     let file_id = sm.add_file("<input>", source);
-    let mark = SourceMark {
-        file_id,
-        ..mark
-    };
+    let mark = SourceMark { file_id, ..mark };
     let mut body = render_context_with_caret(sm.source(file_id).unwrap_or(""), mark, 2);
     if let Some(help) = diagnostic_help_core(code) {
         append_help_line(&mut body, help);

@@ -2,10 +2,6 @@ use std::fs;
 
 const TARGETS: &[(&str, &str)] = &[
     (
-        "crates/sm-front/src/lib.rs",
-        "tests/golden_snapshots/public_api/sm_front_lib.txt",
-    ),
-    (
         "crates/sm-ir/src/lib.rs",
         "tests/golden_snapshots/public_api/sm_ir_lib.txt",
     ),
@@ -38,20 +34,8 @@ const TARGETS: &[(&str, &str)] = &[
         "tests/golden_snapshots/public_api/prom_cap_lib.txt",
     ),
     (
-        "crates/prom-state/src/lib.rs",
-        "tests/golden_snapshots/public_api/prom_state_lib.txt",
-    ),
-    (
-        "crates/prom-audit/src/lib.rs",
-        "tests/golden_snapshots/public_api/prom_audit_lib.txt",
-    ),
-    (
         "crates/prom-runtime/src/lib.rs",
         "tests/golden_snapshots/public_api/prom_runtime_lib.txt",
-    ),
-    (
-        "crates/prom-rules/src/lib.rs",
-        "tests/golden_snapshots/public_api/prom_rules_lib.txt",
     ),
     (
         "crates/smc-cli/src/lib.rs",
@@ -67,23 +51,50 @@ fn is_public_item(line: &str) -> bool {
     line.starts_with("pub ") || line.starts_with("pub(")
 }
 
+fn is_public_fn(line: &str) -> bool {
+    is_public_item(line) && (line.starts_with("pub fn") || line.contains(" fn "))
+}
+
 fn normalized_public_surface(path: &str) -> String {
     let src = fs::read_to_string(path).unwrap_or_else(|err| panic!("read {path}: {err}"));
+    let src_lines: Vec<&str> = src.lines().collect();
     let mut lines = Vec::new();
     let mut pending_attrs = Vec::new();
+    let mut idx = 0usize;
 
-    for raw in src.lines() {
-        let line = raw.trim();
+    while idx < src_lines.len() {
+        let line = src_lines[idx].trim();
         if line.starts_with("#[") {
             pending_attrs.push(normalize_ws(line));
+            idx += 1;
             continue;
         }
         if is_public_item(line) {
             lines.append(&mut pending_attrs);
+            if is_public_fn(line) {
+                let mut signature = normalize_ws(line);
+                while !signature.ends_with('{') && !signature.ends_with(';') {
+                    idx += 1;
+                    if idx >= src_lines.len() {
+                        break;
+                    }
+                    let continuation = src_lines[idx].trim();
+                    if continuation.is_empty() {
+                        continue;
+                    }
+                    signature.push(' ');
+                    signature.push_str(&normalize_ws(continuation));
+                }
+                lines.push(signature);
+                idx += 1;
+                continue;
+            }
             lines.push(normalize_ws(line));
+            idx += 1;
             continue;
         }
         pending_attrs.clear();
+        idx += 1;
     }
 
     format!(

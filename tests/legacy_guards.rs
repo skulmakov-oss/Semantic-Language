@@ -1,41 +1,58 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::BTreeSet;
+use std::process::Command;
 
 fn collect_rs_files(root: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = fs::read_dir(root) else { return };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            collect_rs_files(&p, out);
-        } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
-            out.push(p);
+    let prefix = normalize_repo_prefix(root);
+    for rel in tracked_paths() {
+        if is_under_prefix(&rel, &prefix) && rel.ends_with(".rs") {
+            out.push(PathBuf::from(rel));
         }
     }
 }
 
 fn collect_files_with_extensions(root: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
-    let Ok(rd) = fs::read_dir(root) else { return };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            let rel = p.to_string_lossy().replace('\\', "/");
-            if rel.starts_with("./.git")
-                || rel.starts_with(".git/")
-                || rel.starts_with("./target")
-                || rel.starts_with("target/")
-                || rel.starts_with("./artifacts/release")
-                || rel.starts_with("artifacts/release/")
-            {
-                continue;
-            }
-            collect_files_with_extensions(&p, exts, out);
-        } else if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+    let prefix = normalize_repo_prefix(root);
+    for rel in tracked_paths() {
+        if !is_under_prefix(&rel, &prefix) {
+            continue;
+        }
+        let p = Path::new(&rel);
+        if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
             if exts.contains(&ext) {
-                out.push(p);
+                out.push(PathBuf::from(format!("./{}", rel)));
             }
         }
     }
+}
+
+fn tracked_paths() -> BTreeSet<String> {
+    let output = Command::new("git")
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("run git ls-files");
+    assert!(output.status.success(), "git ls-files must succeed");
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| String::from_utf8_lossy(entry).replace('\\', "/"))
+        .collect()
+}
+
+fn normalize_repo_prefix(root: &Path) -> String {
+    let rel = root.to_string_lossy().replace('\\', "/");
+    let rel = rel.trim_start_matches("./");
+    if rel == "." {
+        String::new()
+    } else {
+        rel.trim_end_matches('/').to_string()
+    }
+}
+
+fn is_under_prefix(path: &str, prefix: &str) -> bool {
+    prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
 #[test]
@@ -75,14 +92,17 @@ fn root_src_is_shim_and_bins_only_allowlist() {
 #[test]
 fn root_src_contains_only_lib_and_bin_dir() {
     let mut top = BTreeSet::new();
-    for e in fs::read_dir("src").expect("read src").flatten() {
-        top.insert(e.file_name().to_string_lossy().to_string());
+    for path in tracked_paths() {
+        if let Some(rest) = path.strip_prefix("src/") {
+            if let Some((first, _)) = rest.split_once('/') {
+                top.insert(first.to_string());
+            } else {
+                top.insert(rest.to_string());
+            }
+        }
     }
     let expected: BTreeSet<String> = ["lib.rs", "bin"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(
-        top, expected,
-        "root/src must contain only lib.rs and bin/"
-    );
+    assert_eq!(top, expected, "root/src must contain only lib.rs and bin/");
 }
 
 #[test]
@@ -206,36 +226,14 @@ fn legacy_compatibility_perimeter_is_explicit_and_narrow() {
 #[test]
 fn ton618_named_path_inventory_is_explicit() {
     let mut matches = BTreeSet::new();
-
-    fn walk(root: &Path, out: &mut BTreeSet<String>) {
-        let Ok(rd) = fs::read_dir(root) else { return };
-        for e in rd.flatten() {
-            let p = e.path();
-            let rel = p.to_string_lossy().replace('\\', "/");
-            if rel.starts_with("./.git")
-                || rel.starts_with(".git/")
-                || rel.starts_with("./target")
-                || rel.starts_with("target/")
-                || rel.starts_with("./artifacts/release")
-                || rel.starts_with("artifacts/release/")
-            {
-                continue;
-            }
-            if rel.contains("ton618") {
-                out.insert(rel.clone());
-            }
-            if p.is_dir() {
-                walk(&p, out);
-            }
+    for rel in tracked_paths() {
+        if rel.contains("ton618") {
+            matches.insert(format!("./{}", rel));
         }
     }
 
-    walk(Path::new("."), &mut matches);
-
     let expected: BTreeSet<String> = [
-        "./crates/ton618-core",
         "./crates/ton618-core/Cargo.toml",
-        "./crates/ton618-core/src",
         "./crates/ton618-core/src/arena.rs",
         "./crates/ton618-core/src/diagnostics.rs",
         "./crates/ton618-core/src/ids.rs",
@@ -244,31 +242,25 @@ fn ton618_named_path_inventory_is_explicit() {
         "./crates/ton618-core/src/source.rs",
         "./docs/roadmap/language_maturity/ton618_compatibility_perimeter_scope.md",
         "./src/bin/ton618_core.rs",
-        "./ton618_legacy",
         "./ton618_legacy/.gitignore",
         "./ton618_legacy/LICENSE-APACHE",
         "./ton618_legacy/LICENSE-MIT",
         "./ton618_legacy/README.md",
-        "./ton618_legacy/benches",
         "./ton618_legacy/benches/bank_soa.rs",
         "./ton618_legacy/benches/simd_ops.rs",
         "./ton618_legacy/Cargo.toml",
         "./ton618_legacy/clippy.toml",
         "./ton618_legacy/rustfmt.toml",
-        "./ton618_legacy/src",
         "./ton618_legacy/src/bank.rs",
-        "./ton618_legacy/src/bench",
         "./ton618_legacy/src/bench/mod.rs",
         "./ton618_legacy/src/delta.rs",
         "./ton618_legacy/src/lib.rs",
         "./ton618_legacy/src/masks.rs",
         "./ton618_legacy/src/prelude.rs",
         "./ton618_legacy/src/reg.rs",
-        "./ton618_legacy/src/simd",
         "./ton618_legacy/src/simd/arm_neon.rs",
         "./ton618_legacy/src/simd/mod.rs",
         "./ton618_legacy/src/simd/x86_avx2.rs",
-        "./ton618_legacy/tests",
         "./ton618_legacy/tests/correctness.rs",
         "./ton618_legacy/tests/no_msb_leakage.rs",
         "./ton618_legacy/tests/simd_equivalence.rs",
@@ -302,7 +294,6 @@ fn ton618_content_inventory_is_explicit() {
     }
 
     let expected: BTreeSet<String> = [
-        "./Cargo.lock",
         "./Cargo.toml",
         "./README.md",
         "./crates/sm-front/Cargo.toml",
@@ -343,7 +334,9 @@ fn ton618_content_inventory_is_explicit() {
 #[test]
 fn legacy_support_directory_is_removed() {
     assert!(
-        !Path::new("src/bin/support").exists(),
-        "legacy support directory must be removed after inlining compatibility helpers"
+        tracked_paths()
+            .iter()
+            .all(|path| !path.starts_with("src/bin/support/")),
+        "legacy support directory must not contain tracked compatibility helpers"
     );
 }

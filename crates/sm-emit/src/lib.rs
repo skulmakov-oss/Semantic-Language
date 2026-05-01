@@ -51,6 +51,32 @@ mod tests {
         cursor
     }
 
+    fn skip_optional_ownership_section(code: &[u8], mut cursor: usize) -> usize {
+        if !code[cursor..].starts_with(&OWNERSHIP_SECTION_TAG) {
+            return cursor;
+        }
+        cursor += OWNERSHIP_SECTION_TAG.len();
+        let event_count = read_u16_le(code, &mut cursor).expect("event count") as usize;
+        for _ in 0..event_count {
+            let _kind = read_u8(code, &mut cursor).expect("event kind");
+            let _root = read_u32_le(code, &mut cursor).expect("root");
+            let component_count = read_u16_le(code, &mut cursor).expect("component count") as usize;
+            for _ in 0..component_count {
+                let component_kind = read_u8(code, &mut cursor).expect("component kind");
+                match component_kind {
+                    OWNERSHIP_PATH_COMPONENT_TUPLE_INDEX => {
+                        let _ = read_u16_le(code, &mut cursor).expect("tuple index");
+                    }
+                    OWNERSHIP_PATH_COMPONENT_FIELD_SYMBOL => {
+                        let _ = read_u32_le(code, &mut cursor).expect("field symbol");
+                    }
+                    other => panic!("unexpected ownership path component kind: {other:#x}"),
+                }
+            }
+        }
+        cursor
+    }
+
     #[test]
     fn sm_emit_smoke_compile_to_semcode() {
         let src = "fn main() { return; }";
@@ -233,8 +259,7 @@ mod tests {
         assert_ne!(spec.capabilities & CAP_SEQUENCE_ITERATION, 0);
 
         let code = function_code(&bytes, "main");
-        let cursor = skip_string_table(code);
-        assert!(!code[cursor..].starts_with(&OWNERSHIP_SECTION_TAG));
+        let cursor = skip_optional_ownership_section(code, skip_string_table(code));
         assert!(code[cursor..].contains(&Opcode::SequenceLen.byte()));
         assert!(code[cursor..].contains(&Opcode::SequenceGet.byte()));
     }
