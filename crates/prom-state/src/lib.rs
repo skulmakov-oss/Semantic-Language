@@ -242,7 +242,10 @@ impl SemanticStateStore {
         }
     }
 
-    pub fn apply(&mut self, update: StateUpdate) -> Result<TransitionMetadata, StateValidationError> {
+    pub fn apply(
+        &mut self,
+        update: StateUpdate,
+    ) -> Result<TransitionMetadata, StateValidationError> {
         validate_update(&update)?;
         let from_epoch = self.epoch;
         let to_epoch = StateEpoch(self.epoch.0 + 1);
@@ -794,10 +797,7 @@ mod tests {
         let err = store
             .apply(StateUpdate::new(
                 "fact.alpha",
-                FactResolution::Conflicted(vec![
-                    FactValue::I32(1),
-                    FactValue::I32(1),
-                ]),
+                FactResolution::Conflicted(vec![FactValue::I32(1), FactValue::I32(1)]),
                 ContextWindow::new("root"),
                 "conflict",
             ))

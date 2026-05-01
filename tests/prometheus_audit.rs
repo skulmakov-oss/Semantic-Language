@@ -2,9 +2,7 @@ use semantic_language::frontend::{emit_ir_to_semcode, IrFunction, IrInstr};
 use semantic_language::prom_abi::AbiValue;
 use semantic_language::prom_audit::{AuditEventKind, AuditSessionMetadata, AuditTrail};
 use semantic_language::prom_cap::{CapabilityKind, CapabilityManifest};
-use semantic_language::prom_gates::{
-    DeterministicGateMock, GateDescriptor, GateId, GateRegistry,
-};
+use semantic_language::prom_gates::{DeterministicGateMock, GateDescriptor, GateId, GateRegistry};
 use semantic_language::prom_runtime::GateExecutionSession;
 use semantic_language::runtime_core::ExecutionContext;
 
@@ -94,7 +92,10 @@ fn audit_trail_records_capability_denial_with_manifest_context() {
         AuditEventKind::CapabilityDenied { capability, call } => {
             assert_eq!(*capability, CapabilityKind::PulseEmit);
             assert_eq!(call.as_deref(), Some("PulseEmit"));
-            assert_eq!(replay.session.capability_manifest.schema, "prom.cap.manifest");
+            assert_eq!(
+                replay.session.capability_manifest.schema,
+                "prom.cap.manifest"
+            );
         }
         other => panic!("unexpected event {other:?}"),
     }

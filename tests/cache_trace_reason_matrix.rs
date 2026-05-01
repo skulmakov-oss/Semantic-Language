@@ -39,10 +39,7 @@ fn main() {
     .expect("write root rust");
 }
 
-fn run_check_trace(
-    dir: &std::path::Path,
-    extra_env: &[(&str, &str)],
-) -> std::process::Output {
+fn run_check_trace(dir: &std::path::Path, extra_env: &[(&str, &str)]) -> std::process::Output {
     let exe = env!("CARGO_BIN_EXE_smc");
     let mut cmd = Command::new(exe);
     cmd.arg("check")
@@ -55,10 +52,7 @@ fn run_check_trace(
     cmd.output().expect("run smc")
 }
 
-fn run_hash_exb_trace(
-    dir: &std::path::Path,
-    extra_env: &[(&str, &str)],
-) -> std::process::Output {
+fn run_hash_exb_trace(dir: &std::path::Path, extra_env: &[(&str, &str)]) -> std::process::Output {
     let exe = env!("CARGO_BIN_EXE_smc");
     let mut cmd = Command::new(exe);
     cmd.arg("hash-smc")

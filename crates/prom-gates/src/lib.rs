@@ -126,10 +126,7 @@ impl GateRegistry {
             .descriptor(gate)
             .ok_or_else(|| GateBindingError::new(gate, "gate is not registered"))?;
         if !descriptor.allows_write() {
-            return Err(GateBindingError::new(
-                gate,
-                "gate does not allow writes",
-            ));
+            return Err(GateBindingError::new(gate, "gate does not allow writes"));
         }
         Ok(descriptor)
     }
@@ -167,16 +164,12 @@ impl<'a, B: GateBinding> PrometheusHostAbi for GateHostAdapter<'a, B> {
             .map_err(|err| err.to_abi_error(HostCallId::GateRead, AbiFailureKind::HostFault))
     }
 
-    fn gate_write(
-        &mut self,
-        device_id: u16,
-        port: u16,
-        value: AbiValue,
-    ) -> Result<(), AbiError> {
+    fn gate_write(&mut self, device_id: u16, port: u16, value: AbiValue) -> Result<(), AbiError> {
         let gate = GateId::new(device_id, port);
-        let descriptor = self.registry.validate_write(gate).map_err(|err| {
-            err.to_abi_error(HostCallId::GateWrite, AbiFailureKind::InvalidInput)
-        })?;
+        let descriptor = self
+            .registry
+            .validate_write(gate)
+            .map_err(|err| err.to_abi_error(HostCallId::GateWrite, AbiFailureKind::InvalidInput))?;
         self.binding
             .gate_write(descriptor, value)
             .map_err(|err| err.to_abi_error(HostCallId::GateWrite, AbiFailureKind::HostFault))
@@ -305,13 +298,8 @@ mod tests {
 
         let value = adapter.gate_read(7, 3).expect("read");
         assert_eq!(value, AbiValue::I32(41));
-        adapter
-            .gate_write(7, 4, AbiValue::I32(41))
-            .expect("write");
-        assert_eq!(
-            binding.writes(),
-            &[(GateId::new(7, 4), AbiValue::I32(41))]
-        );
+        adapter.gate_write(7, 4, AbiValue::I32(41)).expect("write");
+        assert_eq!(binding.writes(), &[(GateId::new(7, 4), AbiValue::I32(41))]);
     }
 
     #[test]

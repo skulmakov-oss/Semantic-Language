@@ -1,5 +1,5 @@
-use alloc::format;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -283,7 +283,10 @@ pub fn is_law_name_style_ok(name: &str) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionInferError {
-    MismatchedTypes { left: SemanticType, right: SemanticType },
+    MismatchedTypes {
+        left: SemanticType,
+        right: SemanticType,
+    },
 }
 
 pub fn is_compatible_cmp(left: SemanticType, right: SemanticType) -> bool {
@@ -761,10 +764,7 @@ pub fn validate_import_namespace_rules(
         if !aliases.insert(alias.clone()) {
             return Err(ImportPolicyError {
                 code: "E0241",
-                message: format!(
-                    "duplicate import namespace alias '{}' in one module",
-                    alias
-                ),
+                message: format!("duplicate import namespace alias '{}' in one module", alias),
                 line: import.line,
                 col: import.col,
             });
@@ -789,8 +789,7 @@ pub fn validate_import_namespace_rules(
         if import.wildcard && !import.select_items.is_empty() {
             return Err(ImportPolicyError {
                 code: "E0245",
-                message: "cannot combine wildcard import '*' with explicit select list"
-                    .to_string(),
+                message: "cannot combine wildcard import '*' with explicit select list".to_string(),
                 line: import.line,
                 col: import.col,
             });
@@ -924,21 +923,20 @@ pub fn validate_select_imports_core(
                 .get(&(m.module_key.clone(), import.spec.clone()))
                 .ok_or_else(|| SelectImportPolicyError {
                     code: "E0239",
-                    message: format!(
-                        "import module not loaded for select '{}'",
-                        import.spec
-                    ),
+                    message: format!("import module not loaded for select '{}'", import.spec),
                     module_key: m.module_key.clone(),
                     line: import.line,
                     col: import.col,
                 })?;
-            let symbols = export_symbols.get(dep_key).ok_or_else(|| SelectImportPolicyError {
-                code: "E0239",
-                message: format!("import module not loaded for select '{}'", import.spec),
-                module_key: m.module_key.clone(),
-                line: import.line,
-                col: import.col,
-            })?;
+            let symbols = export_symbols
+                .get(dep_key)
+                .ok_or_else(|| SelectImportPolicyError {
+                    code: "E0239",
+                    message: format!("import module not loaded for select '{}'", import.spec),
+                    module_key: m.module_key.clone(),
+                    line: import.line,
+                    col: import.col,
+                })?;
             let kinds = export_kinds.get(dep_key);
             for (sym, _) in &import.select_items {
                 let (expected_kind, base_name) = parse_select_expected_kind(sym);
@@ -1207,8 +1205,9 @@ Import "dep.sm" as Foo
         let mut ks = BTreeMap::new();
         ks.insert("Present".to_string(), ExportKind::Law);
         export_kinds.insert("dep.sm".to_string(), ks);
-        let err = validate_select_imports_core(&modules, &dep_lookup, &export_symbols, &export_kinds)
-            .expect_err("must fail");
+        let err =
+            validate_select_imports_core(&modules, &dep_lookup, &export_symbols, &export_kinds)
+                .expect_err("must fail");
         assert_eq!(err.code, "E0244");
     }
 
@@ -1232,8 +1231,9 @@ Import "dep.sm" as Foo
         let mut kinds = BTreeMap::new();
         kinds.insert("A".to_string(), ExportKind::Law);
         export_kinds.insert("dep.sm".to_string(), kinds);
-        let err = validate_select_imports_core(&modules, &dep_lookup, &export_symbols, &export_kinds)
-            .expect_err("must fail");
+        let err =
+            validate_select_imports_core(&modules, &dep_lookup, &export_symbols, &export_kinds)
+                .expect_err("must fail");
         assert_eq!(err.code, "E0245");
     }
 
@@ -1385,7 +1385,10 @@ Import pub "a.sm"
 
     #[test]
     fn fold_fx_const_call_smoke() {
-        assert_eq!(fold_fx_const_call_core("fx.add(1.0, 2.0)"), Some("3".to_string()));
+        assert_eq!(
+            fold_fx_const_call_core("fx.add(1.0, 2.0)"),
+            Some("3".to_string())
+        );
         assert_eq!(fold_fx_const_call_core("fx.div(1.0, 0.0)"), None);
     }
 

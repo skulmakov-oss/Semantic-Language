@@ -21,7 +21,7 @@ pub call: Option<HostCallId>,
 pub code: CapabilityDeniedCode,
 pub manifest: CapabilityManifestMetadata,
 pub message: String,
-pub fn new(
+pub fn new( capability: CapabilityKind, call: Option<HostCallId>, code: CapabilityDeniedCode, manifest: CapabilityManifestMetadata, message: impl Into<String>, ) -> Self {
 pub trait CapabilityChecker {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiCapabilityDenied {
@@ -30,7 +30,7 @@ pub operation: Option<UiOperationId>,
 pub code: CapabilityDeniedCode,
 pub manifest: CapabilityManifestMetadata,
 pub message: String,
-pub fn new(
+pub fn new( capability: UiCapabilityKind, operation: Option<UiOperationId>, manifest: CapabilityManifestMetadata, message: impl Into<String>, ) -> Self {
 pub trait UiCapabilityChecker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestValidationCode {
@@ -44,7 +44,7 @@ pub struct CapabilityManifest {
 pub const CURRENT_SCHEMA: &'static str = "prom.cap.manifest";
 pub const CURRENT_VERSION: CapabilityManifestVersion = CapabilityManifestVersion::V1;
 pub fn new() -> Self {
-pub fn with_contract(
+pub fn with_contract(schema: impl Into<String>, version: CapabilityManifestVersion) -> Self {
 pub fn allow(&mut self, capability: CapabilityKind) {
 pub fn allows(&self, capability: CapabilityKind) -> bool {
 pub fn allow_ui(&mut self, capability: UiCapabilityKind) {

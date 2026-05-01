@@ -27,7 +27,6 @@ Current source-visible types:
 
 - `quad`
 - `bool`
-- `text`
 - `i32`
 - `u32`
 - `f64`
@@ -39,83 +38,6 @@ Current source-visible types:
 Current compile-time-only declaration families:
 
 - nominal `schema Name { ... }` declarations for boundary/model contracts
-- record-shaped and tagged-union schema forms within that compile-time-only
-  declaration family
-- explicit schema-role metadata via `config schema`, `api schema`, and
-  `wire schema`
-- optional schema-version metadata via `version(<u32>)`
-- deterministic record-schema compatibility reports across two explicit schema
-  versions with first-wave classes `Equivalent`, `Additive`, and `Breaking`
-- deterministic tagged-union schema compatibility reports across two explicit
-  schema versions with the same first-wave classes
-- canonical schema migration metadata artifacts and stable review formatting
-  derived from those compatibility reports
-- deterministic compile-time validation plans derived from canonical schema
-  declarations and referenced declared types
-- first-wave record-schema validation checks for required fields and field-type
-  compatibility, kept in declaration order for inspectability
-- first-wave tagged-union schema branch checks for allowed variants, required
-  per-branch fields, and per-branch field-type compatibility, kept in variant
-  declaration order for inspectability
-- deterministic generated API contract artifacts derived only from canonical
-  `api schema` and `wire schema` declarations
-- generated API artifacts preserve declaration order and expose explicit
-  format-version and generator metadata for reproducible review
-- deterministic generated wire-contract artifacts derived only from canonical
-  `wire schema` declarations
-- generated wire-contract artifacts currently expose:
-  - tagged wire unions from tagged-union `wire schema`
-  - wire patch types from record-shaped `wire schema`
-- generated wire-contract artifacts preserve declaration order and expose
-  explicit format-version and generator metadata for reproducible review
-
-## Text
-
-Current honest baseline:
-
-- the published stable `v1.1.1` line does not expose `text` as an executable
-  source-visible type family
-- current `main` now admits `text` in declared source type positions in the
-  Rust-like executable path
-- current `main` also admits a narrow double-quoted UTF-8 text literal family
-  in the same source path
-- current `main` admits same-family equality on `text`
-- current `main` now admits a canonical runtime text carrier for admitted
-  literal/equality programs
-- current `main` still does not admit text concatenation
-- current `main` does not widen the PROMETHEUS host ABI with text values
-
-Current text-surface limits:
-
-- the current literal spelling is narrow: double-quoted same-line UTF-8 text
-  only
-- interpolation, formatting, escape-rich string syntax, and host/runtime text
-  ABI widening are not part of the current contract
-
-## First-Class Closures
-
-Current honest baseline:
-
-- the published stable `v1.1.1` line does not claim first-class closure values
-  or closure types
-- current `main` now owns one first-wave closure family in the frontend owner
-  layer
-- current `main` now admits declared `Closure(T -> U)` type positions and
-  standalone closure literals in contextual closure-typed positions
-- current `main` now admits one canonical runtime closure carrier for the same
-  first-wave family
-- current `main` now admits direct invocation of admitted closure values
-
-Current first-wave limits:
-
-- current `main` admits immutable capture inventory for that first-wave family
-- immutable capture only remains the intended direction for the first-wave
-  family
-- direct invocation only is the intended call model for that family
-- direct invocation currently requires exactly one positional argument
-- closure equality is not part of the current contract
-- generic callable abstractions, traits/protocols, async closures, and host-ABI
-  closure transport are not part of the current contract
 
 ## Unit
 
@@ -175,12 +97,6 @@ Current rules:
 
 - arithmetic operators are expected to stay within the same numeric family
 - equality comparisons are valid inside the same family
-- plain same-family `i32` relational comparisons `>`, `<`, `>=`, `<=` are now
-  admitted on current `main`
-- plain same-family `i32` unary `-` and binary `+`, `-`, `*` are now admitted
-  on current `main`
-- same-family `i32 / i32` remains outside the current first arithmetic wave
-- `u32` remains equality-only in the current first application-completeness wave
 - implicit cross-family numeric coercion is not part of the current contract
 
 ## F64
@@ -208,32 +124,16 @@ Current rules:
 
 - the canonical `fx` value path is end-to-end
 - explicit `fx` annotations are supported
-- `fx` currently accepts explicit literals and existing `fx`-typed values in
-  the public Rust-like path
-- contextual literal admission into `fx` is supported only where the expected
-  type is already `fx`
-- on current `main`, plain `fx` unary `+` / `-` and plain binary `+`, `-`,
-  `*`, `/` between already-typed `fx` operands are admitted by source typing as
-  part of the post-stable expansion track
-- stable `fx` behavior in the current line is value transport plus equality, not
-  full arithmetic parity with `f64`
+- `fx` currently accepts literals and existing `fx`-typed values in the public
+  Rust-like path
 
 Current honest limits:
 
-- the published stable `v1.1.1` line still remains narrower than the `f64`
-  arithmetic surface
-- canonical lowering/verified execution for the widened plain `fx` arithmetic
-  surface has now landed on current `main`
-- emitted plain `fx` arithmetic programs use a promoted `SEMCODE3` header line
-  instead of widening the older `SEMCODE2` artifact contract in place
+- richer `fx` arithmetic remains narrower than the `f64` surface
 - coercion from non-literal non-`fx` expressions is not yet the full intended
   long-term contract
-- unary `+` and unary `-` on `fx` are admitted only for literal formation in
-  the published stable `v1.1.1` contract; the widened post-stable path is
-  described separately
-- completed first-wave post-stable widening for general-purpose `fx`
-  arithmetic is documented in
-  `docs/roadmap/language_maturity/fx_arithmetic_full_scope.md`
+- unary `+` and unary `-` on `fx` are still intentionally limited in the
+  canonical Rust-like path
 
 ## Units Of Measure
 
@@ -314,32 +214,6 @@ The current source type contract does not yet claim stable support for:
 - trait or protocol systems
 - implicit numeric widening across unrelated families
 - a broad collection type ecosystem
-
-Current active collections checkpoint on `main`:
-
-- `docs/roadmap/language_maturity/collections_surface_full_scope.md`
-- current `main` now admits one ordered sequence collection family through
-  `Sequence(type)` in declared source type positions
-- current `main` now admits bracketed ordered sequence literals in the
-  Rust-like source path
-- current `main` now admits same-family equality for ordered sequence values
-  when the item type already supports stable equality
-- current `main` now admits a canonical runtime carrier for the same ordered
-  sequence family
-- current `main` now admits `expr[index]` when the base is an admitted ordered
-  sequence and the index is `i32`
-- current `main` now admits `for value in sequence { ... }` for that sequence
-  family through the current first-wave iterable loop surface
-- current `main` still does not admit `len` or `is_empty` for that sequence
-  family in the current `M8.3` first-wave surface
-
-Current active closures checkpoint on `main`:
-
-- `docs/roadmap/language_maturity/first_class_closures_full_scope.md`
-- published `v1.1.1` still does not claim first-class closure values or
-  closure types in the public source type contract
-- current `main` now admits one first-wave runtime closure carrier and direct
-  invocation for admitted closure values
 
 ## Contract Rule
 

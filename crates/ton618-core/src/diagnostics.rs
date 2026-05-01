@@ -46,14 +46,20 @@ pub fn diagnostic_catalog() -> &'static [(&'static str, &'static str)] {
         ("E0239", "Import resolution/read/parse failure."),
         ("E0240", "Import re-export is not supported in v0.1."),
         ("E0241", "Duplicate import alias within one module."),
-        ("W0240", "Dead law branch detected: When condition is always false."),
+        (
+            "W0240",
+            "Dead law branch detected: When condition is always false.",
+        ),
         (
             "W0241",
             "Constant folding candidate detected for fx.* call with literals.",
         ),
         ("W0250", "Law name style warning (expected UpperCamelCase)."),
         ("W0251", "Large Law block warning (too many When clauses)."),
-        ("W0252", "Unused Entity field warning (state/prop not referenced)."),
+        (
+            "W0252",
+            "Unused Entity field warning (state/prop not referenced).",
+        ),
         ("W0253", "Magic number warning (consider named constant)."),
     ]
 }
@@ -109,8 +115,14 @@ pub fn format_parser_error_at_input(
 }
 
 #[cfg(feature = "alloc")]
-pub fn format_multiple_parser_errors(code: &str, messages: &[alloc::string::String]) -> alloc::string::String {
-    let mut out = alloc::format!("error[{code}]: multiple parser errors ({}):", messages.len());
+pub fn format_multiple_parser_errors(
+    code: &str,
+    messages: &[alloc::string::String],
+) -> alloc::string::String {
+    let mut out = alloc::format!(
+        "error[{code}]: multiple parser errors ({}):",
+        messages.len()
+    );
     for (i, msg) in messages.iter().enumerate() {
         out.push_str(&alloc::format!("\n{}. {}", i + 1, msg));
     }

@@ -12,7 +12,6 @@ Each logical step must leave a written record containing:
 - `Why now`
 - `In scope`
 - `Out of scope`
-- `Backups created`
 - `Files or areas touched`
 - `Tests added or updated`
 - `Docs updated`
@@ -38,11 +37,9 @@ The trail may live in one or more repository artifacts, but it must exist by the
 ## PR Discipline
 
 - every PR must state the exact logical step it implements
-- every PR must state that two reserve backups were created before edits began
 - every PR must identify test evidence or state why the change is document-only
 - every PR must identify which docs were updated
 - every PR must state whether release claims or readiness claims changed
-- every PR must state whether the first backup was deleted and why the second backup is being kept or removed
 
 ## Checkpoint Discipline
 

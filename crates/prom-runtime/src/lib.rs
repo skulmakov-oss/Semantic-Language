@@ -1,8 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
-use prom_audit::{AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail};
 use prom_abi::PrometheusHostAbi;
+use prom_audit::{AuditEventId, AuditEventKind, AuditSessionMetadata, AuditTrail};
 use prom_cap::{CapabilityChecker, CapabilityManifestMetadata};
 use prom_gates::{GateBinding, GateHostAdapter, GateRegistry};
 use prom_rules::{Agenda, AgendaEntry, RuleDefinition, RuleEffect, RuleEngine, RuleId};
@@ -11,9 +11,7 @@ use prom_state::{
     StateUpdate, StateValidationError,
 };
 use sm_runtime_core::{ExecutionConfig, ExecutionContext};
-use sm_vm::{
-    run_verified_semcode_with_host_and_capabilities_and_config, RuntimeError,
-};
+use sm_vm::{run_verified_semcode_with_host_and_capabilities_and_config, RuntimeError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSessionDescriptor {
@@ -270,10 +268,14 @@ impl<'a, H: PrometheusHostAbi, C: CapabilityChecker> ExecutionSession<'a, H, C> 
     }
 
     pub fn select_next_activation(&self, agenda: &Agenda) -> Option<ActivationSelection> {
-        agenda.entries().first().cloned().map(|entry| ActivationSelection {
-            entry,
-            remaining_rules: agenda.entries().len().saturating_sub(1),
-        })
+        agenda
+            .entries()
+            .first()
+            .cloned()
+            .map(|entry| ActivationSelection {
+                entry,
+                remaining_rules: agenda.entries().len().saturating_sub(1),
+            })
     }
 
     pub fn begin_audit_trail(&self) -> AuditTrail {
@@ -421,10 +423,14 @@ impl<'a, B: GateBinding, C: CapabilityChecker> GateExecutionSession<'a, B, C> {
     }
 
     pub fn select_next_activation(&self, agenda: &Agenda) -> Option<ActivationSelection> {
-        agenda.entries().first().cloned().map(|entry| ActivationSelection {
-            entry,
-            remaining_rules: agenda.entries().len().saturating_sub(1),
-        })
+        agenda
+            .entries()
+            .first()
+            .cloned()
+            .map(|entry| ActivationSelection {
+                entry,
+                remaining_rules: agenda.entries().len().saturating_sub(1),
+            })
     }
 
     pub fn begin_audit_trail(&self) -> AuditTrail {

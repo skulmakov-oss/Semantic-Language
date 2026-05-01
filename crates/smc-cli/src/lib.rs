@@ -20,17 +20,15 @@ mod schema_versioning;
 mod wire_contract;
 
 #[cfg(feature = "std")]
-use ton618_core::diagnostics::diagnostic_catalog;
-#[cfg(feature = "std")]
 use sm_emit::compile_program_to_semcode_with_options_debug;
 #[cfg(feature = "std")]
-use sm_ir::{
-    compile_program_to_ir_with_options, CompileProfile, OptLevel,
-};
+use sm_ir::{compile_program_to_ir_with_options, CompileProfile, OptLevel};
 #[cfg(feature = "std")]
 use sm_sema::{check_file_with_provider, check_source, ModuleProvider, SemanticReport};
 #[cfg(feature = "std")]
 use std::path::Path;
+#[cfg(feature = "std")]
+use ton618_core::diagnostics::diagnostic_catalog;
 
 #[cfg(feature = "std")]
 pub struct CliPipeline;

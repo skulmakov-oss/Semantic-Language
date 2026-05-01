@@ -8,8 +8,8 @@ fn lcg(seed: &mut u64) -> u64 {
 fn random_source(seed: &mut u64, len: usize) -> String {
     const TOKS: &[&str] = &[
         "Law", "Entity", "When", "System", "state", "prop", "fn", "let", "if", "else", "{", "}",
-        "(", ")", "[", "]", "->", "=>", "==", "!=", ":", ":=", ",", ".", "true", "false", "T",
-        "S", "N", "F", "quad", "bool", "i32", "f64", "\"x\"", "123", "1.25", "\n", "    ", "#c\n",
+        "(", ")", "[", "]", "->", "=>", "==", "!=", ":", ":=", ",", ".", "true", "false", "T", "S",
+        "N", "F", "quad", "bool", "i32", "f64", "\"x\"", "123", "1.25", "\n", "    ", "#c\n",
         "//c\n",
     ];
     let mut out = String::new();

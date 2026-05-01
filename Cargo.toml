@@ -5,13 +5,14 @@ edition = "2021"
 authors = ["Said Kulmakov"]
 license = "MIT OR Apache-2.0"
 description = "Semantic Language with TON618 Core"
-repository = ""
+repository = "https://github.com/skulmakov-oss/Semantic"
 keywords = ["logic", "simd", "reasoning", "agi"]
 categories = ["no-std", "science"]
 
 [workspace]
 members = [
     ".",
+    "crates/core-lab",
     "crates/ton618-core",
     "crates/sm-front",
     "crates/sm-profile",
@@ -32,6 +33,12 @@ members = [
     "crates/prom-ui",
     "crates/prom-ui-runtime",
     "crates/prom-ui-demo",
+    "crates/semantic-core-backend",
+    "crates/semantic-core-bench",
+    "crates/semantic-core-capsule",
+    "crates/semantic-core-exec",
+    "crates/semantic-core-quad",
+    "crates/semantic-core-runtime",
 ]
 resolver = "2"
 
