@@ -75,6 +75,10 @@ pub enum IrInstr {
         seq: u16,
         val: u16,
     },
+    SequencePop {
+        dst: u16,
+        src: u16,
+    },
     MakeClosure {
         dst: u16,
         name: String,
@@ -1064,7 +1068,8 @@ fn emit_semcode_function(
             | IrInstr::SequenceIsEmpty { .. }
             | IrInstr::SequenceContains { .. }
             | IrInstr::SequencePush { .. }
-            | IrInstr::SequencePrepend { .. } => {}
+            | IrInstr::SequencePrepend { .. }
+            | IrInstr::SequencePop { .. } => {}
             IrInstr::MakeClosure { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -1191,6 +1196,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::SequenceContains { .. } => 1 + 2 + 2 + 2,
         IrInstr::SequencePush { .. } => 1 + 2 + 2 + 2,
         IrInstr::SequencePrepend { .. } => 1 + 2 + 2 + 2,
+        IrInstr::SequencePop { .. } => 1 + 2 + 2,
         IrInstr::MakeClosure { captures, .. } => 1 + 2 + 2 + 2 + (captures.len() * 2),
         IrInstr::SequenceGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::ClosureCall { .. } => 1 + 1 + 2 + 2 + 2,
@@ -1345,6 +1351,11 @@ fn emit_instr(
             write_u16_le(out, *dst);
             write_u16_le(out, *seq);
             write_u16_le(out, *val);
+        }
+        IrInstr::SequencePop { dst, src } => {
+            out.push(Opcode::SequencePop.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *src);
         }
         IrInstr::SequenceGet { dst, src, index } => {
             out.push(Opcode::SequenceGet.byte());
@@ -1683,6 +1694,7 @@ fn has_v13_sequence_iter_instr(funcs: &[IrFunction]) -> bool {
                     | IrInstr::SequenceContains { .. }
                     | IrInstr::SequencePush { .. }
                     | IrInstr::SequencePrepend { .. }
+                    | IrInstr::SequencePop { .. }
             )
         })
     })
@@ -3107,6 +3119,44 @@ fn lower_expr_with_expected(
                 let dst = alloc(next);
                 out.push(IrInstr::SequenceContains { dst, seq, val });
                 return Ok((dst, Type::Bool));
+            }
+            // builtin pop(sequence) -> Sequence(T)
+            if resolve_symbol_name(arena, *name)? == "pop" {
+                if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'pop' takes exactly one positional argument".to_string(),
+                    });
+                }
+                let (src, arg_ty) = lower_expr_with_expected(
+                    args[0].value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    None,
+                    ret_ty,
+                    closure_state,
+                )?;
+                return match &arg_ty {
+                    Type::Sequence(_) => {
+                        let dst = alloc(next);
+                        let seq_ty = arg_ty.clone();
+                        out.push(IrInstr::SequencePop { dst, src });
+                        Ok((dst, seq_ty))
+                    }
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'pop' expects a Sequence argument, got {:?}",
+                            arg_ty
+                        ),
+                    }),
+                };
             }
             let sig = if let Some(s) = fn_table.get(name) {
                 s.clone()
@@ -7939,6 +7989,43 @@ fn lower_expr_stmt_with_parts(
             let dst = alloc(next);
             out.push(IrInstr::SequenceContains { dst, seq, val });
             return Ok(());
+        }
+        // builtin pop(sequence) — allowed as statement (result discarded)
+        if resolve_symbol_name(arena, *name)? == "pop" {
+            if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "builtin 'pop' takes exactly one positional argument".to_string(),
+                });
+            }
+            let (src, arg_ty) = lower_expr_with_expected(
+                args[0].value,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                None,
+                ret_ty,
+                closure_state,
+            )?;
+            return match &arg_ty {
+                Type::Sequence(_) => {
+                    let dst = alloc(next);
+                    out.push(IrInstr::SequencePop { dst, src });
+                    Ok(())
+                }
+                _ => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "builtin 'pop' expects a Sequence argument, got {:?}",
+                        arg_ty
+                    ),
+                }),
+            };
         }
         let sig = if let Some(s) = fn_table.get(name) {
             s.clone()

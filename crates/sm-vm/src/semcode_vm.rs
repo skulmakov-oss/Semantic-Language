@@ -664,6 +664,10 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::SequencePop => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::ClosureCall => {
                 let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1425,6 +1429,25 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 let mut new_items = Vec::with_capacity(items.len() + 1);
                 new_items.push(new_val);
                 new_items.extend(items);
+                set_reg(vm, frame_idx, dst, Value::Sequence(new_items))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequencePop => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let src = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, src)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_POP source must be sequence".to_string(),
+                    ));
+                };
+                if items.is_empty() {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_POP source must be non-empty".to_string(),
+                    ));
+                }
+                let mut new_items = items.clone();
+                new_items.pop();
                 set_reg(vm, frame_idx, dst, Value::Sequence(new_items))?;
                 next_pc = cur - f.instr_start;
             }
@@ -2324,6 +2347,11 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let v = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("SEQUENCE_PREPEND r{}, r{}, r{}", d, s, v)
+        }
+        Opcode::SequencePop => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_POP r{}, r{}", d, s)
         }
         Opcode::ClosureCall => {
             let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;

@@ -2320,6 +2320,36 @@ fn infer_expr_type(
                     }),
                 };
             }
+            // builtin pop(sequence) -> Sequence(T)
+            if resolve_symbol_name(arena, *name)? == "pop" {
+                if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'pop' takes exactly one positional argument".to_string(),
+                    });
+                }
+                let arg_ty = infer_expr_type(
+                    args[0].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                    impl_list,
+                )?;
+                return match &arg_ty {
+                    Type::Sequence(_) => Ok(arg_ty),
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'pop' expects a Sequence argument, got {:?}",
+                            arg_ty
+                        ),
+                    }),
+                };
+            }
             let sig = if let Some(s) = table.get(name) {
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {
