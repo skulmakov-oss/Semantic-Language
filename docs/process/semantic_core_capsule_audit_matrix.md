@@ -7,7 +7,7 @@ Scope:
 - this matrix audits the capsule/core snapshot defined by commits `59ad0e1` and `0f33c32`
 - this is not a reconstruction of historical PR sequence
 - the matrix below evaluates the capsule/core acceptance evidence only
-- it does not describe unrelated tracked modifications currently present in the live local worktree
+- this clean follow-up branch isolates the workspace-green check from unrelated local drift
 - this branch is a local execution-core baseline pending push or PR merge
 
 ## Summary
@@ -16,11 +16,12 @@ Scope:
 - Partial waves: `0 / 21` within the audited capsule scope
 - Open functional execution gaps: none found in the audited public core path
 - Remaining capsule-scope gaps: none
-- Live worktree blocker outside scope: `cargo test --workspace` is currently red in `tests/public_api_contracts.rs` because of unrelated drift in `crates/prom-cap/src/lib.rs`
+- Live worktree blocker outside scope: none; `cargo test --workspace` is green on this clean follow-up branch
 
 ## Audit Commands
 
 - `cargo check --workspace`
+- `cargo test --workspace`
 - `cargo test -p semantic-core-capsule`
 - `cargo test -p core-lab`
 - `cargo check -p semantic-core-quad --no-default-features`
@@ -34,10 +35,10 @@ Scope:
 
 ## Live Worktree Note
 
-- the live local worktree currently contains unrelated tracked modifications outside the capsule stream
-- because of that unrelated drift, `cargo test --workspace` is not reproducibly green on the live tree today
-- the present live-tree failure is `tests/public_api_contracts.rs`, which reports inventory drift against `crates/prom-cap/src/lib.rs`
-- that repository-level integration failure is outside the capsule audit scope recorded here
+- this clean follow-up branch does not carry the unrelated tracked modifications present in the noisier local execution worktree
+- `tests/public_api_contracts.rs` is green on this branch
+- `cargo test --workspace` is green on this branch
+- this repository-level green state does not widen the capsule audit scope recorded here
 
 ## Wave Matrix
 
@@ -91,7 +92,7 @@ Result:
 
 ## Recommended Next Actions
 
-1. Push or publish the clean import branch so the audit baseline becomes externally reviewable.
-2. Clear or isolate the unrelated live-worktree drift before claiming a repository-wide green `cargo test --workspace`.
-3. Split the import snapshot into the planned PR stream once review starts.
+1. Push or publish this clean follow-up branch so the workspace-green baseline becomes externally reviewable.
+2. Cherry-pick or otherwise fold this narrow truth-sync back into the main capsule stream only after review.
+3. Split the broader capsule import snapshot into the planned PR stream once review starts.
 4. Keep future process updates tied to real branch or PR state, not just local workspace state.
