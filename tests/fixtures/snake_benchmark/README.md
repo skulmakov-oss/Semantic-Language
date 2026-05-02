@@ -18,7 +18,16 @@ Current landed positive baseline includes:
 - statement `loop`, bare `break;`, and `continue;` for admitted control-flow
 - ordered `Sequence(T)` indexing and iteration
 - `len(sequence) -> i32`
+- `is_empty(sequence) -> bool`
+- `contains(sequence, value) -> bool` for admitted comparable scalar element types
+- persistent `push(sequence, value) -> Sequence(T)`
+- persistent `prepend(sequence, value) -> Sequence(T)`
+- persistent `pop(sequence) -> Sequence(T)`
 - first-class closure capture
+
+The sequence update helpers are functional/persistent. They do not mutate a
+sequence in place; benchmark code should assign the returned sequence when
+evolving state.
 
 This fixture pack intentionally does not yet freeze syntax for two blocker
 families:
