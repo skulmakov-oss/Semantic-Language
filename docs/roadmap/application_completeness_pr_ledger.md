@@ -60,6 +60,11 @@ Current `main` already admits these benchmark-relevant surfaces:
 - `text` literals, `text` type positions, and same-family text equality
 - `Sequence(T)` declared types, literals, indexing, equality, and `for value in sequence`
 - `len(sequence) -> i32` (landed PR #387)
+- `is_empty(sequence) -> bool` (landed PR #395)
+- `contains(sequence, value) -> bool` (landed PR #396)
+- `push(sequence, value) -> Sequence(T)` (landed PR #397)
+- `prepend(sequence, value) -> Sequence(T)` (landed PR #397)
+- `pop(sequence) -> Sequence(T)` (landed PR #398)
 - first-class closures with immutable capture
 - the separate desktop UI boundary as a landed post-stable track
 
@@ -70,7 +75,7 @@ Current `main` still fails this benchmark family at the following points:
 - plain reassignment
 - statement `while`
 - statement `loop` with bare `break;` and `continue`
-- `Sequence(T)` utility layer: `is_empty`, `push`, `pop`, and `contains` (partial — `len` landed)
+- `Sequence(T)` utility layer: `len(sequence) -> i32`, `is_empty(sequence) -> bool`, `contains(sequence, value) -> bool`, `push(sequence, value) -> Sequence(T)`, `prepend(sequence, value) -> Sequence(T)`, and `pop(sequence) -> Sequence(T)`
 - a first-wave map/dictionary family for Q-tables and visit counts
 - a deterministic seeded pseudo-random source
 - text concatenation / minimal formatting for traces
@@ -217,10 +222,12 @@ Current `main` still fails this benchmark family at the following points:
 
 ### C — Sequence Utility Layer
 
-- `PR-C1` [partial — `len` landed, `is_empty`/`contains` remain]
+- `PR-C1` [landed]
   Title: `stdlib/sequence: admit len/is_empty/contains`
-  Landed: `len(sequence) -> i32` (PR #387, 2026-05-02)
-  Remaining: `is_empty(sequence) -> bool`, `contains(sequence, value) -> bool`
+  Landed:
+  - `len(sequence) -> i32` (PR #387, 2026-05-02)
+  - `is_empty(sequence) -> bool` (PR #395, 2026-05-02)
+  - `contains(sequence, value) -> bool` (PR #396, 2026-05-02)
   Goal:
   - provide the minimum observation helpers needed for snake state logic
   Scope:
@@ -233,8 +240,16 @@ Current `main` still fails this benchmark family at the following points:
   - targeted sequence-helper tests green
   - CI green
 
-- `PR-C2` [required]
+- `PR-C2` [landed]
   Title: `stdlib/sequence: admit push/pop/prepend baseline`
+  Landed:
+  - `push(sequence, value) -> Sequence(T)` (PR #397, 2026-05-02)
+  - `prepend(sequence, value) -> Sequence(T)` (PR #397, 2026-05-02)
+  - `pop(sequence) -> Sequence(T)` (PR #398, 2026-05-02)
+  Note:
+  - these are persistent sequence helpers; they return new `Sequence(T)`
+    values and rely on existing `let mut` + reassignment for evolving
+    application state
   Goal:
   - make evolving snake bodies and traces practical without opening a broad
     collection redesign
