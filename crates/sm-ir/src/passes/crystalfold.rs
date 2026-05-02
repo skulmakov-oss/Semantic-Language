@@ -232,6 +232,14 @@ fn fold_constants_and_identities(instrs: &mut Vec<IrInstr>) -> u32 {
                 cst.remove(&dst);
                 out.push(IrInstr::SequenceContains { dst, seq, val });
             }
+            IrInstr::SequencePush { dst, seq, val } => {
+                cst.remove(&dst);
+                out.push(IrInstr::SequencePush { dst, seq, val });
+            }
+            IrInstr::SequencePrepend { dst, seq, val } => {
+                cst.remove(&dst);
+                out.push(IrInstr::SequencePrepend { dst, seq, val });
+            }
             IrInstr::LoadVar { dst, name } => {
                 cst.remove(&dst);
                 out.push(IrInstr::LoadVar { dst, name });
