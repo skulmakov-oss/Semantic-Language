@@ -75,7 +75,6 @@ Current `main` still fails this benchmark family at the following points:
 - plain reassignment
 - statement `while`
 - statement `loop` with bare `break;` and `continue`
-- `Sequence(T)` utility layer: `len(sequence) -> i32`, `is_empty(sequence) -> bool`, `contains(sequence, value) -> bool`, `push(sequence, value) -> Sequence(T)`, `prepend(sequence, value) -> Sequence(T)`, and `pop(sequence) -> Sequence(T)`
 - a first-wave map/dictionary family for Q-tables and visit counts
 - a deterministic seeded pseudo-random source
 - text concatenation / minimal formatting for traces
@@ -207,7 +206,7 @@ Current `main` still fails this benchmark family at the following points:
   Goal:
   - close the imperative-core wave as one explicit contract
   Scope:
-  - docs/spec/tests freeze only
+  - docs/spec/tests sync only
   Depends on:
   - `PR-B1`
   - `PR-B2`
