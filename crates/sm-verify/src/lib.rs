@@ -734,6 +734,19 @@ fn decode_operands(
             refs.required_capabilities |= CAP_SEQUENCE_VALUES;
             refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
         }
+        Opcode::SequenceContains => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-contains dst register"))?;
+            let seq = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-contains seq register"))?;
+            let val = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-contains val register"))?;
+            mark_reg(dst);
+            mark_reg(seq);
+            mark_reg(val);
+            refs.required_capabilities |= CAP_SEQUENCE_VALUES;
+            refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
+        }
         Opcode::MakeClosure => {
             let dst = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated closure dst register"))?;

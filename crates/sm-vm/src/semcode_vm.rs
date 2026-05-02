@@ -659,6 +659,11 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
+            Opcode::SequenceContains => {
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            }
             Opcode::ClosureCall => {
                 let _ = read_u8(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1374,6 +1379,20 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                     ));
                 };
                 set_reg(vm, frame_idx, dst, Value::Bool(items.is_empty()))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequenceContains => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let seq_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let val_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, seq_reg)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_CONTAINS first argument must be sequence".to_string(),
+                    ));
+                };
+                let search = get_reg(vm, frame_idx, val_reg)?;
+                set_reg(vm, frame_idx, dst, Value::Bool(items.contains(&search)))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
@@ -2254,6 +2273,12 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("SEQUENCE_IS_EMPTY r{}, r{}", d, s)
+        }
+        Opcode::SequenceContains => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let v = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_CONTAINS r{}, r{}, r{}", d, s, v)
         }
         Opcode::ClosureCall => {
             let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;
