@@ -78,6 +78,7 @@ fn snake_benchmark_positive_surface_passes_end_to_end() {
         "tests/fixtures/snake_benchmark/positive_contains.sm",
         "tests/fixtures/snake_benchmark/positive_push_prepend.sm",
         "tests/fixtures/snake_benchmark/positive_closure_capture.sm",
+        "tests/fixtures/snake_benchmark/positive_pop.sm",
     ] {
         check_run_compile_verify(rel);
     }
