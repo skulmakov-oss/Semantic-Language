@@ -59,6 +59,7 @@ Current `main` already admits these benchmark-relevant surfaces:
 - enum declarations and enum-pattern `match`
 - `text` literals, `text` type positions, and same-family text equality
 - `Sequence(T)` declared types, literals, indexing, equality, and `for value in sequence`
+- `len(sequence) -> i32` (landed PR #387)
 - first-class closures with immutable capture
 - the separate desktop UI boundary as a landed post-stable track
 
@@ -69,7 +70,7 @@ Current `main` still fails this benchmark family at the following points:
 - plain reassignment
 - statement `while`
 - statement `loop` with bare `break;` and `continue`
-- `Sequence(T)` utility layer such as `len`, `is_empty`, `push`, `pop`, and `contains`
+- `Sequence(T)` utility layer: `is_empty`, `push`, `pop`, and `contains` (partial — `len` landed)
 - a first-wave map/dictionary family for Q-tables and visit counts
 - a deterministic seeded pseudo-random source
 - text concatenation / minimal formatting for traces
@@ -216,8 +217,10 @@ Current `main` still fails this benchmark family at the following points:
 
 ### C — Sequence Utility Layer
 
-- `PR-C1` [required]
+- `PR-C1` [partial — `len` landed, `is_empty`/`contains` remain]
   Title: `stdlib/sequence: admit len/is_empty/contains`
+  Landed: `len(sequence) -> i32` (PR #387, 2026-05-02)
+  Remaining: `is_empty(sequence) -> bool`, `contains(sequence, value) -> bool`
   Goal:
   - provide the minimum observation helpers needed for snake state logic
   Scope:

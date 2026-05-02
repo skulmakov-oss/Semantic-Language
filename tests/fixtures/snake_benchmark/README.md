@@ -17,6 +17,7 @@ Current landed positive baseline includes:
 - `while condition { ... }` statement loops with `bool` conditions
 - statement `loop`, bare `break;`, and `continue;` for admitted control-flow
 - ordered `Sequence(T)` indexing and iteration
+- `len(sequence) -> i32`
 - first-class closure capture
 
 This fixture pack intentionally does not yet freeze syntax for two blocker
