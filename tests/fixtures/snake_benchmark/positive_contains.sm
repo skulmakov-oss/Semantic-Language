@@ -1,0 +1,12 @@
+fn main() {
+    let xs: Sequence(i32) = [10, 20, 30];
+    let found: bool = contains(xs, 20);
+    assert(found == true);
+
+    let missing: bool = contains(xs, 99);
+    assert(missing == false);
+
+    let flags: Sequence(bool) = [true, false, true];
+    let has_false: bool = contains(flags, false);
+    assert(has_false == true);
+}

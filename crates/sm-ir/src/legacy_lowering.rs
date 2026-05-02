@@ -60,6 +60,11 @@ pub enum IrInstr {
         dst: u16,
         src: u16,
     },
+    SequenceContains {
+        dst: u16,
+        seq: u16,
+        val: u16,
+    },
     MakeClosure {
         dst: u16,
         name: String,
@@ -1046,7 +1051,8 @@ fn emit_semcode_function(
             IrInstr::MakeSequence { .. }
             | IrInstr::SequenceGet { .. }
             | IrInstr::SequenceLen { .. }
-            | IrInstr::SequenceIsEmpty { .. } => {}
+            | IrInstr::SequenceIsEmpty { .. }
+            | IrInstr::SequenceContains { .. } => {}
             IrInstr::MakeClosure { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -1170,6 +1176,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::MakeSequence { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::SequenceLen { .. } => 1 + 2 + 2,
         IrInstr::SequenceIsEmpty { .. } => 1 + 2 + 2,
+        IrInstr::SequenceContains { .. } => 1 + 2 + 2 + 2,
         IrInstr::MakeClosure { captures, .. } => 1 + 2 + 2 + 2 + (captures.len() * 2),
         IrInstr::SequenceGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::ClosureCall { .. } => 1 + 1 + 2 + 2 + 2,
@@ -1306,6 +1313,12 @@ fn emit_instr(
             out.push(Opcode::SequenceIsEmpty.byte());
             write_u16_le(out, *dst);
             write_u16_le(out, *src);
+        }
+        IrInstr::SequenceContains { dst, seq, val } => {
+            out.push(Opcode::SequenceContains.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *seq);
+            write_u16_le(out, *val);
         }
         IrInstr::SequenceGet { dst, src, index } => {
             out.push(Opcode::SequenceGet.byte());
@@ -1639,7 +1652,9 @@ fn has_v13_sequence_iter_instr(funcs: &[IrFunction]) -> bool {
         f.instrs.iter().any(|i| {
             matches!(
                 i,
-                IrInstr::SequenceLen { .. } | IrInstr::SequenceIsEmpty { .. }
+                IrInstr::SequenceLen { .. }
+                    | IrInstr::SequenceIsEmpty { .. }
+                    | IrInstr::SequenceContains { .. }
             )
         })
     })
@@ -2937,6 +2952,66 @@ fn lower_expr_with_expected(
                         ),
                     }),
                 };
+            }
+            // builtin contains(sequence, value) -> bool
+            if resolve_symbol_name(arena, *name)? == "contains" {
+                if args.len() != 2 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'contains' takes exactly two positional arguments"
+                            .to_string(),
+                    });
+                }
+                let (seq, seq_ty) = lower_expr_with_expected(
+                    args[0].value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    None,
+                    ret_ty.clone(),
+                    closure_state,
+                )?;
+                let Type::Sequence(seq_type) = &seq_ty else {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'contains' first argument must be a Sequence, got {:?}",
+                            seq_ty
+                        ),
+                    });
+                };
+                let elem_ty = seq_type.item.as_ref().clone();
+                let (val, val_ty) = lower_expr_with_expected(
+                    args[1].value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    Some(elem_ty.clone()),
+                    ret_ty,
+                    closure_state,
+                )?;
+                if val_ty != elem_ty {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'contains' value type {:?} does not match element type {:?}",
+                            val_ty, elem_ty
+                        ),
+                    });
+                }
+                let dst = alloc(next);
+                out.push(IrInstr::SequenceContains { dst, seq, val });
+                return Ok((dst, Type::Bool));
             }
             let sig = if let Some(s) = fn_table.get(name) {
                 s.clone()
@@ -7642,6 +7717,66 @@ fn lower_expr_stmt_with_parts(
                     ),
                 }),
             };
+        }
+        // builtin contains(sequence, value) — allowed as statement (result discarded)
+        if resolve_symbol_name(arena, *name)? == "contains" {
+            if args.len() != 2 || args.iter().any(|a| a.name.is_some()) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "builtin 'contains' takes exactly two positional arguments"
+                        .to_string(),
+                });
+            }
+            let (seq, seq_ty) = lower_expr_with_expected(
+                args[0].value,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                None,
+                ret_ty.clone(),
+                closure_state,
+            )?;
+            let Type::Sequence(seq_type) = &seq_ty else {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "builtin 'contains' first argument must be a Sequence, got {:?}",
+                        seq_ty
+                    ),
+                });
+            };
+            let elem_ty = seq_type.item.as_ref().clone();
+            let (val, val_ty) = lower_expr_with_expected(
+                args[1].value,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                Some(elem_ty.clone()),
+                ret_ty,
+                closure_state,
+            )?;
+            if val_ty != elem_ty {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "builtin 'contains' value type {:?} does not match element type {:?}",
+                        val_ty, elem_ty
+                    ),
+                });
+            }
+            let dst = alloc(next);
+            out.push(IrInstr::SequenceContains { dst, seq, val });
+            return Ok(());
         }
         let sig = if let Some(s) = fn_table.get(name) {
             s.clone()

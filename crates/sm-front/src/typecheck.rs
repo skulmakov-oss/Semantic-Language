@@ -2165,6 +2165,73 @@ fn infer_expr_type(
                     }),
                 };
             }
+            // builtin contains(sequence, value) -> bool
+            if resolve_symbol_name(arena, *name)? == "contains" {
+                if args.len() != 2 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'contains' takes exactly two positional arguments"
+                            .to_string(),
+                    });
+                }
+                let seq_ty = infer_expr_type(
+                    args[0].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty.clone(),
+                    loop_stack,
+                    impl_list,
+                )?;
+                let Type::Sequence(seq_type) = &seq_ty else {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'contains' first argument must be a Sequence, got {:?}",
+                            seq_ty
+                        ),
+                    });
+                };
+                let elem_ty = seq_type.item.as_ref().clone();
+                // Restrict to scalar comparable types in this release
+                match &elem_ty {
+                    Type::I32 | Type::U32 | Type::Bool | Type::Text | Type::Quad => {}
+                    other => {
+                        return Err(FrontendError {
+                            pos: 0,
+                            message: format!(
+                                "builtin 'contains' does not yet support element type {:?}; \
+                                 admitted element types are i32, u32, bool, text, quad",
+                                other
+                            ),
+                        });
+                    }
+                }
+                let val_ty = infer_expr_type(
+                    args[1].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                    impl_list,
+                )?;
+                if val_ty != elem_ty {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'contains' second argument type {:?} does not match \
+                             sequence element type {:?}",
+                            val_ty, elem_ty
+                        ),
+                    });
+                }
+                return Ok(Type::Bool);
+            }
             // builtin is_empty(sequence) -> bool
             if resolve_symbol_name(arena, *name)? == "is_empty" {
                 if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
