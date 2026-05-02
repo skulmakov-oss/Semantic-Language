@@ -2165,6 +2165,37 @@ fn infer_expr_type(
                     }),
                 };
             }
+            // builtin is_empty(sequence) -> bool
+            if resolve_symbol_name(arena, *name)? == "is_empty" {
+                if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'is_empty' takes exactly one positional argument"
+                            .to_string(),
+                    });
+                }
+                let arg_ty = infer_expr_type(
+                    args[0].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                    impl_list,
+                )?;
+                return match &arg_ty {
+                    Type::Sequence(_) => Ok(Type::Bool),
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'is_empty' expects a Sequence argument, got {:?}",
+                            arg_ty
+                        ),
+                    }),
+                };
+            }
             let sig = if let Some(s) = table.get(name) {
                 s.clone()
             } else if let Some(s) = builtin_sig(resolve_symbol_name(arena, *name)?) {

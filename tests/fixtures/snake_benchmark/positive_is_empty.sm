@@ -1,0 +1,9 @@
+fn main() {
+    let empty: Sequence(i32) = [];
+    let result: bool = is_empty(empty);
+    assert(result == true);
+
+    let nonempty: Sequence(i32) = [1, 2, 3];
+    let result2: bool = is_empty(nonempty);
+    assert(result2 == false);
+}

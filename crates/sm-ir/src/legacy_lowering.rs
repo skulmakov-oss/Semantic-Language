@@ -56,6 +56,10 @@ pub enum IrInstr {
         dst: u16,
         src: u16,
     },
+    SequenceIsEmpty {
+        dst: u16,
+        src: u16,
+    },
     MakeClosure {
         dst: u16,
         name: String,
@@ -1041,7 +1045,8 @@ fn emit_semcode_function(
             }
             IrInstr::MakeSequence { .. }
             | IrInstr::SequenceGet { .. }
-            | IrInstr::SequenceLen { .. } => {}
+            | IrInstr::SequenceLen { .. }
+            | IrInstr::SequenceIsEmpty { .. } => {}
             IrInstr::MakeClosure { name, .. } => {
                 let _ = interner.id(name)?;
             }
@@ -1164,6 +1169,7 @@ fn encoded_size(instr: &IrInstr) -> Option<usize> {
         IrInstr::LoadText { .. } => 1 + 2 + 2,
         IrInstr::MakeSequence { items, .. } => 1 + 2 + 2 + (items.len() * 2),
         IrInstr::SequenceLen { .. } => 1 + 2 + 2,
+        IrInstr::SequenceIsEmpty { .. } => 1 + 2 + 2,
         IrInstr::MakeClosure { captures, .. } => 1 + 2 + 2 + 2 + (captures.len() * 2),
         IrInstr::SequenceGet { .. } => 1 + 2 + 2 + 2,
         IrInstr::ClosureCall { .. } => 1 + 1 + 2 + 2 + 2,
@@ -1293,6 +1299,11 @@ fn emit_instr(
         }
         IrInstr::SequenceLen { dst, src } => {
             out.push(Opcode::SequenceLen.byte());
+            write_u16_le(out, *dst);
+            write_u16_le(out, *src);
+        }
+        IrInstr::SequenceIsEmpty { dst, src } => {
+            out.push(Opcode::SequenceIsEmpty.byte());
             write_u16_le(out, *dst);
             write_u16_le(out, *src);
         }
@@ -1624,9 +1635,14 @@ fn has_v9_sequence_instr(funcs: &[IrFunction]) -> bool {
 }
 
 fn has_v13_sequence_iter_instr(funcs: &[IrFunction]) -> bool {
-    funcs
-        .iter()
-        .any(|f| f.instrs.iter().any(|i| matches!(i, IrInstr::SequenceLen { .. })))
+    funcs.iter().any(|f| {
+        f.instrs.iter().any(|i| {
+            matches!(
+                i,
+                IrInstr::SequenceLen { .. } | IrInstr::SequenceIsEmpty { .. }
+            )
+        })
+    })
 }
 
 fn has_v10_closure_instr(funcs: &[IrFunction]) -> bool {
@@ -2879,6 +2895,44 @@ fn lower_expr_with_expected(
                         pos: 0,
                         message: format!(
                             "builtin 'len' expects a Sequence argument, got {:?}",
+                            arg_ty
+                        ),
+                    }),
+                };
+            }
+            // builtin is_empty(sequence) -> bool
+            if resolve_symbol_name(arena, *name)? == "is_empty" {
+                if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'is_empty' takes exactly one positional argument"
+                            .to_string(),
+                    });
+                }
+                let (src, arg_ty) = lower_expr_with_expected(
+                    args[0].value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    None,
+                    ret_ty,
+                    closure_state,
+                )?;
+                return match &arg_ty {
+                    Type::Sequence(_) => {
+                        let dst = alloc(next);
+                        out.push(IrInstr::SequenceIsEmpty { dst, src });
+                        Ok((dst, Type::Bool))
+                    }
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'is_empty' expects a Sequence argument, got {:?}",
                             arg_ty
                         ),
                     }),
@@ -7546,6 +7600,44 @@ fn lower_expr_stmt_with_parts(
                     pos: 0,
                     message: format!(
                         "builtin 'len' expects a Sequence argument, got {:?}",
+                        arg_ty
+                    ),
+                }),
+            };
+        }
+        // builtin is_empty(sequence) — allowed as statement (result discarded)
+        if resolve_symbol_name(arena, *name)? == "is_empty" {
+            if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "builtin 'is_empty' takes exactly one positional argument"
+                        .to_string(),
+                });
+            }
+            let (src, arg_ty) = lower_expr_with_expected(
+                args[0].value,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                None,
+                ret_ty,
+                closure_state,
+            )?;
+            return match &arg_ty {
+                Type::Sequence(_) => {
+                    let dst = alloc(next);
+                    out.push(IrInstr::SequenceIsEmpty { dst, src });
+                    Ok(())
+                }
+                _ => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "builtin 'is_empty' expects a Sequence argument, got {:?}",
                         arg_ty
                     ),
                 }),

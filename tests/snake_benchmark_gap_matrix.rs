@@ -74,6 +74,7 @@ fn snake_benchmark_positive_surface_passes_end_to_end() {
         "tests/fixtures/snake_benchmark/positive_sequence_indexing.sm",
         "tests/fixtures/snake_benchmark/positive_sequence_iteration.sm",
         "tests/fixtures/snake_benchmark/positive_sequence_len.sm",
+        "tests/fixtures/snake_benchmark/positive_is_empty.sm",
         "tests/fixtures/snake_benchmark/positive_closure_capture.sm",
     ] {
         check_run_compile_verify(rel);

@@ -724,6 +724,16 @@ fn decode_operands(
             refs.required_capabilities |= CAP_SEQUENCE_VALUES;
             refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
         }
+        Opcode::SequenceIsEmpty => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-is-empty dst register"))?;
+            let src = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-is-empty src register"))?;
+            mark_reg(dst);
+            mark_reg(src);
+            refs.required_capabilities |= CAP_SEQUENCE_VALUES;
+            refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
+        }
         Opcode::MakeClosure => {
             let dst = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated closure dst register"))?;
