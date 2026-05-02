@@ -1,0 +1,5 @@
+fn main() {
+    let values: Sequence(i32) = [1, 2, 3];
+    let size: i32 = len(values);
+    assert(size == 3);
+}
