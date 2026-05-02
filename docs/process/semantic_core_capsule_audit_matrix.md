@@ -1,25 +1,28 @@
 # Semantic Core Capsule Audit Matrix
 
-Status: audit snapshot as of 2026-05-01
+Status: capsule audit snapshot as of 2026-05-01
 
 Scope:
 
-- this is a status audit of the current clean import branch implementation
+- this matrix audits the capsule/core snapshot defined by commits `59ad0e1` and `0f33c32`
 - this is not a reconstruction of historical PR sequence
-- the matrix below evaluates the built code and current acceptance evidence
+- the matrix below evaluates the capsule/core acceptance evidence only
+- it does not describe unrelated tracked modifications currently present in the live local worktree
 - this branch is a local execution-core baseline pending push or PR merge
 
 ## Summary
 
-- Closed waves: `21 / 21`
-- Partial waves: `0 / 21`
-- Open functional execution gaps: none found in the current public core path
-- Remaining gaps: none in the current audited scope
+- Closed waves: `21 / 21` within the audited capsule scope
+- Partial waves: `0 / 21` within the audited capsule scope
+- Open functional execution gaps: none found in the audited public core path
+- Remaining capsule-scope gaps: none
+- Live worktree blocker outside scope: `cargo test --workspace` is currently red in `tests/public_api_contracts.rs` because of unrelated drift in `crates/prom-cap/src/lib.rs`
 
 ## Audit Commands
 
 - `cargo check --workspace`
-- `cargo test --workspace`
+- `cargo test -p semantic-core-capsule`
+- `cargo test -p core-lab`
 - `cargo check -p semantic-core-quad --no-default-features`
 - `cargo doc -p semantic-core-capsule --no-deps`
 - `cargo run -p core-lab -- --help`
@@ -27,7 +30,14 @@ Scope:
 - `cargo run -p semantic-core-bench -- quad-reg`
 - `cargo run -p semantic-core-bench -- tile`
 - `cargo run -p semantic-core-bench -- exec`
-- public-core wording search over `crates/semantic-core-*`, `crates/core-lab`, and `docs/core`
+- public-core wording search over `crates/semantic-core-*`, `crates/core-lab`, `docs/core`, and `docs/process`
+
+## Live Worktree Note
+
+- the live local worktree currently contains unrelated tracked modifications outside the capsule stream
+- because of that unrelated drift, `cargo test --workspace` is not reproducibly green on the live tree today
+- the present live-tree failure is `tests/public_api_contracts.rs`, which reports inventory drift against `crates/prom-cap/src/lib.rs`
+- that repository-level integration failure is outside the capsule audit scope recorded here
 
 ## Wave Matrix
 
@@ -82,5 +92,6 @@ Result:
 ## Recommended Next Actions
 
 1. Push or publish the clean import branch so the audit baseline becomes externally reviewable.
-2. Split the import snapshot into the planned PR stream once review starts.
-3. Keep future process updates tied to real branch or PR state, not just local workspace state.
+2. Clear or isolate the unrelated live-worktree drift before claiming a repository-wide green `cargo test --workspace`.
+3. Split the import snapshot into the planned PR stream once review starts.
+4. Keep future process updates tied to real branch or PR state, not just local workspace state.
