@@ -959,34 +959,51 @@ pub fn emit_ir_to_semcode(
 
 fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
     let mut out = Vec::new();
+    // require_ownership_section: whenever the chosen header includes CAP_OWNERSHIP_PATHS,
+    // every function must have an OWN0 section (even if empty) so the verifier check passes.
+    let require_ownership_section;
     if has_v13_sequence_iter_instr(funcs) {
         out.extend_from_slice(&MAGIC13);
+        require_ownership_section = true;
     } else if has_v12_record_field_ownership_events(funcs) {
         out.extend_from_slice(&MAGIC12);
+        require_ownership_section = true;
     } else if has_v11_ownership_events(funcs) {
         out.extend_from_slice(&MAGIC11);
+        require_ownership_section = true;
     } else if has_v10_closure_instr(funcs) {
         out.extend_from_slice(&MAGIC10);
+        require_ownership_section = false;
     } else if has_v9_sequence_instr(funcs) {
         out.extend_from_slice(&MAGIC9);
+        require_ownership_section = false;
     } else if has_v8_text_instr(funcs) {
         out.extend_from_slice(&MAGIC8);
+        require_ownership_section = false;
     } else if has_v7_clock_read_instr(funcs) {
         out.extend_from_slice(&MAGIC7);
+        require_ownership_section = false;
     } else if has_v6_event_post_instr(funcs) {
         out.extend_from_slice(&MAGIC6);
+        require_ownership_section = false;
     } else if has_v5_state_update_instr(funcs) {
         out.extend_from_slice(&MAGIC5);
+        require_ownership_section = false;
     } else if has_v4_state_query_instr(funcs) {
         out.extend_from_slice(&MAGIC4);
+        require_ownership_section = false;
     } else if has_v3_fx_math_instr(funcs) {
         out.extend_from_slice(&MAGIC3);
+        require_ownership_section = false;
     } else if has_v2_fx_instr(funcs) {
         out.extend_from_slice(&MAGIC2);
+        require_ownership_section = false;
     } else if has_v1_math_instr(funcs) {
         out.extend_from_slice(&MAGIC1);
+        require_ownership_section = false;
     } else {
         out.extend_from_slice(&MAGIC0);
+        require_ownership_section = false;
     }
     for f in funcs {
         let name_bytes = f.name.as_bytes();
@@ -998,7 +1015,7 @@ fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, Fr
             })?,
         );
         out.extend_from_slice(name_bytes);
-        let code = emit_semcode_function(f, debug_symbols)?;
+        let code = emit_semcode_function(f, debug_symbols, require_ownership_section)?;
         write_u32_le(
             &mut out,
             u32::try_from(code.len()).map_err(|_| FrontendError {
@@ -1011,7 +1028,11 @@ fn emit_semcode(funcs: &[IrFunction], debug_symbols: bool) -> Result<Vec<u8>, Fr
     Ok(out)
 }
 
-fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>, FrontendError> {
+fn emit_semcode_function(
+    f: &IrFunction,
+    debug_symbols: bool,
+    require_ownership_section: bool,
+) -> Result<Vec<u8>, FrontendError> {
     let mut interner = StringInterner::new();
     for instr in &f.instrs {
         match instr {
@@ -1126,7 +1147,7 @@ fn emit_semcode_function(f: &IrFunction, debug_symbols: bool) -> Result<Vec<u8>,
             write_u16_le(&mut code, col);
         }
     }
-    emit_ownership_events(&f.ownership_events, &mut code)?;
+    emit_ownership_events(&f.ownership_events, require_ownership_section, &mut code)?;
     code.extend_from_slice(&instr_stream);
     Ok(code)
 }
@@ -1634,9 +1655,16 @@ fn has_v12_record_field_ownership_events(funcs: &[IrFunction]) -> bool {
 
 fn emit_ownership_events(
     ownership_events: &[OwnershipPathEvent],
+    require_section: bool,
     out: &mut Vec<u8>,
 ) -> Result<(), FrontendError> {
     if ownership_events.is_empty() {
+        if require_section {
+            // Header claims CAP_OWNERSHIP_PATHS; emit an empty OWN0 section so
+            // the verifier check "at least one function has OWN0" passes.
+            out.extend_from_slice(&OWNERSHIP_SECTION_TAG);
+            write_u16_le(out, 0);
+        }
         return Ok(());
     }
 
@@ -2817,6 +2845,44 @@ fn lower_expr_with_expected(
                         "assert builtin is statement-only and cannot be used as expression value"
                             .to_string(),
                 });
+            }
+            // builtin len(sequence) -> i32
+            if resolve_symbol_name(arena, *name)? == "len" {
+                if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: "builtin 'len' takes exactly one positional argument"
+                            .to_string(),
+                    });
+                }
+                let (src, arg_ty) = lower_expr_with_expected(
+                    args[0].value,
+                    arena,
+                    next,
+                    out,
+                    env,
+                    loop_stack,
+                    fn_table,
+                    record_table,
+                    adt_table,
+                    None,
+                    ret_ty,
+                    closure_state,
+                )?;
+                return match &arg_ty {
+                    Type::Sequence(_) => {
+                        let dst = alloc(next);
+                        out.push(IrInstr::SequenceLen { dst, src });
+                        Ok((dst, Type::I32))
+                    }
+                    _ => Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin 'len' expects a Sequence argument, got {:?}",
+                            arg_ty
+                        ),
+                    }),
+                };
             }
             let sig = if let Some(s) = fn_table.get(name) {
                 s.clone()
@@ -7446,6 +7512,44 @@ fn lower_expr_stmt_with_parts(
             }
             out.push(IrInstr::Assert { cond });
             return Ok(());
+        }
+        // builtin len(sequence) — allowed as statement (result discarded)
+        if resolve_symbol_name(arena, *name)? == "len" {
+            if args.len() != 1 || args.iter().any(|a| a.name.is_some()) {
+                return Err(FrontendError {
+                    pos: 0,
+                    message: "builtin 'len' takes exactly one positional argument"
+                        .to_string(),
+                });
+            }
+            let (src, arg_ty) = lower_expr_with_expected(
+                args[0].value,
+                arena,
+                next,
+                out,
+                env,
+                loop_stack,
+                fn_table,
+                record_table,
+                adt_table,
+                None,
+                ret_ty,
+                closure_state,
+            )?;
+            return match &arg_ty {
+                Type::Sequence(_) => {
+                    let dst = alloc(next);
+                    out.push(IrInstr::SequenceLen { dst, src });
+                    Ok(())
+                }
+                _ => Err(FrontendError {
+                    pos: 0,
+                    message: format!(
+                        "builtin 'len' expects a Sequence argument, got {:?}",
+                        arg_ty
+                    ),
+                }),
+            };
         }
         let sig = if let Some(s) = fn_table.get(name) {
             s.clone()

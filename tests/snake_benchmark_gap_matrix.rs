@@ -73,6 +73,7 @@ fn snake_benchmark_positive_surface_passes_end_to_end() {
         "tests/fixtures/snake_benchmark/positive_loop_control.sm",
         "tests/fixtures/snake_benchmark/positive_sequence_indexing.sm",
         "tests/fixtures/snake_benchmark/positive_sequence_iteration.sm",
+        "tests/fixtures/snake_benchmark/positive_sequence_len.sm",
         "tests/fixtures/snake_benchmark/positive_closure_capture.sm",
     ] {
         check_run_compile_verify(rel);
@@ -82,11 +83,6 @@ fn snake_benchmark_positive_surface_passes_end_to_end() {
 #[test]
 fn snake_benchmark_negative_gap_suite_reports_current_blockers() {
     let cases = [
-        (
-            "tests/fixtures/snake_benchmark/negative_sequence_len.sm",
-            "E0201",
-            "unknown function 'len'",
-        ),
         (
             "tests/fixtures/snake_benchmark/negative_sequence_push.sm",
             "E0201",
