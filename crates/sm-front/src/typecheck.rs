@@ -2165,6 +2165,63 @@ fn infer_expr_type(
                     }),
                 };
             }
+            // builtin push(sequence, value) -> Sequence(T)  [persistent — returns new sequence]
+            if resolve_symbol_name(arena, *name)? == "push"
+                || resolve_symbol_name(arena, *name)? == "prepend"
+            {
+                let builtin_name = resolve_symbol_name(arena, *name)?;
+                if args.len() != 2 || args.iter().any(|a| a.name.is_some()) {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin '{builtin_name}' takes exactly two positional arguments"
+                        ),
+                    });
+                }
+                let seq_ty = infer_expr_type(
+                    args[0].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty.clone(),
+                    loop_stack,
+                    impl_list,
+                )?;
+                let Type::Sequence(seq_type) = &seq_ty else {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin '{builtin_name}' first argument must be a Sequence, got {:?}",
+                            seq_ty
+                        ),
+                    });
+                };
+                let elem_ty = seq_type.item.as_ref().clone();
+                let val_ty = infer_expr_type(
+                    args[1].value,
+                    arena,
+                    env,
+                    table,
+                    record_table,
+                    adt_table,
+                    ret_ty,
+                    loop_stack,
+                    impl_list,
+                )?;
+                if val_ty != elem_ty {
+                    return Err(FrontendError {
+                        pos: 0,
+                        message: format!(
+                            "builtin '{builtin_name}' second argument type {:?} does not match \
+                             sequence element type {:?}",
+                            val_ty, elem_ty
+                        ),
+                    });
+                }
+                return Ok(seq_ty);
+            }
             // builtin contains(sequence, value) -> bool
             if resolve_symbol_name(arena, *name)? == "contains" {
                 if args.len() != 2 || args.iter().any(|a| a.name.is_some()) {

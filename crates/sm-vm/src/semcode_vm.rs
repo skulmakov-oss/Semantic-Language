@@ -659,7 +659,7 @@ fn validate_function_bytecode(f: &FunctionBytecode) -> Result<(), RuntimeError> 
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             }
-            Opcode::SequenceContains => {
+            Opcode::SequenceContains | Opcode::SequencePush | Opcode::SequencePrepend => {
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
                 let _ = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
@@ -1393,6 +1393,39 @@ fn exec_loop<H: VmHostBridge>(vm: &mut VM, host: &mut H) -> Result<(), RuntimeEr
                 };
                 let search = get_reg(vm, frame_idx, val_reg)?;
                 set_reg(vm, frame_idx, dst, Value::Bool(items.contains(&search)))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequencePush => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let seq_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let val_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, seq_reg)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_PUSH first argument must be sequence".to_string(),
+                    ));
+                };
+                let new_val = get_reg(vm, frame_idx, val_reg)?;
+                let mut new_items = items;
+                new_items.push(new_val);
+                set_reg(vm, frame_idx, dst, Value::Sequence(new_items))?;
+                next_pc = cur - f.instr_start;
+            }
+            Opcode::SequencePrepend => {
+                let dst = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let seq_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let val_reg = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+                let sequence = get_reg(vm, frame_idx, seq_reg)?;
+                let Value::Sequence(items) = sequence else {
+                    return Err(RuntimeError::TypeMismatchRuntime(
+                        "SEQUENCE_PREPEND first argument must be sequence".to_string(),
+                    ));
+                };
+                let new_val = get_reg(vm, frame_idx, val_reg)?;
+                let mut new_items = Vec::with_capacity(items.len() + 1);
+                new_items.push(new_val);
+                new_items.extend(items);
+                set_reg(vm, frame_idx, dst, Value::Sequence(new_items))?;
                 next_pc = cur - f.instr_start;
             }
             Opcode::LoadVar => {
@@ -2279,6 +2312,18 @@ fn disasm_one(f: &FunctionBytecode, pc: usize) -> Result<(String, usize), Runtim
             let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             let v = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
             format!("SEQUENCE_CONTAINS r{}, r{}, r{}", d, s, v)
+        }
+        Opcode::SequencePush => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let v = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_PUSH r{}, r{}, r{}", d, s, v)
+        }
+        Opcode::SequencePrepend => {
+            let d = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let s = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            let v = read_u16_le(&f.code, &mut cur).map_err(map_format_err)?;
+            format!("SEQUENCE_PREPEND r{}, r{}, r{}", d, s, v)
         }
         Opcode::ClosureCall => {
             let has_dst = read_u8(&f.code, &mut cur).map_err(map_format_err)? != 0;

@@ -747,6 +747,32 @@ fn decode_operands(
             refs.required_capabilities |= CAP_SEQUENCE_VALUES;
             refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
         }
+        Opcode::SequencePush => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-push dst register"))?;
+            let seq = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-push seq register"))?;
+            let val = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-push val register"))?;
+            mark_reg(dst);
+            mark_reg(seq);
+            mark_reg(val);
+            refs.required_capabilities |= CAP_SEQUENCE_VALUES;
+            refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
+        }
+        Opcode::SequencePrepend => {
+            let dst = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-prepend dst register"))?;
+            let seq = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-prepend seq register"))?;
+            let val = read_u16_le(code, cursor)
+                .map_err(|_| invalid("truncated sequence-prepend val register"))?;
+            mark_reg(dst);
+            mark_reg(seq);
+            mark_reg(val);
+            refs.required_capabilities |= CAP_SEQUENCE_VALUES;
+            refs.required_capabilities |= CAP_SEQUENCE_ITERATION;
+        }
         Opcode::MakeClosure => {
             let dst = read_u16_le(code, cursor)
                 .map_err(|_| invalid("truncated closure dst register"))?;
