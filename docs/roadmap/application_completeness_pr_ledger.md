@@ -264,8 +264,10 @@ Current `main` still fails this benchmark family at the following points:
 
 ### D — Lookup State And Deterministic Randomness
 
-- `PR-D1` [required]
+- `PR-D1` [landed]
   Title: `docs/scope: define first-wave map surface`
+  Scope doc:
+  - `docs/roadmap/first_wave_map_surface.md`
   Goal:
   - open exactly one lookup-table family for benchmark-class application state
   Scope:
