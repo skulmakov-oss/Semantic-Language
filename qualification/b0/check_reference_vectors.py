@@ -14,7 +14,6 @@ Exit code 0 = no unexplained deltas. Exit code 1 = divergence found.
 """
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +22,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VECTORS = REPO_ROOT / "reference" / "b0" / "reference_vectors.json"
 PROBE_SOURCE = REPO_ROOT / "reference" / "b0" / "dump_b0_vectors.rs"
 COMPARED_KEYS = ["operation_family", "state_encoding", "not", "and", "or", "implies"]
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    # Write-then-replace so a pre-existing file at `path` is never left
+    # partially overwritten (disk full, permission revoked, interrupt
+    # mid-write): the target is always either its old bytes or the new
+    # bytes in full, never a half-written mix.
+    tmp = path.with_name(path.name + ".b0-tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
 
 
 def extract_live(reference_checkout: Path) -> dict:
@@ -36,11 +45,14 @@ def extract_live(reference_checkout: Path) -> dict:
     installed_probe = examples_dir / "dump_b0_vectors.rs"
     # Never clobber pre-existing content at this path (local WIP in a shared
     # checkout, or a future upstream file of the same name): back it up and
-    # restore it, rather than just skipping deletion of *our* copy.
+    # restore it, rather than just skipping deletion of *our* copy. The
+    # backup read and the first write both happen inside try/finally so the
+    # restore below still runs even if the write itself fails partway.
     original_bytes = installed_probe.read_bytes() if installed_probe.exists() else None
-    shutil.copyfile(PROBE_SOURCE, installed_probe)
+    probe_bytes = PROBE_SOURCE.read_bytes()
 
     try:
+        _atomic_write(installed_probe, probe_bytes)
         result = subprocess.run(
             ["cargo", "run", "-p", "semantic-core-quad", "--example", "dump_b0_vectors", "--quiet"],
             cwd=reference_checkout,
@@ -52,7 +64,7 @@ def extract_live(reference_checkout: Path) -> dict:
         sys.exit(f"error: reference probe failed to run:\n{exc.stderr}")
     finally:
         if original_bytes is not None:
-            installed_probe.write_bytes(original_bytes)
+            _atomic_write(installed_probe, original_bytes)
         else:
             installed_probe.unlink(missing_ok=True)
             if not examples_dir_existed:
