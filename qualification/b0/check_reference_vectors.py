@@ -15,12 +15,16 @@ mutable state there.
 Usage:
     python3 qualification/b0/check_reference_vectors.py --reference-checkout <path-to-Semantic-repo>
 
-Exit code 0 = no unexplained deltas and the corpus is structurally
-complete. Exit code 1 = divergence found, OR a required field is missing,
-mis-shaped, has malformed/out-of-domain entries, or does not cover every
-operand combination exactly once, on either side (fail-closed: a field or
-its entries degrading identically on both sides must never compare equal
-by accident).
+Exit code 0 means all three legs of the triangle hold: the frozen corpus
+matches an independently-computed normative B0 algebra, the live
+extraction matches that same normative algebra, and (redundantly, but
+checked explicitly) the frozen corpus matches the live extraction. Exit
+code 1 means any of: a required field is missing, mis-shaped, or has
+malformed/out-of-domain/incorrectly-covered entries on either side
+(fail-closed); either side disagrees with the normative algebra (closes
+the case where frozen corpus and live extraction are corrupted
+*identically*, which frozen==live agreement alone cannot catch); or an
+unexplained frozen-vs-live delta.
 """
 import argparse
 import json
@@ -42,6 +46,48 @@ FROZEN_STATE_ENCODING = {"N": 0, "F": 1, "T": 2, "S": 3}
 UNARY_TABLES = {"not": ("a",)}
 BINARY_TABLES = {"and": ("a", "b"), "or": ("a", "b"), "implies": ("a", "b"), "eq": ("a", "b")}
 TABLE_LEN = {**{k: 4 for k in UNARY_TABLES}, **{k: 16 for k in BINARY_TABLES}}
+CANONICAL_ORDER = ["N", "F", "T", "S"]  # matches dump_b0_vectors.rs's explicit row/column order
+NORMATIVE_TABLE_KEYS = ["not", "and", "or", "implies", "eq"]
+
+
+def _normative_tables() -> dict:
+    """Independently re-derives the frozen B0 legacy-lattice algebra from
+    FROZEN_STATE_ENCODING's own bit values and the documented formulas
+    (docs/spec/quad_logic_frame_v1.md: NOT = swap truth/falsity planes,
+    AND = bitwise AND, OR = bitwise OR, IMPLIES = NOT(a) OR b) - entirely
+    independent of both the Rust reference and the committed corpus.
+
+    This is the third leg of the triangle: frozen==live agreement alone
+    proves nothing if both sides can be corrupted identically (e.g. `T AND
+    T` changed to `S` in both the corpus and the probe at once - shape,
+    domain and coverage checks all still pass, and frozen==live trivially
+    holds). Every table is additionally required to match this
+    independently-computed oracle, which touches neither of the two files
+    under comparison.
+    """
+    bits = FROZEN_STATE_ENCODING
+    name_of = {v: k for k, v in bits.items()}
+
+    def not_(a):
+        c = bits[a]
+        return name_of[((c & 0b10) >> 1) | ((c & 0b01) << 1)]
+
+    def and_(a, b):
+        return name_of[bits[a] & bits[b]]
+
+    def or_(a, b):
+        return name_of[bits[a] | bits[b]]
+
+    def implies_(a, b):
+        return name_of[bits[not_(a)] | bits[b]]
+
+    return {
+        "not": [{"a": a, "result": not_(a)} for a in CANONICAL_ORDER],
+        "and": [{"a": a, "b": b, "result": and_(a, b)} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
+        "or": [{"a": a, "b": b, "result": or_(a, b)} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
+        "implies": [{"a": a, "b": b, "result": implies_(a, b)} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
+        "eq": [{"a": a, "b": b, "result": a == b} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
+    }
 
 
 def _is_plain_int(v) -> bool:
@@ -172,6 +218,26 @@ def main() -> int:
         print("FAIL: corpus is not structurally complete (fail-closed):")
         for p in shape_problems:
             print(f"  - {p}")
+        return 1
+
+    normative = _normative_tables()
+    normative_problems = []
+    for key in NORMATIVE_TABLE_KEYS:
+        for label, data in (("frozen", frozen), ("live", live)):
+            if data[key] != normative[key]:
+                normative_problems.append((label, key))
+    if normative_problems:
+        print(
+            "FAIL: disagrees with the independently-computed normative B0 algebra "
+            "(frozen==live agreement alone is not sufficient - both sides can be "
+            "wrong the same way):"
+        )
+        for label, key in normative_problems:
+            data = frozen if label == "frozen" else live
+            print(f"  --- {label}.{key} ---")
+            print(f"  {json.dumps(data[key])}")
+            print(f"  --- normative.{key} ---")
+            print(f"  {json.dumps(normative[key])}")
         return 1
 
     deltas = diff(frozen, live)
