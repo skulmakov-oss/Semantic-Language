@@ -34,6 +34,11 @@ FROZEN_VECTORS = REPO_ROOT / "reference" / "b0" / "reference_vectors.json"
 PROBE_SOURCE = REPO_ROOT / "reference" / "b0" / "dump_b0_vectors.rs"
 COMPARED_KEYS = ["operation_family", "state_encoding", "not", "and", "or", "implies", "eq"]
 STATES = {"N", "F", "T", "S"}
+# Frozen by the B0-00 contract itself (docs/bootstrap/b0/foundation_contract.md),
+# not just "some" shape: after a slice is frozen, the validator must reject a
+# technically well-formed but wrong value here, not merely check its shape.
+FROZEN_OPERATION_FAMILY = "legacy_lattice"
+FROZEN_STATE_ENCODING = {"N": 0, "F": 1, "T": 2, "S": 3}
 UNARY_TABLES = {"not": ("a",)}
 BINARY_TABLES = {"and": ("a", "b"), "or": ("a", "b"), "implies": ("a", "b"), "eq": ("a", "b")}
 TABLE_LEN = {**{k: 4 for k in UNARY_TABLES}, **{k: 16 for k in BINARY_TABLES}}
@@ -123,16 +128,15 @@ def check_shape(label: str, data: dict) -> list:
         value = data[key]
 
         if key == "operation_family":
-            if not isinstance(value, str) or not value:
-                problems.append(f"{label}.{key} = {value!r}, expected a non-empty string")
+            if value != FROZEN_OPERATION_FAMILY:
+                problems.append(f"{label}.{key} = {value!r}, expected exactly {FROZEN_OPERATION_FAMILY!r}")
             continue
 
         if key == "state_encoding":
-            if not isinstance(value, dict) or set(value.keys()) != STATES:
-                got = sorted(value.keys()) if isinstance(value, dict) else repr(value)
-                problems.append(f"{label}.{key} keys are {got}, expected {sorted(STATES)}")
-            elif not all(_is_plain_int(v) for v in value.values()) or set(value.values()) != {0, 1, 2, 3}:
-                problems.append(f"{label}.{key} values are {value}, expected a bijection onto {{0,1,2,3}}")
+            if not isinstance(value, dict) or not all(_is_plain_int(v) for v in value.values()):
+                problems.append(f"{label}.{key} = {value!r}, expected int values")
+            elif value != FROZEN_STATE_ENCODING:
+                problems.append(f"{label}.{key} = {value}, expected exactly {FROZEN_STATE_ENCODING}")
             continue
 
         operand_keys = UNARY_TABLES.get(key) or BINARY_TABLES.get(key)
