@@ -5,20 +5,28 @@ Re-extracts the legacy-lattice Quad contract from a live checkout of the
 reference repository (`skulmakov-oss/Semantic`) through several independent
 public oracle surfaces - `semantic-core-quad::QuadState`/`QuadroReg32`
 (state encoding, not/and/or/implies/eq), `sm_format::Opcode` (opcode bytes,
-minimum SemCode revision), and the real `sm_emit`->`sm_verify`->`sm_vm`
-compile/verify/run pipeline (vm_eq: the source-language `==` operator,
-compiled and executed for real) - by building and running a throwaway
-crate with `path` dependencies on those reference crates, then compares
-the result byte-for-byte (structurally) against the frozen corpus
-committed at reference/b0/reference_vectors.json. The host-ABI boundary
-(quad_to_u8/quad_from_abi) is a private function pair with no lightweight
-public entry point; that specific claim is instead proven by requiring
+minimum SemCode revision), a hand-built `IrInstr::GateWrite` program run
+with a real `prom_abi::RecordingHostAbi` (abi_encoding: the outbound
+host-ABI byte), and the real `sm_emit`->`sm_verify`->`sm_vm` compile/
+verify/run pipeline (vm_eq: the source-language `==` operator, compiled
+and executed for real) - by building and running a throwaway crate with
+`path` dependencies on those reference crates, then compares the result
+byte-for-byte (structurally) against the frozen corpus committed at
+reference/b0/reference_vectors.json. The *inbound* host-ABI direction
+(quad_from_abi, including rejection of out-of-domain bytes) doesn't reduce
+to a value comparison; that specific claim is instead proven by requiring
 the reference's own exhaustive tests for it to run and pass (see
 check_abi_boundary_tests). The probe project lives entirely in its own
-temp directory (own Cargo.toml, own Cargo.lock, own target/) - the
-reference checkout is only ever read from, never written to, so two
-concurrent invocations against the same checkout cannot race on shared
-mutable state there.
+temp directory (own Cargo.toml, own Cargo.lock, own target/), so no
+git-tracked file in the reference checkout is ever modified there. The one
+exception is check_abi_boundary_tests, which runs `cargo test` directly in
+the checkout (there is no source-language syntax to reach a host-effect
+call from an isolated crate) - CARGO_TARGET_DIR redirects its build output
+to its own throwaway temp directory per invocation, so no tracked content
+or shared build state is touched or raced on there either; see that
+function's docstring for why `--frozen`/`--locked` don't apply here (a
+gitignored Cargo.lock may still be generated in the checkout root, the
+same as for any ordinary build of this repository).
 
 Usage:
     python3 qualification/b0/check_reference_vectors.py --reference-checkout <path-to-Semantic-repo>
@@ -47,6 +55,7 @@ unexplained frozen-vs-live delta.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -59,6 +68,7 @@ PROBE_SOURCE = REPO_ROOT / "reference" / "b0" / "dump_b0_vectors.rs"
 COMPARED_KEYS = [
     "operation_family",
     "state_encoding",
+    "abi_encoding",
     "opcode_encoding",
     "minimum_semcode_revision",
     "not",
@@ -183,7 +193,17 @@ def _table_problems(label: str, key: str, entries, operand_keys) -> list:
         )
     return problems
 
-PROBE_CRATES = ["semantic-core-quad", "sm-format", "sm-emit", "sm-verify", "sm-vm"]
+PROBE_CRATES = [
+    "semantic-core-quad",
+    "sm-format",
+    "sm-emit",
+    "sm-verify",
+    "sm-vm",
+    "sm-ir",
+    "sm-front",
+    "prom-abi",
+    "prom-cap",
+]
 
 CARGO_TOML_HEADER = """\
 [package]
@@ -239,7 +259,7 @@ def check_shape(label: str, data: dict) -> list:
                 problems.append(f"{label}.{key} = {value!r}, expected exactly {FROZEN_OPERATION_FAMILY!r}")
             continue
 
-        if key == "state_encoding":
+        if key in ("state_encoding", "abi_encoding"):
             if not isinstance(value, dict) or not all(_is_plain_int(v) for v in value.values()):
                 problems.append(f"{label}.{key} = {value!r}, expected int values")
             elif value != FROZEN_STATE_ENCODING:
@@ -335,26 +355,47 @@ def check_checkout_identity(reference_checkout: Path, allow_drift: bool) -> list
 
 
 def check_abi_boundary_tests(reference_checkout: Path) -> list:
-    # sm-vm::quad_to_u8/quad_from_abi (the host-ABI 0/1/2/3 <-> N/F/T/S
-    # boundary foundation_contract.md calls a frozen fact) are private
-    # functions with no lightweight public entry point - reaching them
-    # requires a full host-call round trip through
-    # run_verified_semcode_with_host_and_capabilities* and a
-    # PrometheusHostAbi implementation, which is materially more surface
-    # than this probe should take on. Proving that specific claim instead
-    # means requiring the reference's own exhaustive tests for it to
-    # actually run and pass, at the pinned commit - not just exit 0 (which
-    # a test filter matching nothing would also report).
+    # sm-vm::quad_from_abi's *rejection* behavior (252 out-of-domain bytes,
+    # not just the 4 canonical ones) is a private function with no direct
+    # external entry point and doesn't reduce to a simple JSON value
+    # comparison, so this specific claim is proven by requiring the
+    # reference's own exhaustive tests for it to actually run and pass, at
+    # the pinned commit - not just exit 0 (which a test filter matching
+    # nothing would also report). `cargo test` runs directly in
+    # reference_checkout (there is no source-language syntax to reach a
+    # GateRead/GateWrite host call, so this can't be an isolated-crate
+    # probe the way extract_live is) - CARGO_TARGET_DIR redirects build
+    # output to a throwaway temp dir instead of the checkout's own target/.
+    #
+    # `--frozen`/`--locked` were tried and dropped: Cargo.lock is gitignored
+    # in this repository (`.gitignore:9`), so a genuinely fresh checkout -
+    # exactly the case this default path exists to support - has none yet,
+    # and both flags refuse to *create* a missing lock file, hard-failing
+    # every time on a truly clean clone or worktree (confirmed empirically:
+    # only appeared to work in an already-built directory with a
+    # pre-existing Cargo.lock left over from earlier commands). What this
+    # check actually guarantees is that no *git-tracked* file in the
+    # checkout is ever modified (verified by `git status --porcelain`,
+    # which does not report gitignored paths); a local Cargo.lock may be
+    # generated in the checkout root exactly as it would for any ordinary
+    # build of this repository, which is expected Cargo behavior, not a
+    # tracked-content mutation.
     problems = []
-    try:
-        result = subprocess.run(
-            ["cargo", "test", "-p", "sm-vm", "--quiet", "--", *FROZEN_ABI_BOUNDARY_TESTS, "--exact"],
-            cwd=reference_checkout,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        return [f"could not run cargo test for the ABI boundary: {exc}"]
+    with tempfile.TemporaryDirectory(prefix="b0-abi-target-") as target_dir:
+        env = dict(os.environ, CARGO_TARGET_DIR=target_dir)
+        try:
+            result = subprocess.run(
+                [
+                    "cargo", "test", "-p", "sm-vm", "--quiet",
+                    "--", *FROZEN_ABI_BOUNDARY_TESTS, "--exact",
+                ],
+                cwd=reference_checkout,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            return [f"could not run cargo test for the ABI boundary: {exc}"]
 
     # --quiet suppresses per-test "test <name> ... ok" lines (just dots), so
     # parse the "test result: N passed; M failed" summaries instead - `-p

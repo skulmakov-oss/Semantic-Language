@@ -29,16 +29,76 @@
 //   public `.byte()` and `.minimum_semcode_revision()` methods for
 //   QNot/QAnd/QOr/QImpl.
 //
-// The host-ABI boundary (`sm-vm::quad_to_u8`/`quad_from_abi`) is also a
-// private function with no lightweight public entry point (reaching it
-// requires a full host-call round trip through
-// `run_verified_semcode_with_host_and_capabilities*` and a
-// `PrometheusHostAbi` implementation - materially more surface than this
-// probe should take on). That specific claim is instead proven by
-// `qualification/b0/check_reference_vectors.py` running the reference
-// repository's own exhaustive tests for it directly.
+// The host-ABI boundary has two directions, both private functions with no
+// direct external entry point:
+// - inbound (quad_from_abi, byte -> Quad, including *rejection* of the 252
+//   out-of-domain bytes) is proven by `check_reference_vectors.py` running
+//   the reference's own exhaustive tests for it directly, since rejection
+//   behavior across 256 inputs doesn't reduce to a simple JSON comparison.
+// - outbound (quad_to_u8, Quad -> byte) IS mechanically extracted here
+//   (`abi_encoding`), via the real host-call round trip: a hand-built
+//   `IrInstr::GateWrite` program (the same low-level construction the
+//   reference's own inbound tests use, since there is no `.sm` source
+//   syntax for a host effect call), executed through the public
+//   `run_verified_semcode_with_host_and_capabilities` with a real
+//   `prom_abi::RecordingHostAbi`, reading back the exact byte it recorded.
+use prom_abi::{AbiValue, RecordingHostAbi};
+use prom_cap::{CapabilityKind, CapabilityManifest};
 use semantic_core_quad::{QuadState, QuadroReg32};
+use sm_ir::{IrFunction, IrInstr};
 use sm_vm::Value;
+
+// `IrInstr::LoadQ`'s `val` field is `sm_front::types::QuadVal` (the
+// frontend/IR-level type), not `sm_vm::QuadVal` (the VM value-level type) -
+// distinct types, per the B0-00 duplicate-owner audit.
+fn quad_val(s: QuadState) -> sm_front::types::QuadVal {
+    match s {
+        QuadState::N => sm_front::types::QuadVal::N,
+        QuadState::F => sm_front::types::QuadVal::F,
+        QuadState::T => sm_front::types::QuadVal::T,
+        QuadState::S => sm_front::types::QuadVal::S,
+    }
+}
+
+/// Builds and runs a tiny program that loads `state` into a register and
+/// writes it out via the real `GateWrite` host call, then reads back the
+/// exact byte the host received - the real outbound host-ABI round trip,
+/// not a re-derivation of `quad_to_u8`.
+fn abi_outbound_byte(state: QuadState) -> u8 {
+    let instrs = vec![
+        IrInstr::LoadQ {
+            dst: 0,
+            val: quad_val(state),
+        },
+        IrInstr::GateWrite {
+            device_id: 0,
+            port: 0,
+            src: 0,
+        },
+        IrInstr::Ret { src: None },
+    ];
+    let bytes = sm_ir::emit_ir_to_semcode(
+        &[IrFunction {
+            name: "main".to_string(),
+            instrs,
+            ownership_events: Vec::new(),
+            params: Vec::new(),
+        }],
+        false,
+    )
+    .expect("emit abi_outbound_byte probe program");
+
+    let mut host = RecordingHostAbi::default();
+    let mut capabilities = CapabilityManifest::new();
+    capabilities.allow(CapabilityKind::GateWrite);
+    sm_vm::run_verified_semcode_with_host_and_capabilities(&bytes, &mut host, &capabilities)
+        .expect("run abi_outbound_byte probe program");
+
+    match host.writes.as_slice() {
+        [(_, _, AbiValue::Quad(byte))] => *byte,
+        other => panic!("expected exactly one recorded Quad gate_write, got {other:?}"),
+    }
+}
 
 fn name(s: QuadState) -> &'static str {
     match s {
@@ -91,6 +151,16 @@ fn main() {
         QuadState::F.bits(),
         QuadState::T.bits(),
         QuadState::S.bits()
+    );
+
+    // Outbound host-ABI byte, via a real GateWrite round trip - see
+    // abi_outbound_byte's doc comment.
+    println!(
+        "  \"abi_encoding\": {{ \"N\": {}, \"F\": {}, \"T\": {}, \"S\": {} }},",
+        abi_outbound_byte(QuadState::N),
+        abi_outbound_byte(QuadState::F),
+        abi_outbound_byte(QuadState::T),
+        abi_outbound_byte(QuadState::S)
     );
 
     // sm_format::Opcode's own public byte()/minimum_semcode_revision(), not

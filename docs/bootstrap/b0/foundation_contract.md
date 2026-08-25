@@ -226,20 +226,26 @@ verified:
    via `QuadState::bits()` into `reference/b0/reference_vectors.json`'s
    `state_encoding` field (also backed by the reference's own
    `quad_state_encoding_is_frozen` test).
-2. The SemCode host-ABI boundary (`quad_to_u8`/`quad_from_abi`) — this is
-   the one place external, untrusted bytes are converted to `Quad` and is
-   explicitly documented as a closed 4-value domain, not a raw byte. Both
-   functions are private with no lightweight public entry point (reaching
-   them requires a full host-call round trip through
-   `run_verified_semcode_with_host_and_capabilities*` and a
-   `PrometheusHostAbi` implementation), so this claim is proven not by
-   extraction but by `qualification/b0/check_reference_vectors.py`
-   requiring the reference's own exhaustive tests for it
-   (`quad_from_abi_matches_canonical_domain_exhaustively`,
-   `gate_read_admits_every_canonical_quad_byte`,
-   `gate_read_rejects_every_out_of_domain_quad_byte`) to actually run and
-   pass at the pinned commit — not merely exit 0, which a test filter
-   matching nothing would also report.
+2. The SemCode host-ABI boundary, both directions, both private functions
+   with no direct external entry point:
+   - **Outbound** (`quad_to_u8`, `Quad -> byte`) is mechanically extracted
+     into the `abi_encoding` field via a real host-call round trip: a
+     hand-built `IrInstr::LoadQ`/`GateWrite` program (there is no `.sm`
+     source syntax for a host-effect call, so this is constructed the same
+     way the reference's own inbound tests are), run through the public
+     `run_verified_semcode_with_host_and_capabilities` with a real
+     `prom_abi::RecordingHostAbi`, reading back the exact byte recorded.
+   - **Inbound** (`quad_from_abi`), including *rejection* of the 252
+     out-of-domain bytes (not just the 4 canonical ones — this is
+     explicitly documented as a closed 4-value domain, not a raw byte),
+     doesn't reduce to a single JSON value comparison, so this claim is
+     proven not by extraction but by `qualification/b0/check_reference_vectors.py`
+     requiring the reference's own exhaustive tests for it
+     (`quad_from_abi_matches_canonical_domain_exhaustively`,
+     `gate_read_admits_every_canonical_quad_byte`,
+     `gate_read_rejects_every_out_of_domain_quad_byte`) to actually run and
+     pass at the pinned commit — not merely exit 0, which a test filter
+     matching nothing would also report.
 
 The `QAnd`/`QOr`/`QNot`/`QImpl` **opcode bytes** (`0x10`/`0x11`/`0x12`/`0x13`,
 `crates/sm-format/src/local_format.rs:412-415`) and their
