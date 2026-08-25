@@ -1,0 +1,285 @@
+{
+  "contract": "B0-00 Foundation Quad primitive (legacy lattice family)",
+  "reference": {
+    "repository": "skulmakov-oss/Semantic",
+    "commit": "979def10135e1a90d7333d5501405343d498579e",
+    "commit_subject": "test(sm-vm): prove invocation rejection and determinism contracts (#1839)",
+    "commit_date": "2026-08-25T12:36:48+05:00",
+    "crate": "semantic-core-quad",
+    "crate_version": "0.1.0",
+    "generator": "crates/semantic-core-quad/examples/dump_b0_vectors.rs (temporary probe, not committed to the reference repo; source is reproduced in docs/bootstrap/b0/foundation_contract.md appendix A)",
+    "generation_command": "cargo run -p semantic-core-quad --example dump_b0_vectors --quiet"
+  },
+  "excluded_family": "QTruth (QTruthAnd/QTruthOr/QTruthNot/QTruthImpl) is a separate, later-added Belnap truth-table family gated behind SemCode minimum revision 19 (#1732). See docs/bootstrap/b0/foundation_contract.md section 'Explicit exclusions'.",
+  "operation_family": "legacy_lattice",
+  "state_encoding": {
+    "N": 0,
+    "F": 1,
+    "T": 2,
+    "S": 3
+  },
+  "not": [
+    {
+      "a": "N",
+      "result": "N"
+    },
+    {
+      "a": "F",
+      "result": "T"
+    },
+    {
+      "a": "T",
+      "result": "F"
+    },
+    {
+      "a": "S",
+      "result": "S"
+    }
+  ],
+  "and": [
+    {
+      "a": "N",
+      "b": "N",
+      "result": "N"
+    },
+    {
+      "a": "N",
+      "b": "F",
+      "result": "N"
+    },
+    {
+      "a": "N",
+      "b": "T",
+      "result": "N"
+    },
+    {
+      "a": "N",
+      "b": "S",
+      "result": "N"
+    },
+    {
+      "a": "F",
+      "b": "N",
+      "result": "N"
+    },
+    {
+      "a": "F",
+      "b": "F",
+      "result": "F"
+    },
+    {
+      "a": "F",
+      "b": "T",
+      "result": "N"
+    },
+    {
+      "a": "F",
+      "b": "S",
+      "result": "F"
+    },
+    {
+      "a": "T",
+      "b": "N",
+      "result": "N"
+    },
+    {
+      "a": "T",
+      "b": "F",
+      "result": "N"
+    },
+    {
+      "a": "T",
+      "b": "T",
+      "result": "T"
+    },
+    {
+      "a": "T",
+      "b": "S",
+      "result": "T"
+    },
+    {
+      "a": "S",
+      "b": "N",
+      "result": "N"
+    },
+    {
+      "a": "S",
+      "b": "F",
+      "result": "F"
+    },
+    {
+      "a": "S",
+      "b": "T",
+      "result": "T"
+    },
+    {
+      "a": "S",
+      "b": "S",
+      "result": "S"
+    }
+  ],
+  "or": [
+    {
+      "a": "N",
+      "b": "N",
+      "result": "N"
+    },
+    {
+      "a": "N",
+      "b": "F",
+      "result": "F"
+    },
+    {
+      "a": "N",
+      "b": "T",
+      "result": "T"
+    },
+    {
+      "a": "N",
+      "b": "S",
+      "result": "S"
+    },
+    {
+      "a": "F",
+      "b": "N",
+      "result": "F"
+    },
+    {
+      "a": "F",
+      "b": "F",
+      "result": "F"
+    },
+    {
+      "a": "F",
+      "b": "T",
+      "result": "S"
+    },
+    {
+      "a": "F",
+      "b": "S",
+      "result": "S"
+    },
+    {
+      "a": "T",
+      "b": "N",
+      "result": "T"
+    },
+    {
+      "a": "T",
+      "b": "F",
+      "result": "S"
+    },
+    {
+      "a": "T",
+      "b": "T",
+      "result": "T"
+    },
+    {
+      "a": "T",
+      "b": "S",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "N",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "F",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "T",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "S",
+      "result": "S"
+    }
+  ],
+  "implies": [
+    {
+      "a": "N",
+      "b": "N",
+      "result": "N"
+    },
+    {
+      "a": "N",
+      "b": "F",
+      "result": "F"
+    },
+    {
+      "a": "N",
+      "b": "T",
+      "result": "T"
+    },
+    {
+      "a": "N",
+      "b": "S",
+      "result": "S"
+    },
+    {
+      "a": "F",
+      "b": "N",
+      "result": "T"
+    },
+    {
+      "a": "F",
+      "b": "F",
+      "result": "S"
+    },
+    {
+      "a": "F",
+      "b": "T",
+      "result": "T"
+    },
+    {
+      "a": "F",
+      "b": "S",
+      "result": "S"
+    },
+    {
+      "a": "T",
+      "b": "N",
+      "result": "F"
+    },
+    {
+      "a": "T",
+      "b": "F",
+      "result": "F"
+    },
+    {
+      "a": "T",
+      "b": "T",
+      "result": "S"
+    },
+    {
+      "a": "T",
+      "b": "S",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "N",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "F",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "T",
+      "result": "S"
+    },
+    {
+      "a": "S",
+      "b": "S",
+      "result": "S"
+    }
+  ]
+}
