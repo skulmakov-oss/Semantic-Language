@@ -7,7 +7,7 @@
     "commit_date": "2026-08-25T12:36:48+05:00",
     "crate": "semantic-core-quad",
     "crate_version": "0.1.0",
-    "generator": "reference/b0/dump_b0_vectors.rs, built and run as an isolated throwaway crate (path dependency on this reference checkout's crates/semantic-core-quad; the checkout is only ever read, never written to) by qualification/b0/check_reference_vectors.py. not/and/or/implies are computed via QuadroReg32 lane 0 + lattice_inverse/lattice_meet/lattice_join, the exact call chain sm-vm::quad_not/quad_and/quad_or/quad_implies use - not QuadState's own separately-implemented inverse/meet/join. eq is QuadState's PartialEq, matching sm-vm::value_eq's Value::Quad(x) == Value::Quad(y). Row/column order is an explicit N/F/T/S literal in the probe, not QuadState::ALL's own order.",
+    "generator": "reference/b0/dump_b0_vectors.rs, built and run as an isolated throwaway crate (path dependencies on this reference checkout's crates/semantic-core-quad, sm-format, sm-emit, sm-verify, sm-vm; the checkout is only ever read, never written to) by qualification/b0/check_reference_vectors.py. not/and/or/implies are computed via QuadroReg32 lane 0 + lattice_inverse/lattice_meet/lattice_join, the exact call chain sm-vm::quad_not/quad_and/quad_or/quad_implies use - not QuadState's own separately-implemented inverse/meet/join. eq is QuadState's own derived PartialEq. vm_eq is the source-language == operator, compiled and run through sm_emit::compile_program_to_semcode -> sm_verify::verify_semcode_token -> sm_vm::run_verified_function_semcode_with_args, exercising Opcode::CmpEq's runtime handler (which calls the VM's private value_eq function) - a genuinely different path from eq. opcode_encoding/minimum_semcode_revision are sm_format::Opcode's own public byte()/minimum_semcode_revision() methods. Row/column order is an explicit N/F/T/S literal in the probe, not QuadState::ALL's own order. The host-ABI boundary (quad_to_u8/quad_from_abi) is a private function pair with no lightweight public entry point; that claim is proven separately by check_reference_vectors.py running the reference's own exhaustive tests for it (semcode_vm::tests::quad_from_abi_matches_canonical_domain_exhaustively, gate_read_admits_every_canonical_quad_byte, gate_read_rejects_every_out_of_domain_quad_byte), not by extraction into this file.",
     "generation_command": "python3 qualification/b0/check_reference_vectors.py --reference-checkout <path-to-Semantic-repo>"
   },
   "excluded_family": "QTruth (QTruthAnd/QTruthOr/QTruthNot/QTruthImpl) is a separate, later-added Belnap truth-table family gated behind SemCode minimum revision 19 (#1732). See docs/bootstrap/b0/foundation_contract.md section 'Explicit exclusions'.",
@@ -17,6 +17,18 @@
     "F": 1,
     "T": 2,
     "S": 3
+  },
+  "opcode_encoding": {
+    "QNot": 18,
+    "QAnd": 16,
+    "QOr": 17,
+    "QImpl": 19
+  },
+  "minimum_semcode_revision": {
+    "QNot": 1,
+    "QAnd": 1,
+    "QOr": 1,
+    "QImpl": 1
   },
   "not": [
     {
@@ -283,6 +295,88 @@
     }
   ],
   "eq": [
+    {
+      "a": "N",
+      "b": "N",
+      "result": true
+    },
+    {
+      "a": "N",
+      "b": "F",
+      "result": false
+    },
+    {
+      "a": "N",
+      "b": "T",
+      "result": false
+    },
+    {
+      "a": "N",
+      "b": "S",
+      "result": false
+    },
+    {
+      "a": "F",
+      "b": "N",
+      "result": false
+    },
+    {
+      "a": "F",
+      "b": "F",
+      "result": true
+    },
+    {
+      "a": "F",
+      "b": "T",
+      "result": false
+    },
+    {
+      "a": "F",
+      "b": "S",
+      "result": false
+    },
+    {
+      "a": "T",
+      "b": "N",
+      "result": false
+    },
+    {
+      "a": "T",
+      "b": "F",
+      "result": false
+    },
+    {
+      "a": "T",
+      "b": "T",
+      "result": true
+    },
+    {
+      "a": "T",
+      "b": "S",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "N",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "F",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "T",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "S",
+      "result": true
+    }
+  ],
+  "vm_eq": [
     {
       "a": "N",
       "b": "N",

@@ -4,20 +4,41 @@
 // and is never written into it. It is copied here for reproducibility;
 // `qualification/b0/check_reference_vectors.py` builds and runs it as the
 // `src/main.rs` of a throwaway crate in its own temp directory, depending
-// on the reference checkout's `crates/semantic-core-quad` via a `path`
-// dependency - so the reference checkout is only ever read from.
+// on the reference checkout's `semantic-core-quad`/`sm-format`/`sm-emit`/
+// `sm-verify`/`sm-vm` crates via `path` dependencies - so the reference
+// checkout is only ever read from.
 //
-// NOT/AND/OR/IMPLIES are computed by routing a single value through lane 0
-// of a `QuadroReg32` and calling `.lattice_inverse()`/`.lattice_meet()`/
-// `.lattice_join()` - the exact same call chain as `sm-vm`'s
-// `quad_not`/`quad_and`/`quad_or`/`quad_implies`
-// (`crates/sm-vm/src/semcode_vm.rs:3153-3168`, via its `quad_lane0`/
-// `quad_lane0_value` helpers), not `QuadState`'s own (separately
-// implemented) `inverse`/`meet`/`join` methods - so a divergence introduced
-// only in the packed-register lattice path is exercised, not bypassed.
-// Equality is `QuadState`'s own `PartialEq`, matching `sm-vm::value_eq`'s
-// `Value::Quad(x) == Value::Quad(y)` (`x == y` on the bridged `QuadVal`).
+// Four independent oracle surfaces, each exercised through its own real
+// entry points rather than one one reimplemented by hand:
+//
+// - not/and/or/implies: lane 0 of a `QuadroReg32`, via
+//   `.lattice_inverse()`/`.lattice_meet()`/`.lattice_join()` - the exact
+//   call chain `sm-vm::quad_not`/`quad_and`/`quad_or`/`quad_implies` use
+//   (`crates/sm-vm/src/semcode_vm.rs:3153-3168`), not `QuadState`'s own
+//   separately-implemented single-value methods.
+// - eq: `QuadState`'s own derived `PartialEq`.
+// - vm_eq: the *source-language* `==` operator on quad literals, compiled
+//   and run through the real public pipeline
+//   (`sm_emit::compile_program_to_semcode` ->
+//   `sm_verify::verify_semcode_token` ->
+//   `sm_vm::run_verified_function_semcode_with_args`) - a genuinely
+//   different code path from `eq` (the VM's `CmpEq` opcode, not
+//   `QuadState::PartialEq`), since `sm-vm`'s own `value_eq` is a private
+//   function with no direct external entry point.
+// - opcode_encoding / minimum_semcode_revision: `sm_format::Opcode`'s own
+//   public `.byte()` and `.minimum_semcode_revision()` methods for
+//   QNot/QAnd/QOr/QImpl.
+//
+// The host-ABI boundary (`sm-vm::quad_to_u8`/`quad_from_abi`) is also a
+// private function with no lightweight public entry point (reaching it
+// requires a full host-call round trip through
+// `run_verified_semcode_with_host_and_capabilities*` and a
+// `PrometheusHostAbi` implementation - materially more surface than this
+// probe should take on). That specific claim is instead proven by
+// `qualification/b0/check_reference_vectors.py` running the reference
+// repository's own exhaustive tests for it directly.
 use semantic_core_quad::{QuadState, QuadroReg32};
+use sm_vm::Value;
 
 fn name(s: QuadState) -> &'static str {
     match s {
@@ -38,10 +59,27 @@ fn quad_lane0_value(reg: QuadroReg32) -> QuadState {
     reg.try_get(0).unwrap()
 }
 
+/// Compiles, verifies, and runs `{a} == {b}` as real Semantic source through
+/// the public front-end/verify/VM pipeline, returning the VM's own boolean
+/// result - exercises the `CmpEq` opcode path, not `QuadState::PartialEq`.
+fn vm_eq(a: &str, b: &str) -> bool {
+    let src = format!(
+        "fn eq_case() -> bool {{ return {} == {}; }} fn main() {{ return; }}",
+        a, b
+    );
+    let bytes = sm_emit::compile_program_to_semcode(&src).expect("compile eq_case");
+    let token = sm_verify::verify_semcode_token(&bytes).expect("verify eq_case");
+    let entry = token.require_entry("eq_case").expect("require_entry eq_case");
+    match sm_vm::run_verified_function_semcode_with_args(&entry, Vec::new()).expect("run eq_case")
+    {
+        Value::Bool(b) => b,
+        other => panic!("eq_case({a}, {b}) returned non-bool: {other:?}"),
+    }
+}
+
 fn main() {
     println!("{{");
     println!("  \"crate\": \"semantic-core-quad\",");
-    println!("  \"crate_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
     println!("  \"generator\": \"reference/b0/dump_b0_vectors.rs\",");
     println!("  \"operation_family\": \"legacy_lattice\",");
     // Derived from `QuadState::bits()` itself (not hard-coded) so a future
@@ -53,6 +91,25 @@ fn main() {
         QuadState::F.bits(),
         QuadState::T.bits(),
         QuadState::S.bits()
+    );
+
+    // sm_format::Opcode's own public byte()/minimum_semcode_revision(), not
+    // hand-copied literals - the frozen wire contract for the legacy
+    // lattice family.
+    use sm_format::semcode_format::Opcode;
+    println!(
+        "  \"opcode_encoding\": {{ \"QNot\": {}, \"QAnd\": {}, \"QOr\": {}, \"QImpl\": {} }},",
+        Opcode::QNot.byte(),
+        Opcode::QAnd.byte(),
+        Opcode::QOr.byte(),
+        Opcode::QImpl.byte()
+    );
+    println!(
+        "  \"minimum_semcode_revision\": {{ \"QNot\": {}, \"QAnd\": {}, \"QOr\": {}, \"QImpl\": {} }},",
+        Opcode::QNot.minimum_semcode_revision(),
+        Opcode::QAnd.minimum_semcode_revision(),
+        Opcode::QOr.minimum_semcode_revision(),
+        Opcode::QImpl.minimum_semcode_revision()
     );
 
     println!("  \"not\": [");
@@ -119,24 +176,29 @@ fn main() {
         false,
     );
 
-    println!("  \"eq\": [");
-    let mut eq_entries = Vec::new();
-    for a in states {
-        for b in states {
-            eq_entries.push((a, b, a == b));
+    let dump_bool_binary = |field: &str, f: &dyn Fn(QuadState, QuadState) -> bool, last: bool| {
+        println!("  \"{}\": [", field);
+        let mut entries = Vec::new();
+        for a in states {
+            for b in states {
+                entries.push((a, b, f(a, b)));
+            }
         }
-    }
-    for (i, (a, b, r)) in eq_entries.iter().enumerate() {
-        let comma = if i + 1 < eq_entries.len() { "," } else { "" };
-        println!(
-            "    {{ \"a\": \"{}\", \"b\": \"{}\", \"result\": {} }}{}",
-            name(*a),
-            name(*b),
-            r,
-            comma
-        );
-    }
-    println!("  ]");
+        for (i, (a, b, r)) in entries.iter().enumerate() {
+            let comma = if i + 1 < entries.len() { "," } else { "" };
+            println!(
+                "    {{ \"a\": \"{}\", \"b\": \"{}\", \"result\": {} }}{}",
+                name(*a),
+                name(*b),
+                r,
+                comma
+            );
+        }
+        println!("  ]{}", if last { "" } else { "," });
+    };
+
+    dump_bool_binary("eq", &|a, b| a == b, false);
+    dump_bool_binary("vm_eq", &|a, b| vm_eq(name(a), name(b)), true);
 
     println!("}}");
 }

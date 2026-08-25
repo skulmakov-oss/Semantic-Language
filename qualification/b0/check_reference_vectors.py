@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """B0-00 differential qualification gate (Semantic-Language issue #2).
 
-Re-extracts the legacy-lattice Quad truth tables (and structural equality)
-from a live checkout of the reference repository (`skulmakov-oss/Semantic`)
-by building and running a throwaway crate that depends on its
-`semantic-core-quad` crate via a `path` dependency, then compares the
-result byte-for-byte (structurally) against the frozen corpus committed at
-reference/b0/reference_vectors.json. The probe project lives entirely in
-its own temp directory (own Cargo.toml, own Cargo.lock, own target/) -
-the reference checkout is only ever read from, never written to, so two
+Re-extracts the legacy-lattice Quad contract from a live checkout of the
+reference repository (`skulmakov-oss/Semantic`) through several independent
+public oracle surfaces - `semantic-core-quad::QuadState`/`QuadroReg32`
+(state encoding, not/and/or/implies/eq), `sm_format::Opcode` (opcode bytes,
+minimum SemCode revision), and the real `sm_emit`->`sm_verify`->`sm_vm`
+compile/verify/run pipeline (vm_eq: the source-language `==` operator,
+compiled and executed for real) - by building and running a throwaway
+crate with `path` dependencies on those reference crates, then compares
+the result byte-for-byte (structurally) against the frozen corpus
+committed at reference/b0/reference_vectors.json. The host-ABI boundary
+(quad_to_u8/quad_from_abi) is a private function pair with no lightweight
+public entry point; that specific claim is instead proven by requiring
+the reference's own exhaustive tests for it to run and pass (see
+check_abi_boundary_tests). The probe project lives entirely in its own
+temp directory (own Cargo.toml, own Cargo.lock, own target/) - the
+reference checkout is only ever read from, never written to, so two
 concurrent invocations against the same checkout cannot race on shared
 mutable state there.
 
@@ -19,23 +27,27 @@ By default, --reference-checkout must be a clean checkout with its git
 HEAD exactly at the frozen reference commit (FROZEN_REFERENCE_COMMIT
 below) - otherwise this proves nothing about the B0-00 contract, no
 matter what the tables say. Pass --allow-reference-drift to intentionally
-run a regression check against a different commit instead.
+run a regression check against a different commit instead (the PASS
+message is then labeled DRIFT MODE, not a qualification result).
 
-Exit code 0 means all three legs of the triangle hold: the frozen corpus
-matches an independently-computed normative B0 algebra, the live
-extraction matches that same normative algebra, and (redundantly, but
-checked explicitly) the frozen corpus matches the live extraction. Exit
-code 1 means any of: --reference-checkout isn't the frozen commit (or is
-dirty) and drift wasn't allowed; the frozen corpus's own reference
-metadata (repository/commit/crate) doesn't match what's actually frozen;
-a required field is missing, mis-shaped, or has malformed/out-of-domain/
-incorrectly-covered entries on either side (fail-closed); either side
-disagrees with the normative algebra (closes the case where frozen corpus
-and live extraction are corrupted *identically*, which frozen==live
-agreement alone cannot catch); or an unexplained frozen-vs-live delta.
+Exit code 0 means all three legs of the triangle hold for every dimension
+above: the frozen corpus matches an independently-computed normative B0
+algebra, the live extraction matches that same normative algebra, and
+(redundantly, but checked explicitly) the frozen corpus matches the live
+extraction. Exit code 1 means any of: --reference-checkout isn't the
+frozen commit (or is dirty) and drift wasn't allowed; the frozen corpus's
+own reference metadata (repository/commit/crate) doesn't match what's
+actually frozen; the reference's own host-ABI boundary tests didn't run
+and pass; a required field is missing, mis-shaped, or has
+malformed/out-of-domain/incorrectly-covered entries on either side
+(fail-closed); either side disagrees with the normative algebra (closes
+the case where frozen corpus and live extraction are corrupted
+*identically*, which frozen==live agreement alone cannot catch); or an
+unexplained frozen-vs-live delta.
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -44,21 +56,53 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VECTORS = REPO_ROOT / "reference" / "b0" / "reference_vectors.json"
 PROBE_SOURCE = REPO_ROOT / "reference" / "b0" / "dump_b0_vectors.rs"
-COMPARED_KEYS = ["operation_family", "state_encoding", "not", "and", "or", "implies", "eq"]
+COMPARED_KEYS = [
+    "operation_family",
+    "state_encoding",
+    "opcode_encoding",
+    "minimum_semcode_revision",
+    "not",
+    "and",
+    "or",
+    "implies",
+    "eq",
+    "vm_eq",
+]
 STATES = {"N", "F", "T", "S"}
+OPCODES = {"QNot", "QAnd", "QOr", "QImpl"}
+BOOL_RESULT_TABLES = {"eq", "vm_eq"}
 # Frozen by the B0-00 contract itself (docs/bootstrap/b0/foundation_contract.md),
 # not just "some" shape: after a slice is frozen, the validator must reject a
 # technically well-formed but wrong value here, not merely check its shape.
 FROZEN_OPERATION_FAMILY = "legacy_lattice"
 FROZEN_STATE_ENCODING = {"N": 0, "F": 1, "T": 2, "S": 3}
+FROZEN_OPCODE_ENCODING = {"QNot": 0x12, "QAnd": 0x10, "QOr": 0x11, "QImpl": 0x13}
+FROZEN_MINIMUM_SEMCODE_REVISION = {"QNot": 1, "QAnd": 1, "QOr": 1, "QImpl": 1}
 FROZEN_REFERENCE_REPOSITORY = "skulmakov-oss/Semantic"
 FROZEN_REFERENCE_COMMIT = "979def10135e1a90d7333d5501405343d498579e"
 FROZEN_REFERENCE_CRATE = "semantic-core-quad"
+# sm-vm's own exhaustive tests for the host-ABI quad boundary (quad_to_u8/
+# quad_from_abi, both private functions with no lightweight public entry
+# point - see dump_b0_vectors.rs's header comment for why this claim is
+# proven by running the reference's own tests rather than re-extracting).
+# Fully qualified module paths (cargo test --exact needs the exact path,
+# not just the bare test function name).
+FROZEN_ABI_BOUNDARY_TESTS = (
+    "semcode_vm::tests::quad_from_abi_matches_canonical_domain_exhaustively",
+    "semcode_vm::tests::gate_read_admits_every_canonical_quad_byte",
+    "semcode_vm::tests::gate_read_rejects_every_out_of_domain_quad_byte",
+)
 UNARY_TABLES = {"not": ("a",)}
-BINARY_TABLES = {"and": ("a", "b"), "or": ("a", "b"), "implies": ("a", "b"), "eq": ("a", "b")}
+BINARY_TABLES = {
+    "and": ("a", "b"),
+    "or": ("a", "b"),
+    "implies": ("a", "b"),
+    "eq": ("a", "b"),
+    "vm_eq": ("a", "b"),
+}
 TABLE_LEN = {**{k: 4 for k in UNARY_TABLES}, **{k: 16 for k in BINARY_TABLES}}
 CANONICAL_ORDER = ["N", "F", "T", "S"]  # matches dump_b0_vectors.rs's explicit row/column order
-NORMATIVE_TABLE_KEYS = ["not", "and", "or", "implies", "eq"]
+NORMATIVE_TABLE_KEYS = ["not", "and", "or", "implies", "eq", "vm_eq"]
 
 
 def _normative_tables() -> dict:
@@ -98,6 +142,7 @@ def _normative_tables() -> dict:
         "or": [{"a": a, "b": b, "result": or_(a, b)} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
         "implies": [{"a": a, "b": b, "result": implies_(a, b)} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
         "eq": [{"a": a, "b": b, "result": a == b} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
+        "vm_eq": [{"a": a, "b": b, "result": a == b} for a in CANONICAL_ORDER for b in CANONICAL_ORDER],
     }
 
 
@@ -123,7 +168,7 @@ def _table_problems(label: str, key: str, entries, operand_keys) -> list:
             if v not in STATES:
                 problems.append(f"{label}.{key}[{i}].{k} = {v!r}, expected one of {sorted(STATES)}")
         result = entry["result"]
-        if key == "eq":
+        if key in BOOL_RESULT_TABLES:
             if not isinstance(result, bool):
                 problems.append(f"{label}.{key}[{i}].result = {result!r}, expected a bool")
         elif result not in STATES:
@@ -138,7 +183,9 @@ def _table_problems(label: str, key: str, entries, operand_keys) -> list:
         )
     return problems
 
-CARGO_TOML = """\
+PROBE_CRATES = ["semantic-core-quad", "sm-format", "sm-emit", "sm-verify", "sm-vm"]
+
+CARGO_TOML_HEADER = """\
 [package]
 name = "b0-extract"
 version = "0.0.0"
@@ -146,19 +193,22 @@ edition = "2021"
 publish = false
 
 [dependencies]
-semantic-core-quad = {{ path = {crate_path} }}
 """
 
 
 def extract_live(reference_checkout: Path) -> dict:
-    crate_dir = reference_checkout / "crates" / "semantic-core-quad"
-    if not (crate_dir / "Cargo.toml").is_file():
-        sys.exit(f"error: {crate_dir} not found - is --reference-checkout the Semantic repo root?")
+    crate_dirs = {name: reference_checkout / "crates" / name for name in PROBE_CRATES}
+    for name, crate_dir in crate_dirs.items():
+        if not (crate_dir / "Cargo.toml").is_file():
+            sys.exit(f"error: {crate_dir} not found - is --reference-checkout the Semantic repo root?")
 
     with tempfile.TemporaryDirectory(prefix="b0-extract-") as tmp:
         tmp_path = Path(tmp)
-        crate_path_toml = json.dumps(crate_dir.resolve().as_posix())  # safe double-quoted TOML string
-        (tmp_path / "Cargo.toml").write_text(CARGO_TOML.format(crate_path=crate_path_toml))
+        deps = "".join(
+            f'{name} = {{ path = {json.dumps(crate_dir.resolve().as_posix())} }}\n'
+            for name, crate_dir in crate_dirs.items()
+        )
+        (tmp_path / "Cargo.toml").write_text(CARGO_TOML_HEADER + deps)
         src_dir = tmp_path / "src"
         src_dir.mkdir()
         (src_dir / "main.rs").write_bytes(PROBE_SOURCE.read_bytes())
@@ -194,6 +244,16 @@ def check_shape(label: str, data: dict) -> list:
                 problems.append(f"{label}.{key} = {value!r}, expected int values")
             elif value != FROZEN_STATE_ENCODING:
                 problems.append(f"{label}.{key} = {value}, expected exactly {FROZEN_STATE_ENCODING}")
+            continue
+
+        if key in ("opcode_encoding", "minimum_semcode_revision"):
+            frozen_value = (
+                FROZEN_OPCODE_ENCODING if key == "opcode_encoding" else FROZEN_MINIMUM_SEMCODE_REVISION
+            )
+            if not isinstance(value, dict) or not all(_is_plain_int(v) for v in value.values()):
+                problems.append(f"{label}.{key} = {value!r}, expected int values")
+            elif value != frozen_value:
+                problems.append(f"{label}.{key} = {value}, expected exactly {frozen_value}")
             continue
 
         operand_keys = UNARY_TABLES.get(key) or BINARY_TABLES.get(key)
@@ -274,6 +334,54 @@ def check_checkout_identity(reference_checkout: Path, allow_drift: bool) -> list
     return problems
 
 
+def check_abi_boundary_tests(reference_checkout: Path) -> list:
+    # sm-vm::quad_to_u8/quad_from_abi (the host-ABI 0/1/2/3 <-> N/F/T/S
+    # boundary foundation_contract.md calls a frozen fact) are private
+    # functions with no lightweight public entry point - reaching them
+    # requires a full host-call round trip through
+    # run_verified_semcode_with_host_and_capabilities* and a
+    # PrometheusHostAbi implementation, which is materially more surface
+    # than this probe should take on. Proving that specific claim instead
+    # means requiring the reference's own exhaustive tests for it to
+    # actually run and pass, at the pinned commit - not just exit 0 (which
+    # a test filter matching nothing would also report).
+    problems = []
+    try:
+        result = subprocess.run(
+            ["cargo", "test", "-p", "sm-vm", "--quiet", "--", *FROZEN_ABI_BOUNDARY_TESTS, "--exact"],
+            cwd=reference_checkout,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        return [f"could not run cargo test for the ABI boundary: {exc}"]
+
+    # --quiet suppresses per-test "test <name> ... ok" lines (just dots), so
+    # parse the "test result: N passed; M failed" summaries instead - `-p
+    # sm-vm` runs several test binaries (lib unit tests, each `tests/*.rs`
+    # integration file, doctests), each emitting its own summary line, and
+    # only the one containing these tests (the lib's `mod tests`) matches
+    # anything under --exact. Sum across all of them: total passed must
+    # equal exactly the number of named tests, with zero failures anywhere.
+    output = result.stdout + result.stderr
+    summaries = re.findall(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed", output)
+    if not summaries:
+        problems.append("could not parse any 'test result:' summary from cargo test output")
+        return problems
+    total_passed = sum(int(p) for p, _ in summaries)
+    total_failed = sum(int(f) for _, f in summaries)
+    total_ran = total_passed + total_failed
+    if total_ran != len(FROZEN_ABI_BOUNDARY_TESTS):
+        problems.append(
+            f"{total_ran} test(s) matched --exact across all cargo test binaries, expected "
+            f"exactly {len(FROZEN_ABI_BOUNDARY_TESTS)} (the named ABI boundary tests) - a "
+            f"renamed or missing test would silently reduce this count instead of failing"
+        )
+    if total_failed != 0:
+        problems.append(f"{total_failed} of the ABI boundary tests failed")
+    return problems
+
+
 def diff(frozen: dict, live: dict) -> list:
     deltas = []
     for key in COMPARED_KEYS:
@@ -317,6 +425,13 @@ def main() -> int:
             print(f"  - {p}")
         return 1
 
+    abi_problems = check_abi_boundary_tests(checkout)
+    if abi_problems:
+        print("FAIL: host-ABI boundary claim not proven (reference's own tests):")
+        for p in abi_problems:
+            print(f"  - {p}")
+        return 1
+
     shape_problems = check_shape("frozen", frozen) + check_shape("live", live)
     if shape_problems:
         print("FAIL: corpus is not structurally complete (fail-closed):")
@@ -354,8 +469,11 @@ def main() -> int:
             print(f"  {json.dumps(live.get(key))}")
         return 1
 
-    print("PASS: reference_vectors.json matches live extraction from the reference implementation.")
-    print(f"  not: {len(frozen['not'])} cases, and/or/implies/eq: {len(frozen['and'])} cases each")
+    if args.allow_reference_drift:
+        print("PASS (DRIFT MODE - REGRESSION ONLY, NOT B0 QUALIFICATION)")
+    else:
+        print("PASS: reference_vectors.json matches live extraction from the reference implementation.")
+    print(f"  not: {len(frozen['not'])} cases, and/or/implies/eq/vm_eq: {len(frozen['and'])} cases each")
     return 0
 
 

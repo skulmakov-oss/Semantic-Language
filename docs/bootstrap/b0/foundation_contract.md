@@ -202,22 +202,44 @@ evidence merging or conflict resolution:
 mutually distinct, no coercion). All three Rust `QuadVal`/`QuadState`
 definitions audited derive plain `PartialEq, Eq` (structural, not custom)
 with no `PartialOrd`/`Ord` anywhere in the audited files. All 16 cases are
-mechanically extracted (via `QuadState`'s own derived `PartialEq`, matching
-`sm-vm::value_eq`'s `Value::Quad(x) == Value::Quad(y)`) into the `eq` field
-of `reference/b0/reference_vectors.json`, not asserted from prose alone.
+mechanically extracted through **two independent oracle surfaces**, both
+recorded in `reference/b0/reference_vectors.json`:
+
+- `eq` — `QuadState`'s own derived `PartialEq`.
+- `vm_eq` — the *source-language* `==` operator, compiled from real `.sm`
+  source and run through the public `sm_emit::compile_program_to_semcode`
+  -> `sm_verify::verify_semcode_token` ->
+  `sm_vm::run_verified_function_semcode_with_args` pipeline. This exercises
+  `Opcode::CmpEq`'s runtime handler
+  (`crates/sm-vm/src/semcode_vm.rs:2439-2447`), which calls the VM's
+  private `value_eq` function directly — a genuinely different code path
+  from `QuadState::PartialEq`, closing the gap where `eq` staying correct
+  could no longer guarantee `value_eq` also did.
 
 ## Serialized representation
 
 The **`0/1/2/3` numeric encoding for `N/F/T/S` is a frozen, contractually
-required fact**, but only at these two specific points, both exhaustively
-tested:
+required fact**, but only at these two specific points, both mechanically
+verified:
 
-1. `semantic-core-quad::QuadState` bit encoding
-   (`quad_state_encoding_is_frozen` test).
-2. The SemCode host-ABI boundary (`quad_from_abi`,
-   `quad_from_abi_matches_canonical_domain_exhaustively` test) — this is the
-   one place external, untrusted bytes are converted to `Quad` and is
-   explicitly documented as a closed 4-value domain, not a raw byte.
+1. `semantic-core-quad::QuadState` bit encoding — mechanically extracted
+   via `QuadState::bits()` into `reference/b0/reference_vectors.json`'s
+   `state_encoding` field (also backed by the reference's own
+   `quad_state_encoding_is_frozen` test).
+2. The SemCode host-ABI boundary (`quad_to_u8`/`quad_from_abi`) — this is
+   the one place external, untrusted bytes are converted to `Quad` and is
+   explicitly documented as a closed 4-value domain, not a raw byte. Both
+   functions are private with no lightweight public entry point (reaching
+   them requires a full host-call round trip through
+   `run_verified_semcode_with_host_and_capabilities*` and a
+   `PrometheusHostAbi` implementation), so this claim is proven not by
+   extraction but by `qualification/b0/check_reference_vectors.py`
+   requiring the reference's own exhaustive tests for it
+   (`quad_from_abi_matches_canonical_domain_exhaustively`,
+   `gate_read_admits_every_canonical_quad_byte`,
+   `gate_read_rejects_every_out_of_domain_quad_byte`) to actually run and
+   pass at the pinned commit — not merely exit 0, which a test filter
+   matching nothing would also report.
 
 The `QAnd`/`QOr`/`QNot`/`QImpl` **opcode bytes** (`0x10`/`0x11`/`0x12`/`0x13`,
 `crates/sm-format/src/local_format.rs:412-415`) and their
@@ -225,6 +247,15 @@ The `QAnd`/`QOr`/`QNot`/`QImpl` **opcode bytes** (`0x10`/`0x11`/`0x12`/`0x13`,
 `crates/sm-format/src/local_format.rs:634-639`, "present since the original
 enum") are also frozen wire facts, needed to know this family requires no
 special SemCode header revision, unlike QTruth (see Explicit exclusions).
+Both are mechanically extracted via `sm_format::Opcode`'s own public
+`.byte()` and `.minimum_semcode_revision()` methods into the
+`opcode_encoding`/`minimum_semcode_revision` fields of
+`reference/b0/reference_vectors.json`, not hand-copied from source reading
+alone - a real, demonstrated risk: during this same review round, a
+paraphrase of this exact fact (in chat, not in this file) transposed the
+QNot/QAnd/QOr/QImpl byte order relative to the actual enum, which
+generating the table from `Opcode::byte()` directly would have caught
+immediately had it been the source of truth.
 
 Nothing else about representation (register allocation, instruction operand
 byte layout beyond the two register/three register shape, `QuadroReg32`
@@ -316,33 +347,62 @@ select contract, capture reference behavior, define canonical comparison
 form). It does **not** by itself qualify anything, because no Semantic
 mirror exists yet (steps 4-8 remain). The comparison form fixed here is
 **exact structured identity** (tier 2 of `BOOTSTRAP.md`'s comparison
-hierarchy) over `{state_encoding, not, and, or, implies, eq}` as recorded in
-`reference/b0/reference_vectors.json`.
+hierarchy) over `{state_encoding, opcode_encoding,
+minimum_semcode_revision, not, and, or, implies, eq, vm_eq}` as recorded in
+`reference/b0/reference_vectors.json`, plus a pass/fail requirement (not a
+value comparison) that the reference's own host-ABI boundary tests run and
+pass at the pinned commit. `--reference-checkout` must itself be a clean
+checkout with git HEAD exactly at the frozen commit by default
+(`--allow-reference-drift` opts out explicitly, and visibly labels the
+result `PASS (DRIFT MODE)` rather than a qualification pass).
 
 Mutation-proof evidence (required by issue #2's qualification checklist) is
-recorded in this PR's description: deliberate one-cell mutations
-(`T AND T`: `T` -> `S`, and separately `S eq S`: `true` -> `false`) in the
-committed corpus each caused `qualification/b0/check_reference_vectors.py`
-to fail with an exact reported delta, then were reverted and re-verified
-passing.
+recorded in this PR's description: numerous deliberate mutations - value
+mutations in the committed corpus (e.g. `T AND T`: `T` -> `S`, `S eq S`:
+`true` -> `false`, `opcode_encoding.QAnd`, `minimum_semcode_revision.QNot`,
+`vm_eq`'s `T,T` cell), structural/domain/coverage corruption, frozen-
+constant substitution, reference-checkout identity mismatches, and a
+mutation of the reference implementation itself (`QuadroReg32::lattice_meet`,
+and separately `quad_from_abi`) - each caused
+`qualification/b0/check_reference_vectors.py` to fail with an exact
+reported cause, then were reverted and re-verified passing.
 
 ## Appendix A: extraction probe source
 
 Reproduced at [`reference/b0/dump_b0_vectors.rs`](../../../reference/b0/dump_b0_vectors.rs)
 for readability; it is not compiled as part of this repository.
 `qualification/b0/check_reference_vectors.py` builds and runs it as the
-`src/main.rs` of a throwaway crate in its own temp directory, with a `path`
-dependency on the reference checkout's `crates/semantic-core-quad` -
-the checkout itself is only ever read, never written to (no file is ever
-installed into or removed from it), so two qualification runs against the
-same checkout cannot race on shared mutable state there. Row/column order
-in the emitted tables is an explicit `N/F/T/S` literal in the probe, not
-`QuadState::ALL`'s own iteration order, so a pure reorder of that array
-upstream cannot appear as a spurious corpus divergence. `not`/`and`/`or`/
-`implies` route through lane 0 of a `QuadroReg32` and its
-`lattice_inverse`/`lattice_meet`/`lattice_join` methods — the exact call
-chain `sm-vm`'s own opcode handlers use — rather than `QuadState`'s
-separately-implemented single-value methods. `eq` reads `QuadState`'s
-derived `PartialEq` directly, matching `sm-vm::value_eq`. No reference-repo
-source was copied or reimplemented by hand into the corpus values
-themselves — every value is the live return of a reference-crate call.
+`src/main.rs` of a throwaway crate in its own temp directory, with `path`
+dependencies on the reference checkout's `semantic-core-quad`, `sm-format`,
+`sm-emit`, `sm-verify`, and `sm-vm` crates - the checkout itself is only
+ever read, never written to (no file is ever installed into or removed
+from it), so two qualification runs against the same checkout cannot race
+on shared mutable state there. Row/column order in the emitted tables is
+an explicit `N/F/T/S` literal in the probe, not `QuadState::ALL`'s own
+iteration order, so a pure reorder of that array upstream cannot appear as
+a spurious corpus divergence.
+
+Four independent oracle surfaces, each through its own real entry point:
+
+- `not`/`and`/`or`/`implies` route through lane 0 of a `QuadroReg32` and
+  its `lattice_inverse`/`lattice_meet`/`lattice_join` methods — the exact
+  call chain `sm-vm`'s own opcode handlers use — rather than `QuadState`'s
+  separately-implemented single-value methods.
+- `eq` reads `QuadState`'s own derived `PartialEq` directly.
+- `vm_eq` compiles and runs `{a} == {b}` as real `.sm` source through the
+  public `sm_emit::compile_program_to_semcode` ->
+  `sm_verify::verify_semcode_token` ->
+  `sm_vm::run_verified_function_semcode_with_args` pipeline, exercising
+  `Opcode::CmpEq`'s runtime handler (which calls the VM's private
+  `value_eq` function) — a genuinely different path from `eq`.
+- `opcode_encoding`/`minimum_semcode_revision` read `sm_format::Opcode`'s
+  own public `.byte()`/`.minimum_semcode_revision()` methods.
+
+The host-ABI boundary (`quad_to_u8`/`quad_from_abi`) is a private function
+pair with no lightweight public entry point reachable without a full
+host-call round trip; that specific claim is proven not by extraction but
+by the qualification script separately requiring the reference's own
+exhaustive tests for it to run and pass (see "Serialized representation"
+above). No reference-repo source was copied or reimplemented by hand into
+any corpus value — every value is the live return of a reference-crate
+call, or the pass/fail result of the reference's own test suite.
