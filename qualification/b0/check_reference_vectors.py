@@ -15,16 +15,24 @@ mutable state there.
 Usage:
     python3 qualification/b0/check_reference_vectors.py --reference-checkout <path-to-Semantic-repo>
 
+By default, --reference-checkout must be a clean checkout with its git
+HEAD exactly at the frozen reference commit (FROZEN_REFERENCE_COMMIT
+below) - otherwise this proves nothing about the B0-00 contract, no
+matter what the tables say. Pass --allow-reference-drift to intentionally
+run a regression check against a different commit instead.
+
 Exit code 0 means all three legs of the triangle hold: the frozen corpus
 matches an independently-computed normative B0 algebra, the live
 extraction matches that same normative algebra, and (redundantly, but
 checked explicitly) the frozen corpus matches the live extraction. Exit
-code 1 means any of: a required field is missing, mis-shaped, or has
-malformed/out-of-domain/incorrectly-covered entries on either side
-(fail-closed); either side disagrees with the normative algebra (closes
-the case where frozen corpus and live extraction are corrupted
-*identically*, which frozen==live agreement alone cannot catch); or an
-unexplained frozen-vs-live delta.
+code 1 means any of: --reference-checkout isn't the frozen commit (or is
+dirty) and drift wasn't allowed; the frozen corpus's own reference
+metadata (repository/commit/crate) doesn't match what's actually frozen;
+a required field is missing, mis-shaped, or has malformed/out-of-domain/
+incorrectly-covered entries on either side (fail-closed); either side
+disagrees with the normative algebra (closes the case where frozen corpus
+and live extraction are corrupted *identically*, which frozen==live
+agreement alone cannot catch); or an unexplained frozen-vs-live delta.
 """
 import argparse
 import json
@@ -43,6 +51,9 @@ STATES = {"N", "F", "T", "S"}
 # technically well-formed but wrong value here, not merely check its shape.
 FROZEN_OPERATION_FAMILY = "legacy_lattice"
 FROZEN_STATE_ENCODING = {"N": 0, "F": 1, "T": 2, "S": 3}
+FROZEN_REFERENCE_REPOSITORY = "skulmakov-oss/Semantic"
+FROZEN_REFERENCE_COMMIT = "979def10135e1a90d7333d5501405343d498579e"
+FROZEN_REFERENCE_CRATE = "semantic-core-quad"
 UNARY_TABLES = {"not": ("a",)}
 BINARY_TABLES = {"and": ("a", "b"), "or": ("a", "b"), "implies": ("a", "b"), "eq": ("a", "b")}
 TABLE_LEN = {**{k: 4 for k in UNARY_TABLES}, **{k: 16 for k in BINARY_TABLES}}
@@ -195,6 +206,74 @@ def check_shape(label: str, data: dict) -> list:
     return problems
 
 
+def check_reference_metadata(frozen: dict) -> list:
+    # The frozen corpus's own "reference" block (repository/commit/crate)
+    # names exactly what was extracted against. It is not part of
+    # COMPARED_KEYS (the live extraction has no such field), so nothing
+    # else in this script would notice it silently drifting - validate it
+    # against the frozen identity explicitly.
+    problems = []
+    ref = frozen.get("reference")
+    if not isinstance(ref, dict):
+        problems.append(f"frozen.reference = {ref!r}, expected an object")
+        return problems
+    checks = (
+        ("repository", FROZEN_REFERENCE_REPOSITORY),
+        ("commit", FROZEN_REFERENCE_COMMIT),
+        ("crate", FROZEN_REFERENCE_CRATE),
+    )
+    for field, expected in checks:
+        actual = ref.get(field)
+        if actual != expected:
+            problems.append(f"frozen.reference.{field} = {actual!r}, expected exactly {expected!r}")
+    return problems
+
+
+def check_checkout_identity(reference_checkout: Path, allow_drift: bool) -> list:
+    # Validating the corpus's *claimed* commit (check_reference_metadata)
+    # proves nothing about what --reference-checkout actually points at.
+    # Without this, any checkout that happens to produce matching Quad
+    # behavior - a newer commit, an older one, a dirty working tree, even
+    # an unrelated repo with a compatible crate - would qualify as if it
+    # were the frozen oracle.
+    if allow_drift:
+        return []
+    problems = []
+
+    def run_git(*args):
+        return subprocess.run(
+            ["git", "-C", str(reference_checkout), *args],
+            capture_output=True, text=True, check=True,
+        )
+
+    try:
+        head = run_git("rev-parse", "HEAD").stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        problems.append(f"could not determine --reference-checkout's git HEAD: {exc}")
+        return problems
+    if head != FROZEN_REFERENCE_COMMIT:
+        problems.append(
+            f"--reference-checkout HEAD is {head}, expected the frozen reference commit "
+            f"{FROZEN_REFERENCE_COMMIT}. This gate proves B0-00 against that exact commit; "
+            f"pass --allow-reference-drift to intentionally run it against a different one "
+            f"(the result is then a regression check, not a B0 qualification proof)."
+        )
+
+    try:
+        status = run_git("status", "--porcelain").stdout
+    except subprocess.CalledProcessError as exc:
+        problems.append(f"could not check --reference-checkout's git status: {exc}")
+        return problems
+    if status.strip():
+        problems.append(
+            "--reference-checkout has uncommitted changes (git status --porcelain is "
+            "non-empty). Pass --allow-reference-drift to intentionally qualify against a "
+            "modified checkout."
+        )
+
+    return problems
+
+
 def diff(frozen: dict, live: dict) -> list:
     deltas = []
     for key in COMPARED_KEYS:
@@ -208,10 +287,35 @@ def diff(frozen: dict, live: dict) -> list:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference-checkout", required=True, type=Path)
+    parser.add_argument(
+        "--allow-reference-drift",
+        action="store_true",
+        help=(
+            "Skip the default check that --reference-checkout's git HEAD is exactly the "
+            "frozen reference commit and its working tree is clean. Use this only to "
+            "intentionally run a regression check against a different commit - the result "
+            "is then not a B0-00 qualification proof."
+        ),
+    )
     args = parser.parse_args()
 
+    checkout = args.reference_checkout.resolve()
+    identity_problems = check_checkout_identity(checkout, args.allow_reference_drift)
+    if identity_problems:
+        print("FAIL: --reference-checkout does not match the frozen reference identity:")
+        for p in identity_problems:
+            print(f"  - {p}")
+        return 1
+
     frozen = json.loads(FROZEN_VECTORS.read_text())
-    live = extract_live(args.reference_checkout.resolve())
+    live = extract_live(checkout)
+
+    metadata_problems = check_reference_metadata(frozen)
+    if metadata_problems:
+        print("FAIL: frozen corpus's own reference metadata is wrong:")
+        for p in metadata_problems:
+            print(f"  - {p}")
+        return 1
 
     shape_problems = check_shape("frozen", frozen) + check_shape("live", live)
     if shape_problems:
