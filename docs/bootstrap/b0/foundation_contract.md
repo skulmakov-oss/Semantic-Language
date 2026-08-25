@@ -329,15 +329,19 @@ passing.
 ## Appendix A: extraction probe source
 
 Reproduced at [`reference/b0/dump_b0_vectors.rs`](../../../reference/b0/dump_b0_vectors.rs)
-for readability; it is not compiled as part of this repository. It is placed
-into a checkout of the reference repository's
-`crates/semantic-core-quad/examples/` directory and run with `cargo run -p
-semantic-core-quad --example dump_b0_vectors` by
-`qualification/b0/check_reference_vectors.py`, which removes it afterward
-(restoring, byte-for-byte and atomically, any file that was already at that
-path). `not`/`and`/`or`/`implies` route through lane 0 of a `QuadroReg32`
-and its `lattice_inverse`/`lattice_meet`/`lattice_join` methods — the exact
-call chain `sm-vm`'s own opcode handlers use — rather than `QuadState`'s
+for readability; it is not compiled as part of this repository.
+`qualification/b0/check_reference_vectors.py` builds and runs it as the
+`src/main.rs` of a throwaway crate in its own temp directory, with a `path`
+dependency on the reference checkout's `crates/semantic-core-quad` -
+the checkout itself is only ever read, never written to (no file is ever
+installed into or removed from it), so two qualification runs against the
+same checkout cannot race on shared mutable state there. Row/column order
+in the emitted tables is an explicit `N/F/T/S` literal in the probe, not
+`QuadState::ALL`'s own iteration order, so a pure reorder of that array
+upstream cannot appear as a spurious corpus divergence. `not`/`and`/`or`/
+`implies` route through lane 0 of a `QuadroReg32` and its
+`lattice_inverse`/`lattice_meet`/`lattice_join` methods — the exact call
+chain `sm-vm`'s own opcode handlers use — rather than `QuadState`'s
 separately-implemented single-value methods. `eq` reads `QuadState`'s
 derived `PartialEq` directly, matching `sm-vm::value_eq`. No reference-repo
 source was copied or reimplemented by hand into the corpus values

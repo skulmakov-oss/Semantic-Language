@@ -1,11 +1,11 @@
 // B0-00 reference extraction probe (Semantic-Language issue #2).
 //
-// This is NOT part of the reference repository (`skulmakov-oss/Semantic`).
-// It is copied here for reproducibility and is placed into
-// `crates/semantic-core-quad/examples/` of a checked-out reference repo by
-// `qualification/b0/check_reference_vectors.py`, run there with
-// `cargo run -p semantic-core-quad --example dump_b0_vectors`, and removed
-// afterward. It must never be committed to the reference repository itself.
+// This is NOT part of the reference repository (`skulmakov-oss/Semantic`)
+// and is never written into it. It is copied here for reproducibility;
+// `qualification/b0/check_reference_vectors.py` builds and runs it as the
+// `src/main.rs` of a throwaway crate in its own temp directory, depending
+// on the reference checkout's `crates/semantic-core-quad` via a `path`
+// dependency - so the reference checkout is only ever read from.
 //
 // NOT/AND/OR/IMPLIES are computed by routing a single value through lane 0
 // of a `QuadroReg32` and calling `.lattice_inverse()`/`.lattice_meet()`/
@@ -42,7 +42,7 @@ fn main() {
     println!("{{");
     println!("  \"crate\": \"semantic-core-quad\",");
     println!("  \"crate_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
-    println!("  \"generator\": \"crates/semantic-core-quad/examples/dump_b0_vectors.rs\",");
+    println!("  \"generator\": \"reference/b0/dump_b0_vectors.rs\",");
     println!("  \"operation_family\": \"legacy_lattice\",");
     // Derived from `QuadState::bits()` itself (not hard-coded) so a future
     // discriminant change is caught by re-running this probe, not masked by
@@ -56,7 +56,12 @@ fn main() {
     );
 
     println!("  \"not\": [");
-    let states = QuadState::ALL;
+    // Explicit canonical N/F/T/S order, deliberately NOT `QuadState::ALL`'s
+    // own iteration order: this contract does not freeze that array's
+    // internal ordering, only the four named states and their values, so a
+    // pure reorder of `ALL` upstream must not appear as a corpus divergence
+    // in this list-based (order-sensitive) output.
+    let states = [QuadState::N, QuadState::F, QuadState::T, QuadState::S];
     for (i, a) in states.iter().enumerate() {
         let r = quad_lane0_value(quad_lane0(*a).lattice_inverse());
         let comma = if i + 1 < states.len() { "," } else { "" };
