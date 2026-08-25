@@ -16,9 +16,11 @@ Usage:
     python3 qualification/b0/check_reference_vectors.py --reference-checkout <path-to-Semantic-repo>
 
 Exit code 0 = no unexplained deltas and the corpus is structurally
-complete. Exit code 1 = divergence found, OR a required field is missing
-or the wrong shape on either side (fail-closed: a field silently absent
-from both sides must never compare equal by accident).
+complete. Exit code 1 = divergence found, OR a required field is missing,
+mis-shaped, has malformed/out-of-domain entries, or does not cover every
+operand combination exactly once, on either side (fail-closed: a field or
+its entries degrading identically on both sides must never compare equal
+by accident).
 """
 import argparse
 import json
@@ -31,18 +33,48 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VECTORS = REPO_ROOT / "reference" / "b0" / "reference_vectors.json"
 PROBE_SOURCE = REPO_ROOT / "reference" / "b0" / "dump_b0_vectors.rs"
 COMPARED_KEYS = ["operation_family", "state_encoding", "not", "and", "or", "implies", "eq"]
+STATES = {"N", "F", "T", "S"}
+UNARY_TABLES = {"not": ("a",)}
+BINARY_TABLES = {"and": ("a", "b"), "or": ("a", "b"), "implies": ("a", "b"), "eq": ("a", "b")}
+TABLE_LEN = {**{k: 4 for k in UNARY_TABLES}, **{k: 16 for k in BINARY_TABLES}}
 
-# Expected shape per field, checked before any value comparison. Catches a
-# whole dimension quietly disappearing from the corpus or the extractor
-# (which `dict.get(k) != dict.get(k)` -> `None != None` -> False would miss).
-REQUIRED_SHAPE = {
-    "state_encoding": ("dict_keys", {"N", "F", "T", "S"}),
-    "not": ("list_len", 4),
-    "and": ("list_len", 16),
-    "or": ("list_len", 16),
-    "implies": ("list_len", 16),
-    "eq": ("list_len", 16),
-}
+
+def _is_plain_int(v) -> bool:
+    return type(v) is int  # excludes bool, which is a subclass of int in Python
+
+
+def _table_problems(label: str, key: str, entries, operand_keys) -> list:
+    # Validates each entry's shape and domain, and that every operand
+    # combination appears exactly once - not just that the list has the
+    # right length. A list of 16 `null`s, or 16 copies of the same pair,
+    # would satisfy a length-only check but is not a real truth table.
+    problems = []
+    expected_keys = set(operand_keys) | {"result"}
+    seen_operands = set()
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict) or set(entry.keys()) != expected_keys:
+            got = sorted(entry.keys()) if isinstance(entry, dict) else repr(entry)
+            problems.append(f"{label}.{key}[{i}] = {got}, expected keys {sorted(expected_keys)}")
+            continue
+        operands = tuple(entry[k] for k in operand_keys)
+        for k, v in zip(operand_keys, operands):
+            if v not in STATES:
+                problems.append(f"{label}.{key}[{i}].{k} = {v!r}, expected one of {sorted(STATES)}")
+        result = entry["result"]
+        if key == "eq":
+            if not isinstance(result, bool):
+                problems.append(f"{label}.{key}[{i}].result = {result!r}, expected a bool")
+        elif result not in STATES:
+            problems.append(f"{label}.{key}[{i}].result = {result!r}, expected one of {sorted(STATES)}")
+        if all(v in STATES for v in operands):
+            seen_operands.add(operands)
+    expected_count = len(STATES) ** len(operand_keys)
+    if len(seen_operands) != expected_count:
+        problems.append(
+            f"{label}.{key} covers {len(seen_operands)}/{expected_count} distinct operand "
+            f"combination(s) - expected each combination exactly once (duplicates or gaps present)"
+        )
+    return problems
 
 CARGO_TOML = """\
 [package]
@@ -88,19 +120,28 @@ def check_shape(label: str, data: dict) -> list:
         if key not in data:
             problems.append(f"{label}.{key} is missing")
             continue
-        shape = REQUIRED_SHAPE.get(key)
-        if shape is None:
-            continue
-        kind, expected = shape
         value = data[key]
-        if kind == "list_len":
-            if not isinstance(value, list) or len(value) != expected:
-                actual = len(value) if isinstance(value, list) else type(value).__name__
-                problems.append(f"{label}.{key} has {actual} cases, expected {expected}")
-        elif kind == "dict_keys":
-            if not isinstance(value, dict) or set(value.keys()) != expected:
+
+        if key == "operation_family":
+            if not isinstance(value, str) or not value:
+                problems.append(f"{label}.{key} = {value!r}, expected a non-empty string")
+            continue
+
+        if key == "state_encoding":
+            if not isinstance(value, dict) or set(value.keys()) != STATES:
                 got = sorted(value.keys()) if isinstance(value, dict) else repr(value)
-                problems.append(f"{label}.{key} keys are {got}, expected {sorted(expected)}")
+                problems.append(f"{label}.{key} keys are {got}, expected {sorted(STATES)}")
+            elif not all(_is_plain_int(v) for v in value.values()) or set(value.values()) != {0, 1, 2, 3}:
+                problems.append(f"{label}.{key} values are {value}, expected a bijection onto {{0,1,2,3}}")
+            continue
+
+        operand_keys = UNARY_TABLES.get(key) or BINARY_TABLES.get(key)
+        if not isinstance(value, list) or len(value) != TABLE_LEN[key]:
+            actual = len(value) if isinstance(value, list) else type(value).__name__
+            problems.append(f"{label}.{key} has {actual} cases, expected {TABLE_LEN[key]}")
+            continue
+        problems.extend(_table_problems(label, key, value, operand_keys))
+
     return problems
 
 
