@@ -29,7 +29,16 @@ fn main() {
     println!("  \"crate_version\": \"{}\",", env!("CARGO_PKG_VERSION"));
     println!("  \"generator\": \"crates/semantic-core-quad/examples/dump_b0_vectors.rs\",");
     println!("  \"operation_family\": \"legacy_lattice\",");
-    println!("  \"state_encoding\": {{ \"N\": 0, \"F\": 1, \"T\": 2, \"S\": 3 }},");
+    // Derived from `QuadState::bits()` itself (not hard-coded) so a future
+    // discriminant change is caught by re-running this probe, not masked by
+    // a stale literal that happens to still say 0/1/2/3.
+    println!(
+        "  \"state_encoding\": {{ \"N\": {}, \"F\": {}, \"T\": {}, \"S\": {} }},",
+        QuadState::N.bits(),
+        QuadState::F.bits(),
+        QuadState::T.bits(),
+        QuadState::S.bits()
+    );
 
     println!("  \"not\": [");
     let states = QuadState::ALL;

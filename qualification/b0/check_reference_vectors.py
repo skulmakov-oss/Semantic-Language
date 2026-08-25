@@ -31,9 +31,13 @@ def extract_live(reference_checkout: Path) -> dict:
         sys.exit(f"error: {crate_dir} not found - is --reference-checkout the Semantic repo root?")
 
     examples_dir = crate_dir / "examples"
+    examples_dir_existed = examples_dir.is_dir()
     examples_dir.mkdir(exist_ok=True)
     installed_probe = examples_dir / "dump_b0_vectors.rs"
-    probe_was_absent = not installed_probe.exists()
+    # Never clobber pre-existing content at this path (local WIP in a shared
+    # checkout, or a future upstream file of the same name): back it up and
+    # restore it, rather than just skipping deletion of *our* copy.
+    original_bytes = installed_probe.read_bytes() if installed_probe.exists() else None
     shutil.copyfile(PROBE_SOURCE, installed_probe)
 
     try:
@@ -47,12 +51,15 @@ def extract_live(reference_checkout: Path) -> dict:
     except subprocess.CalledProcessError as exc:
         sys.exit(f"error: reference probe failed to run:\n{exc.stderr}")
     finally:
-        if probe_was_absent:
+        if original_bytes is not None:
+            installed_probe.write_bytes(original_bytes)
+        else:
             installed_probe.unlink(missing_ok=True)
-            try:
-                examples_dir.rmdir()
-            except OSError:
-                pass  # directory pre-existed or has other files; leave it alone
+            if not examples_dir_existed:
+                try:
+                    examples_dir.rmdir()
+                except OSError:
+                    pass  # not empty (other files appeared concurrently); leave it alone
 
     return json.loads(result.stdout)
 
