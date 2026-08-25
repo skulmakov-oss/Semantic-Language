@@ -7,7 +7,7 @@
     "commit_date": "2026-08-25T12:36:48+05:00",
     "crate": "semantic-core-quad",
     "crate_version": "0.1.0",
-    "generator": "crates/semantic-core-quad/examples/dump_b0_vectors.rs (temporary probe, not committed to the reference repo; source is reproduced in docs/bootstrap/b0/foundation_contract.md appendix A)",
+    "generator": "crates/semantic-core-quad/examples/dump_b0_vectors.rs (temporary probe, not committed to the reference repo; source is reproduced in docs/bootstrap/b0/foundation_contract.md appendix A). not/and/or/implies are computed via QuadroReg32 lane 0 + lattice_inverse/lattice_meet/lattice_join, the exact call chain sm-vm::quad_not/quad_and/quad_or/quad_implies use - not QuadState's own separately-implemented inverse/meet/join. eq is QuadState's PartialEq, matching sm-vm::value_eq's Value::Quad(x) == Value::Quad(y).",
     "generation_command": "cargo run -p semantic-core-quad --example dump_b0_vectors --quiet"
   },
   "excluded_family": "QTruth (QTruthAnd/QTruthOr/QTruthNot/QTruthImpl) is a separate, later-added Belnap truth-table family gated behind SemCode minimum revision 19 (#1732). See docs/bootstrap/b0/foundation_contract.md section 'Explicit exclusions'.",
@@ -280,6 +280,88 @@
       "a": "S",
       "b": "S",
       "result": "S"
+    }
+  ],
+  "eq": [
+    {
+      "a": "N",
+      "b": "N",
+      "result": true
+    },
+    {
+      "a": "N",
+      "b": "F",
+      "result": false
+    },
+    {
+      "a": "N",
+      "b": "T",
+      "result": false
+    },
+    {
+      "a": "N",
+      "b": "S",
+      "result": false
+    },
+    {
+      "a": "F",
+      "b": "N",
+      "result": false
+    },
+    {
+      "a": "F",
+      "b": "F",
+      "result": true
+    },
+    {
+      "a": "F",
+      "b": "T",
+      "result": false
+    },
+    {
+      "a": "F",
+      "b": "S",
+      "result": false
+    },
+    {
+      "a": "T",
+      "b": "N",
+      "result": false
+    },
+    {
+      "a": "T",
+      "b": "F",
+      "result": false
+    },
+    {
+      "a": "T",
+      "b": "T",
+      "result": true
+    },
+    {
+      "a": "T",
+      "b": "S",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "N",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "F",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "T",
+      "result": false
+    },
+    {
+      "a": "S",
+      "b": "S",
+      "result": true
     }
   ]
 }

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """B0-00 differential qualification gate (Semantic-Language issue #2).
 
-Re-extracts the legacy-lattice Quad truth tables from a live checkout of the
-reference repository (`skulmakov-oss/Semantic`) by compiling and running the
-probe at reference/b0/dump_b0_vectors.rs against its `semantic-core-quad`
-crate, then compares the result byte-for-byte (structurally) against the
-frozen corpus committed at reference/b0/reference_vectors.json.
+Re-extracts the legacy-lattice Quad truth tables (and structural equality)
+from a live checkout of the reference repository (`skulmakov-oss/Semantic`)
+by compiling and running the probe at reference/b0/dump_b0_vectors.rs
+against its `semantic-core-quad` crate, then compares the result
+byte-for-byte (structurally) against the frozen corpus committed at
+reference/b0/reference_vectors.json.
 
 Usage:
     python3 qualification/b0/check_reference_vectors.py --reference-checkout <path-to-Semantic-repo>
@@ -16,22 +17,32 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FROZEN_VECTORS = REPO_ROOT / "reference" / "b0" / "reference_vectors.json"
 PROBE_SOURCE = REPO_ROOT / "reference" / "b0" / "dump_b0_vectors.rs"
-COMPARED_KEYS = ["operation_family", "state_encoding", "not", "and", "or", "implies"]
+COMPARED_KEYS = ["operation_family", "state_encoding", "not", "and", "or", "implies", "eq"]
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
     # Write-then-replace so a pre-existing file at `path` is never left
     # partially overwritten (disk full, permission revoked, interrupt
     # mid-write): the target is always either its old bytes or the new
-    # bytes in full, never a half-written mix.
-    tmp = path.with_name(path.name + ".b0-tmp")
-    tmp.write_bytes(data)
-    tmp.replace(path)
+    # bytes in full, never a half-written mix. A uniquely-generated temp
+    # name (mkstemp), not a fixed sidecar name, so a pre-existing sidecar
+    # from local work or a concurrent invocation of this same script is
+    # never clobbered or raced on.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with open(fd, "wb") as f:
+            f.write(data)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def extract_live(reference_checkout: Path) -> dict:
@@ -103,7 +114,7 @@ def main() -> int:
         return 1
 
     print("PASS: reference_vectors.json matches live extraction from the reference implementation.")
-    print(f"  not: {len(frozen['not'])} cases, and/or/implies: {len(frozen['and'])} cases each")
+    print(f"  not: {len(frozen['not'])} cases, and/or/implies/eq: {len(frozen['and'])} cases each")
     return 0
 
 

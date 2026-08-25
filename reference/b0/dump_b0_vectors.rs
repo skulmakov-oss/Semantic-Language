@@ -7,12 +7,17 @@
 // `cargo run -p semantic-core-quad --example dump_b0_vectors`, and removed
 // afterward. It must never be committed to the reference repository itself.
 //
-// It dumps the exhaustive NOT/AND/OR/IMPLIES legacy-lattice truth tables
-// straight from `QuadState`'s own `inverse`/`meet`/`join` methods (the same
-// primitives `sm-vm::quad_not`/`quad_and`/`quad_or`/`quad_implies` delegate
-// to via `QuadroReg32`), so the corpus is derived from the reference
-// implementation, not retyped by hand.
-use semantic_core_quad::QuadState;
+// NOT/AND/OR/IMPLIES are computed by routing a single value through lane 0
+// of a `QuadroReg32` and calling `.lattice_inverse()`/`.lattice_meet()`/
+// `.lattice_join()` - the exact same call chain as `sm-vm`'s
+// `quad_not`/`quad_and`/`quad_or`/`quad_implies`
+// (`crates/sm-vm/src/semcode_vm.rs:3153-3168`, via its `quad_lane0`/
+// `quad_lane0_value` helpers), not `QuadState`'s own (separately
+// implemented) `inverse`/`meet`/`join` methods - so a divergence introduced
+// only in the packed-register lattice path is exercised, not bypassed.
+// Equality is `QuadState`'s own `PartialEq`, matching `sm-vm::value_eq`'s
+// `Value::Quad(x) == Value::Quad(y)` (`x == y` on the bridged `QuadVal`).
+use semantic_core_quad::{QuadState, QuadroReg32};
 
 fn name(s: QuadState) -> &'static str {
     match s {
@@ -21,6 +26,16 @@ fn name(s: QuadState) -> &'static str {
         QuadState::T => "T",
         QuadState::S => "S",
     }
+}
+
+fn quad_lane0(q: QuadState) -> QuadroReg32 {
+    let mut reg = QuadroReg32::from_raw(0);
+    reg.set_unchecked(0, q);
+    reg
+}
+
+fn quad_lane0_value(reg: QuadroReg32) -> QuadState {
+    reg.try_get(0).unwrap()
 }
 
 fn main() {
@@ -43,7 +58,7 @@ fn main() {
     println!("  \"not\": [");
     let states = QuadState::ALL;
     for (i, a) in states.iter().enumerate() {
-        let r = a.inverse();
+        let r = quad_lane0_value(quad_lane0(*a).lattice_inverse());
         let comma = if i + 1 < states.len() { "," } else { "" };
         println!(
             "    {{ \"a\": \"{}\", \"result\": \"{}\" }}{}",
@@ -75,10 +90,48 @@ fn main() {
         println!("  ]{}", if last { "" } else { "," });
     };
 
-    dump_binary("and", &|a, b| a.meet(b), false);
-    dump_binary("or", &|a, b| a.join(b), false);
-    // IMPLIES per docs/spec/quad_logic_frame_v1.md: "A -> B = NOT(A) join B".
-    dump_binary("implies", &|a, b| a.inverse().join(b), true);
+    dump_binary(
+        "and",
+        &|a, b| quad_lane0_value(quad_lane0(a).lattice_meet(quad_lane0(b))),
+        false,
+    );
+    dump_binary(
+        "or",
+        &|a, b| quad_lane0_value(quad_lane0(a).lattice_join(quad_lane0(b))),
+        false,
+    );
+    // IMPLIES per docs/spec/quad_logic_frame_v1.md: "A -> B = NOT(A) join B",
+    // same call chain as `sm-vm::quad_implies`.
+    dump_binary(
+        "implies",
+        &|a, b| {
+            quad_lane0_value(
+                quad_lane0(a)
+                    .lattice_inverse()
+                    .lattice_join(quad_lane0(b)),
+            )
+        },
+        false,
+    );
+
+    println!("  \"eq\": [");
+    let mut eq_entries = Vec::new();
+    for a in states {
+        for b in states {
+            eq_entries.push((a, b, a == b));
+        }
+    }
+    for (i, (a, b, r)) in eq_entries.iter().enumerate() {
+        let comma = if i + 1 < eq_entries.len() { "," } else { "" };
+        println!(
+            "    {{ \"a\": \"{}\", \"b\": \"{}\", \"result\": {} }}{}",
+            name(*a),
+            name(*b),
+            r,
+            comma
+        );
+    }
+    println!("  ]");
 
     println!("}}");
 }

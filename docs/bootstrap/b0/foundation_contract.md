@@ -105,12 +105,20 @@ this family, not the truth-table family, as the one `&&`/`||` reach:
 **lattice join** result; the truth-table `map_or(S, T)` would be `T` (see
 Explicit exclusions).
 
-Definitions, all reducing to `QuadState`'s own `inverse`/`meet`/`join`
-(`crates/semantic-core-quad/src/lib.rs:113-127`), which `sm-vm`'s
-`quad_not`/`quad_and`/`quad_or`/`quad_implies`
-(`crates/sm-vm/src/semcode_vm.rs:3153-3168`) call via the explicitly-named
+Definitions, all reducing to `QuadroReg32`'s explicitly-named
 `lattice_inverse`/`lattice_meet`/`lattice_join` aliases
-(`crates/semantic-core-quad/src/lib.rs:451-461`, "Explicit Lattice Aliases"):
+(`crates/semantic-core-quad/src/lib.rs:451-461`, "Explicit Lattice Aliases"),
+which `sm-vm`'s `quad_not`/`quad_and`/`quad_or`/`quad_implies`
+(`crates/sm-vm/src/semcode_vm.rs:3153-3168`) call by wrapping each `QuadVal`
+into lane 0 of a `QuadroReg32` (`quad_lane0`/`quad_lane0_value`). Note this
+is a *different* Rust implementation from `QuadState`'s own (separately
+defined, single-value) `inverse`/`meet`/`join` methods
+(`crates/semantic-core-quad/src/lib.rs:113-127`) — they are verified
+mathematically equivalent (both reduce to the same bit formulas; lane 0 of
+an otherwise-zeroed register behaves identically to a bare value), but the
+VM runtime exercises the `QuadroReg32` path specifically, and this
+contract's reference corpus is extracted through that exact path (see
+Appendix A), not the simpler `QuadState`-level one:
 
 - `NOT(a) = lattice_inverse(a)` = swap the truth/falsity bit planes
 - `AND(a, b) = lattice_meet(a, b)` = bitwise AND of the 2-bit codes
@@ -135,8 +143,10 @@ implements `QNot`/`QAnd`/`QOr`/`QImpl` by calling `.inverse()`/`.meet()`/
 ## Truth tables
 
 Machine-readable, mechanically extracted (not hand-typed) at
-[`reference/b0/reference_vectors.json`](../../../reference/b0/reference_vectors.json).
-Extraction method and reproduction instructions: Appendix A below and
+[`reference/b0/reference_vectors.json`](../../../reference/b0/reference_vectors.json)
+— `not`/`and`/`or`/`implies` (52 cases total) plus a 16-case `eq` table (see
+"Equality / identity rules" below). Extraction method and reproduction
+instructions: Appendix A below and
 [`qualification/b0/check_reference_vectors.py`](../../../qualification/b0/check_reference_vectors.py).
 
 ### NOT (4 cases)
@@ -191,7 +201,10 @@ evidence merging or conflict resolution:
 §"Quad equality" (`N == N -> true`, `N == S -> false`, etc. — all four states
 mutually distinct, no coercion). All three Rust `QuadVal`/`QuadState`
 definitions audited derive plain `PartialEq, Eq` (structural, not custom)
-with no `PartialOrd`/`Ord` anywhere in the audited files.
+with no `PartialOrd`/`Ord` anywhere in the audited files. All 16 cases are
+mechanically extracted (via `QuadState`'s own derived `PartialEq`, matching
+`sm-vm::value_eq`'s `Value::Quad(x) == Value::Quad(y)`) into the `eq` field
+of `reference/b0/reference_vectors.json`, not asserted from prose alone.
 
 ## Serialized representation
 
@@ -303,14 +316,15 @@ select contract, capture reference behavior, define canonical comparison
 form). It does **not** by itself qualify anything, because no Semantic
 mirror exists yet (steps 4-8 remain). The comparison form fixed here is
 **exact structured identity** (tier 2 of `BOOTSTRAP.md`'s comparison
-hierarchy) over `{state_encoding, not, and, or, implies}` as recorded in
+hierarchy) over `{state_encoding, not, and, or, implies, eq}` as recorded in
 `reference/b0/reference_vectors.json`.
 
 Mutation-proof evidence (required by issue #2's qualification checklist) is
-recorded in this PR's description: a deliberate one-cell mutation
-(`T AND T`: `T` -> `S`) in the committed corpus caused
-`qualification/b0/check_reference_vectors.py` to fail with an exact reported
-delta, then was reverted and re-verified passing.
+recorded in this PR's description: deliberate one-cell mutations
+(`T AND T`: `T` -> `S`, and separately `S eq S`: `true` -> `false`) in the
+committed corpus each caused `qualification/b0/check_reference_vectors.py`
+to fail with an exact reported delta, then were reverted and re-verified
+passing.
 
 ## Appendix A: extraction probe source
 
@@ -319,7 +333,12 @@ for readability; it is not compiled as part of this repository. It is placed
 into a checkout of the reference repository's
 `crates/semantic-core-quad/examples/` directory and run with `cargo run -p
 semantic-core-quad --example dump_b0_vectors` by
-`qualification/b0/check_reference_vectors.py`, which removes it afterward.
-It reads only public `QuadState` methods (`inverse`, `meet`, `join`,
-`ALL`) — no reference-repo source was copied or reimplemented by hand into
-this corpus.
+`qualification/b0/check_reference_vectors.py`, which removes it afterward
+(restoring, byte-for-byte and atomically, any file that was already at that
+path). `not`/`and`/`or`/`implies` route through lane 0 of a `QuadroReg32`
+and its `lattice_inverse`/`lattice_meet`/`lattice_join` methods — the exact
+call chain `sm-vm`'s own opcode handlers use — rather than `QuadState`'s
+separately-implemented single-value methods. `eq` reads `QuadState`'s
+derived `PartialEq` directly, matching `sm-vm::value_eq`. No reference-repo
+source was copied or reimplemented by hand into the corpus values
+themselves — every value is the live return of a reference-crate call.
