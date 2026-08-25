@@ -353,10 +353,12 @@ select contract, capture reference behavior, define canonical comparison
 form). It does **not** by itself qualify anything, because no Semantic
 mirror exists yet (steps 4-8 remain). The comparison form fixed here is
 **exact structured identity** (tier 2 of `BOOTSTRAP.md`'s comparison
-hierarchy) over `{state_encoding, opcode_encoding,
+hierarchy) over `{state_encoding, abi_encoding, opcode_encoding,
 minimum_semcode_revision, not, and, or, implies, eq, vm_eq}` as recorded in
 `reference/b0/reference_vectors.json`, plus a pass/fail requirement (not a
-value comparison) that the reference's own host-ABI boundary tests run and
+value comparison) that the reference's own host-ABI boundary tests
+(inbound `quad_from_abi` rejection coverage specifically - `abi_encoding`
+already covers the outbound `quad_to_u8` direction by extraction) run and
 pass at the pinned commit. `--reference-checkout` must itself be a clean
 checkout with git HEAD exactly at the frozen commit by default
 (`--allow-reference-drift` opts out explicitly, and visibly labels the
@@ -367,9 +369,9 @@ recorded in this PR's description: numerous deliberate mutations - value
 mutations in the committed corpus (e.g. `T AND T`: `T` -> `S`, `S eq S`:
 `true` -> `false`, `opcode_encoding.QAnd`, `minimum_semcode_revision.QNot`,
 `vm_eq`'s `T,T` cell), structural/domain/coverage corruption, frozen-
-constant substitution, reference-checkout identity mismatches, and a
-mutation of the reference implementation itself (`QuadroReg32::lattice_meet`,
-and separately `quad_from_abi`) - each caused
+constant substitution, reference-checkout identity mismatches, and
+mutations of the reference implementation itself (`QuadroReg32::lattice_meet`,
+`quad_to_u8`, and separately `quad_from_abi`) - each caused
 `qualification/b0/check_reference_vectors.py` to fail with an exact
 reported cause, then were reverted and re-verified passing.
 
@@ -380,15 +382,16 @@ for readability; it is not compiled as part of this repository.
 `qualification/b0/check_reference_vectors.py` builds and runs it as the
 `src/main.rs` of a throwaway crate in its own temp directory, with `path`
 dependencies on the reference checkout's `semantic-core-quad`, `sm-format`,
-`sm-emit`, `sm-verify`, and `sm-vm` crates - the checkout itself is only
-ever read, never written to (no file is ever installed into or removed
-from it), so two qualification runs against the same checkout cannot race
-on shared mutable state there. Row/column order in the emitted tables is
-an explicit `N/F/T/S` literal in the probe, not `QuadState::ALL`'s own
+`sm-emit`, `sm-verify`, `sm-vm`, `sm-ir`, `sm-front`, `prom-abi`, and
+`prom-cap` crates - the checkout itself is only ever read, never written
+to (no file is ever installed into or removed from it), so two
+qualification runs against the same checkout cannot race on shared
+mutable state there. Row/column order in the emitted tables is an
+explicit `N/F/T/S` literal in the probe, not `QuadState::ALL`'s own
 iteration order, so a pure reorder of that array upstream cannot appear as
 a spurious corpus divergence.
 
-Four independent oracle surfaces, each through its own real entry point:
+Five independent oracle surfaces, each through its own real entry point:
 
 - `not`/`and`/`or`/`implies` route through lane 0 of a `QuadroReg32` and
   its `lattice_inverse`/`lattice_meet`/`lattice_join` methods — the exact
@@ -403,12 +406,24 @@ Four independent oracle surfaces, each through its own real entry point:
   `value_eq` function) — a genuinely different path from `eq`.
 - `opcode_encoding`/`minimum_semcode_revision` read `sm_format::Opcode`'s
   own public `.byte()`/`.minimum_semcode_revision()` methods.
+- `abi_encoding` (the outbound `quad_to_u8` direction of the host-ABI
+  boundary) is extracted via a hand-built `IrInstr::LoadQ`/`GateWrite`
+  program (there is no `.sm` source syntax for a host-effect call, so this
+  is built the same low-level way the reference's own inbound tests are)
+  run through the public `run_verified_semcode_with_host_and_capabilities`
+  with a real `prom_abi::RecordingHostAbi`, reading back the exact byte it
+  recorded.
 
-The host-ABI boundary (`quad_to_u8`/`quad_from_abi`) is a private function
-pair with no lightweight public entry point reachable without a full
-host-call round trip; that specific claim is proven not by extraction but
-by the qualification script separately requiring the reference's own
-exhaustive tests for it to run and pass (see "Serialized representation"
-above). No reference-repo source was copied or reimplemented by hand into
-any corpus value — every value is the live return of a reference-crate
-call, or the pass/fail result of the reference's own test suite.
+The *inbound* host-ABI direction (`quad_from_abi`, including rejection of
+the 252 out-of-domain bytes) is a private function with no lightweight
+public entry point and doesn't reduce to a single JSON value comparison;
+that specific claim is proven not by extraction but by the qualification
+script separately requiring the reference's own exhaustive tests for it to
+run and pass (see "Serialized representation" above), redirecting
+`CARGO_TARGET_DIR` to an isolated temp directory and checking the process
+exit code independently of the parsed pass/fail counts (a later stage
+failing after the named tests' own summary line already looked clean must
+still fail the gate). No reference-repo source was copied or reimplemented
+by hand into any corpus value — every value is the live return of a
+reference-crate call, or the pass/fail result of the reference's own test
+suite.

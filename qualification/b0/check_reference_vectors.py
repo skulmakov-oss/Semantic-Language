@@ -397,6 +397,18 @@ def check_abi_boundary_tests(reference_checkout: Path) -> list:
         except FileNotFoundError as exc:
             return [f"could not run cargo test for the ABI boundary: {exc}"]
 
+    # A nonzero exit is a FAIL regardless of what the parsed summaries say:
+    # cargo runs several stages (build each test binary, run each, doctests)
+    # and any one of them can fail *after* the summary block containing our
+    # three named tests has already printed "3 passed; 0 failed" - e.g. a
+    # later test binary failing to compile, or a doctest failing. Trusting
+    # the parsed counts alone would let that failure through as a PASS.
+    if result.returncode != 0:
+        problems.append(
+            f"cargo test exited with code {result.returncode} - some part of the run failed "
+            f"even if the named tests' own summary line looked clean"
+        )
+
     # --quiet suppresses per-test "test <name> ... ok" lines (just dots), so
     # parse the "test result: N passed; M failed" summaries instead - `-p
     # sm-vm` runs several test binaries (lib unit tests, each `tests/*.rs`
