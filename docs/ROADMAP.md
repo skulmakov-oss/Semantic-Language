@@ -210,4 +210,8 @@ Self-hosting is declared only when:
 - unrelated application tooling;
 - cosmetic parity with the Rust repository.
 
-These may exist independently without blocking language bootstrap. TypeScript Workbench/Studio remains a presentation consumer of Semantic-owned contracts and is governed separately by the Semantic Reactive Interface milestone.
+These may exist independently without blocking language bootstrap.
+
+The reference repository's former **native Semantic UI / Workbench / Studio** workstream remains retired from the active bootstrap roadmap. This repository does **not** restore that native-UI effort.
+
+A separate owner decision in [Issue #5 — Semantic Reactive Interface (SRI)](https://github.com/skulmakov-oss/Semantic-Language/issues/5) defines a **TypeScript-based Workbench / Studio only as an external presentation consumer** of Semantic-owned services. That successor tooling track is not part of B0–B8, does not transfer language/build semantic authority to TypeScript, and must not block self-hosting qualification.
