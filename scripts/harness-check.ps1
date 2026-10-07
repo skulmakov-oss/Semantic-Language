@@ -280,6 +280,10 @@ try {
     $TaskFile = if ($TaskFile) { [System.IO.Path]::GetFullPath($TaskFile, $PWD.Path) }
                 else { Join-Path $RepoRoot '.harness/current.task.yaml' }
     Set-Location -LiteralPath $RepoRoot
+    # The envelope must be a regular file, never a link that could redirect the read.
+    if ((Get-Item -LiteralPath $TaskFile -Force -ErrorAction SilentlyContinue).LinkType) { throw "envelope is a link: $TaskFile" }
+    $mode = "$(& git ls-files -s -- .harness/current.task.yaml)".Split(' ')[0]
+    if ($mode -and $mode -cne '100644') { throw "envelope must be a regular file in git (mode $mode)" }
     $envelope = Read-Envelope $TaskFile
     Write-Host "[harness] task $($envelope.task.id) (issue #$($envelope.constraints.issue))"
     $mode = if ($BaseRef) { "committed $BaseRef...HEAD + working tree" } else { 'working tree (staged, unstaged, untracked)' }

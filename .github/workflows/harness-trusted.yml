@@ -34,4 +34,5 @@ jobs:
           git -C candidate fetch --no-tags -q "$REPO" "+refs/pull/$PR_NUMBER/head:refs/pr/head"
           git -C candidate fetch --no-tags -q "$REPO" "$BASE_SHA"
           git -C candidate -c advice.detachedHead=false checkout -q --detach "$HEAD_SHA"
+          test ! -L candidate/.harness/current.task.yaml || { echo "[harness:error] candidate envelope is a symlink"; exit 1; }
           pwsh -NoProfile -File trusted/scripts/harness-check.ps1 -RepoRoot "$GITHUB_WORKSPACE/candidate" -BaseRef "$BASE_SHA" -RequireEnvelopeBase
