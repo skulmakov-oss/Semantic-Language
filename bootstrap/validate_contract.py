@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "31e7d086988abf2d51c5477ad7e8746220ad1efb97ceab9e2161a558b3a3fa82"}
+FROZEN_DIGESTS = {PROTOCOL: "60c267db7c666bd6399b501b33c5064743d1866b9ec4f9efa0de6d29d41155f4"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -77,7 +77,9 @@ def check_registry(subset_text):
         registry[bsf] = state
         filled = [c for c in cells if c.lower() not in EMPTY_CELL]
         if state in ("ADMITTED", "FROZEN"):
-            if len(cells) != 6 or len(filled) != 6 or " / " not in cells[4] \
+            halves = [h.strip().lower() for h in cells[4].split(" / ")] if len(cells) > 4 else []
+            if len(cells) != 6 or len(filled) != 6 or len(halves) != 2 \
+                    or any(h in EMPTY_CELL for h in halves) \
                     or not SHF_RANGE.search(cells[5]):
                 errors.append(f"CONTRACT_DRIFT: {state} registry row {bsf} is incomplete "
                               "(needs compiler use, positive / negative evidence and SHF stages)")
@@ -299,10 +301,31 @@ def check_contract(contract, reference, subset_text):
     return errors
 
 
-def check_evidence(contract, record):
-    """An evidence record is valid only under the exact contract it claims."""
+HASH = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def check_evidence(contract, record, source_set_identity=None):
+    """A record supports the Bootstrap Seal only if it is bound to this exact contract AND
+    records an admitted C1 and C2 whose comparison held. `source_set_identity`, when given,
+    must equal the record's (the identity of the current S)."""
+    ev = contract["evidence"]
     errors = [f"CONTRACT_DRIFT: evidence field {f!r} missing"
-              for f in contract["evidence"]["required_fields"] if f not in record]
+              for f in ev["required_fields"] if f not in record]
+    for field in ("source_set_identity", "c1_artifact_hash", "c2_artifact_hash"):
+        if field in record and not HASH.fullmatch(str(record[field])):
+            errors.append(f"SOURCE_SET_INVALID: evidence {field} is not {ev['artifact_hash_format']}"
+                          if field == "source_set_identity" else
+                          f"FIXED_POINT_DELTA: evidence {field} is not {ev['artifact_hash_format']}")
+    if source_set_identity is not None and record.get("source_set_identity") != source_set_identity:
+        errors.append("SOURCE_SET_INVALID: evidence was produced for a different source set")
+    for field in ("c1_verifier_binding", "c2_verifier_binding"):
+        if field in record and record[field] != ev["verifier_binding_admitted"]:
+            errors.append(f"ADMISSION_REJECT: {field} is not {ev['verifier_binding_admitted']!r}")
+    if "comparison_result" in record and record["comparison_result"] != ev["comparison_result_holds"]:
+        errors.append("FIXED_POINT_DELTA: comparison_result does not record a holding fixed point")
+    if contract["fixed_point"]["comparison_rule"] == "byte-equality-v1" \
+            and record.get("c1_artifact_hash") != record.get("c2_artifact_hash"):
+        errors.append("FIXED_POINT_DELTA: byte-equality-v1 requires identical C1 and C2 hashes")
     if record.get("contract_protocol") != contract["protocol"]:
         errors.append("CONTRACT_DRIFT: evidence bound to a different contract protocol")
     if record.get("comparison_rule") != contract["fixed_point"]["comparison_rule"]:
@@ -369,6 +392,8 @@ def self_test():
     assert check_registry(with_row("| BSF-999 | x | ADMITTED |"))[1]
     assert check_registry(with_row("| BSF-999 | x | ADMITTED | use | evidence | SHF-10 |"))[1]  # no "/"
     assert check_registry(with_row("| BSF-999 | x | ADMITTED | — | a / b | SHF-10 |"))[1]      # empty cell
+    assert check_registry(with_row("| BSF-999 | x | ADMITTED | use | T A F I B / — | SHF-10 |"))[1]
+    assert check_registry(with_row("| BSF-999 | x | ADMITTED | use | — / negatives | SHF-10 |"))[1]
     assert check_registry(with_row("| BSF-999 | x | FROZEN | use | a / b | stages |"))[1]       # no SHF
     assert check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | upstream |"))[1]        # no stage
     assert check_registry(with_row("| BSF-999 | x | MAYBE | a | b |"))[1]
@@ -458,10 +483,26 @@ def self_test():
             assert load_source_set(repo, nested, "compiler")[1]
 
     # evidence binding
-    record = {f: "x" for f in contract["evidence"]["required_fields"]}
-    record.update(contract_protocol=PROTOCOL, comparison_rule="byte-equality-v1",
-                  c0_identity=f"{REPOSITORY}@{contract['c0']['sha']}")
+    h = "sha256:" + "ab" * 32
+    record = dict(contract_protocol=PROTOCOL, comparison_rule="byte-equality-v1",
+                  c0_identity=f"{REPOSITORY}@{contract['c0']['sha']}",
+                  source_set_identity="sha256:" + "cd" * 32, c1_artifact_hash=h, c2_artifact_hash=h,
+                  c1_verifier_binding="admitted", c2_verifier_binding="admitted",
+                  comparison_result="equal")
+    assert set(record) == set(contract["evidence"]["required_fields"])
     assert not check_evidence(contract, record)
+    assert not check_evidence(contract, record, source_set_identity="sha256:" + "cd" * 32)
+    # values, not only keys: a failed or malformed run is never Seal evidence
+    for bad, cls in [({"comparison_result": "different"}, "FIXED_POINT_DELTA"),
+                     ({"comparison_result": False}, "FIXED_POINT_DELTA"),
+                     ({"c2_artifact_hash": "sha256:" + "ef" * 32}, "FIXED_POINT_DELTA"),
+                     ({"c1_artifact_hash": "x", "c2_artifact_hash": "x"}, "FIXED_POINT_DELTA"),
+                     ({"c1_verifier_binding": "rejected"}, "ADMISSION_REJECT"),
+                     ({"c2_verifier_binding": "x"}, "ADMISSION_REJECT"),
+                     ({"source_set_identity": "x"}, "SOURCE_SET_INVALID")]:
+        errs = check_evidence(contract, {**record, **bad})
+        assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
+    assert check_evidence(contract, record, source_set_identity="sha256:" + "00" * 32)
     assert check_evidence(contract, {**record, "comparison_rule": "normalized-equality-v1"})
     assert check_evidence(contract, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"})
     assert check_evidence(contract, {**record, "c0_identity": f"{REPOSITORY}@main"})

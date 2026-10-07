@@ -161,6 +161,10 @@ required_fields = [
     "c1_verifier_binding", "c2_artifact_hash", "c2_verifier_binding", "comparison_rule",
     "comparison_result",
 ]
+# A record supports the Bootstrap Seal only with these values; anything else is not evidence.
+artifact_hash_format = "sha256:<64 lowercase hex>"   # c1/c2_artifact_hash, source_set_identity
+verifier_binding_admitted = "admitted"               # c1/c2_verifier_binding
+comparison_result_holds = "equal"                    # byte-equality-v1 also requires c1 hash == c2 hash
 
 # ---------------------------------------------------------------- subset
 [subset]

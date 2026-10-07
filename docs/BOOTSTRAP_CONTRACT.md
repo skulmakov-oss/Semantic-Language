@@ -178,3 +178,7 @@ Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_
 `c1_verifier_binding`, `c2_artifact_hash`, `c2_verifier_binding`, `comparison_rule`,
 `comparison_result` (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
 §7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.
+A record supports the Bootstrap Seal only if its values hold, not merely its keys: hashes are
+`sha256:<64 lowercase hex>`, `source_set_identity` equals the identity of the current `S`, both
+verifier bindings are `admitted` (else `ADMISSION_REJECT`), `comparison_result` is `equal`, and
+under `byte-equality-v1` the C1 and C2 hashes are identical (else `FIXED_POINT_DELTA`).
