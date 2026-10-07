@@ -251,9 +251,12 @@ def check_capabilities(contract):
                 errors.append(f"CAPABILITY_GAP: capability {name!r} must declare available_at_c0")
             elif not cap["available_at_c0"]:
                 stage = SHF_STAGE.fullmatch(str(cap.get("gap_stage", "")))
-                if cap.get("gap_owner") != REPOSITORY or not stage or not 1 <= int(stage.group(1)) <= 17:
+                # an upstream capability gap closes in an upstream capability stage, same bounds as
+                # CANDIDATE registry rows (SHF-1..SHF-9), never in a compiler/bootstrap stage
+                lo, hi = CANDIDATE_STAGES
+                if cap.get("gap_owner") != REPOSITORY or not stage or not lo <= int(stage.group(1)) <= hi:
                     errors.append(f"CAPABILITY_GAP: unavailable capability {name!r} needs gap_owner "
-                                  f"{REPOSITORY!r} and a gap_stage SHF-1..SHF-17")
+                                  f"{REPOSITORY!r} and a gap_stage SHF-{lo}..SHF-{hi}")
     host = contract.get("host", {})
     for name in host.get("required_capabilities", []):
         if name not in caps:
@@ -554,6 +557,16 @@ def self_test():
     # capabilities and host boundary
     fails("CAPABILITY_GAP", lambda c: c["host"]["required_capabilities"].append("binary_net"))
     fails("CAPABILITY_GAP", lambda c: c["capabilities"]["artifact_write"].pop("gap_stage"))
+    # capability gaps close in upstream capability stages SHF-1..SHF-9 only
+    def gap_errors(**changes):
+        c = copy.deepcopy(contract)
+        c["capabilities"]["artifact_write"].update(changes)
+        return [e for e in check_capabilities(c) if e.startswith("CAPABILITY_GAP:")]
+    assert not gap_errors(gap_stage="SHF-1")
+    assert not gap_errors(gap_stage="SHF-9")
+    assert gap_errors(gap_stage="SHF-10")
+    assert gap_errors(gap_stage="SHF-17")
+    assert gap_errors(gap_owner="skulmakov-oss/Semantic-Language")
     fails("HOST_LOGIC_LEAK", lambda c: c["host"]["required_capabilities"].append("clock_read"))
     fails("HOST_LOGIC_LEAK", lambda c: c["host"]["forbidden_logic"].remove("parsing"))
     fails("NONDETERMINISM", lambda c: c["deterministic_inputs"]["forbidden"].remove("wall_clock"))
