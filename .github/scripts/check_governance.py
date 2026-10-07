@@ -8,6 +8,7 @@ Exit code 0 = pass, 1 = any violation. Run with --self-test to prove the guards 
 """
 import re
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -87,8 +88,10 @@ def non_goals_lines(text):
     lines = set()
     for i, t in enumerate(tokens):
         if t.type == "list_item_open" and t.map:
-            first_inline = next((x for x in tokens[i + 1:] if x.type == "inline"), None)
-            if first_inline is not None and first_inline.content.startswith(NON_GOALS_FIELD):
+            # Only the item's own first paragraph names the field, never a nested descendant.
+            own = tokens[i + 1:i + 3]
+            if [x.type for x in own] == ["paragraph_open", "inline"] \
+                    and own[1].content.startswith(NON_GOALS_FIELD):
                 lines.update(range(*t.map))
     return lines
 
@@ -113,7 +116,7 @@ def check_reference(data):
     errors = []
     if data.get("repository") != "skulmakov-oss/Semantic":
         errors.append("reference: repository must be 'skulmakov-oss/Semantic'")
-    if not SHA.match(str(data.get("sha", ""))):
+    if not SHA.fullmatch(str(data.get("sha", ""))):
         errors.append("reference: sha must be an exact 40-hex commit (never a branch name)")
     if data.get("status") not in REFERENCE_STATUSES:
         errors.append(f"reference: status must be one of {sorted(REFERENCE_STATUSES)}")
@@ -161,7 +164,7 @@ def check_links(rel, text, base, root=ROOT):
         # Only repository-relative assets count: absolute paths and escapes from the checkout
         # would otherwise be satisfied by arbitrary files on the CI host.
         resolved = (base / path).resolve()
-        if path.startswith(("/", "\\")) or Path(path).is_absolute() or \
+        if drive or path.startswith(("/", "\\")) or Path(path).is_absolute() or \
                 (resolved != root and root not in resolved.parents):
             errors.append(f"{rel}: link outside the repository '{target}'")
         elif not resolved.exists():
@@ -231,6 +234,8 @@ def self_test():
         assert not check_roadmap_critical_path(child), term
         loose = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:**\n\n  - {term}\n\n  - other\n")
         assert not check_roadmap_critical_path(loose), term
+        nested = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n-\n  - **Non-goals:** x\n  - **Deliverable:** requires {term}\n")
+        assert check_roadmap_critical_path(nested), term
         peer = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:**\n\n  - x\n\n{term} is required\n")
         assert check_roadmap_critical_path(peer), term
         after = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** x\n- **Deliverable:** {term}\n")
@@ -239,6 +244,7 @@ def self_test():
           "bootstrap": {"upstream_issue": 1910}}
     assert not check_reference(ok)
     assert check_reference({**ok, "sha": "main"})
+    assert check_reference({**ok, "sha": "a" * 40 + "\n"})
     assert check_reference({**ok, "repository": "someone/Semantic"})
     assert check_reference({**ok, "status": "canonical"})
     assert check_reference({**ok, "bootstrap": {}})
@@ -248,7 +254,6 @@ def self_test():
     assert not check_agents_contract("\n".join(AGENTS_ANCHORS))
     assert len(check_agents_contract("\n".join(AGENTS_ANCHORS[1:]))) == 1
     # nested docs are governed: build a throwaway tree with a nested bad doc
-    import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         nested = Path(tmp) / "docs" / "design"
         nested.mkdir(parents=True)
@@ -280,6 +285,11 @@ def self_test():
     here = Path(__file__).resolve()
     assert check_links("x.md", f"[abs]({here.as_posix()})\n", ROOT)          # absolute, though it exists
     assert check_links("x.md", "[host](/etc/passwd)\n", ROOT)
+    with tempfile.TemporaryDirectory() as tmp:
+        if sys.platform != "win32":  # on POSIX a checkout can really contain a "C:" directory
+            (Path(tmp) / "C:").mkdir()
+            (Path(tmp) / "C:" / "x.md").write_text("x", encoding="utf-8")
+        assert check_links("x.md", "[drive](C:/x.md)\n", Path(tmp), Path(tmp))
     assert check_links("x.md", "[up](../../../../../../etc/hosts)\n", ROOT)  # escapes the checkout
     assert not check_links("x.md", "[ok](.github/scripts/check_governance.py)\n", ROOT)
     assert not check_links("x.md", "[a](check_governance.py#L1) [b](mailto:x@y.z)\n", Path(__file__).parent)
