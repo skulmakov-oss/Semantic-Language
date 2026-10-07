@@ -133,7 +133,7 @@ format); the "owner: `sm-ir`" wording in `docs/spec/semcode.md` is historical pe
 |---|---|
 | Root | `compiler/` |
 | Membership | exactly the files listed in [`bootstrap/source-set.toml`](../bootstrap/source-set.toml); never a directory scan |
-| Path form | relative, POSIX `/`, ASCII, components `[a-z0-9_]+`, file suffix `.sm` |
+| Path form | relative, POSIX `/`, ASCII, components `[a-z0-9_]+`, file suffix `.sm`; each component (with suffix) at most 100 characters and the whole relative path at most 160 (portable under Windows MAX_PATH with the checkout directory) |
 | Rejected paths | absolute, drive-letter, backslash, `.`/`..`/empty components, outside root, any component that is a Windows device name (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`) |
 | Links | every path component must resolve to exactly its literal location (no symlink, Windows junction or other reparse point at any depth) |
 | Ordering | strictly ascending by UTF-8 bytes; an unsorted list is rejected, not re-sorted |

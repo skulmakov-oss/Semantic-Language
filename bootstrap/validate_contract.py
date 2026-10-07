@@ -26,7 +26,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "b7a3e0495ef1d028f95dbd5b05480b22c27406267106dd18af058c733aeb7136"}
+FROZEN_DIGESTS = {PROTOCOL: "6f80db639198bfcb90ec49678024e8a793ab497b1300bc308eb2063543027908"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -46,6 +46,8 @@ REQUIRED_FORBIDDEN_INPUTS = {
 SHA = re.compile(r"[0-9a-f]{40}")
 COMPONENT = re.compile(r"[a-z0-9_]+")
 # Windows device names (not creatable as files on the qualified C0 platform).
+MAX_COMPONENT_LENGTH = 100
+MAX_PATH_LENGTH = 160
 RESERVED_COMPONENTS = sorted({"aux", "con", "nul", "prn"} | {f"com{i}" for i in range(1, 10)}
                              | {f"lpt{i}" for i in range(1, 10)})
 SHF_STAGE = re.compile(r"SHF-(\d+)")
@@ -138,6 +140,9 @@ def check_paths(files, root):
         stems = parts[:-1] + [parts[-1][:-3]]
         if any(not COMPONENT.fullmatch(c) for c in stems):
             errors.append(f"SOURCE_SET_INVALID: non-canonical path component in {p!r}")
+            continue
+        if len(p) > MAX_PATH_LENGTH or any(len(c) > MAX_COMPONENT_LENGTH for c in parts):
+            errors.append(f"SOURCE_SET_INVALID: path or component too long for the qualified platform: {p!r}")
             continue
         if any(c in RESERVED_COMPONENTS for c in stems):
             errors.append(f"SOURCE_SET_INVALID: Windows-reserved device name in {p!r}")
@@ -322,6 +327,8 @@ def check_contract(contract, reference, subset_text, contract_doc):
     if ss.get("protocol") != SOURCE_PROTOCOL or ss.get("newline") != "lf-only" \
             or ss.get("ordering") != "strictly-ascending-utf8-bytes" or ss.get("duplicates") != "reject":
         errors.append("SOURCE_SET_INVALID: source_set rules differ from shf0-source-set-v1")
+    if ss.get("max_component_length") != MAX_COMPONENT_LENGTH or ss.get("max_path_length") != MAX_PATH_LENGTH:
+        errors.append("SOURCE_SET_INVALID: path length bounds differ from the validator")
     if ss.get("reserved_components") != RESERVED_COMPONENTS:
         errors.append("SOURCE_SET_INVALID: reserved_components must list exactly the Windows device names")
     if ss.get("identity", {}).get("algorithm") != "sha256":
@@ -640,6 +647,12 @@ def self_test():
         assert check_paths([f"compiler/{reserved}.sm"], "compiler"), reserved
         assert check_paths([f"compiler/{reserved}/a.sm"], "compiler"), reserved
     assert not check_paths(["compiler/com10.sm", "compiler/console.sm"], "compiler")
+    assert check_paths(["compiler/" + "a" * 256 + ".sm"], "compiler")              # NTFS component limit
+    assert check_paths(["compiler/" + "a" * 98 + ".sm"], "compiler")               # 101 > 100
+    assert not check_paths(["compiler/" + "a" * 97 + ".sm"], "compiler")           # exactly 100
+    deep = "compiler/" + "/".join(["abcdefghij"] * 14) + ".sm"                      # > 160 total
+    assert len(deep) > MAX_PATH_LENGTH and check_paths([deep], "compiler")
+    fails("SOURCE_SET_INVALID", lambda c: c["source_set"].update(max_path_length=400))
     fails("SOURCE_SET_INVALID", lambda c: c["source_set"]["reserved_components"].remove("con"))
 
     # source-set identity
