@@ -93,7 +93,8 @@ AGENTS_PROSE = [p for sentences in AGENTS_CONTRACT.values() for p in sentences]
 
 
 def active_files(root):
-    files = [root / "README.md", root / "CONTRIBUTING.md", root / "AGENTS.md"]
+    # Every root document is governed; CLAUDE.md has its own exact '@AGENTS.md' check.
+    files = sorted(p for p in root.glob("*.md") if p.name != "CLAUDE.md")
     files += sorted((root / "docs").rglob("*.md"))
     files += sorted((root / ".github").rglob("*.md"))
     return files
@@ -516,6 +517,12 @@ def self_test():
         errs = run(Path(tmp))
         assert any("docs/design/new.md" in e and "B3" in e for e in errs)
         assert any("docs/design/new.md" in e and "broken relative link" in e for e in errs)
+    # a new root-level document is governed too
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "DESIGN.md").write_text("Phase B3 [x](missing.md)\n", encoding="utf-8")
+        errs = run(Path(tmp))
+        assert any(e.startswith("DESIGN.md:") and "B3" in e for e in errs)
+        assert any(e.startswith("DESIGN.md:") and "broken relative link" in e for e in errs)
     assert not check_links("x.md", "[a](https://example.com) [b](#anchor)", ROOT)
     assert check_links("x.md", '[a](missing.md "details")', ROOT)
     assert check_links("x.md", "[a](<missing file.md>)", ROOT)
