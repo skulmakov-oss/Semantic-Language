@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "60c267db7c666bd6399b501b33c5064743d1866b9ec4f9efa0de6d29d41155f4"}
+FROZEN_DIGESTS = {PROTOCOL: "78a29f9564f075e47b613edec99fef016539dddfdaad6a61027a328fe4e67419"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -46,7 +46,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 COMPONENT = re.compile(r"[a-z0-9_]+")
 SHF_STAGE = re.compile(r"SHF-(\d+)")
 BSF_ID = re.compile(r"BSF-\d{3}")
-SHF_RANGE = re.compile(r"SHF-\d+(?:\.\.\d+)?")
+SHF_RANGE = re.compile(r"SHF-(\d+)(?:\.\.(\d+))?")  # whole cell: SHF-n or SHF-a..b, 0..17
 EMPTY_CELL = {"", "—", "-", "n/a", "tbd"}
 
 
@@ -54,12 +54,22 @@ def registry_rows(subset_text):
     """[(id, state, cells)] for every table row whose first cell is a BSF id."""
     rows = []
     for line in subset_text.splitlines():
+        line = line.strip()  # indentation must not hide a row
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if cells and cells[0].upper().startswith("BSF"):  # a malformed id must not hide a row
             rows.append((cells[0], cells[2] if len(cells) > 2 else "", cells))
     return rows
+
+
+def valid_stages(cell):
+    """The whole cell is SHF-n or SHF-a..b with 0 <= a <= b <= 17."""
+    m = SHF_RANGE.fullmatch(cell.strip())
+    if not m:
+        return False
+    lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+    return 0 <= lo <= hi <= 17
 
 
 def check_registry(subset_text):
@@ -83,11 +93,12 @@ def check_registry(subset_text):
             halves = [h.strip().lower() for h in cells[4].split(" / ")] if len(cells) > 4 else []
             if len(cells) != 6 or len(filled) != 6 or len(halves) != 2 \
                     or any(h in EMPTY_CELL for h in halves) \
-                    or not SHF_RANGE.search(cells[5]):
+                    or not valid_stages(cells[5]):
                 errors.append(f"CONTRACT_DRIFT: {state} registry row {bsf} is incomplete "
                               "(needs compiler use, positive / negative evidence and SHF stages)")
         elif state == "CANDIDATE":
-            if len(cells) != 5 or len(filled) != 5 or not SHF_STAGE.search(cells[4]):
+            owner, _, stage = cells[4].rpartition(" / ") if len(cells) == 5 else ("", "", "")
+            if len(cells) != 5 or len(filled) != 5 or not owner.strip() or not valid_stages(stage):
                 errors.append(f"CONTRACT_DRIFT: CANDIDATE registry row {bsf} needs a gap and an owner / SHF stage")
         else:
             errors.append(f"CONTRACT_DRIFT: registry row {bsf} has unknown state {state!r}")
@@ -232,17 +243,12 @@ def check_capabilities(contract):
     return errors
 
 
-SUBSET_STATE_FIELDS = ("admitted", "candidate", "frozen")  # evolve via the registry linkage
-
-
 def frozen_digest(contract, reference):
-    """sha256 of the canonical form of every frozen value: the whole contract (except the
-    evolving [subset] state lists) together with the whole C0 reference manifest (verdict,
-    limits, drift, contract paths)."""
-    frozen = copy.deepcopy(contract)
-    for field in SUBSET_STATE_FIELDS:
-        frozen.get("subset", {}).pop(field, None)
-    canonical = json.dumps({"contract": frozen, "reference": reference},
+    """sha256 of the canonical form of every frozen value: the whole contract, including the
+    [subset] state lists, together with the whole C0 reference manifest (verdict, limits,
+    drift, contract paths). Admitting or dropping a construction is a contract change
+    (BOOTSTRAP_SUBSET.md §8), so the lists cannot be edited to hide a registry row."""
+    canonical = json.dumps({"contract": contract, "reference": reference},
                            sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -402,6 +408,12 @@ def self_test():
     assert check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | upstream |"))[1]        # no stage
     assert check_registry(with_row("| BSF-999 | x | MAYBE | a | b |"))[1]
     assert check_registry(subset.replace("| BSF-001 |", "| BSF-01 |"))[1]        # malformed id
+    indented = subset.replace("\n| BSF-001 |", "\n   | BSF-001 |", 1)
+    assert check_registry(indented)[0].get("BSF-001") == "ADMITTED"              # still visible
+    for stage in ("SHF-99", "junk SHF-10 junk", "SHF-14..10", "SHF-10..18", "SHF-"):
+        assert check_registry(with_row(f"| BSF-999 | x | ADMITTED | use | a / b | {stage} |"))[1], stage
+        assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | owner / {stage} |"))[1], stage
+    assert not check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-17 |"))[1]
     assert check_registry(subset.replace("| BSF-001 |", "| bsf-001 |"))[1]
     assert not check_registry(with_row("| BSF-999 | x | ADMITTED | use | a / b | SHF-10..14 |"))[1]
     assert check_registry(with_row("| BSF-001 | other | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-1 |"))[1]
@@ -417,9 +429,8 @@ def self_test():
     fails("CONTRACT_DRIFT", lambda c: c["capabilities"]["artifact_write"].update(available_at_c0=True))
     for name in REQUIRED_FAILURES:  # no failure class may allow qualification to continue
         fails("CONTRACT_DRIFT", lambda c, n=name: c["failures"][n].update({"continue": True}))
-    # only the evolving subset state lists sit outside the digest; its authority does not
-    assert not [e for e in mutated(lambda c: c["subset"]["candidate"].remove("BSF-106"))
-                if "frozen value" in e]
+    # the subset state lists are frozen with the protocol: they cannot be edited to hide a row
+    fails("CONTRACT_DRIFT", lambda c: c["subset"]["candidate"].remove("BSF-106"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(authority="docs/spec/other_profile.md"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(registry="docs/OTHER.md"))
     # the C0 reference manifest (verdict, limits, drift, contract paths) is frozen too

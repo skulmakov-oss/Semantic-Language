@@ -106,8 +106,8 @@ delta count (required: 0). See [QUALIFICATION.md](./QUALIFICATION.md).
 Protocol `shf0-bootstrap-contract-v1`. Changing any value below is a contract revision with a
 new protocol identifier, never an edit made to fit a failed run (`CONTRACT_DRIFT`).
 The validator enforces this mechanically: it binds the protocol identifier to a sha256 of the
-canonical form of every frozen value: all of `bootstrap/contract.toml` except the evolving
-`[subset]` state lists (admitted / candidate / frozen, checked through the registry linkage),
+canonical form of every frozen value: all of `bootstrap/contract.toml`, including the `[subset]`
+state lists (admitting or dropping a construction is a contract change, BOOTSTRAP_SUBSET.md §8),
 together with the whole C0 reference manifest `reference/semantic-reference.toml`.
 
 ### 10.1 C0
