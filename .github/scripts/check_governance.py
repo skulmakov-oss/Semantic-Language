@@ -96,16 +96,27 @@ def non_goals_lines(text):
     return lines
 
 
+def h2_headings(text):
+    """(0-based start line, text) of every real level-2 heading; '##' inside code is not one."""
+    tokens = COMMONMARK.parse(text)
+    return [(t.map[0], tokens[i + 1].content) for i, t in enumerate(tokens)
+            if t.type == "heading_open" and t.tag == "h2" and t.map]
+
+
 def check_roadmap_critical_path(text):
-    head = text.split(ROADMAP_OFF_PATH_HEADING, 1)
-    if len(head) != 2:
+    headings = h2_headings(text)
+    off_path = ROADMAP_OFF_PATH_HEADING.removeprefix("## ")
+    cut = next((line for line, title in headings if title == off_path), None)
+    if cut is None:
         return [f"docs/ROADMAP.md: missing '{ROADMAP_OFF_PATH_HEADING}' section"]
+    lines = text.splitlines()[:cut]
     errors = []
-    excluded = non_goals_lines(head[0])
-    for n, line in enumerate(head[0].splitlines(), 1):
+    excluded = non_goals_lines("\n".join(lines))
+    for n, line in enumerate(lines, 1):
         if OFF_CRITICAL_PATH.search(line) and n - 1 not in excluded:
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {line.strip()}")
-    stages = set(re.findall(r"^## (SHF-\d+) ", head[0], re.M))
+    stages = {m.group(1) for line, title in headings if line < cut
+              for m in [re.match(r"(SHF-\d+) ", title)] if m}
     expected = {f"SHF-{i}" for i in range(18)}
     if stages != expected:
         errors.append(f"docs/ROADMAP.md: SHF stage set mismatch: missing {sorted(expected - stages)}, extra {sorted(stages - expected)}")
@@ -220,6 +231,11 @@ def self_test():
     assert check_roadmap_critical_path("## SHF-0 — x\nneeds the Instant Pipeline\n" + ROADMAP_OFF_PATH_HEADING)
     assert check_roadmap_critical_path(good.replace("## SHF-17 — x\n", ""))
     assert check_roadmap_critical_path("no heading")
+    # a fenced example of the marker is not the real heading; validation must continue past it
+    fenced = good.replace("## SHF-17 — x\n", "## SHF-17 — x\n```md\n" + ROADMAP_OFF_PATH_HEADING
+                          + "\n```\n- **Deliverable:** requires VM rewrite\n")
+    assert check_roadmap_critical_path(fenced)
+    assert check_roadmap_critical_path("```\n" + good + "```\n")  # stage headings in code don't count
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
                  "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI",
                  "persistent compiler service", "incremental syntax", "incremental IR",
