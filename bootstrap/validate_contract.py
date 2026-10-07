@@ -12,6 +12,7 @@ Stdlib only (Python >= 3.11). Exit 0 = valid, 1 = violation. --self-test runs mu
 """
 import copy
 import hashlib
+import json
 import re
 import struct
 import sys
@@ -23,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
+# Canonical digest of every frozen value of each protocol version (see frozen_digest).
+FROZEN_DIGESTS = {PROTOCOL: "f5384570ad2c3d55e9199e3c83db906d0bfa60825c0972d572be2b0fe50fe41c"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -86,7 +89,7 @@ def check_content(path, data):
         errors.append(f"SOURCE_SET_INVALID: {path}: CR byte (only LF newlines are canonical)")
     if b"\x00" in data:
         errors.append(f"SOURCE_SET_INVALID: {path}: NUL byte")
-    if data and not data.endswith(b"\n"):
+    if not data.endswith(b"\n"):  # an empty file has no final newline either
         errors.append(f"SOURCE_SET_INVALID: {path}: missing final newline")
     try:
         data.decode("utf-8")
@@ -179,10 +182,21 @@ def check_capabilities(contract):
     return errors
 
 
+def frozen_digest(contract):
+    """sha256 of the canonical form of every frozen contract value. [subset] is excluded: it
+    grows as constructions are admitted and is checked through the registry linkage instead."""
+    frozen = {k: v for k, v in contract.items() if k != "subset"}
+    canonical = json.dumps(frozen, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def check_contract(contract, reference, subset_text):
     errors = []
     if contract.get("protocol") != PROTOCOL:
         errors.append(f"CONTRACT_DRIFT: protocol must be {PROTOCOL!r}")
+    elif frozen_digest(contract) != FROZEN_DIGESTS[PROTOCOL]:
+        errors.append(f"CONTRACT_DRIFT: a frozen value of {PROTOCOL} changed; a contract change needs "
+                      "a new protocol identifier and a recorded revision")
     errors += check_c0(contract, reference)
 
     fp = contract.get("fixed_point", {})
@@ -214,8 +228,10 @@ def check_contract(contract, reference, subset_text):
     for name in sorted(REQUIRED_FAILURES - set(failures)):
         errors.append(f"CONTRACT_DRIFT: failure class {name} is missing")
     for name, f in failures.items():
-        if not (f.get("trigger") and f.get("response") and isinstance(f.get("continue"), bool)):
-            errors.append(f"CONTRACT_DRIFT: failure class {name} needs trigger, response and continue")
+        if not (f.get("trigger") and f.get("response")):
+            errors.append(f"CONTRACT_DRIFT: failure class {name} needs trigger and response")
+        if f.get("continue") is not False:  # protocol v1: every failure stops qualification
+            errors.append(f"CONTRACT_DRIFT: failure class {name} must set continue = false")
 
     sub = contract.get("subset", {})
     admitted, candidate, frozen = (set(sub.get(k, [])) for k in ("admitted", "candidate", "frozen"))
@@ -295,6 +311,15 @@ def self_test():
     fails("CONTRACT_DRIFT", lambda c: c["subset"]["admitted"].append("BSF-101"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"]["admitted"].remove("BSF-001"))
     fails("SOURCE_SET_INVALID", lambda c: c["source_set"].update(newline="normalize"))
+    # every frozen value is covered by the protocol digest, not only the explicitly checked ones
+    fails("CONTRACT_DRIFT", lambda c: c["source_set"].update(root="src"))
+    fails("CONTRACT_DRIFT", lambda c: c["source_set"].update(manifest="other.toml"))
+    fails("CONTRACT_DRIFT", lambda c: c["source_set"].update(final_newline="optional"))
+    fails("CONTRACT_DRIFT", lambda c: c["source_set"]["identity"].update(domain="other"))
+    fails("CONTRACT_DRIFT", lambda c: c["capabilities"]["artifact_write"].update(available_at_c0=True))
+    for name in REQUIRED_FAILURES:  # no failure class may allow qualification to continue
+        fails("CONTRACT_DRIFT", lambda c, n=name: c["failures"][n].update({"continue": True}))
+    assert not mutated(lambda c: c["subset"].update(frozen=[])), "subset is not digest-frozen"
 
     # source-set paths
     good = ["compiler/a.sm", "compiler/b/c.sm"]
@@ -322,6 +347,7 @@ def self_test():
     for bad in (b"\xef\xbb\xbffn a() {}\n", b"fn a() {}\r\n", b"fn a() {}", b"fn\x00\n", b"\xff\n"):
         assert check_content("x.sm", bad), bad
     assert not check_content("x.sm", b"fn a() {}\n")
+    assert check_content("x.sm", b"")  # empty file: no final newline
 
     # end-to-end on a throwaway tree, including on-disk bytes
     with tempfile.TemporaryDirectory() as tmp:
