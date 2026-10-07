@@ -14,6 +14,7 @@ import copy
 import hashlib
 import json
 import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -99,7 +100,7 @@ def check_registry(subset_text):
         elif state == "CANDIDATE":
             owner, _, stage = cells[4].rpartition(" / ") if len(cells) == 5 else ("", "", "")
             # candidates are capability gaps owned upstream: the owner is exactly that repository
-            if len(cells) != 5 or len(filled) != 5 or owner.strip().strip("`") != REPOSITORY \
+            if len(cells) != 5 or len(filled) != 5 or owner.strip() not in (REPOSITORY, f"`{REPOSITORY}`") \
                     or not valid_stages(stage):
                 errors.append(f"CONTRACT_DRIFT: CANDIDATE registry row {bsf} needs a gap and an owner / SHF stage")
         else:
@@ -431,20 +432,29 @@ def check_evidence(repo, record):
     registry and source set from `repo`, requires that they validate (no CONTRACT_DRIFT etc.)
     and computes the current S identity itself, so a caller cannot supply a modified contract
     or a stale identity. Returns errors; empty means the record supports the Bootstrap Seal."""
-    identity, errors = validate(repo)
-    if errors:
-        return ["CONTRACT_DRIFT: canonical contract does not validate; evidence cannot be accepted"] + errors
-    contract = tomllib.loads((repo / CONTRACT).read_text(encoding="utf-8"))
-    reference = tomllib.loads((repo / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
-    if not isinstance(record, dict):
-        return ["CONTRACT_DRIFT: evidence record must be a mapping"]
-    try:
+    try:  # the whole gate fails closed: canonical loading, validation and record checks
+        identity, errors = validate(repo)
+        if errors:
+            return ["CONTRACT_DRIFT: canonical contract does not validate; evidence cannot be accepted"] + errors
+        contract = tomllib.loads((repo / CONTRACT).read_text(encoding="utf-8"))
+        reference = tomllib.loads((repo / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
+        if not isinstance(record, dict):
+            return ["CONTRACT_DRIFT: evidence record must be a mapping"]
         return check_record(contract, reference, record, identity)
-    except Exception as exc:  # a malformed record must fail closed, never crash the gate
-        return [f"CONTRACT_DRIFT: malformed evidence record ({type(exc).__name__}: {exc})"]
+    except Exception as exc:
+        return [f"CONTRACT_DRIFT: evidence cannot be evaluated ({type(exc).__name__}: {exc})"]
 
 
 def validate(repo):
+    """(source-set identity, errors). Fails closed: unloadable or malformed canonical files are
+    reported as CONTRACT_DRIFT rather than raised."""
+    try:
+        return _validate(repo)
+    except Exception as exc:
+        return None, [f"CONTRACT_DRIFT: canonical contract files cannot be loaded ({type(exc).__name__}: {exc})"]
+
+
+def _validate(repo):
     contract = tomllib.loads((repo / CONTRACT).read_text(encoding="utf-8"))
     reference = tomllib.loads((repo / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
     subset_text = (repo / contract["subset"]["registry"]).read_text(encoding="utf-8")
@@ -515,7 +525,8 @@ def self_test():
         assert check_registry(with_row(f"| BSF-999 | x | ADMITTED | use | a / b | {stage} |"))[1], stage
         assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | owner / {stage} |"))[1], stage
     assert not check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-17 |"))[1]
-    for owner in ("—", "tbd", "n/a", "someone/Semantic"):                      # placeholder / wrong owner
+    for owner in ("—", "tbd", "n/a", "someone/Semantic",                         # placeholder / wrong owner
+                  "`skulmakov-oss/Semantic", "skulmakov-oss/Semantic`", "``skulmakov-oss/Semantic``"):
         assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | {owner} / SHF-1 |"))[1], owner
     assert check_registry(subset.replace("| BSF-001 |", "| bsf-001 |"))[1]
     assert not check_registry(with_row("| BSF-999 | x | ADMITTED | use | a / b | SHF-10..14 |"))[1]
@@ -686,7 +697,20 @@ def self_test():
         errs = check_evidence(ROOT, {**good, **bad})
         assert errs and all(e.split(":")[0] in REQUIRED_FAILURES for e in errs), (bad, errs)
     assert check_evidence(ROOT, ["not", "a", "mapping"])
-    import shutil
+    with tempfile.TemporaryDirectory() as tmp:                     # malformed but valid-TOML canonical file
+        repo = Path(tmp)
+        for rel in (CONTRACT, "bootstrap/source-set.toml", "reference/semantic-reference.toml",
+                    "docs/BOOTSTRAP_SUBSET.md", CONTRACT_DOC):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / rel, repo / rel)
+        text = (repo / CONTRACT).read_text(encoding="utf-8")
+        (repo / CONTRACT).write_text(text.replace('reference_manifest = "reference/semantic-reference.toml"',
+                                                  'reference_manifest = ["x"]'), encoding="utf-8")
+        errs = check_evidence(repo, good)
+        assert errs and errs[0].startswith("CONTRACT_DRIFT:"), errs
+        assert validate(repo)[1]
+        (repo / CONTRACT).write_text("not = [valid toml", encoding="utf-8")
+        assert check_evidence(repo, good) and validate(repo)[1]
     with tempfile.TemporaryDirectory() as tmp:                                  # tampered contract
         repo = Path(tmp)
         for rel in (CONTRACT, "bootstrap/source-set.toml", "reference/semantic-reference.toml",
