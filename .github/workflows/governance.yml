@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Harness -BaseRef needs the merge base of <base>...HEAD
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -34,5 +36,27 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin "$BASE"
           python bootstrap/validate_contract.py --base-ref "$BASE"
+      - name: Harness self-test
+        shell: pwsh
+        run: ./scripts/harness-check.ps1 -SelfTest
+      - name: Harness scope enforcement vs exact base
+        # Pull requests: the immutable PR base SHA. Pushes to main: the previous tip.
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          STRICT: ${{ github.event_name == 'pull_request' && '-RequireEnvelopeBase' || '' }}
+        run: |
+          git fetch --no-tags origin "$BASE"
+          # Trusted enforcement: run the checker as it exists at the base revision, so a change
+          # cannot loosen the checker that judges it. Only the bootstrap PR (no checker at base)
+          # runs its own copy.
+          if git cat-file -e "$BASE:scripts/harness-check.ps1" 2>/dev/null; then
+            git show "$BASE:scripts/harness-check.ps1" > "$RUNNER_TEMP/harness-check.ps1"
+            CHECKER="$RUNNER_TEMP/harness-check.ps1"
+          else
+            echo "[harness] no checker at base $BASE (Harness bootstrap): using PR copy"
+            CHECKER=scripts/harness-check.ps1
+          fi
+          pwsh -NoProfile -File "$CHECKER" -RepoRoot "$GITHUB_WORKSPACE" -BaseRef "$BASE" $STRICT
       - name: Whitespace check
         run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD

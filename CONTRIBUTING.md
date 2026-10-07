@@ -16,6 +16,16 @@ For every non-trivial bootstrap change, identify:
 
 If any of these are unknown and materially affect semantics, investigate before widening implementation scope.
 
+## Harness workflow
+
+Every change runs under the active task envelope `.harness/current.task.yaml` (rules: `AGENTS.md`).
+
+- **Before work:** read the envelope, confirm the task and its authority, confirm every planned path fits `allowed_paths` and none hits `forbidden_paths`.
+- **Before commit:** `pwsh -File scripts/harness-check.ps1` and `git diff --check`.
+- **Before PR handoff:** `pwsh -File scripts/harness-check.ps1 -BaseRef <exact-base-sha>`, `git diff --name-only <base>...HEAD`, `git status`.
+
+A task that needs paths outside the envelope stops and asks the owner; it does not edit the envelope on its own.
+
 ## Pull request shape
 
 Prefer narrow PRs that contain one migration or qualification unit.

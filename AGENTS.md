@@ -26,15 +26,19 @@ Local tool state (lancedb, reference checkouts, scratch) never lives inside this
 
 ```text
 1. User / repository-owner explicit instruction
-2. Git-tracked normative documents in this repository
-3. Exact-SHA reference contracts from skulmakov-oss/Semantic
-4. Accepted Git-tracked ADR / architecture decisions
-5. Code and tests
-6. Obsidian project brain
-7. local-rag index
-8. codebase-memory index
-9. Session notes / historical logs
+2. Active Harness task envelope (.harness/current.task.yaml)
+3. Git-tracked normative documents in this repository
+4. Exact-SHA reference contracts from skulmakov-oss/Semantic
+5. Accepted Git-tracked ADR / architecture decisions
+6. Code and tests
+7. Obsidian project brain
+8. local-rag index
+9. codebase-memory index
+10. Session notes / historical logs
 ```
+
+The Harness envelope narrows a task; it never widens the architecture authority of items 3–5.
+Owner GO may authorize a controlled Harness transition; agent convenience may not.
 
 **Indexes are retrieval tools, not sources of truth.**
 - local-rag or codebase-memory disagrees with Git-tracked content → Git wins.
@@ -176,9 +180,44 @@ No memory writes after trivial reads or formatting changes.
   rebase unrelated work or rewrite history. Force push only `--force-with-lease`, only after an
   authorized rebase.
 
+### Harness (per-task authorization envelope)
+
+`.harness/current.task.yaml` names the single active task, its allowed/forbidden paths and its
+capability flags. `scripts/harness-check.ps1` enforces it locally (staged, unstaged and untracked
+files) and in CI against the exact PR base (`-BaseRef`). Forbidden always wins over allowed;
+a missing or malformed envelope fails closed.
+
+An agent may NOT broaden or replace the active Harness merely because its task is blocked.
+When a task needs different paths or capabilities:
+
+1. STOP;
+2. report the blocker;
+3. obtain explicit owner authorization for the named task;
+4. change `.harness/current.task.yaml` in its own envelope-only PR, reviewed and merged by
+   the owner;
+5. only then make the newly authorized changes, in a later PR.
+
+CI enforces this: in `-BaseRef` mode a change to the envelope's scope (task id, allowed/forbidden
+paths, authorization flags) relative to the base envelope fails unless the PR touches nothing
+else, so a PR can never authorize its own payload. Each PR records its exact base in
+`constraints.base_sha`; advancing it is bookkeeping, not a transition.
+
+Trust root: `.github/workflows/harness-trusted.yml` (`pull_request_target`, job
+`scope-enforcement`) runs as it exists on the base branch, executes only the base revision's
+`scripts/harness-check.ps1`, and inspects the PR head as data only (read-only token, no secrets,
+no PR code executed). A PR may propose changes to it, but they are judged by the previous trusted
+version. Ordinary task envelopes must still list `scripts/harness-check.ps1` and `.github/**`
+under `forbidden_paths`; only an owner-authorized governance task may allow them.
+
+The Harness is never a mechanism for self-authorization. Bootstrap fact: the PR that introduced
+the Harness (issue #14) added envelope, checker, CI enforcement and the trusted workflow together
+under explicit owner GO. Because the trusted workflow did not yet exist on its base, that one PR was
+qualified by exact-head owner review, CI and independent review instead. That exception ended at
+its merge; no later PR may claim it. There is no bypass.
+
 ## 9. Working loop
 
-1. Read current Git status and exact repository identity.
+1. Read current Git status, exact repository identity and `.harness/current.task.yaml`.
 2. Read relevant recent project Session/Decisions.
 3. Search curated docs with local-rag.
 4. Inspect current code with codebase-memory/source.

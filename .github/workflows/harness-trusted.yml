@@ -1,0 +1,38 @@
+name: harness-trusted
+
+# Trust root for Harness scope enforcement. pull_request_target runs THIS file as it exists on
+# the base branch, so a PR cannot remove or weaken the check that judges it. The PR head is
+# inspected as data only: nothing from it is executed (no scripts, no builds, no PR workflow).
+# Changes to this file take effect only after merge, judged by the previous trusted version.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  scope-enforcement:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trusted scope enforcement (base checker vs PR head)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # No third-party actions in the trust root: both trees are fetched with plain git from
+          # the base repository by exact SHA / pull ref (public repository, no credentials).
+          REPO="https://github.com/$GITHUB_REPOSITORY"
+          git init -q trusted
+          git -C trusted fetch --no-tags -q "$REPO" "$BASE_SHA"
+          git -C trusted -c advice.detachedHead=false checkout -q --detach "$BASE_SHA"
+          test -f trusted/scripts/harness-check.ps1 || { echo "[harness:error] no trusted checker at base $BASE_SHA"; exit 1; }
+          # Candidate = PR head as plain Git data (never executed). refs/pull/N/head lives in the
+          # base repository, so forks work too. Full history is needed for the merge base.
+          git init -q candidate
+          git -C candidate fetch --no-tags -q "$REPO" "+refs/pull/$PR_NUMBER/head:refs/pr/head"
+          git -C candidate fetch --no-tags -q "$REPO" "$BASE_SHA"
+          git -C candidate -c advice.detachedHead=false checkout -q --detach "$HEAD_SHA"
+          test ! -L candidate/.harness/current.task.yaml || { echo "[harness:error] candidate envelope is a symlink"; exit 1; }
+          pwsh -NoProfile -File trusted/scripts/harness-check.ps1 -RepoRoot "$GITHUB_WORKSPACE/candidate" -BaseRef "$BASE_SHA" -RequireEnvelopeBase
