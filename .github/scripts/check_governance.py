@@ -51,8 +51,9 @@ DEFERRED_TRACKS = [
     r"\b(?:sm-vm|sm-verify)\s+rewrit\w*",
     # FUTURE.md "Verifier or VM in Semantic": implementing either component in Semantic
     r"\b(?:semantic|self-hosted)\s+(?:vm|verifier)\b",
-    r"\b(?:vm|verifier|sm-vm|sm-verify)\s+(?:written\s+)?in\s+semantic\b",
-    r"\b(?:implement|write|build|create|port|reimplement)\w*\s+(?:the\s+|a\s+)?(?:sm-vm|sm-verify)\b",
+    r"\b(?:vm|verifier|sm-vm|sm-verify)\s+(?:(?:written|implemented|reimplemented)\s+)?(?:in|into|to)\s+semantic\b",
+    # (a bare "implement/build sm-vm …" is NOT matched: integrating the existing VM/verifier,
+    #  e.g. "implement sm-vm invocation", is required first-self-hosting work)
 ]
 OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
 # A stage's own Non-goals line legitimately names deferred work in order to exclude it.
@@ -242,6 +243,10 @@ def rendered_blocks(text):
             kind = "heading"
             if opener.tag == "h2":
                 section = rendered_text(t)
+            elif opener.tag != "h1" and section is not None:
+                # Anything under a subsection (e.g. "### Historical rules") is no longer the
+                # section's own operative body; required sentences must sit directly under ##.
+                section = f"{section} / {rendered_text(t)}"
         else:
             kind = "prose"
         # A block made only of inline code is a code literal, not a stated rule.
@@ -406,10 +411,14 @@ def self_test():
     # canonical component names and rewrite-first wording
     for wording in ["rewrite sm-vm in Semantic", "rewrite sm-verify in Semantic",
                     "rewriting the verifier", "sm-vm rewrite", "Rewrite the VM",
-                    "implement sm-vm in Semantic", "create a Semantic VM", "port sm-verify",
-                    "a verifier written in Semantic", "self-hosted VM"]:
+                    "implement sm-vm in Semantic", "create a Semantic VM", "port sm-verify to Semantic",
+                    "a verifier written in Semantic", "self-hosted VM", "reimplement the VM in Semantic"]:
         assert check_roadmap_critical_path(stage(f"- **Deliverable:** {wording}")), wording
     assert not check_roadmap_critical_path(stage("- **Deliverable:** artifact admitted by `sm-verify`"))
+    # integrating the EXISTING verifier/VM is first-self-hosting work, not a rewrite
+    for wording in ["implement sm-vm invocation through the existing runtime",
+                    "build the sm-verify command line", "run C1 on sm-vm"]:
+        assert not check_roadmap_critical_path(stage(f"- **Deliverable:** {wording}")), wording
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
                  "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI",
                  "persistent compiler service", "incremental syntax", "incremental IR",
@@ -462,6 +471,9 @@ def self_test():
     hollow = ("".join(f"## {h}\n\n" for h in AGENTS_HEADINGS) + "## Historical contract\n\n"
               + "".join(f"{p}\n\n" for p in AGENTS_PROSE))
     assert len(check_agents_contract(hollow)) == len(AGENTS_PROSE)
+    # a rule kept only under a subsection of its own section is no longer the section's rule
+    assert check_agents_contract(real_agents.replace("- Do not merge without owner GO.", "") +
+                                 "\n### Historical rules\n\nDo not merge without owner GO.\n")
     assert check_agents_contract(real_agents.replace(  # one rule moved to another section
         "- Do not merge without owner GO.", "").replace(
         "## 9. Working loop", "## 9. Working loop\n\nDo not merge without owner GO.\n"))
