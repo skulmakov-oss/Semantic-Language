@@ -112,7 +112,8 @@ Tools: `query_documents`, `ingest_file`, `ingest_data`, `status`, `list_files`, 
 - Re-ingest of the **identical path string** REPLACES the document (verified 2026-10-07).
   A differently spelled path to the same file (`\` vs `/`) creates a DUPLICATE.
   Always use the canonical form `D:/Obsidian/Knowledge/Semantic-Brain/<folder>/<name>.md`.
-- Chunks under ~50 characters are dropped; a very short note may fail to ingest.
+- Very short documents or chunks may be ignored by the current local-rag implementation.
+  Do not depend on an exact minimum length unless verified from the implementation/configuration.
 
 ### Ingestion policy (Obsidian)
 
