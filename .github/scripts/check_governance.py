@@ -10,7 +10,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
@@ -120,8 +120,8 @@ def check_agents_contract(text):
 
 
 def link_targets(text):
-    """Every link destination CommonMark sees: inline/reference links and all definitions,
-    including definitions that are never used. Code spans and code blocks contain no links."""
+    """Every destination CommonMark sees, still URI-encoded: link hrefs, image srcs and all
+    reference definitions (used or not). Code spans and code blocks contain none."""
     env = {}
     targets = []
 
@@ -129,20 +129,24 @@ def link_targets(text):
         for t in tokens:
             if t.type == "link_open":
                 targets.append(t.attrGet("href"))
+            elif t.type == "image":
+                targets.append(t.attrGet("src"))
             if t.children:
                 walk(t.children)
 
     walk(COMMONMARK.parse(text, env))
     targets += [ref["href"] for ref in env.get("references", {}).values()]
-    return [unquote(t) for t in targets if t]
+    return [t for t in targets if t]
 
 
 def check_links(rel, text, base):
     errors = []
     for target in link_targets(text):
-        if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith("#"):
+        # Classify on the encoded URI; decode only the path component for the file lookup.
+        parts = urlsplit(target)
+        if parts.scheme or parts.netloc:
             continue
-        path = target.split("#", 1)[0]
+        path = unquote(parts.path)
         if path and not (base / path).exists():
             errors.append(f"{rel}: broken relative link '{target}'")
     return errors
@@ -250,6 +254,9 @@ def self_test():
     # indented code blocks are literal text
     assert not check_links("x.md", "para\n\n    [x](missing.md)\n", ROOT)
     assert check_links("x.md", "[x](missing%20file.md)\n", ROOT)
+    assert check_links("x.md", "![diagram](missing.png)\n", ROOT)
+    assert check_links("x.md", "[draft](%23missing.md)\n", ROOT)
+    assert not check_links("x.md", "[a](check_governance.py#L1) [b](mailto:x@y.z)\n", Path(__file__).parent)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 
