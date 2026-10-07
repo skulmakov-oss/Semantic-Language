@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "c7b8336d15baeb2a97e2b3fcccc609dae10a96d188b20b5c60c05fe795130d6e"}
+FROZEN_DIGESTS = {PROTOCOL: "d287fbc8fecae8ae2fc4fb6697cef45ffa2b21f188a06d3ba04da045be7e10c2"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -507,7 +507,9 @@ def self_test():
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(registry="docs/OTHER.md"))
     # the C0 reference manifest (verdict, limits, drift, contract paths) is frozen too
     fails("CONTRACT_DRIFT", lambda r: r["qualification"].update(verdict="NOT QUALIFIED"), ref=True)
-    fails("CONTRACT_DRIFT", lambda r: r["qualification"]["limits"].pop(), ref=True)
+    fails("CONTRACT_DRIFT", lambda r: r["qualification"]["limits"].pop("R4"), ref=True)
+    fails("CONTRACT_DRIFT", lambda r: r["qualification"]["limits"].update(
+        R2="text escapes are decoded"), ref=True)                      # redefined limit, same id
     fails("CONTRACT_DRIFT", lambda r: r["drift"].update(inherits_qualification=True), ref=True)
     fails("CONTRACT_DRIFT", lambda r: r["contracts"].update(semcode_spec="docs/x.md"), ref=True)
 

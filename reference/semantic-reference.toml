@@ -19,13 +19,15 @@ release_tag = "v1.2.0"                     # v1.2.0^{} dereferences to this SHA
 verdict = "ORACLE QUALIFIED WITH EXPLICIT LIMITS"
 qualification_campaign = "skulmakov-oss/Semantic#1983"
 platform_scope = "x86_64-pc-windows-msvc"  # Linux/macOS outside the v1.2.0 contour
-# Explicit limits carried by the release (upstream release notes, v1.2.0):
-#   R1 quad helper predicates are not surface-language helpers
-#   R2 text escape processing is raw-slice (\n is two bytes)
-#   R3 generic rejection diagnostic is not bootstrap-comparable (#1717)
-#   R4 host paths may appear in diagnostic presentation
-limits = ["R1", "R2", "R3", "R4"]
 determinism_evidence = "tests/cli_artifact_lifecycle.rs"  # smc compile output bytes deterministic
+
+# Explicit limits carried by the release (upstream release notes, v1.2.0). Data, not comments:
+# they are part of the frozen protocol digest.
+[qualification.limits]
+R1 = "quad helper predicates are not surface-language helpers"
+R2 = "text escape processing is raw-slice: a backslash-n escape is two bytes, not a newline"
+R3 = "generic rejection diagnostic is not bootstrap-comparable (Semantic#1717)"
+R4 = "host paths may appear in diagnostic presentation"
 
 # Relationship to current upstream development main.
 [drift]
