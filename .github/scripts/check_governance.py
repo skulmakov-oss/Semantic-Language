@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Fail-closed governance checks for the Semantic-Language SHF architecture.
 
-Stdlib only (Python >= 3.11 for tomllib). Exit code 0 = pass, 1 = any violation.
-Run with --self-test to prove the guards fire on known-bad input.
+Python >= 3.11 (tomllib). Markdown links are extracted with a real CommonMark parser
+(markdown-it-py, pinned in requirements.txt) instead of regular expressions, so code spans,
+fenced/indented code blocks and every link form follow the CommonMark specification.
+Exit code 0 = pass, 1 = any violation. Run with --self-test to prove the guards fire.
 """
 import re
 import sys
 import tomllib
 from pathlib import Path
+from urllib.parse import unquote
+
+from markdown_it import MarkdownIt
+
+COMMONMARK = MarkdownIt("commonmark")
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,10 +47,6 @@ OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
 # A stage's own Non-goals line legitimately names deferred work in order to exclude it.
 NON_GOALS_LINE = re.compile(r"^\s*- \*\*Non-goals:\*\*")
 ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
-# Inline link destination: <angle-bracketed> or bare, optionally followed by a "title".
-LINK = re.compile(r"\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
-# Reference-style link definition: [label]: <dest> or [label]: dest
-LINK_DEF = re.compile(r"^ {0,3}\[(?!\^)[^\]]+\]:\s*(?:<([^>]*)>|(\S+))", re.M)  # [^x]: is a footnote
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
 # Load-bearing anchors of the root operating contract; removing any of them fails the gate.
@@ -116,36 +119,28 @@ def check_agents_contract(text):
     return [f"AGENTS.md: required contract anchor missing: {a!r}" for a in AGENTS_ANCHORS if a not in text]
 
 
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
+def link_targets(text):
+    """Every link destination CommonMark sees: inline/reference links and all definitions,
+    including definitions that are never used. Code spans and code blocks contain no links."""
+    env = {}
+    targets = []
 
+    def walk(tokens):
+        for t in tokens:
+            if t.type == "link_open":
+                targets.append(t.attrGet("href"))
+            if t.children:
+                walk(t.children)
 
-def strip_code(text):
-    """Remove fenced blocks and inline code spans: they render as literal text, not links.
-
-    A fence closes on a line of the same character that is at least as long as the opener
-    (CommonMark); an unclosed fence runs to the end of the document.
-    """
-    kept, fence = [], None
-    for line in text.splitlines():
-        m = FENCE.match(line)
-        if fence is None:
-            if m:
-                fence = m.group(1)
-            else:
-                kept.append(line)
-        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
-                and not line[m.end():].strip():
-            fence = None
-    return CODE_SPAN.sub("", "\n".join(kept))
+    walk(COMMONMARK.parse(text, env))
+    targets += [ref["href"] for ref in env.get("references", {}).values()]
+    return [unquote(t) for t in targets if t]
 
 
 def check_links(rel, text, base):
     errors = []
-    text = strip_code(text)
-    for angle, bare in LINK.findall(text) + LINK_DEF.findall(text):
-        target = angle or bare
-        if re.match(r"^[a-z]+:", target) or target.startswith("#"):
+    for target in link_targets(text):
+        if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith("#"):
             continue
         path = target.split("#", 1)[0]
         if path and not (base / path).exists():
@@ -250,6 +245,11 @@ def self_test():
     assert not check_links("x.md", "```\n[x](missing.md)\n````\n", ROOT)
     assert not check_links("x.md", "~~~\n[x](missing.md)\n```\nstill code\n~~~\n", ROOT)
     assert check_links("x.md", "````\nok\n```\n[y](inside.md)\n````\n[x](missing.md)\n", ROOT)
+    # a backtick info string containing a backtick is not a fence opener: the link stays live
+    assert check_links("x.md", "```md`example`\n[x](missing.md)\n", ROOT)
+    # indented code blocks are literal text
+    assert not check_links("x.md", "para\n\n    [x](missing.md)\n", ROOT)
+    assert check_links("x.md", "[x](missing%20file.md)\n", ROOT)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 
