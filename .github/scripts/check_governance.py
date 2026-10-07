@@ -126,20 +126,41 @@ def rendered_text(inline):
 HISTORICAL_QUOTE = re.compile(r"^historical\b", re.I)
 
 
-def operative_inlines(tokens):
+QUOTE_PREFIX = re.compile(r"^ {0,3}((?:> ?)+)")
+
+
+def quote_markers(line):
+    m = QUOTE_PREFIX.match(line)
+    return m.group(1).count(">") if m else 0
+
+
+def operative_inlines(tokens, lines):
     """(index, inline token) for every inline token that is in force. One rule for all guards:
-    code blocks and HTML yield no inline tokens; block quotes explicitly classified as historical
-    (first text starts with "Historical") are cited material. Every other block quote, including
-    GitHub callouts such as `> [!IMPORTANT]`, is operative content."""
-    historical_depth = 0  # >0 while inside a block quote marked historical
+    code blocks and HTML yield no inline tokens; a block quote explicitly classified as
+    historical is cited material. Every other block quote, including GitHub callouts such as
+    `> [!IMPORTANT]`, is operative content.
+
+    A quote is historical only if its OWN first paragraph (paragraph_open + inline directly
+    after blockquote_open) starts with "Historical" and every source line of that paragraph
+    carries the quote's full `>` prefix. A nested descendant never classifies an ancestor, and a
+    lazy-continuation line (fewer `>` markers, which CommonMark folds into the inner paragraph)
+    cannot be hidden inside a historical quote."""
+    stack = []  # one bool per open block quote: is it historical?
     for i, t in enumerate(tokens):
         if t.type == "blockquote_open":
-            first = next((x for x in tokens[i + 1:] if x.type == "inline"), None)
-            if historical_depth or (first and HISTORICAL_QUOTE.match(rendered_text(first))):
-                historical_depth += 1
+            own = tokens[i + 1:i + 3]
+            depth = len(stack) + 1
+            marked = (
+                [x.type for x in own] == ["paragraph_open", "inline"]
+                and HISTORICAL_QUOTE.match(rendered_text(own[1])) is not None
+                and own[1].map is not None
+                and all(quote_markers(lines[n]) >= depth for n in range(*own[1].map) if n < len(lines))
+            )
+            stack.append(marked)
         elif t.type == "blockquote_close":
-            historical_depth = max(0, historical_depth - 1)
-        elif t.type == "inline" and not historical_depth:
+            if stack:
+                stack.pop()
+        elif t.type == "inline" and not any(stack):
             yield i, t
 
 
@@ -147,7 +168,7 @@ def active_prose(text):
     """(1-based line, rendered text) for each operative roadmap block, excluding a stage's own
     `- **Non-goals:**` field."""
     excluded = non_goals_lines(text)
-    return [(t.map[0] + 1, rendered_text(t)) for _, t in operative_inlines(COMMONMARK.parse(text))
+    return [(t.map[0] + 1, rendered_text(t)) for _, t in operative_inlines(COMMONMARK.parse(text), text.splitlines())
             if t.map and t.map[0] not in excluded]
 
 
@@ -194,7 +215,7 @@ def rendered_blocks(text):
     historical quotes cannot satisfy the contract; callouts and other quotes can."""
     tokens = COMMONMARK.parse(text)
     blocks = []
-    for i, t in operative_inlines(tokens):
+    for i, t in operative_inlines(tokens, text.splitlines()):
         opener = tokens[i - 1] if i else None
         if opener is not None and opener.type == "heading_open":
             if opener.level != 0:
@@ -337,6 +358,14 @@ def self_test():
     # callouts and plain quotes inside a stage are active content
     assert check_roadmap_critical_path(stage("> [!IMPORTANT]\n> **Deliverable:** requires VM rewrite"))
     assert check_roadmap_critical_path(stage("> requires VM rewrite"))
+    # historical classification is structural: a nested historical quote never exempts its parent
+    assert check_roadmap_critical_path(stage("> > Historical note\n> **Deliverable:** requires VM rewrite"))
+    assert check_roadmap_critical_path(stage("> > Historical note\n> requires Instant Pipeline"))
+    assert not check_roadmap_critical_path(stage("> Historical note\n>\n> B7 previously required VM rewrite."))
+    assert check_roadmap_critical_path(stage("> **Deliverable:** requires VM rewrite"))
+    assert check_roadmap_critical_path(stage("> > Historical note\n>\n> **Deliverable:** requires VM rewrite"))
+    assert check_roadmap_critical_path(stage("> [!IMPORTANT]\n> **Deliverable:** requires VM rewrite"))
+    assert not check_roadmap_critical_path(stage("> > Historical note\n> > B7 required a VM rewrite."))
     # raw HTML blocks inside the SHF critical-path region fail closed
     assert check_roadmap_critical_path(stage("<div>\nDeliverable: requires VM rewrite\n</div>"))
     assert check_roadmap_critical_path(stage("<div>\n\n**Deliverable:** requires VM rewrite\n\n</div>"))
