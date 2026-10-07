@@ -1,11 +1,11 @@
 # Bootstrap Contract
 
-Status: **architecture-level contract — SHF-0 NOT STARTED**
+Status: **SHF-0 IN PROGRESS (issue #11) — executable protocol `shf0-bootstrap-contract-v1` in §10**
 
-This document fixes the vocabulary and invariants of the self-hosting proof at architecture
-level. SHF-0 (see [ROADMAP.md](./ROADMAP.md)) turns it into an executable bootstrap protocol:
-concrete source tree, normalization rule, capability list and failure handling. Nothing here
-claims that SHF-0 has been performed.
+This document fixes the vocabulary and invariants of the self-hosting proof. §1–§9 state them at
+architecture level; §10 records the executable protocol frozen by SHF-0, whose machine-readable
+form is [`bootstrap/contract.toml`](../bootstrap/contract.toml) and whose validator is
+[`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). No compiler exists yet.
 
 ## 1. Terms
 
@@ -100,3 +100,77 @@ Recorded only when the fixed point passes with zero unexplained deltas. It conta
 Each qualification run records: reference repository and SHA, source-set identity, input
 corpus, comparison form, positive/negative/boundary results, mutation proof, and unexplained
 delta count (required: 0). See [QUALIFICATION.md](./QUALIFICATION.md).
+
+## 10. Executable protocol (SHF-0)
+
+Protocol `shf0-bootstrap-contract-v1`. Changing any value below is a contract revision with a
+new protocol identifier, never an edit made to fit a failed run (`CONTRACT_DRIFT`).
+
+### 10.1 C0
+
+`skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7` — the `v1.2.0` Stable
+Foundation release, verdict "ORACLE QUALIFIED WITH EXPLICIT LIMITS" (qualification campaign
+`Semantic#1983`, platform `x86_64-pc-windows-msvc`, limits R1–R4). Upstream development `main`
+(`5f3e2302…`) is 16 commits ahead with compiler-relevant changes and does **not** inherit that
+qualification. Details and contract paths: [`reference/semantic-reference.toml`](../reference/semantic-reference.toml).
+
+SemCode format ownership at C0 is taken from `CONSTRAINTS.md` (`sm-format` owns the binary
+format); the "owner: `sm-ir`" wording in `docs/spec/semcode.md` is historical per that file.
+
+### 10.2 Source set `S` (`shf0-source-set-v1`)
+
+| Rule | Value |
+|---|---|
+| Root | `compiler/` |
+| Membership | exactly the files listed in [`bootstrap/source-set.toml`](../bootstrap/source-set.toml); never a directory scan |
+| Path form | relative, POSIX `/`, ASCII, components `[a-z0-9_]+`, file suffix `.sm` |
+| Rejected paths | absolute, drive-letter, backslash, `.`/`..`/empty components, outside root |
+| Ordering | strictly ascending by UTF-8 bytes; an unsorted list is rejected, not re-sorted |
+| Duplicates | rejected, including case-insensitive collisions |
+| Bytes | UTF-8, no BOM, LF only (any CR rejected), final newline required, no NUL |
+| Checkout | `.gitattributes` keeps `*.sm` LF on every platform; no normalization in the protocol |
+
+**Identity:** `sha256` over the framed stream
+
+```text
+"SHF0-SOURCE-SET\0v1\0" || u64be(file_count)
+  || for each file in manifest order: u32be(len(path)) || path || u64be(len(content)) || content
+```
+
+rendered as `sha256:<64 lowercase hex>`. Any path or content change changes the identity; the
+framing makes path/content boundaries unambiguous.
+
+### 10.3 Compiler interface
+
+`Compile(source_set, declared_config, declared_capability_results) -> (artifact, diagnostics, status)`
+with status `ok | rejected | failed`. Protocol v1 admits no configuration inputs. The artifact is
+SemCode under the upstream `sm-format` contract at C0. CLI spelling is not part of the contract.
+
+### 10.4 Fixed point
+
+`C1 = C0(S)`, `C2 = C1(S)`. C1 and C2 are both admitted by `sm-verify`; only admitted C1 is
+executed (on `sm-vm`). Comparison rule: **`byte-equality-v1`** — `C1.smc` and `C2.smc` are equal
+as complete byte sequences. Basis: at C0 the SemCode format has canonical framing, its `DBG0`
+section holds only `(pc, line, col)`, no time/path/random field exists, and
+`tests/cli_artifact_lifecycle.rs` asserts byte-deterministic compile output.
+
+### 10.5 Host capabilities
+
+See [HOST_BOUNDARY.md](./HOST_BOUNDARY.md) §9. Default environment inputs: none.
+
+### 10.6 Failure taxonomy
+
+All classes stop qualification (`continue = false`); evidence from a failing run is not valid.
+§8 classes plus two protocol classes:
+
+| Class | Trigger |
+|---|---|
+| `SOURCE_SET_INVALID` | manifest or file bytes violate `shf0-source-set-v1`; identity is undefined |
+| `CONTRACT_DRIFT` | evidence bound to a different protocol, comparison rule or C0 |
+
+### 10.7 Evidence record
+
+Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_artifact_hash`,
+`c1_verifier_binding`, `c2_artifact_hash`, `c2_verifier_binding`, `comparison_rule`,
+`comparison_result` (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
+§7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.
