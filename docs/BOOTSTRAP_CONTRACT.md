@@ -130,6 +130,7 @@ format); the "owner: `sm-ir`" wording in `docs/spec/semcode.md` is historical pe
 | Membership | exactly the files listed in [`bootstrap/source-set.toml`](../bootstrap/source-set.toml); never a directory scan |
 | Path form | relative, POSIX `/`, ASCII, components `[a-z0-9_]+`, file suffix `.sm` |
 | Rejected paths | absolute, drive-letter, backslash, `.`/`..`/empty components, outside root |
+| Links | no symlink or Windows junction on any path component; the root must resolve to exactly `<repo>/compiler` |
 | Ordering | strictly ascending by UTF-8 bytes; an unsorted list is rejected, not re-sorted |
 | Duplicates | rejected, including case-insensitive collisions |
 | Bytes | UTF-8, no BOM, LF only (any CR rejected), final newline required, no NUL |
@@ -179,8 +180,10 @@ Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_
 `c1_verifier_binding`, `c2_artifact_hash`, `c2_verifier_binding`, `comparison_result`,
 `comparison_rule`, and the Seal provenance of §7: `platform` (one of the C0 qualified platforms),
 `verifier_contract` / `runtime_contract` (the pinned C0 `sm-verify` / `sm-vm`), and
-`remaining_rust_responsibilities` (non-empty; `oracle`, `host_mechanics`,
-`verifier_runtime_foundation`) (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
+`remaining_rust_responsibilities` (exactly `oracle`, `host_mechanics`,
+`verifier_runtime_foundation`, each once); plus the qualification evidence of §9: `input_corpus`
+(sha256), `positive_cases` / `negative_cases` / `boundary_cases` = `pass`, `mutation_proof` =
+`detected`, `unexplained_deltas` = `0` (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
 §7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.
 A record supports the Bootstrap Seal only if its values hold, not merely its keys: hashes are
 `sha256:<64 lowercase hex>`, `source_set_identity` equals the identity of the current `S`, both

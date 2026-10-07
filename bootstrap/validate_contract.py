@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "211b8e1ef45170f18beda98b36c4a663b629cd59a64ceb30368995b464daf151"}
+FROZEN_DIGESTS = {PROTOCOL: "45a377bf6fdb00d626f4c9792c0ebec5044dc8f68772422170d3b5edb8e91b57"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -180,12 +180,16 @@ def load_source_set(repo, manifest, root):
         return None, errors
     entries = []
     real_root = (repo / root).resolve()
+    # The root itself must not be redirected (symlink, Windows junction or other reparse point):
+    # its resolved location must be exactly <repo>/<root>.
+    if real_root != repo.resolve() / root:
+        return None, [f"SOURCE_SET_INVALID: source root {root!r} is redirected outside the repository"]
     for p in files:
         f = repo / p
-        # No symlink anywhere on the path, and the bytes must physically live under the root.
+        # No link of any kind on the path, and the bytes must physically live under the root.
         chain = [repo.joinpath(*p.split("/")[:i]) for i in range(1, len(p.split("/")) + 1)]
-        if any(c.is_symlink() for c in chain) or not f.is_file() \
-                or real_root not in f.resolve().parents:
+        if any(c.is_symlink() or getattr(c, "is_junction", lambda: False)() for c in chain) \
+                or not f.is_file() or real_root not in f.resolve().parents:
             errors.append(f"SOURCE_SET_INVALID: {p}: missing, symlinked or not a regular file under root")
             continue
         data = f.read_bytes()
@@ -341,10 +345,22 @@ def check_evidence(contract, reference, record, source_set_identity):
             errors.append(f"REFERENCE_MISMATCH: {field} is not the pinned {ev[field]!r}")
     if "remaining_rust_responsibilities" in record:
         resp = record["remaining_rust_responsibilities"]
-        if not isinstance(resp, list) or not resp \
-                or any(r not in ev["rust_responsibility_categories"] for r in resp):
-            errors.append("CONTRACT_DRIFT: remaining_rust_responsibilities must be a non-empty list of "
+        # The first Seal must report every responsibility still in Rust, each exactly once.
+        if not isinstance(resp, list) or sorted(resp) != sorted(ev["rust_responsibility_categories"]):
+            errors.append("CONTRACT_DRIFT: remaining_rust_responsibilities must be exactly "
                           f"{ev['rust_responsibility_categories']}")
+    # Qualification evidence (BOOTSTRAP_CONTRACT §9, QUALIFICATION §3) must hold by value.
+    q = ev["qualification_results"]
+    if "input_corpus" in record and not HASH.fullmatch(str(record["input_corpus"])):
+        errors.append(f"CONTRACT_DRIFT: input_corpus is not {ev['artifact_hash_format']}")
+    for field in ("positive_cases", "negative_cases", "boundary_cases"):
+        if field in record and record[field] != q["cases"]:
+            errors.append(f"FIXED_POINT_DELTA: {field} is not {q['cases']!r}")
+    if "mutation_proof" in record and record["mutation_proof"] != q["mutation_proof"]:
+        errors.append(f"CONTRACT_DRIFT: mutation_proof is not {q['mutation_proof']!r}")
+    if "unexplained_deltas" in record and (type(record["unexplained_deltas"]) is not int
+                                           or record["unexplained_deltas"] != q["unexplained_deltas"]):
+        errors.append("FIXED_POINT_DELTA: unexplained_deltas must be 0")
     for field in ("source_set_identity", "c1_artifact_hash", "c2_artifact_hash"):
         if field in record and not HASH.fullmatch(str(record[field])):
             errors.append(f"SOURCE_SET_INVALID: evidence {field} is not {ev['artifact_hash_format']}"
@@ -514,6 +530,20 @@ def self_test():
         assert load_source_set(repo, {**man, "files": ["compiler/missing.sm"]}, "compiler")[1]
         assert load_source_set(repo, {**man, "protocol": "v0"}, "compiler")[1]
 
+    # a Windows directory junction as root (not reported by is_symlink) must be rejected too
+    if sys.platform == "win32":
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, outside = Path(tmp) / "repo", Path(tmp) / "outside"
+            repo.mkdir()
+            outside.mkdir()
+            (outside / "x.sm").write_bytes(b"fn x() {}\n")
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(repo / "compiler"), str(outside)],
+                                  capture_output=True).returncode == 0
+            if made:
+                man = {"protocol": SOURCE_PROTOCOL, "root": "compiler", "files": ["compiler/x.sm"]}
+                assert load_source_set(repo, man, "compiler")[1], "junction root accepted"
+
     # a symlinked root or ancestor must not let bytes come from outside the declared root
     with tempfile.TemporaryDirectory() as tmp:
         repo, outside = Path(tmp) / "repo", Path(tmp) / "outside"
@@ -542,7 +572,10 @@ def self_test():
                   comparison_result="equal", platform="x86_64-pc-windows-msvc",
                   verifier_contract=contract["evidence"]["verifier_contract"],
                   runtime_contract=contract["evidence"]["runtime_contract"],
-                  remaining_rust_responsibilities=["oracle", "verifier_runtime_foundation"])
+                  remaining_rust_responsibilities=["oracle", "host_mechanics",
+                                                   "verifier_runtime_foundation"],
+                  input_corpus="sha256:" + "12" * 32, positive_cases="pass", negative_cases="pass",
+                  boundary_cases="pass", mutation_proof="detected", unexplained_deltas=0)
     assert set(record) == set(contract["evidence"]["required_fields"])
     current = record["source_set_identity"]
     assert not check_evidence(contract, reference, record, current)
@@ -559,7 +592,18 @@ def self_test():
                      ({"verifier_contract": "skulmakov-oss/Semantic@main:crates/sm-verify"}, "REFERENCE_MISMATCH"),
                      ({"runtime_contract": "local-build"}, "REFERENCE_MISMATCH"),
                      ({"remaining_rust_responsibilities": []}, "CONTRACT_DRIFT"),
-                     ({"remaining_rust_responsibilities": ["parsing"]}, "CONTRACT_DRIFT")]:
+                     ({"remaining_rust_responsibilities": ["parsing"]}, "CONTRACT_DRIFT"),
+                     ({"remaining_rust_responsibilities": ["oracle"]}, "CONTRACT_DRIFT"),    # incomplete
+                     ({"remaining_rust_responsibilities": ["oracle", "oracle", "host_mechanics",
+                                                           "verifier_runtime_foundation"]}, "CONTRACT_DRIFT"),
+                     ({"input_corpus": "corpus-v1"}, "CONTRACT_DRIFT"),
+                     ({"positive_cases": "fail"}, "FIXED_POINT_DELTA"),
+                     ({"negative_cases": "skipped"}, "FIXED_POINT_DELTA"),
+                     ({"boundary_cases": None}, "FIXED_POINT_DELTA"),
+                     ({"mutation_proof": "not-run"}, "CONTRACT_DRIFT"),
+                     ({"unexplained_deltas": 1}, "FIXED_POINT_DELTA"),
+                     ({"unexplained_deltas": False}, "FIXED_POINT_DELTA"),
+                     ({"unexplained_deltas": "0"}, "FIXED_POINT_DELTA")]:
         errs = check_evidence(contract, reference, {**record, **bad}, current)
         assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
     assert check_evidence(contract, reference, record, "sha256:" + "00" * 32)  # stale evidence

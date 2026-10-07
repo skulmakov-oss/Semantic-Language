@@ -162,12 +162,17 @@ required_fields = [
     "comparison_result",
     # Bootstrap Seal provenance (BOOTSTRAP_CONTRACT.md §7)
     "platform", "verifier_contract", "runtime_contract", "remaining_rust_responsibilities",
+    # qualification evidence (BOOTSTRAP_CONTRACT.md §9, QUALIFICATION.md §3)
+    "input_corpus", "positive_cases", "negative_cases", "boundary_cases", "mutation_proof",
+    "unexplained_deltas",
 ]
+# Values the qualification evidence must hold. input_corpus uses artifact_hash_format.
+qualification_results = { cases = "pass", mutation_proof = "detected", unexplained_deltas = 0 }
 # platform must be one of the C0 reference manifest's qualified platforms ([qualification].platform_scope).
 # verifier_contract / runtime_contract must name the pinned C0 components:
 verifier_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-verify"
 runtime_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-vm"
-# remaining_rust_responsibilities: non-empty list, each one of these categories.
+# remaining_rust_responsibilities: exactly these categories, each once (all remain in Rust at the first Seal).
 rust_responsibility_categories = ["oracle", "host_mechanics", "verifier_runtime_foundation"]
 # A record supports the Bootstrap Seal only with these values; anything else is not evidence.
 artifact_hash_format = "sha256:<64 lowercase hex>"   # c1/c2_artifact_hash, source_set_identity
