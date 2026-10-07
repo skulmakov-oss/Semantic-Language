@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "d287fbc8fecae8ae2fc4fb6697cef45ffa2b21f188a06d3ba04da045be7e10c2"}
+FROZEN_DIGESTS = {PROTOCOL: "a74c545eeb41363e08196b5af1484a0f34ade9147211999996152b4b5688a5ea"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -250,6 +250,16 @@ def check_capabilities(contract):
     return errors
 
 
+CONTRACT_DOC = "docs/BOOTSTRAP_CONTRACT.md"
+
+
+def normative_text(text):
+    """A normative document without its `Status:` line, with line endings and trailing spaces
+    normalized. Formatting noise does not change it; any wording change does."""
+    lines = [line.rstrip() for line in text.splitlines() if not line.startswith("Status:")]
+    return "\n".join(lines).strip()
+
+
 def registry_section(subset_text):
     """The normative registry (BOOTSTRAP_SUBSET.md §5) with line endings and trailing spaces
     normalized: section authority, every row and every cell."""
@@ -259,22 +269,24 @@ def registry_section(subset_text):
     return "\n".join(line.rstrip() for line in section.splitlines()).strip()
 
 
-def frozen_digest(contract, reference, subset_text):
+def frozen_digest(contract, reference, subset_text, contract_doc):
     """sha256 of the canonical form of every frozen value: the whole contract (including the
     [subset] state lists), the whole C0 reference manifest (verdict, limits, drift, contract
     paths) and the normative registry section of BOOTSTRAP_SUBSET.md. Admitting, dropping or
     redefining a construction is a contract change (BOOTSTRAP_SUBSET.md §8)."""
     canonical = json.dumps({"contract": contract, "reference": reference,
-                            "registry": registry_section(subset_text)},
+                            "registry": registry_section(subset_text),
+                            "subset_doc": normative_text(subset_text),
+                            "contract_doc": normative_text(contract_doc)},
                            sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def check_contract(contract, reference, subset_text):
+def check_contract(contract, reference, subset_text, contract_doc):
     errors = []
     if contract.get("protocol") != PROTOCOL:
         errors.append(f"CONTRACT_DRIFT: protocol must be {PROTOCOL!r}")
-    elif frozen_digest(contract, reference, subset_text) != FROZEN_DIGESTS[PROTOCOL]:
+    elif frozen_digest(contract, reference, subset_text, contract_doc) != FROZEN_DIGESTS[PROTOCOL]:
         errors.append(f"CONTRACT_DRIFT: a frozen value of {PROTOCOL} changed; a contract change needs "
                       "a new protocol identifier and a recorded revision")
     errors += check_c0(contract, reference)
@@ -413,7 +425,8 @@ def validate(repo):
     reference = tomllib.loads((repo / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
     subset_text = (repo / contract["subset"]["registry"]).read_text(encoding="utf-8")
     manifest = tomllib.loads((repo / contract["source_set"]["manifest"]).read_text(encoding="utf-8"))
-    errors = check_contract(contract, reference, subset_text)
+    contract_doc = (repo / CONTRACT_DOC).read_text(encoding="utf-8")
+    errors = check_contract(contract, reference, subset_text, contract_doc)
     identity, ss_errors = load_source_set(repo, manifest, contract["source_set"]["root"])
     return identity, errors + ss_errors
 
@@ -423,12 +436,13 @@ def self_test():
     contract = tomllib.loads((ROOT / CONTRACT).read_text(encoding="utf-8"))
     reference = tomllib.loads((ROOT / "reference/semantic-reference.toml").read_text(encoding="utf-8"))
     subset = (ROOT / "docs/BOOTSTRAP_SUBSET.md").read_text(encoding="utf-8")
-    assert not check_contract(contract, reference, subset), check_contract(contract, reference, subset)
+    doc = (ROOT / CONTRACT_DOC).read_text(encoding="utf-8")
+    assert not check_contract(contract, reference, subset, doc), check_contract(contract, reference, subset, doc)
 
     def mutated(fn, ref=False):
         c, r = copy.deepcopy(contract), copy.deepcopy(reference)
         fn(r if ref else c)
-        return check_contract(c, r, subset)
+        return check_contract(c, r, subset, doc)
 
     def fails(cls, fn, ref=False):
         errs = mutated(fn, ref)
@@ -482,7 +496,7 @@ def self_test():
     assert check_registry(with_row("| BSF-001 | other | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-1 |"))[1]
     c999 = copy.deepcopy(contract)
     c999["subset"]["admitted"].append("BSF-999")
-    assert check_contract(c999, reference, with_row("| BSF-999 | x | ADMITTED |"))
+    assert check_contract(c999, reference, with_row("| BSF-999 | x | ADMITTED |"), doc)
     fails("SOURCE_SET_INVALID", lambda c: c["source_set"].update(newline="normalize"))
     # every frozen value is covered by the protocol digest, not only the explicitly checked ones
     fails("CONTRACT_DRIFT", lambda c: c["source_set"].update(root="src"))
@@ -499,10 +513,21 @@ def self_test():
                  ("T A F I B / arity", "T / arity"),                       # evidence form
                  ("| SHF-12..14 |", "| SHF-13..14 |"),                     # stages
                  ("semantic.foundation.source/1.2", "semantic.foundation.source/9.9")]:  # authority
-        errs = check_contract(contract, reference, subset.replace(*edit, 1))
+        errs = check_contract(contract, reference, subset.replace(*edit, 1), doc)
         assert any("frozen value" in e for e in errs), edit
     # formatting-only noise (trailing spaces, CRLF) does not change the registry digest
     assert registry_section(subset) == registry_section(subset.replace("\n", "  \r\n"))
+    # all normative prose of both documents is bound, not only the registry
+    for edit in [("framed stream", "concatenated stream"),             # BOOTSTRAP_CONTRACT §10.2
+                 ("byte-equality-v1", "normalized-equality-v1")]:       # §10.4 prose
+        errs = check_contract(contract, reference, subset, doc.replace(*edit, 1))
+        assert any("frozen value" in e for e in errs), edit
+    errs = check_contract(contract, reference,
+                          subset.replace("approved for compiler use", "optional", 1), doc)   # §2 meaning
+    assert any("frozen value" in e for e in errs)
+    assert normative_text(doc) == normative_text(doc.replace("\n", " \r\n"))           # formatting only
+    status_only = doc.replace("Status: **SHF-0", "Status: **SHF-0 (re-reviewed)", 1)
+    assert normative_text(doc) == normative_text(status_only)                          # status line
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(authority="docs/spec/other_profile.md"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(registry="docs/OTHER.md"))
     # the C0 reference manifest (verdict, limits, drift, contract paths) is frozen too

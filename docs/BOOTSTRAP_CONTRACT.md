@@ -103,13 +103,18 @@ delta count (required: 0). See [QUALIFICATION.md](./QUALIFICATION.md).
 
 ## 10. Executable protocol (SHF-0)
 
-Protocol `shf0-bootstrap-contract-v1`. Changing any value below is a contract revision with a
+Protocol `shf0-bootstrap-contract-v1`. **Authority:** the machine-readable files
+(`bootstrap/contract.toml`, `bootstrap/source-set.toml`, `reference/semantic-reference.toml`)
+are authoritative; this prose explains them, and on any conflict the machine-readable contract
+wins. Changing any value below is a contract revision with a
 new protocol identifier, never an edit made to fit a failed run (`CONTRACT_DRIFT`).
 The validator enforces this mechanically: it binds the protocol identifier to a sha256 of the
 canonical form of every frozen value: all of `bootstrap/contract.toml`, including the `[subset]`
 state lists (admitting or dropping a construction is a contract change, BOOTSTRAP_SUBSET.md §8),
 together with the whole C0 reference manifest `reference/semantic-reference.toml` and the
-normative registry section of `docs/BOOTSTRAP_SUBSET.md` (§5: authority, rows, cells).
+full normative text of this document and of `docs/BOOTSTRAP_SUBSET.md` (everything except the
+`Status:` line; line endings and trailing spaces are normalized), so prose and data cannot
+diverge under one protocol identifier.
 
 ### 10.1 C0
 
