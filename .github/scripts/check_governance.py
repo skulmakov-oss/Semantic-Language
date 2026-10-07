@@ -54,15 +54,19 @@ ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
 # Load-bearing anchors of the root operating contract; removing any of them fails the gate.
-AGENTS_ANCHORS = [
-    "## 2. Authority hierarchy",
+# They are matched against the RENDERED document (CommonMark tokens), never raw bytes, so an
+# anchor kept only inside code, an HTML comment or raw HTML does not count.
+AGENTS_HEADINGS = [
+    "2. Authority hierarchy",
+    "10. Forbidden",
+]
+AGENTS_PROSE = [  # visible sentences; inline-code text counts only as part of a sentence
     "Indexes are retrieval tools, not sources of truth.",
-    "`skulmakov-oss/Semantic` + exact Git SHA",
-    "Floating upstream `main` is never a qualification oracle.",
-    "Upstream authority: `skulmakov-oss/Semantic#1910`.",
-    "`skulmakov-oss/Semantic#1909`",
+    "Any qualification oracle must be identified by: skulmakov-oss/Semantic + exact Git SHA.",
+    "Floating upstream main is never a qualification oracle.",
+    "Upstream authority: skulmakov-oss/Semantic#1910.",
+    "skulmakov-oss/Semantic#1909 (Native Reasoning / Full Sigma + t¤) is a post-self-hosting track.",
     "First self-hosting does NOT require rewriting",
-    "## 10. Forbidden",
     "Do not merge without owner GO.",
 ]
 
@@ -150,7 +154,13 @@ def check_roadmap_critical_path(text):
     if cut is None:
         return [f"docs/ROADMAP.md: missing '{ROADMAP_OFF_PATH_HEADING}' section"]
     errors = []
-    for n, prose in active_prose("\n".join(text.splitlines()[:cut])):
+    critical = "\n".join(text.splitlines()[:cut])
+    # Fail closed: the SHF roadmap needs no raw HTML, and HTML content is not interpreted.
+    for t in COMMONMARK.parse(critical):
+        if t.type == "html_block" and t.map:
+            errors.append(f"docs/ROADMAP.md:{t.map[0] + 1}: raw HTML block in the SHF critical-path "
+                          "region is not allowed")
+    for n, prose in active_prose(critical):
         if OFF_CRITICAL_PATH.search(prose):
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {prose}")
     stages = {m.group(1) for line, title in headings if line < cut
@@ -174,8 +184,29 @@ def check_reference(data):
     return errors
 
 
+def rendered_blocks(text):
+    """(kind, rendered text) of every active block: 'heading' or 'prose'. Code blocks, HTML
+    blocks and HTML comments produce no inline tokens, so they contribute nothing."""
+    tokens = COMMONMARK.parse(text)
+    blocks = []
+    for i, t in enumerate(tokens):
+        if t.type == "inline":
+            kind = "heading" if i and tokens[i - 1].type == "heading_open" else "prose"
+            # A block made only of inline code is a code literal, not a stated rule.
+            if any(c.type == "text" and c.content.strip() for c in t.children or []):
+                blocks.append((kind, rendered_text(t)))
+    return blocks
+
+
 def check_agents_contract(text):
-    return [f"AGENTS.md: required contract anchor missing: {a!r}" for a in AGENTS_ANCHORS if a not in text]
+    blocks = rendered_blocks(text)
+    headings = {b for kind, b in blocks if kind == "heading"}
+    prose = [b for kind, b in blocks if kind == "prose"]
+    errors = [f"AGENTS.md: required contract heading missing: {h!r}"
+              for h in AGENTS_HEADINGS if h not in headings]
+    errors += [f"AGENTS.md: required contract sentence missing from active prose: {p!r}"
+               for p in AGENTS_PROSE if not any(p in b for b in prose)]
+    return errors
 
 
 def link_targets(text):
@@ -296,6 +327,14 @@ def self_test():
     # callouts and plain quotes inside a stage are active content
     assert check_roadmap_critical_path(stage("> [!IMPORTANT]\n> **Deliverable:** requires VM rewrite"))
     assert check_roadmap_critical_path(stage("> requires VM rewrite"))
+    # raw HTML blocks inside the SHF critical-path region fail closed
+    assert check_roadmap_critical_path(stage("<div>\nDeliverable: requires VM rewrite\n</div>"))
+    assert check_roadmap_critical_path(stage("<div>\n\n**Deliverable:** requires VM rewrite\n\n</div>"))
+    assert check_roadmap_critical_path(stage(
+        "<details>\n<summary>Requirement</summary>\nrequires Instant Pipeline\n</details>"))
+    assert check_roadmap_critical_path(stage("<!-- requires VM rewrite -->"))
+    assert not check_roadmap_critical_path(good.replace(  # HTML after the real off-path heading is fine
+        ROADMAP_OFF_PATH_HEADING + "\n", ROADMAP_OFF_PATH_HEADING + "\n<div>\nVM rewrite\n</div>\n"))
     # canonical component names and rewrite-first wording
     for wording in ["rewrite sm-vm in Semantic", "rewrite sm-verify in Semantic",
                     "rewriting the verifier", "sm-vm rewrite", "Rewrite the VM"]:
@@ -330,10 +369,28 @@ def self_test():
     assert check_reference({**ok, "status": "canonical"})
     assert check_reference({**ok, "bootstrap": {}})
     assert check_links("x.md", "[a](definitely-missing-file.md)", ROOT)
+    # AGENTS.md contract: only the rendered, active document counts.
+    contract = "".join(f"## {h}\n\n" for h in AGENTS_HEADINGS) + "".join(f"{p}\n\n" for p in AGENTS_PROSE)
+    real_agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert not check_agents_contract(contract)
+    assert not check_agents_contract(real_agents)
     assert check_agents_contract("")
     assert check_agents_contract("unrelated text")
-    assert not check_agents_contract("\n".join(AGENTS_ANCHORS))
-    assert len(check_agents_contract("\n".join(AGENTS_ANCHORS[1:]))) == 1
+    assert check_agents_contract("```markdown\n" + contract + "```\n")            # fenced
+    assert check_agents_contract("~~~\n" + contract + "~~~\n")
+    assert check_agents_contract("<!--\n" + contract + "-->\n")                   # HTML comment
+    assert check_agents_contract("<div>\n" + contract.replace("\n\n", "\n") + "</div>\n")  # raw HTML
+    assert check_agents_contract("\n".join("    " + l for l in contract.splitlines()) + "\n")  # indented
+    assert check_agents_contract(contract.replace("## 10. Forbidden", "`## 10. Forbidden`"))
+    assert check_agents_contract(contract.replace("## 2. Authority hierarchy", "2. Authority hierarchy"))
+    assert check_agents_contract(contract.replace("Do not merge without owner GO.",
+                                                  "`Do not merge without owner GO.`"))  # code-only sentence
+    assert len(check_agents_contract(contract.replace(AGENTS_PROSE[0], ""))) == 1
+    # visible text unchanged by emphasis -> still satisfied
+    assert not check_agents_contract(real_agents.replace("Do not merge without owner GO.",
+                                                         "Do **not** merge without *owner* GO."))
+    assert not check_agents_contract(real_agents.replace("Floating upstream `main` is never",
+                                                         "Floating upstream **`main`** is never"))
     # nested docs are governed: build a throwaway tree with a nested bad doc
     with tempfile.TemporaryDirectory() as tmp:
         nested = Path(tmp) / "docs" / "design"
