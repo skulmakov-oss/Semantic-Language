@@ -123,10 +123,10 @@ function Get-ChangedPaths([string]$base) {
     $paths | ForEach-Object { $_ -split "`0" } | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique -CaseSensitive
 }
 
-# Envelope transition vs the base envelope. Widening allowed_paths or narrowing forbidden_paths
-# under the SAME task.id is a silent self-expansion and fails; a new task.id is a visible,
-# owner-reviewed transition and is reported loudly.
-function Test-Transition($cfg, [string]$base) {
+# A PR may not authorize its own payload: every changed path except the envelope itself must
+# also fit the BASE (already merged) envelope. A transition therefore lands as its own
+# envelope-only PR under owner review; the newly authorized work follows in a later PR.
+function Test-Transition($cfg, [string]$base, [string[]]$paths) {
     $text = & git show "${base}:.harness/current.task.yaml" 2>$null
     if ($LASTEXITCODE -ne 0) { Write-Host "[harness] no envelope at base $base (Harness bootstrap)"; return }
     $tmp = New-TemporaryFile
@@ -135,6 +135,8 @@ function Test-Transition($cfg, [string]$base) {
         $old = try { Read-Envelope $tmp } catch { $null }
     } finally { Remove-Item -LiteralPath $tmp }
     if (-not $old) { 'base envelope exists but is unparseable (fail closed)'; return }
+    Get-Violations $old @($paths | Where-Object { $_ -cne '.harness/current.task.yaml' }) |
+        ForEach-Object { "$_ [not authorized by base envelope $($old.task.id)]" }
     $added = @($cfg.scope.allowed_paths | Where-Object { $_ -cnotin $old.scope.allowed_paths })
     $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
     if ($old.task.id -cne $cfg.task.id) {
@@ -142,9 +144,6 @@ function Test-Transition($cfg, [string]$base) {
     }
     foreach ($a in $added) { Write-Host "[harness] TRANSITION: allowed_paths + $a" }
     foreach ($f in $removed) { Write-Host "[harness] TRANSITION: forbidden_paths - $f" }
-    if (($added.Count -or $removed.Count) -and $old.task.id -ceq $cfg.task.id) {
-        "envelope widened without a task transition (task.id unchanged: $($cfg.task.id))"
-    }
 }
 
 function Invoke-SelfTest {
@@ -226,6 +225,8 @@ constraints:
 if ($SelfTest) { Invoke-SelfTest }
 
 try {
+    # Git paths below are repository-root relative regardless of the caller's directory.
+    Set-Location -LiteralPath (Join-Path $PSScriptRoot '..')
     $envelope = Read-Envelope ([System.IO.Path]::GetFullPath($TaskFile))
     Write-Host "[harness] task $($envelope.task.id) (issue #$($envelope.constraints.issue))"
     $mode = if ($BaseRef) { "committed $BaseRef...HEAD + working tree" } else { 'working tree (staged, unstaged, untracked)' }
@@ -241,7 +242,7 @@ if ($BaseRef) {
     if ($RequireEnvelopeBase -and $envelope.constraints.base_sha -cne $full) {
         $violations += "constraints.base_sha $($envelope.constraints.base_sha) != PR base $full (stale envelope)"
     }
-    $violations += @(Test-Transition $envelope $BaseRef)
+    $violations += @(Test-Transition $envelope $BaseRef $paths)
 }
 foreach ($v in $violations) { Write-Host "[harness:error] $v" }
 if ($violations.Count) { exit 1 }

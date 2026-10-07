@@ -193,8 +193,12 @@ When a task needs different paths or capabilities:
 1. STOP;
 2. report the blocker;
 3. obtain explicit owner authorization for the named task;
-4. change `.harness/current.task.yaml` in auditable branch/PR history;
-5. make only the newly authorized changes.
+4. change `.harness/current.task.yaml` in its own envelope-only PR, reviewed and merged by
+   the owner;
+5. only then make the newly authorized changes, in a later PR.
+
+CI enforces this: in `-BaseRef` mode every changed path except the envelope itself must also fit
+the base (already merged) envelope, so a PR can never authorize its own payload.
 
 The Harness is never a mechanism for self-authorization. Bootstrap fact: the PR that introduced
 the Harness (issue #14) added envelope, checker and CI enforcement together under explicit owner
