@@ -1,66 +1,55 @@
 ---
-name: Bootstrap slice
-description: Define one Semantic bootstrap migration/qualification slice
-title: "B?: "
+name: SHF work item
+description: Define one bootstrap work item under the SHF self-hosting roadmap
+title: "SHF-?: "
 labels: []
 assignees: []
 ---
 
+## SHF stage
+
+- Parent stage (SHF-0 … SHF-17):
+- Owner repository: `Semantic-Language` / `Semantic` / both
+- Upstream authority: `skulmakov-oss/Semantic#1910`
+
 ## Objective
 
-<!-- One concrete bootstrap outcome. -->
+<!-- One concrete outcome. -->
 
-## Reference contract
+## Reference
 
-- Reference repository: `skulmakov-oss/Semantic`
-- Reference owner/module:
-- Reference commit/ref:
-- Related upstream issues:
+- Repository: `skulmakov-oss/Semantic`
+- Exact SHA (where relevant):
+- Contract affected (spec path / module):
 
-## Why this slice is safe to start
+## Ownership check
 
-<!-- Explain why open upstream work does not invalidate this exact contract. -->
+- [ ] This does not change the Semantic language/runtime contract (otherwise it belongs upstream first)
+- [ ] No compiler logic is placed in host/bootstrap glue
 
-## Inputs
+## Migration state
 
--
+Current: REFERENCE_ONLY / MIRRORED / DIFFERENTIAL / QUALIFIED / CANONICAL
+Target:
 
-## Observable outputs
+## Comparison form
 
--
+<!-- Tier from docs/QUALIFICATION.md §1 and exact schema. -->
 
-## Differential rule
-
-<!-- Exact/normalized comparison rule. -->
-
-## Scope
-
-### In scope
-
--
-
-### Out of scope
-
--
-
-## Qualification matrix
+## Evidence required
 
 - [ ] Positive cases
-- [ ] Negative/error cases where contractual
+- [ ] Negative cases where contractual
 - [ ] Boundary cases
-- [ ] Differential corpus
-- [ ] Mutation/adversarial proof
-- [ ] No unexplained divergence
+- [ ] Mutation proof (gate fails on a meaningful defect)
+- [ ] Unexplained deltas = 0
+- [ ] Limitations recorded
 
-## Definition of done
+## Non-goals
 
-- [ ] Semantic mirror implemented
-- [ ] Reference behavior captured
-- [ ] Differential comparison automated
-- [ ] Qualification evidence recorded
-- [ ] Proven contract documented narrowly
-- [ ] Migration state updated
+-
 
 ## Stop conditions
 
-Stop this slice if an upstream change makes Semantic meaning, the public contract, wire representation, or deterministic observable behavior ambiguous.
+Stop if the reference contract is ambiguous, the reference pin cannot be verified, or a required
+capability is missing upstream.
