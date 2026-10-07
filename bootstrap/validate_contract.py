@@ -855,13 +855,117 @@ def self_test():
     assert check_record(contract, reference, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"}, current)
     assert check_record(contract, reference, {**record, "c0_identity": f"{REPOSITORY}@main"}, current)
     assert check_record(contract, reference, {k: v for k, v in record.items() if k != "c2_artifact_hash"}, current)
+    # protocol immutability relative to the exact PR base
+    A, B = "a" * 64, "b" * 64
+    def src(entries):  # validator-shaped source text with a given registry
+        return 'V1 = "shf0-bootstrap-contract-v1"\nFROZEN_DIGESTS = {' + ", ".join(entries) + "}\n"
+    v1a, v1b, v2b = f'V1: "{A}"', f'V1: "{B}"', f'"shf0-bootstrap-contract-v2": "{B}"'
+    assert not check_protocol_immutability(src([v1a]), src([v1a]))                 # same -> PASS
+    assert check_protocol_immutability(src([v1a]), src([v1b]))                     # redefined
+    assert check_protocol_immutability(src([v1a]), src([]))                        # removed
+    assert check_protocol_immutability(src([v1a]), src([v2b]))                     # removed, v2 added
+    assert not check_protocol_immutability(src([v1a]), src([v1a, v2b]))            # append-only
+    assert not check_protocol_immutability(None, src([v1a]))                       # base has no file
+    assert not check_protocol_immutability("x = 1\n", src([v1a]))                  # base predates SHF-0
+    assert check_protocol_immutability(src([v1a]), "FROZEN_DIGESTS = make()\n")    # unreadable shape
+    assert check_protocol_immutability(src([v1a]), "FROZEN_DIGESTS = {V9: 'x'}\n") # unknown key name
+    assert check_protocol_immutability(src([v1a]), src([v1a, v1b]))                # duplicate key
+    # the real validator: v1 is registered, and editing contract values + FROZEN_DIGESTS[v1]
+    # together cannot pass once v1 exists on the base
+    real = (ROOT / VALIDATOR).read_text(encoding="utf-8")
+    assert read_frozen_digests(real) == FROZEN_DIGESTS
+    rewritten = real.replace(FROZEN_DIGESTS[PROTOCOL], "0" * 64, 1)
+    assert check_protocol_immutability(real, rewritten)                            # same-PR bypass
+    assert not check_protocol_immutability(None, real)                             # first introduction
+    assert check_against_base(ROOT, "main")                                        # branch name refused
     print("shf0 self-test: PASS")
+
+
+VALIDATOR = "bootstrap/validate_contract.py"
+
+
+def read_frozen_digests(source):
+    """FROZEN_DIGESTS of a validator source text, read with `ast` only (never executed).
+    Keys may be string literals or names bound at module level to string literals; values must
+    be string literals. Returns {} when the source defines no registry (e.g. a pre-SHF-0 base).
+    Raises ValueError for any other shape, which callers report as CONTRACT_DRIFT."""
+    import ast
+    tree = ast.parse(source)
+    names = {}
+    registry = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target, value = node.targets[0].id, node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                names[target] = value.value
+            elif target == "FROZEN_DIGESTS":
+                registry = value
+    if registry is None:
+        return {}
+    if not isinstance(registry, ast.Dict):
+        raise ValueError("FROZEN_DIGESTS is not a dict literal")
+    out = {}
+    for k, v in zip(registry.keys, registry.values):
+        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+            key = k.value
+        elif isinstance(k, ast.Name) and k.id in names:
+            key = names[k.id]
+        else:
+            raise ValueError("FROZEN_DIGESTS key is not a string literal or module string constant")
+        if not (isinstance(v, ast.Constant) and isinstance(v.value, str)):
+            raise ValueError("FROZEN_DIGESTS value is not a string literal")
+        if key in out:
+            raise ValueError(f"FROZEN_DIGESTS defines {key!r} twice")
+        out[key] = v.value
+    return out
+
+
+def check_protocol_immutability(base_source, head_source):
+    """Every protocol already registered on the base must exist unchanged on the head; new
+    protocol identifiers may be added. A base without a registry imposes nothing."""
+    try:
+        base = read_frozen_digests(base_source) if base_source is not None else {}
+        head = read_frozen_digests(head_source)
+    except (SyntaxError, ValueError) as exc:
+        return [f"CONTRACT_DRIFT: frozen protocol registry cannot be read ({exc})"]
+    errors = []
+    for protocol, digest in sorted(base.items()):
+        if protocol not in head:
+            errors.append(f"CONTRACT_DRIFT: frozen protocol {protocol} was removed")
+        elif head[protocol] != digest:
+            errors.append(f"CONTRACT_DRIFT: frozen protocol {protocol} was redefined in place "
+                          "(introduce a new protocol identifier instead)")
+    return errors
+
+
+def check_against_base(repo, base_ref):
+    """Compare the head validator's protocol registry with the one at the exact `base_ref`."""
+    import subprocess
+    if not SHA.fullmatch(str(base_ref)):
+        return [f"REFERENCE_MISMATCH: --base-ref must be an exact 40-hex commit, not {base_ref!r}"]
+    known = subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{base_ref}^{{commit}}"],
+                           capture_output=True)
+    if known.returncode != 0:
+        return [f"REFERENCE_MISMATCH: base commit {base_ref} is not available locally"]
+    shown = subprocess.run(["git", "-C", str(repo), "show", f"{base_ref}:{VALIDATOR}"],
+                           capture_output=True)
+    base_source = shown.stdout.decode("utf-8") if shown.returncode == 0 else None  # absent: none
+    head_source = (repo / VALIDATOR).read_text(encoding="utf-8")
+    return check_protocol_immutability(base_source, head_source)
 
 
 if __name__ == "__main__":
     if "--self-test" in sys.argv:
         self_test()
         sys.exit(0)
+    if "--base-ref" in sys.argv:
+        i = sys.argv.index("--base-ref")
+        base_ref = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
+        problems = check_against_base(ROOT, base_ref)
+        for p in problems:
+            print(f"FAIL: {p}")
+        print("shf0 protocol immutability vs base: " + ("FAIL" if problems else "PASS"))
+        sys.exit(1 if problems else 0)
     identity, problems = validate(ROOT)
     for p in problems:
         print(f"FAIL: {p}")
