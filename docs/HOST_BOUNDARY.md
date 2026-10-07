@@ -91,3 +91,23 @@ A capability becomes frozen only when: upstream owner and SHA are identified; re
 representation, denial and failure behavior are specified; determinism and bounds are specified;
 positive, denied, malformed and boundary tests exist; and the adapter contains no compiler-domain
 logic. If the capability changes the runtime contract, it is defined upstream first.
+
+## 9. First-bootstrap capability policy (SHF-0)
+
+Frozen in [`bootstrap/contract.toml`](../bootstrap/contract.toml). "Permitted" is policy;
+"available at C0" is what exists at `Semantic@89641da8`; a gap is planned work upstream and does
+not invent an ABI here.
+
+| Capability / effect | Permitted | Available at C0 | Future gap | Owner |
+|---|---|---|---|---|
+| Declared source byte input | yes | yes — `fs.read`, UTF-8 text under one canonical root | — | Semantic |
+| Declared artifact byte output | yes | **no** — only UTF-8 text writes exist | SHF-2 (binary output) | Semantic |
+| Arguments / config transport | yes | yes — `args.read`; protocol v1 declares no config | — | Semantic |
+| Existing verifier execution | yes | yes — `sm-verify` admits C1 and C2 | — | Semantic |
+| Existing VM execution | yes | yes — `sm-vm` runs admitted C1 only | — | Semantic |
+| Environment variables | **no** | — | — | — |
+| Clock | **no** | — | — | — |
+
+Forbidden host logic (any occurrence is `HOST_LOGIC_LEAK`): tokenization, parsing, symbol
+binding, typechecking, IR selection, lowering, opcode selection, SemCode construction, diagnostic
+meaning, compiler ordering decisions.

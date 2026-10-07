@@ -1,0 +1,14 @@
+# Canonical source set S of the self-hosted compiler (SHF-0 protocol "shf0-source-set-v1").
+#
+# Membership is exactly this explicit list. It never depends on a directory scan or on
+# filesystem enumeration order. Rules (enforced by bootstrap/validate_contract.py):
+#   - every path is relative, POSIX '/'-separated, ASCII, under `root`, ends in ".sm";
+#   - components match [a-z0-9_]+ (no ".", "..", empty, absolute, drive or backslash forms);
+#   - the list is strictly ascending by UTF-8 bytes; no duplicates (case-insensitive);
+#   - an unsorted list is rejected, never silently re-sorted.
+#
+# The list is empty until compiler source exists (SHF-10 onward).
+
+protocol = "shf0-source-set-v1"
+root = "compiler"
+files = []

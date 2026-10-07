@@ -22,5 +22,17 @@ jobs:
         run: python .github/scripts/check_governance.py --self-test
       - name: Governance checks
         run: python .github/scripts/check_governance.py
+      - name: SHF-0 contract validator self-test
+        run: python bootstrap/validate_contract.py --self-test
+      - name: SHF-0 bootstrap contract
+        run: python bootstrap/validate_contract.py
+      - name: SHF-0 frozen protocol immutability vs exact base
+        # Pull requests: the immutable PR base SHA. Pushes to main: the previous tip.
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          python bootstrap/validate_contract.py --base-ref "$BASE"
       - name: Whitespace check
         run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD

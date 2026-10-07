@@ -1,11 +1,11 @@
 # Bootstrap Contract
 
-Status: **architecture-level contract — SHF-0 NOT STARTED**
+Status: **SHF-0 QUALIFIED / COMPLETE (issue #11) — executable protocol `shf0-bootstrap-contract-v1` in §10**
 
-This document fixes the vocabulary and invariants of the self-hosting proof at architecture
-level. SHF-0 (see [ROADMAP.md](./ROADMAP.md)) turns it into an executable bootstrap protocol:
-concrete source tree, normalization rule, capability list and failure handling. Nothing here
-claims that SHF-0 has been performed.
+This document fixes the vocabulary and invariants of the self-hosting proof. §1–§9 state them at
+architecture level; §10 records the executable protocol frozen by SHF-0, whose machine-readable
+form is [`bootstrap/contract.toml`](../bootstrap/contract.toml) and whose validator is
+[`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). No compiler exists yet.
 
 ## 1. Terms
 
@@ -100,3 +100,129 @@ Recorded only when the fixed point passes with zero unexplained deltas. It conta
 Each qualification run records: reference repository and SHA, source-set identity, input
 corpus, comparison form, positive/negative/boundary results, mutation proof, and unexplained
 delta count (required: 0). See [QUALIFICATION.md](./QUALIFICATION.md).
+
+## 10. Executable protocol (SHF-0)
+
+Protocol `shf0-bootstrap-contract-v1`. **Authority:** the machine-readable files
+(`bootstrap/contract.toml`, `bootstrap/source-set.toml`, `reference/semantic-reference.toml`)
+are authoritative; this prose explains them, and on any conflict the machine-readable contract
+wins. Changing any value below is a contract revision with a
+new protocol identifier, never an edit made to fit a failed run (`CONTRACT_DRIFT`).
+The validator enforces this mechanically: it binds the protocol identifier to a sha256 of the
+canonical form of every frozen value: all of `bootstrap/contract.toml`, including the `[subset]`
+state lists (admitting or dropping a construction is a contract change, BOOTSTRAP_SUBSET.md §8),
+together with the whole C0 reference manifest `reference/semantic-reference.toml` and the
+full normative text of this document and of `docs/BOOTSTRAP_SUBSET.md` (everything except the
+`Status:` line; line endings and trailing spaces are normalized), so prose and data cannot
+diverge under one protocol identifier.
+
+### 10.1 C0
+
+`skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7` — the `v1.2.0` Stable
+Foundation release, verdict "ORACLE QUALIFIED WITH EXPLICIT LIMITS" (qualification campaign
+`Semantic#1983`, platform `x86_64-pc-windows-msvc`, limits R1–R4). Upstream development `main`
+(`5f3e2302…`) is 16 commits ahead with compiler-relevant changes and does **not** inherit that
+qualification. Details and contract paths: [`reference/semantic-reference.toml`](../reference/semantic-reference.toml).
+
+SemCode format ownership at C0 is taken from `CONSTRAINTS.md` (`sm-format` owns the binary
+format); the "owner: `sm-ir`" wording in `docs/spec/semcode.md` is historical per that file.
+
+### 10.2 Source set `S` (`shf0-source-set-v1`)
+
+| Rule | Value |
+|---|---|
+| Root | `compiler/` |
+| Membership | exactly the files listed in [`bootstrap/source-set.toml`](../bootstrap/source-set.toml); never a directory scan |
+| Path form | relative, POSIX `/`, ASCII, components `[a-z0-9_]+`, file suffix `.sm`; each component (with suffix) at most 100 characters and the whole relative path at most 160 (portable under Windows MAX_PATH with the checkout directory) |
+| Rejected paths | absolute, drive-letter, backslash, `.`/`..`/empty components, outside root, any component that is a Windows device name (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`) |
+| Links | every path component must resolve to exactly its literal location (no symlink, Windows junction or other reparse point at any depth) |
+| Ordering | strictly ascending by UTF-8 bytes; an unsorted list is rejected, not re-sorted |
+| Duplicates | rejected, including case-insensitive collisions |
+| Bytes | UTF-8, no BOM, LF only (any CR rejected), final newline required, no NUL |
+| Checkout | `.gitattributes` keeps `*.sm` LF on every platform; no normalization in the protocol |
+
+**Identity:** `sha256` over the framed stream
+
+```text
+"SHF0-SOURCE-SET\0v1\0" || u64be(file_count)
+  || for each file in manifest order: u32be(len(path)) || path || u64be(len(content)) || content
+```
+
+rendered as `sha256:<64 lowercase hex>`. Any path or content change changes the identity; the
+framing makes path/content boundaries unambiguous.
+
+### 10.3 Compiler interface
+
+`Compile(source_set, declared_config, declared_capability_results) -> (artifact, diagnostics, status)`
+with status `ok | rejected | failed`. Protocol v1 admits no configuration inputs. The artifact is
+SemCode under the upstream `sm-format` contract at C0. CLI spelling is not part of the contract.
+
+### 10.4 Fixed point
+
+`C1 = C0(S)`, `C2 = C1(S)`. C1 and C2 are both admitted by `sm-verify`; only admitted C1 is
+executed (on `sm-vm`). Comparison rule: **`byte-equality-v1`** — `C1.smc` and `C2.smc` are equal
+as complete byte sequences. Basis: at C0 the SemCode format has canonical framing, its `DBG0`
+section holds only `(pc, line, col)`, no time/path/random field exists, and
+`tests/cli_artifact_lifecycle.rs` asserts byte-deterministic compile output.
+
+### 10.5 Host capabilities
+
+See [HOST_BOUNDARY.md](./HOST_BOUNDARY.md) §9. Default environment inputs: none.
+
+### 10.6 Failure taxonomy
+
+All classes stop qualification (`continue = false`); evidence from a failing run is not valid.
+§8 classes plus two protocol classes:
+
+| Class | Trigger |
+|---|---|
+| `SOURCE_SET_INVALID` | manifest or file bytes violate `shf0-source-set-v1`; identity is undefined |
+| `CONTRACT_DRIFT` | evidence bound to a different protocol, comparison rule or C0 |
+
+### 10.7 Evidence record
+
+An evidence record is a TOML/JSON mapping produced by a qualifying run. Required fields:
+
+- binding: `contract_protocol`, `c0_identity`, `comparison_rule`;
+- fixed point: `source_set_identity`, `c1_artifact_hash`, `c1_verifier_binding`,
+  `c2_artifact_hash`, `c2_verifier_binding`, `comparison_result`;
+- Seal provenance (§7): `platform` (one of the C0 qualified platforms), `verifier_contract` /
+  `runtime_contract` (the pinned C0 `sm-verify` / `sm-vm`), `remaining_rust_responsibilities`
+  (exactly `oracle`, `host_mechanics`, `verifier_runtime_foundation`, each once);
+- qualification evidence (§9): `input_corpus` (sha256), `input_corpus_size` (positive integer),
+  `positive_cases` / `negative_cases` / `boundary_cases` (each `{count > 0, result = pass}`,
+  counts summing to `input_corpus_size`), `mutation_proof` = `detected`,
+  `unexplained_deltas` = `0`, `limitations` (non-empty list of what the evidence does not prove);
+- C0 checkout attestation: `c0_checkout_head` (= C0 SHA) and `c0_checkout_clean` (= true).
+
+**Record validation (what SHF-0 proves).** `check_evidence(repo, record)` is the only record
+gate. It loads the canonical contract files from the repository, requires them to validate,
+computes the current `S` identity itself, and then checks every internally checkable invariant:
+exact C0 and protocol binding (else `CONTRACT_DRIFT`), current `S` identity, hash formats,
+both verifier bindings `admitted` (else `ADMISSION_REJECT`), `comparison_result` = `equal` and
+identical C1/C2 hashes under `byte-equality-v1` (else `FIXED_POINT_DELTA`), complete corpus and
+case evidence, platform / contracts / responsibilities, and the attested checkout values (a head
+other than C0 or a non-`true` clean flag is `REFERENCE_MISMATCH`). It fails closed on malformed
+input. Passing it means the record is well-formed and internally consistent — nothing more.
+
+**Production (what a producer MUST do).** The checkout fields are producer attestations, not
+cryptographic proof of execution provenance. A producer MUST run `verify_reference_checkout()`
+on the C0 checkout immediately before the qualifying run and record its outcome. A post-run
+record cannot prove how it was produced, so `check_evidence` validates the attested values but
+cannot establish that the check actually ran. Upstream release artifacts are unsigned; SHF-0
+adds no signing.
+
+**Seal acceptance (what is additionally required).** Self-attested evidence alone is NOT
+sufficient for the Bootstrap Seal. The Seal is accepted only when the producing run is bound to
+the canonical reference-check procedure AND an independent reproduction from the exact qualified
+C0 and canonical `S` confirms the claimed artifact identities. A reproduction mismatch is a
+qualification failure (`FIXED_POINT_DELTA` or `REFERENCE_MISMATCH`) and cannot be waived by the
+stored attestation.
+
+### 10.8 Stage ownership of evidence
+
+| Stage | Responsibility |
+|---|---|
+| SHF-0 | freezes the provenance requirements; validates record structure and internal consistency |
+| SHF-15 | produces C1 from the verified exact C0 and canonical `S`; binds evidence to the actual producing run |
+| SHF-16 | produces C2; performs the fixed-point proof; independently reproduces the required evidence; gates the Bootstrap Seal |

@@ -1,25 +1,47 @@
-# Semantic reference pin for the Semantic-Language bootstrap.
+# C0 reference pin for the Semantic-Language bootstrap (frozen by SHF-0, issue #11).
 #
-# status = "planning-reference": this SHA is the audited planning reference for the SHF
-# architecture. It is NOT a qualified bootstrap oracle. Qualification evidence must name its
-# own exact SHA. Floating main is never a qualification oracle. Changing this pin requires an
-# explicit drift analysis (commits between old and new SHA, invalidated evidence).
+# C0 is identified only by repository + exact SHA. Floating main is never a qualification
+# oracle. Changing this pin requires an explicit drift analysis (commits between the old and new
+# SHA, which bootstrap evidence they invalidate) and a contract revision.
 
 repository = "skulmakov-oss/Semantic"
-sha = "5f3e230223a35384cb505e418fdac0b07102d2e6"
-status = "planning-reference"
+sha = "89641da8237f4fcefb50cf1958a50e4d4003aea7"
+status = "qualified-reference"
 audited = "2026-10-07"
 
 [bootstrap]
 upstream_issue = 1910
 deferred_successor_issue = 1909
 
-# Paths verified to exist at the pinned SHA. They identify where upstream contracts live;
-# no contract version is claimed beyond the SHA itself.
+# Why this SHA is a qualified C0.
+[qualification]
+release_tag = "v1.2.0"                     # v1.2.0^{} dereferences to this SHA
+verdict = "ORACLE QUALIFIED WITH EXPLICIT LIMITS"
+qualification_campaign = "skulmakov-oss/Semantic#1983"
+platform_scope = "x86_64-pc-windows-msvc"  # Linux/macOS outside the v1.2.0 contour
+determinism_evidence = "tests/cli_artifact_lifecycle.rs"  # smc compile output bytes deterministic
+
+# Explicit limits carried by the release (upstream release notes, v1.2.0). Data, not comments:
+# they are part of the frozen protocol digest.
+[qualification.limits]
+R1 = "quad helper predicates are not surface-language helpers"
+R2 = "text escape processing is raw-slice: a backslash-n escape is two bytes, not a newline"
+R3 = "generic rejection diagnostic is not bootstrap-comparable (Semantic#1717)"
+R4 = "host paths may appear in diagnostic presentation"
+
+# Relationship to current upstream development main.
+[drift]
+planning_reference = "5f3e230223a35384cb505e418fdac0b07102d2e6"
+commits_ahead_of_c0 = 16
+compiler_relevant = true   # PB-01..PB-07 (#1985-#1992) change frontend, sema, IR/SemCode, admission
+inherits_qualification = false
+upstream_statement = "docs/release_artifact_model.md @ planning_reference: current main is development beyond C1 and is not qualified as any new release"
+
+# Paths verified to exist at the pinned SHA.
 [contracts]
-constraints = "CONSTRAINTS.md"
+constraints = "CONSTRAINTS.md"                    # authoritative ownership (sm-format owns the binary format)
 spec_index = "docs/spec/index.md"
-semcode_spec = "docs/spec/semcode.md"
+semcode_spec = "docs/spec/semcode.md"             # its "owner: sm-ir" wording is historical per CONSTRAINTS.md
 verifier_spec = "docs/spec/verifier.md"
 vm_spec = "docs/spec/vm.md"
 ir_spec = "docs/spec/ir.md"
@@ -29,6 +51,9 @@ modules_spec = "docs/spec/modules.md"
 diagnostics_spec = "docs/spec/diagnostics.md"
 capabilities_spec = "docs/spec/capabilities.md"
 quad_logic_spec = "docs/spec/quad_logic_frame_v1.md"
+source_profile = "docs/spec/foundation_source_profile_v1.md"   # semantic.foundation.source/1.2
+source_profile_evidence = "docs/roadmap/stable_foundation/stable_public_language_contract.md"
+application_boundary = "docs/spec/controlled_application_boundary_v0.md"
 semcode_format_crate = "crates/sm-format"
 emitter_crate = "crates/sm-emit"
 verifier_crate = "crates/sm-verify"
