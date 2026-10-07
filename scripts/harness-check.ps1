@@ -134,7 +134,7 @@ function Test-Transition($cfg, [string]$base) {
         Set-Content -LiteralPath $tmp -Value $text -Encoding utf8
         $old = try { Read-Envelope $tmp } catch { $null }
     } finally { Remove-Item -LiteralPath $tmp }
-    if (-not $old) { Write-Host '[harness] TRANSITION: base envelope unparseable; reviewing new envelope only'; return }
+    if (-not $old) { 'base envelope exists but is unparseable (fail closed)'; return }
     $added = @($cfg.scope.allowed_paths | Where-Object { $_ -cnotin $old.scope.allowed_paths })
     $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
     if ($old.task.id -cne $cfg.task.id) {
