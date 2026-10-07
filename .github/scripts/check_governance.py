@@ -45,7 +45,7 @@ DEFERRED_TRACKS = [
 ]
 OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
 # A stage's own Non-goals line legitimately names deferred work in order to exclude it.
-NON_GOALS_LINE = re.compile(r"^\s*- \*\*Non-goals:\*\*")
+NON_GOALS_FIELD = "**Non-goals:**"
 ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
@@ -80,20 +80,27 @@ def check_legacy_vocabulary(rel, text):
     return errors
 
 
+def non_goals_lines(text):
+    """0-based source lines that belong to a `- **Non-goals:**` list item, as CommonMark
+    structures it (wrapped text, blank lines and nested children included)."""
+    tokens = COMMONMARK.parse(text)
+    lines = set()
+    for i, t in enumerate(tokens):
+        if t.type == "list_item_open" and t.map:
+            first_inline = next((x for x in tokens[i + 1:] if x.type == "inline"), None)
+            if first_inline is not None and first_inline.content.startswith(NON_GOALS_FIELD):
+                lines.update(range(*t.map))
+    return lines
+
+
 def check_roadmap_critical_path(text):
     head = text.split(ROADMAP_OFF_PATH_HEADING, 1)
     if len(head) != 2:
         return [f"docs/ROADMAP.md: missing '{ROADMAP_OFF_PATH_HEADING}' section"]
     errors = []
-    in_non_goals = False
+    excluded = non_goals_lines(head[0])
     for n, line in enumerate(head[0].splitlines(), 1):
-        # A Non-goals field includes every indented line after it (wrapped text or child bullets)
-        # until an unindented peer field or heading begins.
-        if NON_GOALS_LINE.match(line):
-            in_non_goals = True
-        elif not (in_non_goals and line.startswith((" ", "\t"))):
-            in_non_goals = False
-        if OFF_CRITICAL_PATH.search(line) and not in_non_goals:
+        if OFF_CRITICAL_PATH.search(line) and n - 1 not in excluded:
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {line.strip()}")
     stages = set(re.findall(r"^## (SHF-\d+) ", head[0], re.M))
     expected = {f"SHF-{i}" for i in range(18)}
@@ -139,15 +146,25 @@ def link_targets(text):
     return [t for t in targets if t]
 
 
-def check_links(rel, text, base):
+def check_links(rel, text, base, root=ROOT):
     errors = []
+    root = root.resolve()
     for target in link_targets(text):
         # Classify on the encoded URI; decode only the path component for the file lookup.
         parts = urlsplit(target)
-        if parts.scheme or parts.netloc:
+        drive = len(parts.scheme) == 1  # "C:/x" is a Windows absolute path, not a URI scheme
+        if (parts.scheme and not drive) or parts.netloc:
             continue
-        path = unquote(parts.path)
-        if path and not (base / path).exists():
+        path = unquote(target.split("#", 1)[0] if drive else parts.path)
+        if not path:
+            continue
+        # Only repository-relative assets count: absolute paths and escapes from the checkout
+        # would otherwise be satisfied by arbitrary files on the CI host.
+        resolved = (base / path).resolve()
+        if path.startswith(("/", "\\")) or Path(path).is_absolute() or \
+                (resolved != root and root not in resolved.parents):
+            errors.append(f"{rel}: link outside the repository '{target}'")
+        elif not resolved.exists():
             errors.append(f"{rel}: broken relative link '{target}'")
     return errors
 
@@ -175,7 +192,7 @@ def run(root):
         rel = path.relative_to(root).as_posix()
         text = path.read_text(encoding="utf-8")
         errors += check_legacy_vocabulary(rel, text)
-        errors += check_links(rel, text, path.parent)
+        errors += check_links(rel, text, path.parent, root)
     roadmap = root / "docs/ROADMAP.md"
     if roadmap.is_file():
         errors += check_roadmap_critical_path(roadmap.read_text(encoding="utf-8"))
@@ -212,6 +229,10 @@ def self_test():
         assert not check_roadmap_critical_path(wrapped), term
         child = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:**\n  - {term}\n")
         assert not check_roadmap_critical_path(child), term
+        loose = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:**\n\n  - {term}\n\n  - other\n")
+        assert not check_roadmap_critical_path(loose), term
+        peer = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:**\n\n  - x\n\n{term} is required\n")
+        assert check_roadmap_critical_path(peer), term
         after = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** x\n- **Deliverable:** {term}\n")
         assert check_roadmap_critical_path(after), term
     ok = {"repository": "skulmakov-oss/Semantic", "sha": "a" * 40, "status": "planning-reference",
@@ -256,6 +277,11 @@ def self_test():
     assert check_links("x.md", "[x](missing%20file.md)\n", ROOT)
     assert check_links("x.md", "![diagram](missing.png)\n", ROOT)
     assert check_links("x.md", "[draft](%23missing.md)\n", ROOT)
+    here = Path(__file__).resolve()
+    assert check_links("x.md", f"[abs]({here.as_posix()})\n", ROOT)          # absolute, though it exists
+    assert check_links("x.md", "[host](/etc/passwd)\n", ROOT)
+    assert check_links("x.md", "[up](../../../../../../etc/hosts)\n", ROOT)  # escapes the checkout
+    assert not check_links("x.md", "[ok](.github/scripts/check_governance.py)\n", ROOT)
     assert not check_links("x.md", "[a](check_governance.py#L1) [b](mailto:x@y.z)\n", Path(__file__).parent)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
