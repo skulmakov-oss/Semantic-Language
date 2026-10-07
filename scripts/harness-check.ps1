@@ -122,6 +122,7 @@ function Invoke-GitZ {
     $psi = [System.Diagnostics.ProcessStartInfo]::new('git')
     foreach ($a in @('-c', 'core.quotepath=off') + $args) { $psi.ArgumentList.Add($a) }
     $psi.RedirectStandardOutput = $true
+    $psi.WorkingDirectory = (Get-Location).ProviderPath  # .NET cwd is not the PowerShell location
     $proc = [System.Diagnostics.Process]::Start($psi)
     $buf = [System.IO.MemoryStream]::new()
     $proc.StandardOutput.BaseStream.CopyTo($buf)
