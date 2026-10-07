@@ -112,18 +112,24 @@ function Invoke-Git {
     $out
 }
 
-# Raw stdout as ONE string: PowerShell's native-command pipeline would split names that contain
-# newlines before the NUL split, so read the process stream directly.
+# Raw stdout BYTES: PowerShell's native-command pipeline would split names containing newlines,
+# and a StreamReader would eat a leading BOM. Split on byte 0, then decode each name as strict
+# UTF-8 (no BOM handling; invalid bytes throw -> fail closed).
 function Invoke-GitZ {
     $psi = [System.Diagnostics.ProcessStartInfo]::new('git')
     foreach ($a in @('-c', 'core.quotepath=off') + $args) { $psi.ArgumentList.Add($a) }
     $psi.RedirectStandardOutput = $true
-    $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $proc = [System.Diagnostics.Process]::Start($psi)
-    $out = $proc.StandardOutput.ReadToEnd()
+    $buf = [System.IO.MemoryStream]::new()
+    $proc.StandardOutput.BaseStream.CopyTo($buf)
     $proc.WaitForExit()
     if ($proc.ExitCode -ne 0) { throw "git $args failed ($($proc.ExitCode))" }
-    $out -split "`0"
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $bytes = $buf.ToArray(); $start = 0
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        if ($bytes[$i] -eq 0) { $utf8.GetString($bytes, $start, $i - $start); $start = $i + 1 }
+    }
+    if ($start -lt $bytes.Length) { $utf8.GetString($bytes, $start, $bytes.Length - $start) }
 }
 
 function Get-ChangedPaths([string]$base) {
