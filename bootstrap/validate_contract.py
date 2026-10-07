@@ -45,7 +45,48 @@ REQUIRED_FORBIDDEN_INPUTS = {
 SHA = re.compile(r"[0-9a-f]{40}")
 COMPONENT = re.compile(r"[a-z0-9_]+")
 SHF_STAGE = re.compile(r"SHF-(\d+)")
-BSF_ROW = re.compile(r"^\|\s*(BSF-\d{3})\s*\|[^|]*\|\s*(CANDIDATE|ADMITTED|FROZEN)\s*\|", re.M)
+BSF_ID = re.compile(r"BSF-\d{3}")
+SHF_RANGE = re.compile(r"SHF-\d+(?:\.\.\d+)?")
+EMPTY_CELL = {"", "—", "-", "n/a", "tbd"}
+
+
+def registry_rows(subset_text):
+    """[(id, state, cells)] for every table row whose first cell is a BSF id."""
+    rows = []
+    for line in subset_text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells and BSF_ID.fullmatch(cells[0]):
+            rows.append((cells[0], cells[2] if len(cells) > 2 else "", cells))
+    return rows
+
+
+def check_registry(subset_text):
+    """Every row is complete for its state; ids are unique. Returns ({id: state}, errors).
+
+    ADMITTED / FROZEN rows: ID | construction | state | required compiler use |
+    positive / negative evidence | stages (requalification impact). Their reference authority is
+    the section-level C0 authority stated above the table.
+    CANDIDATE rows: ID | construction | state | gap at C0 | owner / SHF stage."""
+    errors, registry = [], {}
+    for bsf, state, cells in registry_rows(subset_text):
+        if bsf in registry:
+            errors.append(f"CONTRACT_DRIFT: registry id {bsf} appears more than once")
+            continue
+        registry[bsf] = state
+        filled = [c for c in cells if c.lower() not in EMPTY_CELL]
+        if state in ("ADMITTED", "FROZEN"):
+            if len(cells) != 6 or len(filled) != 6 or " / " not in cells[4] \
+                    or not SHF_RANGE.search(cells[5]):
+                errors.append(f"CONTRACT_DRIFT: {state} registry row {bsf} is incomplete "
+                              "(needs compiler use, positive / negative evidence and SHF stages)")
+        elif state == "CANDIDATE":
+            if len(cells) != 5 or len(filled) != 5 or not SHF_STAGE.search(cells[4]):
+                errors.append(f"CONTRACT_DRIFT: CANDIDATE registry row {bsf} needs a gap and an owner / SHF stage")
+        else:
+            errors.append(f"CONTRACT_DRIFT: registry row {bsf} has unknown state {state!r}")
+    return registry, errors
 DOMAIN = b"SHF0-SOURCE-SET\x00v1\x00"
 
 
@@ -248,7 +289,8 @@ def check_contract(contract, reference, subset_text):
     admitted, candidate, frozen = (set(sub.get(k, [])) for k in ("admitted", "candidate", "frozen"))
     if admitted & candidate or admitted & frozen or candidate & frozen:
         errors.append("CONTRACT_DRIFT: a BSF id appears in more than one subset state")
-    registry = {bsf: state for bsf, state in BSF_ROW.findall(subset_text)}
+    registry, registry_errors = check_registry(subset_text)
+    errors += registry_errors
     declared = {**{b: "ADMITTED" for b in admitted}, **{b: "CANDIDATE" for b in candidate},
                 **{b: "FROZEN" for b in frozen}}
     if registry != declared:
@@ -321,6 +363,20 @@ def self_test():
     fails("CONTRACT_DRIFT", lambda c: c["failures"]["NONDETERMINISM"].pop("continue"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"]["admitted"].append("BSF-101"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"]["admitted"].remove("BSF-001"))
+    # registry rows must be complete for their state, and ids unique
+    assert not check_registry(subset)[1]
+    with_row = lambda row: subset + "\n" + row + "\n"  # noqa: E731
+    assert check_registry(with_row("| BSF-999 | x | ADMITTED |"))[1]
+    assert check_registry(with_row("| BSF-999 | x | ADMITTED | use | evidence | SHF-10 |"))[1]  # no "/"
+    assert check_registry(with_row("| BSF-999 | x | ADMITTED | — | a / b | SHF-10 |"))[1]      # empty cell
+    assert check_registry(with_row("| BSF-999 | x | FROZEN | use | a / b | stages |"))[1]       # no SHF
+    assert check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | upstream |"))[1]        # no stage
+    assert check_registry(with_row("| BSF-999 | x | MAYBE | a | b |"))[1]
+    assert not check_registry(with_row("| BSF-999 | x | ADMITTED | use | a / b | SHF-10..14 |"))[1]
+    assert check_registry(with_row("| BSF-001 | other | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-1 |"))[1]
+    c999 = copy.deepcopy(contract)
+    c999["subset"]["admitted"].append("BSF-999")
+    assert check_contract(c999, reference, with_row("| BSF-999 | x | ADMITTED |"))
     fails("SOURCE_SET_INVALID", lambda c: c["source_set"].update(newline="normalize"))
     # every frozen value is covered by the protocol digest, not only the explicitly checked ones
     fails("CONTRACT_DRIFT", lambda c: c["source_set"].update(root="src"))
