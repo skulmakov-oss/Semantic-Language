@@ -97,10 +97,11 @@ def non_goals_lines(text):
 
 
 def h2_headings(text):
-    """(0-based start line, text) of every real level-2 heading; '##' inside code is not one."""
+    """(0-based start line, text) of every top-level h2 heading. '##' inside code, block quotes
+    or list items is not a document section."""
     tokens = COMMONMARK.parse(text)
     return [(t.map[0], tokens[i + 1].content) for i, t in enumerate(tokens)
-            if t.type == "heading_open" and t.tag == "h2" and t.map]
+            if t.type == "heading_open" and t.tag == "h2" and t.level == 0 and t.map]
 
 
 def check_roadmap_critical_path(text):
@@ -236,6 +237,12 @@ def self_test():
                           + "\n```\n- **Deliverable:** requires VM rewrite\n")
     assert check_roadmap_critical_path(fenced)
     assert check_roadmap_critical_path("```\n" + good + "```\n")  # stage headings in code don't count
+    quoted = good.replace("## SHF-17 — x\n", "## SHF-17 — x\n> " + ROADMAP_OFF_PATH_HEADING
+                          + "\n\n- **Deliverable:** requires VM rewrite\n")
+    assert check_roadmap_critical_path(quoted)
+    listed = good.replace("## SHF-17 — x\n", "## SHF-17 — x\n- " + ROADMAP_OFF_PATH_HEADING
+                          + "\n\n- **Deliverable:** requires VM rewrite\n")
+    assert check_roadmap_critical_path(listed)
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
                  "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI",
                  "persistent compiler service", "incremental syntax", "incremental IR",
