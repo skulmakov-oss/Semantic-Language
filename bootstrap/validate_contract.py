@@ -98,7 +98,9 @@ def check_registry(subset_text):
                               "(needs compiler use, positive / negative evidence and SHF stages)")
         elif state == "CANDIDATE":
             owner, _, stage = cells[4].rpartition(" / ") if len(cells) == 5 else ("", "", "")
-            if len(cells) != 5 or len(filled) != 5 or not owner.strip() or not valid_stages(stage):
+            # candidates are capability gaps owned upstream: the owner is exactly that repository
+            if len(cells) != 5 or len(filled) != 5 or owner.strip().strip("`") != REPOSITORY \
+                    or not valid_stages(stage):
                 errors.append(f"CONTRACT_DRIFT: CANDIDATE registry row {bsf} needs a gap and an owner / SHF stage")
         else:
             errors.append(f"CONTRACT_DRIFT: registry row {bsf} has unknown state {state!r}")
@@ -364,7 +366,8 @@ def check_record(contract, reference, record, source_set_identity):
     if "remaining_rust_responsibilities" in record:
         resp = record["remaining_rust_responsibilities"]
         # The first Seal must report every responsibility still in Rust, each exactly once.
-        if not isinstance(resp, list) or sorted(resp) != sorted(ev["rust_responsibility_categories"]):
+        if not isinstance(resp, list) or not all(isinstance(r, str) for r in resp) \
+                or sorted(resp) != sorted(ev["rust_responsibility_categories"]):
             errors.append("CONTRACT_DRIFT: remaining_rust_responsibilities must be exactly "
                           f"{ev['rust_responsibility_categories']}")
     # Qualification evidence (BOOTSTRAP_CONTRACT §9, QUALIFICATION §3) must hold by value.
@@ -433,7 +436,12 @@ def check_evidence(repo, record):
         return ["CONTRACT_DRIFT: canonical contract does not validate; evidence cannot be accepted"] + errors
     contract = tomllib.loads((repo / CONTRACT).read_text(encoding="utf-8"))
     reference = tomllib.loads((repo / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
-    return check_record(contract, reference, record, identity)
+    if not isinstance(record, dict):
+        return ["CONTRACT_DRIFT: evidence record must be a mapping"]
+    try:
+        return check_record(contract, reference, record, identity)
+    except Exception as exc:  # a malformed record must fail closed, never crash the gate
+        return [f"CONTRACT_DRIFT: malformed evidence record ({type(exc).__name__}: {exc})"]
 
 
 def validate(repo):
@@ -507,6 +515,8 @@ def self_test():
         assert check_registry(with_row(f"| BSF-999 | x | ADMITTED | use | a / b | {stage} |"))[1], stage
         assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | owner / {stage} |"))[1], stage
     assert not check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-17 |"))[1]
+    for owner in ("—", "tbd", "n/a", "someone/Semantic"):                      # placeholder / wrong owner
+        assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | {owner} / SHF-1 |"))[1], owner
     assert check_registry(subset.replace("| BSF-001 |", "| bsf-001 |"))[1]
     assert not check_registry(with_row("| BSF-999 | x | ADMITTED | use | a / b | SHF-10..14 |"))[1]
     assert check_registry(with_row("| BSF-001 | other | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-1 |"))[1]
@@ -668,6 +678,14 @@ def self_test():
     real_identity, _ = validate(ROOT)
     assert not check_evidence(ROOT, {**record, "source_set_identity": real_identity})
     assert check_evidence(ROOT, record)                                         # identity not of this S
+    # malformed records fail closed instead of crashing the gate
+    good = {**record, "source_set_identity": real_identity}
+    for bad in ({"remaining_rust_responsibilities": ["oracle", 1, "host_mechanics"]},
+                {"positive_cases": {"count": 30, "result": ["pass"]}},
+                {"limitations": [None]}):
+        errs = check_evidence(ROOT, {**good, **bad})
+        assert errs and all(e.split(":")[0] in REQUIRED_FAILURES for e in errs), (bad, errs)
+    assert check_evidence(ROOT, ["not", "a", "mapping"])
     import shutil
     with tempfile.TemporaryDirectory() as tmp:                                  # tampered contract
         repo = Path(tmp)
