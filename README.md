@@ -94,7 +94,7 @@ Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 
 ## Current phase
 
-**SHF-0 in progress (issue #11): executable bootstrap contract.** No compiler code exists yet.
+**SHF-0 qualified / complete (issue #11): executable bootstrap contract frozen.** SHF-1 not started; no compiler code exists yet.
 
 C0 reference pin: `skulmakov-oss/Semantic@89641da8` (`v1.2.0`, qualified with explicit limits) —
 [`reference/semantic-reference.toml`](reference/semantic-reference.toml). Floating `main` of the

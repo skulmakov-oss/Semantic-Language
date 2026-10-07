@@ -1,6 +1,6 @@
 # Self-Hosting Roadmap — SHF-0 … SHF-17
 
-Status: canonical roadmap. **SHF-0 IN PROGRESS (issue #11); SHF-1 … SHF-17 not started.**
+Status: canonical roadmap. **SHF-0 QUALIFIED / COMPLETE (issue #11); SHF-1 … SHF-17 not started.**
 
 This is the only milestone vocabulary of this repository. Stage names and dependencies follow
 the upstream authority `skulmakov-oss/Semantic#1910`. A stage is not started merely because it
@@ -56,7 +56,7 @@ no stage may compensate for a missing language contract with bootstrap-only Rust
 
 ## SHF-0 — Bootstrap Contract
 
-- **Status:** IN PROGRESS — issue #11; protocol in [BOOTSTRAP_CONTRACT.md](./BOOTSTRAP_CONTRACT.md) §10.
+- **Status:** QUALIFIED / COMPLETE — issue #11; protocol in [BOOTSTRAP_CONTRACT.md](./BOOTSTRAP_CONTRACT.md) §10.
 - **Goal:** freeze what counts as self-hosting before implementation begins.
 - **Owner repository:** Semantic-Language (authority: `Semantic#1910`).
 - **Dependencies:** none.

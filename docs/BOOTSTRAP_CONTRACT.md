@@ -1,6 +1,6 @@
 # Bootstrap Contract
 
-Status: **SHF-0 IN PROGRESS (issue #11) — executable protocol `shf0-bootstrap-contract-v1` in §10**
+Status: **SHF-0 QUALIFIED / COMPLETE (issue #11) — executable protocol `shf0-bootstrap-contract-v1` in §10**
 
 This document fixes the vocabulary and invariants of the self-hosting proof. §1–§9 state them at
 architecture level; §10 records the executable protocol frozen by SHF-0, whose machine-readable
