@@ -188,11 +188,13 @@ def check_roadmap_critical_path(text):
     for n, prose in active_prose(critical):
         if OFF_CRITICAL_PATH.search(prose):
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {prose}")
-    stages = {m.group(1) for line, title in headings if line < cut
-              for m in [re.match(r"(SHF-\d+) ", title)] if m}
-    expected = {f"SHF-{i}" for i in range(18)}
+    # Exactly one definition per stage, in canonical order: no duplicates, gaps or reordering.
+    stages = [m.group(1) for line, title in headings if line < cut
+              for m in [re.match(r"(SHF-\d+)\b", title)] if m]
+    expected = [f"SHF-{i}" for i in range(18)]
     if stages != expected:
-        errors.append(f"docs/ROADMAP.md: SHF stage set mismatch: missing {sorted(expected - stages)}, extra {sorted(stages - expected)}")
+        errors.append(f"docs/ROADMAP.md: SHF stage headings must be exactly {expected[0]}..{expected[-1]} "
+                      f"once each in order; found {stages}")
     return errors
 
 
@@ -331,6 +333,10 @@ def self_test():
     assert check_roadmap_critical_path("## SHF-0 — x\nneeds the Instant Pipeline\n" + ROADMAP_OFF_PATH_HEADING)
     assert check_roadmap_critical_path(good.replace("## SHF-17 — x\n", ""))
     assert check_roadmap_critical_path("no heading")
+    # stage definitions: exactly once each, in canonical order
+    assert check_roadmap_critical_path(good.replace("## SHF-5 — x\n", "## SHF-5 — x\n## SHF-5 — again\n"))
+    assert check_roadmap_critical_path(good.replace("## SHF-3 — x\n## SHF-4 — x\n", "## SHF-4 — x\n## SHF-3 — x\n"))
+    assert check_roadmap_critical_path(good.replace("## SHF-17 — x\n", "## SHF-17 — x\n## SHF-18 — x\n"))
     # a fenced example of the marker is not the real heading; validation must continue past it
     fenced = good.replace("## SHF-17 — x\n", "## SHF-17 — x\n```md\n" + ROADMAP_OFF_PATH_HEADING
                           + "\n```\n- **Deliverable:** requires VM rewrite\n")
