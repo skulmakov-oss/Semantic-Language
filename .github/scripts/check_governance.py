@@ -185,13 +185,25 @@ def check_reference(data):
 
 
 def rendered_blocks(text):
-    """(kind, rendered text) of every active block: 'heading' or 'prose'. Code blocks, HTML
-    blocks and HTML comments produce no inline tokens, so they contribute nothing."""
+    """(kind, rendered text) of every operative block: 'heading' (top-level only) or 'prose'.
+    Code blocks, HTML blocks and HTML comments produce no inline tokens; block-quoted text is
+    cited material, not a rule in force. None of these can satisfy the contract."""
     tokens = COMMONMARK.parse(text)
     blocks = []
+    quote_depth = 0
     for i, t in enumerate(tokens):
-        if t.type == "inline":
-            kind = "heading" if i and tokens[i - 1].type == "heading_open" else "prose"
+        if t.type == "blockquote_open":
+            quote_depth += 1
+        elif t.type == "blockquote_close":
+            quote_depth -= 1
+        elif t.type == "inline" and not quote_depth:  # quoted text is cited, not operative
+            opener = tokens[i - 1] if i else None
+            if opener is not None and opener.type == "heading_open":
+                if opener.level != 0:
+                    continue  # only top-level document headings define contract sections
+                kind = "heading"
+            else:
+                kind = "prose"
             # A block made only of inline code is a code literal, not a stated rule.
             if any(c.type == "text" and c.content.strip() for c in t.children or []):
                 blocks.append((kind, rendered_text(t)))
@@ -386,6 +398,11 @@ def self_test():
     assert check_agents_contract(contract.replace("Do not merge without owner GO.",
                                                   "`Do not merge without owner GO.`"))  # code-only sentence
     assert len(check_agents_contract(contract.replace(AGENTS_PROSE[0], ""))) == 1
+    quoted = "> Historical contract:\n>\n" + "".join(f"> {l}\n" for l in contract.splitlines())
+    assert check_agents_contract(quoted)                                          # quoted history
+    assert check_agents_contract("- item\n\n" + "".join(f"  {l}\n" for l in contract.splitlines()))
+    assert len(check_agents_contract(  # one rule moved into a quote is missing from operative text
+        contract.replace(AGENTS_PROSE[-1], "> " + AGENTS_PROSE[-1]))) == 1
     # visible text unchanged by emphasis -> still satisfied
     assert not check_agents_contract(real_agents.replace("Do not merge without owner GO.",
                                                          "Do **not** merge without *owner* GO."))
