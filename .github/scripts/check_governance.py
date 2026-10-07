@@ -31,13 +31,19 @@ DEFERRED_TRACKS = [
     r"instant pipeline", r"\bSRI\b", r"vm rewrite", r"verifier rewrite", r"native backend",
     r"\bPROMETHEUS\b", r"\bUI\b", r"workbench", r"studio", r"#1909", r"full sigma", r"t¤",
     r"typescript", r"\bSEMIMG\b",
+    # Instant Pipeline subtracks (docs/FUTURE.md)
+    r"persistent compiler", r"incremental", r"query engine", r"dependency engine",
+    r"admission reuse", r"prepared execution image", r"execution image", r"near-zero startup",
+    r"compiler service", r"clean-build oracle",
 ]
 OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
+# A stage's own Non-goals line legitimately names deferred work in order to exclude it.
+NON_GOALS_LINE = re.compile(r"^\s*- \*\*Non-goals:\*\*")
 ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
 # Inline link destination: <angle-bracketed> or bare, optionally followed by a "title".
 LINK = re.compile(r"\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
 # Reference-style link definition: [label]: <dest> or [label]: dest
-LINK_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(?:<([^>]*)>|(\S+))", re.M)
+LINK_DEF = re.compile(r"^ {0,3}\[(?!\^)[^\]]+\]:\s*(?:<([^>]*)>|(\S+))", re.M)  # [^x]: is a footnote
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
 # Load-bearing anchors of the root operating contract; removing any of them fails the gate.
@@ -77,7 +83,7 @@ def check_roadmap_critical_path(text):
         return [f"docs/ROADMAP.md: missing '{ROADMAP_OFF_PATH_HEADING}' section"]
     errors = []
     for n, line in enumerate(head[0].splitlines(), 1):
-        if OFF_CRITICAL_PATH.search(line):
+        if OFF_CRITICAL_PATH.search(line) and not NON_GOALS_LINE.match(line):
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {line.strip()}")
     stages = set(re.findall(r"^## (SHF-\d+) ", head[0], re.M))
     expected = {f"SHF-{i}" for i in range(18)}
@@ -164,9 +170,13 @@ def self_test():
     assert check_roadmap_critical_path(good.replace("## SHF-17 — x\n", ""))
     assert check_roadmap_critical_path("no heading")
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
-                 "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI"]:
-        bad = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\nrequires {term}\n")
+                 "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI",
+                 "persistent compiler service", "incremental syntax", "incremental IR",
+                 "query engine", "admission reuse", "prepared execution image", "near-zero startup"]:
+        bad = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Deliverable:** requires {term}\n")
         assert check_roadmap_critical_path(bad), term
+        excluded = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** {term}\n")
+        assert not check_roadmap_critical_path(excluded), term
     ok = {"repository": "skulmakov-oss/Semantic", "sha": "a" * 40, "status": "planning-reference",
           "bootstrap": {"upstream_issue": 1910}}
     assert not check_reference(ok)
@@ -195,6 +205,7 @@ def self_test():
     assert check_links("x.md", "[contract][c]\n\n[c]: missing.md\n", ROOT)
     assert check_links("x.md", '[c]: <missing file.md> "t"\n', ROOT)
     assert not check_links("x.md", "[c]: https://example.com\n[d]: #anchor\n", ROOT)
+    assert not check_links("x.md", "text[^1]\n\n[^1]: Explanatory text\n", ROOT)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 
