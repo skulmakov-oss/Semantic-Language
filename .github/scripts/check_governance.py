@@ -126,15 +126,12 @@ def rendered_text(inline):
 HISTORICAL_QUOTE = re.compile(r"^historical\b", re.I)
 
 
-def active_prose(text):
-    """(1-based line, rendered text) for each prose block that states active roadmap content.
-    Excluded: code blocks (no inline tokens), a stage's own `- **Non-goals:**` field, and block
-    quotes explicitly classified as historical (first text starts with "Historical"). Other
-    block quotes, including GitHub callouts such as `> [!IMPORTANT]`, are active content."""
-    excluded = non_goals_lines(text)
-    tokens = COMMONMARK.parse(text)
+def operative_inlines(tokens):
+    """(index, inline token) for every inline token that is in force. One rule for all guards:
+    code blocks and HTML yield no inline tokens; block quotes explicitly classified as historical
+    (first text starts with "Historical") are cited material. Every other block quote, including
+    GitHub callouts such as `> [!IMPORTANT]`, is operative content."""
     historical_depth = 0  # >0 while inside a block quote marked historical
-    blocks = []
     for i, t in enumerate(tokens):
         if t.type == "blockquote_open":
             first = next((x for x in tokens[i + 1:] if x.type == "inline"), None)
@@ -142,9 +139,16 @@ def active_prose(text):
                 historical_depth += 1
         elif t.type == "blockquote_close":
             historical_depth = max(0, historical_depth - 1)
-        elif t.type == "inline" and t.map and not historical_depth and t.map[0] not in excluded:
-            blocks.append((t.map[0] + 1, rendered_text(t)))
-    return blocks
+        elif t.type == "inline" and not historical_depth:
+            yield i, t
+
+
+def active_prose(text):
+    """(1-based line, rendered text) for each operative roadmap block, excluding a stage's own
+    `- **Non-goals:**` field."""
+    excluded = non_goals_lines(text)
+    return [(t.map[0] + 1, rendered_text(t)) for _, t in operative_inlines(COMMONMARK.parse(text))
+            if t.map and t.map[0] not in excluded]
 
 
 def check_roadmap_critical_path(text):
@@ -186,27 +190,21 @@ def check_reference(data):
 
 def rendered_blocks(text):
     """(kind, rendered text) of every operative block: 'heading' (top-level only) or 'prose'.
-    Code blocks, HTML blocks and HTML comments produce no inline tokens; block-quoted text is
-    cited material, not a rule in force. None of these can satisfy the contract."""
+    Uses the same operative rule as the roadmap guard (see operative_inlines): code, HTML and
+    historical quotes cannot satisfy the contract; callouts and other quotes can."""
     tokens = COMMONMARK.parse(text)
     blocks = []
-    quote_depth = 0
-    for i, t in enumerate(tokens):
-        if t.type == "blockquote_open":
-            quote_depth += 1
-        elif t.type == "blockquote_close":
-            quote_depth -= 1
-        elif t.type == "inline" and not quote_depth:  # quoted text is cited, not operative
-            opener = tokens[i - 1] if i else None
-            if opener is not None and opener.type == "heading_open":
-                if opener.level != 0:
-                    continue  # only top-level document headings define contract sections
-                kind = "heading"
-            else:
-                kind = "prose"
-            # A block made only of inline code is a code literal, not a stated rule.
-            if any(c.type == "text" and c.content.strip() for c in t.children or []):
-                blocks.append((kind, rendered_text(t)))
+    for i, t in operative_inlines(tokens):
+        opener = tokens[i - 1] if i else None
+        if opener is not None and opener.type == "heading_open":
+            if opener.level != 0:
+                continue  # only top-level document headings define contract sections
+            kind = "heading"
+        else:
+            kind = "prose"
+        # A block made only of inline code is a code literal, not a stated rule.
+        if any(c.type == "text" and c.content.strip() for c in t.children or []):
+            blocks.append((kind, rendered_text(t)))
     return blocks
 
 
@@ -401,8 +399,12 @@ def self_test():
     quoted = "> Historical contract:\n>\n" + "".join(f"> {l}\n" for l in contract.splitlines())
     assert check_agents_contract(quoted)                                          # quoted history
     assert check_agents_contract("- item\n\n" + "".join(f"  {l}\n" for l in contract.splitlines()))
-    assert len(check_agents_contract(  # one rule moved into a quote is missing from operative text
-        contract.replace(AGENTS_PROSE[-1], "> " + AGENTS_PROSE[-1]))) == 1
+    assert len(check_agents_contract(  # one rule moved into a historical quote is no longer in force
+        contract.replace(AGENTS_PROSE[-1], "> Historical rule: " + AGENTS_PROSE[-1]))) == 1
+    # a rule kept in an operative callout or plain quote remains in force
+    assert not check_agents_contract(contract.replace(
+        AGENTS_PROSE[-1], "> [!IMPORTANT]\n> " + AGENTS_PROSE[-1]))
+    assert not check_agents_contract(contract.replace(AGENTS_PROSE[-1], "> " + AGENTS_PROSE[-1]))
     # visible text unchanged by emphasis -> still satisfied
     assert not check_agents_contract(real_agents.replace("Do not merge without owner GO.",
                                                          "Do **not** merge without *owner* GO."))
