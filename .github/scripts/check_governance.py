@@ -27,7 +27,8 @@ LEGACY_EXEMPT = {"docs/LEGACY_PLAN_MIGRATION.md"}
 LEGACY_MILESTONE = re.compile(r"\b(?:B[0-8](?:-\d+)?|SH-\d+|IP-?\d+|SRI-\d+|BS-\d{3}|HC-\d{3})\b")
 OFF_CRITICAL_PATH = re.compile(r"instant pipeline|\bSRI\b|vm rewrite|verifier rewrite", re.I)
 ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
-LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+# Inline link destination: <angle-bracketed> or bare, optionally followed by a "title".
+LINK = re.compile(r"\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
 # Load-bearing anchors of the root operating contract; removing any of them fails the gate.
@@ -95,7 +96,8 @@ def check_agents_contract(text):
 
 def check_links(rel, text, base):
     errors = []
-    for target in LINK.findall(text):
+    for angle, bare in LINK.findall(text):
+        target = angle or bare
         if re.match(r"^[a-z]+:", target) or target.startswith("#"):
             continue
         path = target.split("#", 1)[0]
@@ -174,6 +176,10 @@ def self_test():
         assert any("docs/design/new.md" in e and "B3" in e for e in errs)
         assert any("docs/design/new.md" in e and "broken relative link" in e for e in errs)
     assert not check_links("x.md", "[a](https://example.com) [b](#anchor)", ROOT)
+    assert check_links("x.md", '[a](missing.md "details")', ROOT)
+    assert check_links("x.md", "[a](<missing file.md>)", ROOT)
+    assert check_links("x.md", "[a](<missing.md> 'details')", ROOT)
+    assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 
 
