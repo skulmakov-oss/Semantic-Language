@@ -104,18 +104,45 @@ def h2_headings(text):
             if t.type == "heading_open" and t.tag == "h2" and t.level == 0 and t.map]
 
 
+def rendered_text(inline):
+    """Visible text of an inline token: emphasis/strong/link markup dropped, code spans kept as
+    their text, soft/hard line breaks as spaces, whitespace collapsed."""
+    parts = []
+    for c in inline.children or []:
+        if c.type in ("text", "code_inline"):
+            parts.append(c.content)
+        elif c.type in ("softbreak", "hardbreak"):
+            parts.append(" ")
+    return " ".join("".join(parts).split())
+
+
+def active_prose(text):
+    """(1-based line, rendered text) for each prose block that states active roadmap content.
+    Excluded: code blocks (no inline tokens), block quotes (quoted/historical material) and a
+    stage's own `- **Non-goals:**` field."""
+    excluded = non_goals_lines(text)
+    quote_depth = 0
+    blocks = []
+    for t in COMMONMARK.parse(text):
+        if t.type == "blockquote_open":
+            quote_depth += 1
+        elif t.type == "blockquote_close":
+            quote_depth -= 1
+        elif t.type == "inline" and t.map and not quote_depth and t.map[0] not in excluded:
+            blocks.append((t.map[0] + 1, rendered_text(t)))
+    return blocks
+
+
 def check_roadmap_critical_path(text):
     headings = h2_headings(text)
     off_path = ROADMAP_OFF_PATH_HEADING.removeprefix("## ")
     cut = next((line for line, title in headings if title == off_path), None)
     if cut is None:
         return [f"docs/ROADMAP.md: missing '{ROADMAP_OFF_PATH_HEADING}' section"]
-    lines = text.splitlines()[:cut]
     errors = []
-    excluded = non_goals_lines("\n".join(lines))
-    for n, line in enumerate(lines, 1):
-        if OFF_CRITICAL_PATH.search(line) and n - 1 not in excluded:
-            errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {line.strip()}")
+    for n, prose in active_prose("\n".join(text.splitlines()[:cut])):
+        if OFF_CRITICAL_PATH.search(prose):
+            errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {prose}")
     stages = {m.group(1) for line, title in headings if line < cut
               for m in [re.match(r"(SHF-\d+) ", title)] if m}
     expected = {f"SHF-{i}" for i in range(18)}
@@ -243,6 +270,19 @@ def self_test():
     listed = good.replace("## SHF-17 — x\n", "## SHF-17 — x\n- " + ROADMAP_OFF_PATH_HEADING
                           + "\n\n- **Deliverable:** requires VM rewrite\n")
     assert check_roadmap_critical_path(listed)
+    # Policy: a deferred track is detected by its rendered meaning, not its Markdown spelling.
+    def stage(body):
+        return good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n{body}\n")
+    for spelling in ["requires VM rewrite", "requires VM **rewrite**", "requires **VM** rewrite",
+                     "requires VM\nrewrite", "requires VM *rewrite*", "requires VM `rewrite`",
+                     "- **Deliverable:** requires the Instant\n  **Pipeline**"]:
+        assert check_roadmap_critical_path(stage(spelling)), spelling
+    # ...but the vocabulary itself is not banned where the architecture allows it.
+    assert not check_roadmap_critical_path(stage("- **Non-goals:** VM **rewrite**"))
+    assert not check_roadmap_critical_path(stage("> Historical plan: B7 required a VM **rewrite**."))
+    assert not check_roadmap_critical_path(good.replace(
+        ROADMAP_OFF_PATH_HEADING + "\n", ROADMAP_OFF_PATH_HEADING + "\nVM **rewrite** is deferred.\n"))
+    assert not check_roadmap_critical_path(stage("```text\nVM rewrite example\n```"))
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
                  "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI",
                  "persistent compiler service", "incremental syntax", "incremental IR",
