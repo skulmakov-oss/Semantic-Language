@@ -53,8 +53,9 @@ Semantic (Rust C0) --compile S--> C1 --compile S--> C2
                                     Bootstrap Seal
 ```
 
-C1 and C2 still cross the ordinary verifier-first route (`sm-verify` admission, then `sm-vm`).
-The fixed-point comparison is bootstrap evidence; it never bypasses admission.
+C1 and C2 are both admitted by `sm-verify`. Only admitted C1 is executed (by `sm-vm`) to compile
+`S` into C2; C2 is admitted and compared, not executed. The fixed-point comparison is bootstrap
+evidence; it never bypasses admission.
 
 **Rewriting the verifier or VM is not a prerequisite for the first self-hosting fixed point.**
 
@@ -101,8 +102,8 @@ Floating `main` of the reference repository is never a qualification oracle.
 
 ## Where the verifier and VM remain
 
-`sm-verify` and `sm-vm` remain Rust components in `skulmakov-oss/Semantic`. Every artifact
-produced by C1 or C2 is admitted by that verifier and executed by that VM. See
+`sm-verify` and `sm-vm` remain Rust components in `skulmakov-oss/Semantic`. Each of
+C1 and C2 is admitted by that verifier, and C1 is executed by that VM to produce C2. See
 [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md).
 
 ## Documents

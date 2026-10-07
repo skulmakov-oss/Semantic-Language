@@ -39,7 +39,8 @@ construction is an SHF-0 deliverable.
 - Every difference is either zero or an explained, recorded delta. The required count of
   unexplained deltas is zero.
 - Fixed-point equality is bootstrap evidence. It does not bypass verifier admission: C1 and C2
-  are both admitted by `sm-verify` and executed only by `sm-vm`.
+  are both admitted by `sm-verify`. Only admitted C1 is executed (by `sm-vm`) to produce C2; C2 is
+  admitted and compared, not executed, as part of the fixed-point proof.
 
 ## 5. Host boundary
 

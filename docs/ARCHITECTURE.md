@@ -87,7 +87,7 @@ admitted runtime. A Semantic VM is not part of the self-hosting critical path.
 
 1. C0 (reference compiler at the pinned SHA) compiles `S` to `C1.smc`.
 2. `C1.smc` is admitted by `sm-verify` and executed by `sm-vm` to compile `S` to `C2.smc`.
-3. `C2.smc` is admitted by `sm-verify`.
+3. `C2.smc` is admitted by `sm-verify` (it is not executed as part of the proof).
 4. `Canonical(C1.smc)` and `Canonical(C2.smc)` are compared under the frozen rule.
 5. On success with zero unexplained deltas, a Bootstrap Seal is recorded.
 

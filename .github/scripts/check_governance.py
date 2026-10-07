@@ -30,11 +30,23 @@ ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
+# Load-bearing anchors of the root operating contract; removing any of them fails the gate.
+AGENTS_ANCHORS = [
+    "## 2. Authority hierarchy",
+    "Indexes are retrieval tools, not sources of truth.",
+    "`skulmakov-oss/Semantic` + exact Git SHA",
+    "Floating upstream `main` is never a qualification oracle.",
+    "Upstream authority: `skulmakov-oss/Semantic#1910`.",
+    "`skulmakov-oss/Semantic#1909`",
+    "First self-hosting does NOT require rewriting",
+    "## 10. Forbidden",
+    "Do not merge without owner GO.",
+]
 
 
 def active_files(root):
     files = [root / "README.md", root / "CONTRIBUTING.md", root / "AGENTS.md"]
-    files += sorted((root / "docs").glob("*.md"))
+    files += sorted((root / "docs").rglob("*.md"))
     files += sorted((root / ".github").rglob("*.md"))
     return files
 
@@ -77,6 +89,10 @@ def check_reference(data):
     return errors
 
 
+def check_agents_contract(text):
+    return [f"AGENTS.md: required contract anchor missing: {a!r}" for a in AGENTS_ANCHORS if a not in text]
+
+
 def check_links(rel, text, base):
     errors = []
     for target in LINK.findall(text):
@@ -99,6 +115,9 @@ def run(root):
     for nested in root.rglob("AGENTS.md"):
         if nested != root / "AGENTS.md" and ".git" not in nested.parts:
             errors.append(f"competing nested AGENTS.md: {nested.relative_to(root).as_posix()}")
+    agents = root / "AGENTS.md"
+    if agents.is_file():
+        errors += check_agents_contract(agents.read_text(encoding="utf-8"))
     claude = root / "CLAUDE.md"
     if claude.is_file() and claude.read_text(encoding="utf-8").strip() != "@AGENTS.md":
         errors.append("CLAUDE.md must contain only '@AGENTS.md'")
@@ -141,6 +160,19 @@ def self_test():
     assert check_reference({**ok, "status": "canonical"})
     assert check_reference({**ok, "bootstrap": {}})
     assert check_links("x.md", "[a](definitely-missing-file.md)", ROOT)
+    assert check_agents_contract("")
+    assert check_agents_contract("unrelated text")
+    assert not check_agents_contract("\n".join(AGENTS_ANCHORS))
+    assert len(check_agents_contract("\n".join(AGENTS_ANCHORS[1:]))) == 1
+    # nested docs are governed: build a throwaway tree with a nested bad doc
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        nested = Path(tmp) / "docs" / "design"
+        nested.mkdir(parents=True)
+        (nested / "new.md").write_text("Phase B3 [x](missing.md)\n", encoding="utf-8")
+        errs = run(Path(tmp))
+        assert any("docs/design/new.md" in e and "B3" in e for e in errs)
+        assert any("docs/design/new.md" in e and "broken relative link" in e for e in errs)
     assert not check_links("x.md", "[a](https://example.com) [b](#anchor)", ROOT)
     print("self-test: PASS")
 
