@@ -165,7 +165,8 @@ required_fields = [
     # qualification evidence (BOOTSTRAP_CONTRACT.md §9, QUALIFICATION.md §3)
     "input_corpus", "positive_cases", "negative_cases", "boundary_cases", "mutation_proof",
     "unexplained_deltas", "input_corpus_size", "limitations",
-    # oracle checkout attestation, produced by verify_reference_checkout() before the run
+    # C0 checkout attestation: the producer MUST obtain it from verify_reference_checkout()
+    # before the run; post-run validation checks the values, not that the check ran (§10.7)
     "c0_checkout_head", "c0_checkout_clean",
 ]
 # Values the qualification evidence must hold. input_corpus uses artifact_hash_format;
@@ -179,7 +180,8 @@ verifier_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003
 runtime_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-vm"
 # remaining_rust_responsibilities: exactly these categories, each once (all remain in Rust at the first Seal).
 rust_responsibility_categories = ["oracle", "host_mechanics", "verifier_runtime_foundation"]
-# A record supports the Bootstrap Seal only with these values; anything else is not evidence.
+# A record passes record validation only with these values. Seal acceptance additionally needs
+# independent reproduction (BOOTSTRAP_CONTRACT §10.7-§10.8).
 artifact_hash_format = "sha256:<64 lowercase hex>"   # c1/c2_artifact_hash, source_set_identity
 verifier_binding_admitted = "admitted"               # c1/c2_verifier_binding
 comparison_result_holds = "equal"                    # byte-equality-v1 also requires c1 hash == c2 hash

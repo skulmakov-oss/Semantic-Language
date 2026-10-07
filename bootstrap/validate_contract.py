@@ -26,7 +26,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "26b47629038c4798f172e3de2bab32c5f51dd2c2f5d43acec7cd54645198adc9"}
+FROZEN_DIGESTS = {PROTOCOL: "75821b09018e2d2d958383a2fad343792e7c85aca91674caf18fb0f187426b35"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -353,7 +353,8 @@ HASH = re.compile(r"sha256:[0-9a-f]{64}")
 def verify_reference_checkout(checkout, sha):
     """For evidence PRODUCERS: the C0 checkout used for a run must be a clean git tree at
     exactly `sha`. Returns errors (REFERENCE_MISMATCH); the producer records the outcome in
-    c0_checkout_head / c0_checkout_clean, which check_record then requires."""
+    c0_checkout_head / c0_checkout_clean. Those fields are attestations: check_record validates
+    their values but cannot prove after the fact that this check ran (BOOTSTRAP_CONTRACT §10.7)."""
     import subprocess
     def git(*args):
         return subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True)
@@ -456,7 +457,9 @@ def check_evidence(repo, record):
     """The only public evidence gate. It loads the canonical contract, reference manifest,
     registry and source set from `repo`, requires that they validate (no CONTRACT_DRIFT etc.)
     and computes the current S identity itself, so a caller cannot supply a modified contract
-    or a stale identity. Returns errors; empty means the record supports the Bootstrap Seal."""
+    or a stale identity. Returns errors; empty means the record is well-formed and internally
+    consistent. It does NOT by itself accept the Bootstrap Seal: that also needs the producing
+    run bound to the reference check and an independent reproduction (SHF-15/16, §10.7)."""
     try:  # the whole gate fails closed: canonical loading, validation and record checks
         identity, errors = validate(repo)
         if errors:

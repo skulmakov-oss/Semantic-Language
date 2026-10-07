@@ -181,23 +181,48 @@ All classes stop qualification (`continue = false`); evidence from a failing run
 
 ### 10.7 Evidence record
 
-Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_artifact_hash`,
-`c1_verifier_binding`, `c2_artifact_hash`, `c2_verifier_binding`, `comparison_result`,
-`comparison_rule`, and the Seal provenance of §7: `platform` (one of the C0 qualified platforms),
-`verifier_contract` / `runtime_contract` (the pinned C0 `sm-verify` / `sm-vm`), and
-`remaining_rust_responsibilities` (exactly `oracle`, `host_mechanics`,
-`verifier_runtime_foundation`, each once); plus the qualification evidence of §9: `input_corpus`
-(sha256), `positive_cases` / `negative_cases` / `boundary_cases` each `{count > 0, result = pass}` with
-counts summing to `input_corpus_size`, `mutation_proof` =
-`detected`, `unexplained_deltas` = `0`, `input_corpus_size` (positive integer) and
-`limitations` (non-empty list of statements of what the evidence does not prove), and the C0
-checkout attestation `c0_checkout_head` (= C0 SHA) and `c0_checkout_clean` (= true), which the
-producer obtains from `verify_reference_checkout()` before the run (else `REFERENCE_MISMATCH`) (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
-§7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.
-A record supports the Bootstrap Seal only if its values hold, not merely its keys: hashes are
-`sha256:<64 lowercase hex>`, `source_set_identity` equals the identity of the current `S`, both
-verifier bindings are `admitted` (else `ADMISSION_REJECT`), `comparison_result` is `equal`, and
-under `byte-equality-v1` the C1 and C2 hashes are identical (else `FIXED_POINT_DELTA`).
-Evidence is accepted only through `check_evidence(repo, record)` in the validator, which loads
-the canonical contract files from the repository, requires them to validate, and computes the
-current `S` identity itself; a caller cannot supply a modified contract or identity.
+An evidence record is a TOML/JSON mapping produced by a qualifying run. Required fields:
+
+- binding: `contract_protocol`, `c0_identity`, `comparison_rule`;
+- fixed point: `source_set_identity`, `c1_artifact_hash`, `c1_verifier_binding`,
+  `c2_artifact_hash`, `c2_verifier_binding`, `comparison_result`;
+- Seal provenance (§7): `platform` (one of the C0 qualified platforms), `verifier_contract` /
+  `runtime_contract` (the pinned C0 `sm-verify` / `sm-vm`), `remaining_rust_responsibilities`
+  (exactly `oracle`, `host_mechanics`, `verifier_runtime_foundation`, each once);
+- qualification evidence (§9): `input_corpus` (sha256), `input_corpus_size` (positive integer),
+  `positive_cases` / `negative_cases` / `boundary_cases` (each `{count > 0, result = pass}`,
+  counts summing to `input_corpus_size`), `mutation_proof` = `detected`,
+  `unexplained_deltas` = `0`, `limitations` (non-empty list of what the evidence does not prove);
+- C0 checkout attestation: `c0_checkout_head` (= C0 SHA) and `c0_checkout_clean` (= true).
+
+**Record validation (what SHF-0 proves).** `check_evidence(repo, record)` is the only record
+gate. It loads the canonical contract files from the repository, requires them to validate,
+computes the current `S` identity itself, and then checks every internally checkable invariant:
+exact C0 and protocol binding (else `CONTRACT_DRIFT`), current `S` identity, hash formats,
+both verifier bindings `admitted` (else `ADMISSION_REJECT`), `comparison_result` = `equal` and
+identical C1/C2 hashes under `byte-equality-v1` (else `FIXED_POINT_DELTA`), complete corpus and
+case evidence, platform / contracts / responsibilities, and the attested checkout values (a head
+other than C0 or a non-`true` clean flag is `REFERENCE_MISMATCH`). It fails closed on malformed
+input. Passing it means the record is well-formed and internally consistent — nothing more.
+
+**Production (what a producer MUST do).** The checkout fields are producer attestations, not
+cryptographic proof of execution provenance. A producer MUST run `verify_reference_checkout()`
+on the C0 checkout immediately before the qualifying run and record its outcome. A post-run
+record cannot prove how it was produced, so `check_evidence` validates the attested values but
+cannot establish that the check actually ran. Upstream release artifacts are unsigned; SHF-0
+adds no signing.
+
+**Seal acceptance (what is additionally required).** Self-attested evidence alone is NOT
+sufficient for the Bootstrap Seal. The Seal is accepted only when the producing run is bound to
+the canonical reference-check procedure AND an independent reproduction from the exact qualified
+C0 and canonical `S` confirms the claimed artifact identities. A reproduction mismatch is a
+qualification failure (`FIXED_POINT_DELTA` or `REFERENCE_MISMATCH`) and cannot be waived by the
+stored attestation.
+
+### 10.8 Stage ownership of evidence
+
+| Stage | Responsibility |
+|---|---|
+| SHF-0 | freezes the provenance requirements; validates record structure and internal consistency |
+| SHF-15 | produces C1 from the verified exact C0 and canonical `S`; binds evidence to the actual producing run |
+| SHF-16 | produces C2; performs the fixed-point proof; independently reproduces the required evidence; gates the Bootstrap Seal |
