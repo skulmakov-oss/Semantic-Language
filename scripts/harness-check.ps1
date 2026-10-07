@@ -96,6 +96,8 @@ function Test-PathMatch([string]$path, [string]$p) {
 
 function Get-Violations($cfg, [string[]]$paths) {
     foreach ($path in $paths) {
+        # A literal backslash or control character could alias another path: never matchable.
+        if ($path -match '[\\\x00-\x1f\x7f]') { "unsupported path name (backslash/control char): $($path -replace '[\x00-\x1f\x7f]', '?')"; continue }
         $f = @($cfg.scope.forbidden_paths | Where-Object { Test-PathMatch $path $_ })
         if ($f.Count) { "forbidden path changed: $path (matches '$($f[0])')"; continue }
         if (-not @($cfg.scope.allowed_paths | Where-Object { Test-PathMatch $path $_ }).Count) {
@@ -110,17 +112,32 @@ function Invoke-Git {
     $out
 }
 
+# Raw stdout as ONE string: PowerShell's native-command pipeline would split names that contain
+# newlines before the NUL split, so read the process stream directly.
+function Invoke-GitZ {
+    $psi = [System.Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($a in @('-c', 'core.quotepath=off') + $args) { $psi.ArgumentList.Add($a) }
+    $psi.RedirectStandardOutput = $true
+    $psi.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $out = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) { throw "git $args failed ($($proc.ExitCode))" }
+    $out -split "`0"
+}
+
 function Get-ChangedPaths([string]$base) {
     $paths = @()
     # -z: NUL-separated, never C-quoted, so unusual names are checked verbatim.
-    $paths += Invoke-Git diff -z --name-only --no-renames --cached
-    $paths += Invoke-Git diff -z --name-only --no-renames
-    $paths += Invoke-Git ls-files -z --others --exclude-standard
+    $paths += Invoke-GitZ diff -z --name-only --no-renames --cached
+    $paths += Invoke-GitZ diff -z --name-only --no-renames
+    $paths += Invoke-GitZ ls-files -z --others --exclude-standard
     if ($base) {
         [void](Invoke-Git rev-parse --verify --quiet "$base^{commit}")
-        $paths += Invoke-Git diff -z --name-only --no-renames "$base...HEAD"
+        $paths += Invoke-GitZ diff -z --name-only --no-renames "$base...HEAD"
     }
-    $paths | ForEach-Object { $_ -split "`0" } | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique -CaseSensitive
+    # Git always separates with '/'; paths are taken verbatim, never rewritten.
+    $paths | Where-Object { $_ } | Sort-Object -Unique -CaseSensitive
 }
 
 # A PR may not authorize its own payload. A scope change vs the BASE (already merged) envelope
@@ -199,7 +216,9 @@ constraints:
             @('agents.md', $false, 'case-sensitive exact match'),
             @('bootstrap/x.sm', $false, 'forbidden *.ext outside allowed'),
             @('docs/frozen/a.md', $false, 'allowed + forbidden -> forbidden wins'),
-            @('scripts/x.sm', $false, 'forbidden *.ext inside allowed dir -> forbidden wins')
+            @('scripts/x.sm', $false, 'forbidden *.ext inside allowed dir -> forbidden wins'),
+            @('scripts\payload', $false, 'literal backslash rejected'),
+            @("AGENTS.md`nscripts/a", $false, 'embedded newline rejected')
         )
         foreach ($c in $cases) {
             $ok = -not @(Get-Violations $e @($c[0])).Count
