@@ -363,9 +363,21 @@ def check_evidence(contract, reference, record, source_set_identity):
     if "limitations" in record and (not isinstance(lim, list) or not lim
                                     or any(not isinstance(x, str) or not x.strip() for x in lim)):
         errors.append("CONTRACT_DRIFT: limitations must be a non-empty list of statements")
+    # Each case class must actually exist (count > 0) and pass; the classes partition the corpus.
+    counted = 0
     for field in ("positive_cases", "negative_cases", "boundary_cases"):
-        if field in record and record[field] != q["cases"]:
-            errors.append(f"FIXED_POINT_DELTA: {field} is not {q['cases']!r}")
+        if field not in record:
+            continue
+        cls = record[field]
+        count = cls.get("count") if isinstance(cls, dict) else None
+        if type(count) is not int or count <= 0 or cls.get("result") != q["cases"]:
+            errors.append(f"FIXED_POINT_DELTA: {field} must be {{count: >0, result: {q['cases']!r}}}")
+        else:
+            counted += count
+    if type(record.get("input_corpus_size")) is int \
+            and all(f in record for f in ("positive_cases", "negative_cases", "boundary_cases")) \
+            and counted != record["input_corpus_size"]:
+        errors.append("FIXED_POINT_DELTA: positive + negative + boundary counts must equal input_corpus_size")
     if "mutation_proof" in record and record["mutation_proof"] != q["mutation_proof"]:
         errors.append(f"CONTRACT_DRIFT: mutation_proof is not {q['mutation_proof']!r}")
     if "unexplained_deltas" in record and (type(record["unexplained_deltas"]) is not int
@@ -594,8 +606,11 @@ def self_test():
                   runtime_contract=contract["evidence"]["runtime_contract"],
                   remaining_rust_responsibilities=["oracle", "host_mechanics",
                                                    "verifier_runtime_foundation"],
-                  input_corpus="sha256:" + "12" * 32, positive_cases="pass", negative_cases="pass",
-                  boundary_cases="pass", mutation_proof="detected", unexplained_deltas=0,
+                  input_corpus="sha256:" + "12" * 32,
+                  positive_cases={"count": 30, "result": "pass"},
+                  negative_cases={"count": 8, "result": "pass"},
+                  boundary_cases={"count": 4, "result": "pass"},
+                  mutation_proof="detected", unexplained_deltas=0,
                   input_corpus_size=42, limitations=["Windows x64 only (C0 platform scope)"])
     assert set(record) == set(contract["evidence"]["required_fields"])
     current = record["source_set_identity"]
@@ -618,9 +633,13 @@ def self_test():
                      ({"remaining_rust_responsibilities": ["oracle", "oracle", "host_mechanics",
                                                            "verifier_runtime_foundation"]}, "CONTRACT_DRIFT"),
                      ({"input_corpus": "corpus-v1"}, "CONTRACT_DRIFT"),
-                     ({"positive_cases": "fail"}, "FIXED_POINT_DELTA"),
-                     ({"negative_cases": "skipped"}, "FIXED_POINT_DELTA"),
+                     ({"positive_cases": "pass"}, "FIXED_POINT_DELTA"),        # bare string
+                     ({"positive_cases": {"count": 30, "result": "fail"}}, "FIXED_POINT_DELTA"),
+                     ({"negative_cases": {"count": 0, "result": "pass"}}, "FIXED_POINT_DELTA"),  # none run
+                     ({"boundary_cases": {"result": "pass"}}, "FIXED_POINT_DELTA"),
                      ({"boundary_cases": None}, "FIXED_POINT_DELTA"),
+                     ({"positive_cases": {"count": 31, "result": "pass"}}, "FIXED_POINT_DELTA"),  # sum
+                     ({"input_corpus_size": 43}, "FIXED_POINT_DELTA"),
                      ({"mutation_proof": "not-run"}, "CONTRACT_DRIFT"),
                      ({"unexplained_deltas": 1}, "FIXED_POINT_DELTA"),
                      ({"unexplained_deltas": False}, "FIXED_POINT_DELTA"),

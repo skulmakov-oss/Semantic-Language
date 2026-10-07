@@ -182,7 +182,8 @@ Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_
 `verifier_contract` / `runtime_contract` (the pinned C0 `sm-verify` / `sm-vm`), and
 `remaining_rust_responsibilities` (exactly `oracle`, `host_mechanics`,
 `verifier_runtime_foundation`, each once); plus the qualification evidence of §9: `input_corpus`
-(sha256), `positive_cases` / `negative_cases` / `boundary_cases` = `pass`, `mutation_proof` =
+(sha256), `positive_cases` / `negative_cases` / `boundary_cases` each `{count > 0, result = pass}` with
+counts summing to `input_corpus_size`, `mutation_proof` =
 `detected`, `unexplained_deltas` = `0`, `input_corpus_size` (positive integer) and
 `limitations` (non-empty list of statements of what the evidence does not prove) (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
 §7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.

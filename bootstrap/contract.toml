@@ -168,6 +168,8 @@ required_fields = [
 ]
 # Values the qualification evidence must hold. input_corpus uses artifact_hash_format;
 # input_corpus_size is a positive integer; limitations is a non-empty list of non-empty strings.
+# positive_cases / negative_cases / boundary_cases are each {count, result}: count > 0, result =
+# `cases` below, and the three counts sum to input_corpus_size (every class must really exist).
 qualification_results = { cases = "pass", mutation_proof = "detected", unexplained_deltas = 0 }
 # platform must be one of the C0 reference manifest's qualified platforms ([qualification].platform_scope).
 # verifier_contract / runtime_contract must name the pinned C0 components:
