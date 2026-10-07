@@ -57,7 +57,9 @@ contractual diagnostics (admission); canonical C1/C2 artifacts (fixed point).
 Salvaged from PR #3; each item is a requirement for any gate built in this repository.
 
 - **Exact reference pinning.** The gate verifies the reference checkout HEAD equals the pinned
-  SHA and the tree is clean before running; a drift override must be explicit and recorded.
+  SHA and the tree is clean before running, and fails otherwise. An explicit drift override may
+  exist only for non-qualification diagnostics: output of an override run is never qualification
+  evidence, is never attributed to the pinned SHA, and cannot advance migration state.
 - **Mechanical extraction.** Reference vectors are produced by running the reference, never
   hand-typed or transcribed.
 - **Explicit comparison schema.** Every compared field is named; a missing or wrongly shaped

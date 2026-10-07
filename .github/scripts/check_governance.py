@@ -82,8 +82,14 @@ def check_roadmap_critical_path(text):
     if len(head) != 2:
         return [f"docs/ROADMAP.md: missing '{ROADMAP_OFF_PATH_HEADING}' section"]
     errors = []
+    in_non_goals = False
     for n, line in enumerate(head[0].splitlines(), 1):
-        if OFF_CRITICAL_PATH.search(line) and not NON_GOALS_LINE.match(line):
+        # A Non-goals field continues over indented continuation lines until the next item/heading.
+        if NON_GOALS_LINE.match(line):
+            in_non_goals = True
+        elif not (in_non_goals and line.startswith((" ", "\t")) and not line.lstrip().startswith("- ")):
+            in_non_goals = False
+        if OFF_CRITICAL_PATH.search(line) and not in_non_goals:
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {line.strip()}")
     stages = set(re.findall(r"^## (SHF-\d+) ", head[0], re.M))
     expected = {f"SHF-{i}" for i in range(18)}
@@ -109,8 +115,18 @@ def check_agents_contract(text):
     return [f"AGENTS.md: required contract anchor missing: {a!r}" for a in AGENTS_ANCHORS if a not in text]
 
 
+FENCED_BLOCK = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1[ \t]*$", re.M | re.S)
+CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
+
+
+def strip_code(text):
+    """Remove fenced blocks and inline code spans: they render as literal text, not links."""
+    return CODE_SPAN.sub("", FENCED_BLOCK.sub("", text))
+
+
 def check_links(rel, text, base):
     errors = []
+    text = strip_code(text)
     for angle, bare in LINK.findall(text) + LINK_DEF.findall(text):
         target = angle or bare
         if re.match(r"^[a-z]+:", target) or target.startswith("#"):
@@ -177,6 +193,10 @@ def self_test():
         assert check_roadmap_critical_path(bad), term
         excluded = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** {term}\n")
         assert not check_roadmap_critical_path(excluded), term
+        wrapped = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** other work;\n  {term}\n")
+        assert not check_roadmap_critical_path(wrapped), term
+        after = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** x\n- **Deliverable:** {term}\n")
+        assert check_roadmap_critical_path(after), term
     ok = {"repository": "skulmakov-oss/Semantic", "sha": "a" * 40, "status": "planning-reference",
           "bootstrap": {"upstream_issue": 1910}}
     assert not check_reference(ok)
@@ -206,6 +226,9 @@ def self_test():
     assert check_links("x.md", '[c]: <missing file.md> "t"\n', ROOT)
     assert not check_links("x.md", "[c]: https://example.com\n[d]: #anchor\n", ROOT)
     assert not check_links("x.md", "text[^1]\n\n[^1]: Explanatory text\n", ROOT)
+    assert not check_links("x.md", "use `[x](missing.md)` syntax\n", ROOT)
+    assert not check_links("x.md", "```md\n[x](missing.md)\n[c]: missing.md\n```\n", ROOT)
+    assert check_links("x.md", "```md\nok\n```\n[x](missing.md)\n", ROOT)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 
