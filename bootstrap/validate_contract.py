@@ -57,7 +57,7 @@ def registry_rows(subset_text):
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if cells and BSF_ID.fullmatch(cells[0]):
+        if cells and cells[0].upper().startswith("BSF"):  # a malformed id must not hide a row
             rows.append((cells[0], cells[2] if len(cells) > 2 else "", cells))
     return rows
 
@@ -71,6 +71,9 @@ def check_registry(subset_text):
     CANDIDATE rows: ID | construction | state | gap at C0 | owner / SHF stage."""
     errors, registry = [], {}
     for bsf, state, cells in registry_rows(subset_text):
+        if not BSF_ID.fullmatch(bsf):
+            errors.append(f"CONTRACT_DRIFT: malformed registry id {bsf!r} (expected BSF-nnn)")
+            continue
         if bsf in registry:
             errors.append(f"CONTRACT_DRIFT: registry id {bsf} appears more than once")
             continue
@@ -304,10 +307,10 @@ def check_contract(contract, reference, subset_text):
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
-def check_evidence(contract, record, source_set_identity=None):
+def check_evidence(contract, record, source_set_identity):
     """A record supports the Bootstrap Seal only if it is bound to this exact contract AND
-    records an admitted C1 and C2 whose comparison held. `source_set_identity`, when given,
-    must equal the record's (the identity of the current S)."""
+    records an admitted C1 and C2 whose comparison held, for the CURRENT S:
+    `source_set_identity` is required and must equal the record's."""
     ev = contract["evidence"]
     errors = [f"CONTRACT_DRIFT: evidence field {f!r} missing"
               for f in ev["required_fields"] if f not in record]
@@ -316,7 +319,8 @@ def check_evidence(contract, record, source_set_identity=None):
             errors.append(f"SOURCE_SET_INVALID: evidence {field} is not {ev['artifact_hash_format']}"
                           if field == "source_set_identity" else
                           f"FIXED_POINT_DELTA: evidence {field} is not {ev['artifact_hash_format']}")
-    if source_set_identity is not None and record.get("source_set_identity") != source_set_identity:
+    if not HASH.fullmatch(str(source_set_identity)) \
+            or record.get("source_set_identity") != source_set_identity:
         errors.append("SOURCE_SET_INVALID: evidence was produced for a different source set")
     for field in ("c1_verifier_binding", "c2_verifier_binding"):
         if field in record and record[field] != ev["verifier_binding_admitted"]:
@@ -397,6 +401,8 @@ def self_test():
     assert check_registry(with_row("| BSF-999 | x | FROZEN | use | a / b | stages |"))[1]       # no SHF
     assert check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | upstream |"))[1]        # no stage
     assert check_registry(with_row("| BSF-999 | x | MAYBE | a | b |"))[1]
+    assert check_registry(subset.replace("| BSF-001 |", "| BSF-01 |"))[1]        # malformed id
+    assert check_registry(subset.replace("| BSF-001 |", "| bsf-001 |"))[1]
     assert not check_registry(with_row("| BSF-999 | x | ADMITTED | use | a / b | SHF-10..14 |"))[1]
     assert check_registry(with_row("| BSF-001 | other | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-1 |"))[1]
     c999 = copy.deepcopy(contract)
@@ -490,8 +496,9 @@ def self_test():
                   c1_verifier_binding="admitted", c2_verifier_binding="admitted",
                   comparison_result="equal")
     assert set(record) == set(contract["evidence"]["required_fields"])
-    assert not check_evidence(contract, record)
-    assert not check_evidence(contract, record, source_set_identity="sha256:" + "cd" * 32)
+    current = record["source_set_identity"]
+    assert not check_evidence(contract, record, current)
+    assert check_evidence(contract, record, None)                     # current S is mandatory
     # values, not only keys: a failed or malformed run is never Seal evidence
     for bad, cls in [({"comparison_result": "different"}, "FIXED_POINT_DELTA"),
                      ({"comparison_result": False}, "FIXED_POINT_DELTA"),
@@ -500,13 +507,13 @@ def self_test():
                      ({"c1_verifier_binding": "rejected"}, "ADMISSION_REJECT"),
                      ({"c2_verifier_binding": "x"}, "ADMISSION_REJECT"),
                      ({"source_set_identity": "x"}, "SOURCE_SET_INVALID")]:
-        errs = check_evidence(contract, {**record, **bad})
+        errs = check_evidence(contract, {**record, **bad}, current)
         assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
-    assert check_evidence(contract, record, source_set_identity="sha256:" + "00" * 32)
-    assert check_evidence(contract, {**record, "comparison_rule": "normalized-equality-v1"})
-    assert check_evidence(contract, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"})
-    assert check_evidence(contract, {**record, "c0_identity": f"{REPOSITORY}@main"})
-    assert check_evidence(contract, {k: v for k, v in record.items() if k != "c2_artifact_hash"})
+    assert check_evidence(contract, record, "sha256:" + "00" * 32)  # stale evidence
+    assert check_evidence(contract, {**record, "comparison_rule": "normalized-equality-v1"}, current)
+    assert check_evidence(contract, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"}, current)
+    assert check_evidence(contract, {**record, "c0_identity": f"{REPOSITORY}@main"}, current)
+    assert check_evidence(contract, {k: v for k, v in record.items() if k != "c2_artifact_hash"}, current)
     print("shf0 self-test: PASS")
 
 
