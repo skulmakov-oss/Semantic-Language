@@ -160,7 +160,15 @@ required_fields = [
     "contract_protocol", "c0_identity", "source_set_identity", "c1_artifact_hash",
     "c1_verifier_binding", "c2_artifact_hash", "c2_verifier_binding", "comparison_rule",
     "comparison_result",
+    # Bootstrap Seal provenance (BOOTSTRAP_CONTRACT.md §7)
+    "platform", "verifier_contract", "runtime_contract", "remaining_rust_responsibilities",
 ]
+# platform must be one of the C0 reference manifest's qualified platforms ([qualification].platform_scope).
+# verifier_contract / runtime_contract must name the pinned C0 components:
+verifier_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-verify"
+runtime_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-vm"
+# remaining_rust_responsibilities: non-empty list, each one of these categories.
+rust_responsibility_categories = ["oracle", "host_mechanics", "verifier_runtime_foundation"]
 # A record supports the Bootstrap Seal only with these values; anything else is not evidence.
 artifact_hash_format = "sha256:<64 lowercase hex>"   # c1/c2_artifact_hash, source_set_identity
 verifier_binding_admitted = "admitted"               # c1/c2_verifier_binding

@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "78a29f9564f075e47b613edec99fef016539dddfdaad6a61027a328fe4e67419"}
+FROZEN_DIGESTS = {PROTOCOL: "211b8e1ef45170f18beda98b36c4a663b629cd59a64ceb30368995b464daf151"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -243,12 +243,22 @@ def check_capabilities(contract):
     return errors
 
 
-def frozen_digest(contract, reference):
-    """sha256 of the canonical form of every frozen value: the whole contract, including the
-    [subset] state lists, together with the whole C0 reference manifest (verdict, limits,
-    drift, contract paths). Admitting or dropping a construction is a contract change
-    (BOOTSTRAP_SUBSET.md §8), so the lists cannot be edited to hide a registry row."""
-    canonical = json.dumps({"contract": contract, "reference": reference},
+def registry_section(subset_text):
+    """The normative registry (BOOTSTRAP_SUBSET.md §5) with line endings and trailing spaces
+    normalized: section authority, every row and every cell."""
+    start = subset_text.find("## 5. Registry")
+    end = subset_text.find("\n## ", start + 1)
+    section = subset_text[start:end if end != -1 else None] if start != -1 else ""
+    return "\n".join(line.rstrip() for line in section.splitlines()).strip()
+
+
+def frozen_digest(contract, reference, subset_text):
+    """sha256 of the canonical form of every frozen value: the whole contract (including the
+    [subset] state lists), the whole C0 reference manifest (verdict, limits, drift, contract
+    paths) and the normative registry section of BOOTSTRAP_SUBSET.md. Admitting, dropping or
+    redefining a construction is a contract change (BOOTSTRAP_SUBSET.md §8)."""
+    canonical = json.dumps({"contract": contract, "reference": reference,
+                            "registry": registry_section(subset_text)},
                            sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -257,7 +267,7 @@ def check_contract(contract, reference, subset_text):
     errors = []
     if contract.get("protocol") != PROTOCOL:
         errors.append(f"CONTRACT_DRIFT: protocol must be {PROTOCOL!r}")
-    elif frozen_digest(contract, reference) != FROZEN_DIGESTS[PROTOCOL]:
+    elif frozen_digest(contract, reference, subset_text) != FROZEN_DIGESTS[PROTOCOL]:
         errors.append(f"CONTRACT_DRIFT: a frozen value of {PROTOCOL} changed; a contract change needs "
                       "a new protocol identifier and a recorded revision")
     errors += check_c0(contract, reference)
@@ -313,13 +323,28 @@ def check_contract(contract, reference, subset_text):
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
-def check_evidence(contract, record, source_set_identity):
+def check_evidence(contract, reference, record, source_set_identity):
     """A record supports the Bootstrap Seal only if it is bound to this exact contract AND
-    records an admitted C1 and C2 whose comparison held, for the CURRENT S:
+    records an admitted C1 and C2 whose comparison held, for the CURRENT S, on a qualified C0
+    platform, with the pinned verifier/runtime and the Seal provenance of §7.
     `source_set_identity` is required and must equal the record's."""
     ev = contract["evidence"]
     errors = [f"CONTRACT_DRIFT: evidence field {f!r} missing"
               for f in ev["required_fields"] if f not in record]
+    qualified = reference.get("qualification", {}).get("platform_scope")
+    qualified = [qualified] if isinstance(qualified, str) else list(qualified or [])
+    if "platform" in record and record["platform"] not in qualified:
+        errors.append(f"REFERENCE_MISMATCH: platform {record['platform']!r} is outside the qualified "
+                      f"C0 platforms {qualified}")
+    for field in ("verifier_contract", "runtime_contract"):
+        if field in record and record[field] != ev[field]:
+            errors.append(f"REFERENCE_MISMATCH: {field} is not the pinned {ev[field]!r}")
+    if "remaining_rust_responsibilities" in record:
+        resp = record["remaining_rust_responsibilities"]
+        if not isinstance(resp, list) or not resp \
+                or any(r not in ev["rust_responsibility_categories"] for r in resp):
+            errors.append("CONTRACT_DRIFT: remaining_rust_responsibilities must be a non-empty list of "
+                          f"{ev['rust_responsibility_categories']}")
     for field in ("source_set_identity", "c1_artifact_hash", "c2_artifact_hash"):
         if field in record and not HASH.fullmatch(str(record[field])):
             errors.append(f"SOURCE_SET_INVALID: evidence {field} is not {ev['artifact_hash_format']}"
@@ -431,6 +456,15 @@ def self_test():
         fails("CONTRACT_DRIFT", lambda c, n=name: c["failures"][n].update({"continue": True}))
     # the subset state lists are frozen with the protocol: they cannot be edited to hide a row
     fails("CONTRACT_DRIFT", lambda c: c["subset"]["candidate"].remove("BSF-106"))
+    # the normative registry content (rows, cells, section authority) is frozen too
+    for edit in [("Items and functions", "Anything at all"),             # construction
+                 ("T A F I B / arity", "T / arity"),                       # evidence form
+                 ("| SHF-12..14 |", "| SHF-13..14 |"),                     # stages
+                 ("semantic.foundation.source/1.2", "semantic.foundation.source/9.9")]:  # authority
+        errs = check_contract(contract, reference, subset.replace(*edit, 1))
+        assert any("frozen value" in e for e in errs), edit
+    # formatting-only noise (trailing spaces, CRLF) does not change the registry digest
+    assert registry_section(subset) == registry_section(subset.replace("\n", "  \r\n"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(authority="docs/spec/other_profile.md"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(registry="docs/OTHER.md"))
     # the C0 reference manifest (verdict, limits, drift, contract paths) is frozen too
@@ -505,11 +539,14 @@ def self_test():
                   c0_identity=f"{REPOSITORY}@{contract['c0']['sha']}",
                   source_set_identity="sha256:" + "cd" * 32, c1_artifact_hash=h, c2_artifact_hash=h,
                   c1_verifier_binding="admitted", c2_verifier_binding="admitted",
-                  comparison_result="equal")
+                  comparison_result="equal", platform="x86_64-pc-windows-msvc",
+                  verifier_contract=contract["evidence"]["verifier_contract"],
+                  runtime_contract=contract["evidence"]["runtime_contract"],
+                  remaining_rust_responsibilities=["oracle", "verifier_runtime_foundation"])
     assert set(record) == set(contract["evidence"]["required_fields"])
     current = record["source_set_identity"]
-    assert not check_evidence(contract, record, current)
-    assert check_evidence(contract, record, None)                     # current S is mandatory
+    assert not check_evidence(contract, reference, record, current)
+    assert check_evidence(contract, reference, record, None)                     # current S is mandatory
     # values, not only keys: a failed or malformed run is never Seal evidence
     for bad, cls in [({"comparison_result": "different"}, "FIXED_POINT_DELTA"),
                      ({"comparison_result": False}, "FIXED_POINT_DELTA"),
@@ -517,14 +554,19 @@ def self_test():
                      ({"c1_artifact_hash": "x", "c2_artifact_hash": "x"}, "FIXED_POINT_DELTA"),
                      ({"c1_verifier_binding": "rejected"}, "ADMISSION_REJECT"),
                      ({"c2_verifier_binding": "x"}, "ADMISSION_REJECT"),
-                     ({"source_set_identity": "x"}, "SOURCE_SET_INVALID")]:
-        errs = check_evidence(contract, {**record, **bad}, current)
+                     ({"source_set_identity": "x"}, "SOURCE_SET_INVALID"),
+                     ({"platform": "x86_64-unknown-linux-gnu"}, "REFERENCE_MISMATCH"),
+                     ({"verifier_contract": "skulmakov-oss/Semantic@main:crates/sm-verify"}, "REFERENCE_MISMATCH"),
+                     ({"runtime_contract": "local-build"}, "REFERENCE_MISMATCH"),
+                     ({"remaining_rust_responsibilities": []}, "CONTRACT_DRIFT"),
+                     ({"remaining_rust_responsibilities": ["parsing"]}, "CONTRACT_DRIFT")]:
+        errs = check_evidence(contract, reference, {**record, **bad}, current)
         assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
-    assert check_evidence(contract, record, "sha256:" + "00" * 32)  # stale evidence
-    assert check_evidence(contract, {**record, "comparison_rule": "normalized-equality-v1"}, current)
-    assert check_evidence(contract, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"}, current)
-    assert check_evidence(contract, {**record, "c0_identity": f"{REPOSITORY}@main"}, current)
-    assert check_evidence(contract, {k: v for k, v in record.items() if k != "c2_artifact_hash"}, current)
+    assert check_evidence(contract, reference, record, "sha256:" + "00" * 32)  # stale evidence
+    assert check_evidence(contract, reference, {**record, "comparison_rule": "normalized-equality-v1"}, current)
+    assert check_evidence(contract, reference, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"}, current)
+    assert check_evidence(contract, reference, {**record, "c0_identity": f"{REPOSITORY}@main"}, current)
+    assert check_evidence(contract, reference, {k: v for k, v in record.items() if k != "c2_artifact_hash"}, current)
     print("shf0 self-test: PASS")
 
 

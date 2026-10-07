@@ -108,7 +108,8 @@ new protocol identifier, never an edit made to fit a failed run (`CONTRACT_DRIFT
 The validator enforces this mechanically: it binds the protocol identifier to a sha256 of the
 canonical form of every frozen value: all of `bootstrap/contract.toml`, including the `[subset]`
 state lists (admitting or dropping a construction is a contract change, BOOTSTRAP_SUBSET.md §8),
-together with the whole C0 reference manifest `reference/semantic-reference.toml`.
+together with the whole C0 reference manifest `reference/semantic-reference.toml` and the
+normative registry section of `docs/BOOTSTRAP_SUBSET.md` (§5: authority, rows, cells).
 
 ### 10.1 C0
 
@@ -175,8 +176,11 @@ All classes stop qualification (`continue = false`); evidence from a failing run
 ### 10.7 Evidence record
 
 Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_artifact_hash`,
-`c1_verifier_binding`, `c2_artifact_hash`, `c2_verifier_binding`, `comparison_rule`,
-`comparison_result` (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
+`c1_verifier_binding`, `c2_artifact_hash`, `c2_verifier_binding`, `comparison_result`,
+`comparison_rule`, and the Seal provenance of §7: `platform` (one of the C0 qualified platforms),
+`verifier_contract` / `runtime_contract` (the pinned C0 `sm-verify` / `sm-vm`), and
+`remaining_rust_responsibilities` (non-empty; `oracle`, `host_mechanics`,
+`verifier_runtime_foundation`) (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
 §7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.
 A record supports the Bootstrap Seal only if its values hold, not merely its keys: hashes are
 `sha256:<64 lowercase hex>`, `source_set_identity` equals the identity of the current `S`, both
