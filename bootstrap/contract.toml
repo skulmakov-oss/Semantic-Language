@@ -165,6 +165,8 @@ required_fields = [
     # qualification evidence (BOOTSTRAP_CONTRACT.md §9, QUALIFICATION.md §3)
     "input_corpus", "positive_cases", "negative_cases", "boundary_cases", "mutation_proof",
     "unexplained_deltas", "input_corpus_size", "limitations",
+    # oracle checkout attestation, produced by verify_reference_checkout() before the run
+    "c0_checkout_head", "c0_checkout_clean",
 ]
 # Values the qualification evidence must hold. input_corpus uses artifact_hash_format;
 # input_corpus_size is a positive integer; limitations is a non-empty list of non-empty strings.

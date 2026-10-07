@@ -26,7 +26,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "d3f4c5cfb2bb8f7e1ec7b189e13e1234d907c4971f4512ab772b51dcee405dc5"}
+FROZEN_DIGESTS = {PROTOCOL: "26b47629038c4798f172e3de2bab32c5f51dd2c2f5d43acec7cd54645198adc9"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -350,11 +350,36 @@ def check_contract(contract, reference, subset_text, contract_doc):
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
+def verify_reference_checkout(checkout, sha):
+    """For evidence PRODUCERS: the C0 checkout used for a run must be a clean git tree at
+    exactly `sha`. Returns errors (REFERENCE_MISMATCH); the producer records the outcome in
+    c0_checkout_head / c0_checkout_clean, which check_record then requires."""
+    import subprocess
+    def git(*args):
+        return subprocess.run(["git", "-C", str(checkout), *args], capture_output=True, text=True)
+    head = git("rev-parse", "HEAD")
+    if head.returncode != 0:
+        return [f"REFERENCE_MISMATCH: {checkout} is not a git checkout"]
+    errors = []
+    if head.stdout.strip() != sha:
+        errors.append(f"REFERENCE_MISMATCH: checkout HEAD {head.stdout.strip()} != pinned C0 {sha}")
+    status = git("status", "--porcelain", "--untracked-files=all")
+    if status.returncode != 0 or status.stdout.strip():
+        errors.append("REFERENCE_MISMATCH: C0 checkout tree is not clean")
+    return errors
+
+
 def check_record(contract, reference, record, source_set_identity):
     """Value checks of one evidence record against an ALREADY VALIDATED contract and the
     current S identity. Internal: callers use check_evidence(repo, record)."""
     ev = contract["evidence"]
-    errors = [f"CONTRACT_DRIFT: evidence field {f!r} missing"
+    if "c0_checkout_head" in record and record["c0_checkout_head"] != contract["c0"]["sha"]:
+        pre = ["REFERENCE_MISMATCH: evidence was produced on a C0 checkout other than the pinned SHA"]
+    else:
+        pre = []
+    if "c0_checkout_clean" in record and record["c0_checkout_clean"] is not True:
+        pre.append("REFERENCE_MISMATCH: evidence was produced on a dirty C0 checkout")
+    errors = pre + [f"CONTRACT_DRIFT: evidence field {f!r} missing"
               for f in ev["required_fields"] if f not in record]
     qualified = reference.get("qualification", {}).get("platform_scope")
     qualified = [qualified] if isinstance(qualified, str) else list(qualified or [])
@@ -680,7 +705,8 @@ def self_test():
                   negative_cases={"count": 8, "result": "pass"},
                   boundary_cases={"count": 4, "result": "pass"},
                   mutation_proof="detected", unexplained_deltas=0,
-                  input_corpus_size=42, limitations=["Windows x64 only (C0 platform scope)"])
+                  input_corpus_size=42, limitations=["Windows x64 only (C0 platform scope)"],
+                  c0_checkout_head=contract["c0"]["sha"], c0_checkout_clean=True)
     assert set(record) == set(contract["evidence"]["required_fields"])
     current = record["source_set_identity"]
     assert not check_record(contract, reference, record, current)
@@ -689,6 +715,29 @@ def self_test():
     real_identity, _ = validate(ROOT)
     assert not check_evidence(ROOT, {**record, "source_set_identity": real_identity})
     assert check_evidence(ROOT, record)                                         # identity not of this S
+    # verify_reference_checkout: a real git tree at the right SHA, clean
+    import subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ.get("PATH", "")}
+        def git(*a):
+            return subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True, env=env)
+        git("init", "-q")
+        (Path(tmp) / "f").write_text("x", encoding="utf-8")
+        git("add", "f")
+        git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "c")
+        sha = git("rev-parse", "HEAD").stdout.strip()
+        if SHA.fullmatch(sha):  # git available
+            assert not verify_reference_checkout(tmp, sha)
+            assert verify_reference_checkout(tmp, "0" * 40)                     # wrong commit
+            (Path(tmp) / "f").write_text("dirty", encoding="utf-8")
+            assert verify_reference_checkout(tmp, sha)                          # dirty tree
+            (Path(tmp) / "f").write_text("x", encoding="utf-8")
+            (Path(tmp) / "new").write_text("u", encoding="utf-8")
+            assert verify_reference_checkout(tmp, sha)                          # untracked file
+    with tempfile.TemporaryDirectory() as tmp:
+        assert verify_reference_checkout(tmp, "0" * 40)                         # not a checkout
+
     # malformed records fail closed instead of crashing the gate
     good = {**record, "source_set_identity": real_identity}
     for bad in ({"remaining_rust_responsibilities": ["oracle", 1, "host_mechanics"]},
@@ -758,7 +807,10 @@ def self_test():
                      ({"input_corpus_size": "42"}, "CONTRACT_DRIFT"),
                      ({"limitations": []}, "CONTRACT_DRIFT"),
                      ({"limitations": [""]}, "CONTRACT_DRIFT"),
-                     ({"limitations": "none"}, "CONTRACT_DRIFT")]:
+                     ({"limitations": "none"}, "CONTRACT_DRIFT"),
+                     ({"c0_checkout_head": reference["drift"]["planning_reference"]}, "REFERENCE_MISMATCH"),
+                     ({"c0_checkout_clean": False}, "REFERENCE_MISMATCH"),
+                     ({"c0_checkout_clean": "true"}, "REFERENCE_MISMATCH")]:
         errs = check_record(contract, reference, {**record, **bad}, current)
         assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
     assert check_record(contract, reference, record, "sha256:" + "00" * 32)  # stale evidence

@@ -190,7 +190,9 @@ Required fields: `contract_protocol`, `c0_identity`, `source_set_identity`, `c1_
 (sha256), `positive_cases` / `negative_cases` / `boundary_cases` each `{count > 0, result = pass}` with
 counts summing to `input_corpus_size`, `mutation_proof` =
 `detected`, `unexplained_deltas` = `0`, `input_corpus_size` (positive integer) and
-`limitations` (non-empty list of statements of what the evidence does not prove) (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
+`limitations` (non-empty list of statements of what the evidence does not prove), and the C0
+checkout attestation `c0_checkout_head` (= C0 SHA) and `c0_checkout_clean` (= true), which the
+producer obtains from `verify_reference_checkout()` before the run (else `REFERENCE_MISMATCH`) (upstream shape: `docs/security/artifact_provenance_and_signing_policy_v0.md`
 §7). A record whose protocol, comparison rule or C0 differ from the contract is `CONTRACT_DRIFT`.
 A record supports the Bootstrap Seal only if its values hold, not merely its keys: hashes are
 `sha256:<64 lowercase hex>`, `source_set_identity` equals the identity of the current `S`, both
