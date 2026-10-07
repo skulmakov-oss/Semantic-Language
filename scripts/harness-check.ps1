@@ -16,7 +16,9 @@ param(
     [string]$BaseRef,
     [switch]$SelfTest,
     [switch]$RequireEnvelopeBase,  # PR mode: constraints.base_sha must equal -BaseRef
-    [string]$TaskFile = (Join-Path $PSScriptRoot '../.harness/current.task.yaml')
+    # CI runs the BASE revision's checker from outside the tree against the PR checkout.
+    [string]$RepoRoot = (Join-Path $PSScriptRoot '..'),
+    [string]$TaskFile
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -273,8 +275,11 @@ if ($SelfTest) { Invoke-SelfTest }
 
 try {
     # Git paths below are repository-root relative regardless of the caller's directory.
-    Set-Location -LiteralPath (Join-Path $PSScriptRoot '..')
-    $envelope = Read-Envelope ([System.IO.Path]::GetFullPath($TaskFile))
+    $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot, $PWD.Path)
+    $TaskFile = if ($TaskFile) { [System.IO.Path]::GetFullPath($TaskFile, $PWD.Path) }
+                else { Join-Path $RepoRoot '.harness/current.task.yaml' }
+    Set-Location -LiteralPath $RepoRoot
+    $envelope = Read-Envelope $TaskFile
     Write-Host "[harness] task $($envelope.task.id) (issue #$($envelope.constraints.issue))"
     $mode = if ($BaseRef) { "committed $BaseRef...HEAD + working tree" } else { 'working tree (staged, unstaged, untracked)' }
     Write-Host "[harness] checking $mode"

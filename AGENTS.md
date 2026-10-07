@@ -202,6 +202,11 @@ paths, authorization flags) relative to the base envelope fails unless the PR to
 else, so a PR can never authorize its own payload. Each PR records its exact base in
 `constraints.base_sha`; advancing it is bookkeeping, not a transition.
 
+CI runs the checker from the base revision, so a PR cannot loosen the checker that judges it.
+GitHub still runs a PR's own workflow file, so ordinary task envelopes must list
+`scripts/harness-check.ps1` and `.github/**` under `forbidden_paths` (envelope edits are already
+bound by the transition rule); only an owner-authorized governance task may allow them.
+
 The Harness is never a mechanism for self-authorization. Bootstrap fact: the PR that introduced
 the Harness (issue #14) added envelope, checker and CI enforcement together under explicit owner
 GO; every later envelope transition is governed by the Harness itself. There is no bypass.
