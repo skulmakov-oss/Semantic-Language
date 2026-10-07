@@ -26,7 +26,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "75821b09018e2d2d958383a2fad343792e7c85aca91674caf18fb0f187426b35"}
+FROZEN_DIGESTS = {PROTOCOL: "bc9cffd3fcb1ff5b611caee2b87c5d3324cc2cbfb7da060b9e000b47b83747d5"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -45,6 +45,9 @@ REQUIRED_FORBIDDEN_INPUTS = {
 }
 SHA = re.compile(r"[0-9a-f]{40}")
 COMPONENT = re.compile(r"[a-z0-9_]+")
+# Windows device names (not creatable as files on the qualified C0 platform).
+RESERVED_COMPONENTS = sorted({"aux", "con", "nul", "prn"} | {f"com{i}" for i in range(1, 10)}
+                             | {f"lpt{i}" for i in range(1, 10)})
 SHF_STAGE = re.compile(r"SHF-(\d+)")
 BSF_ID = re.compile(r"BSF-\d{3}")
 SHF_RANGE = re.compile(r"SHF-(\d+)(?:\.\.(\d+))?")  # whole cell: SHF-n or SHF-a..b, 0..17
@@ -131,6 +134,9 @@ def check_paths(files, root):
         stems = parts[:-1] + [parts[-1][:-3]]
         if any(not COMPONENT.fullmatch(c) for c in stems):
             errors.append(f"SOURCE_SET_INVALID: non-canonical path component in {p!r}")
+            continue
+        if any(c in RESERVED_COMPONENTS for c in stems):
+            errors.append(f"SOURCE_SET_INVALID: Windows-reserved device name in {p!r}")
             continue
         if p.lower() in seen:
             errors.append(f"SOURCE_SET_INVALID: duplicate path {p!r}")
@@ -312,6 +318,8 @@ def check_contract(contract, reference, subset_text, contract_doc):
     if ss.get("protocol") != SOURCE_PROTOCOL or ss.get("newline") != "lf-only" \
             or ss.get("ordering") != "strictly-ascending-utf8-bytes" or ss.get("duplicates") != "reject":
         errors.append("SOURCE_SET_INVALID: source_set rules differ from shf0-source-set-v1")
+    if ss.get("reserved_components") != RESERVED_COMPONENTS:
+        errors.append("SOURCE_SET_INVALID: reserved_components must list exactly the Windows device names")
     if ss.get("identity", {}).get("algorithm") != "sha256":
         errors.append("SOURCE_SET_INVALID: identity algorithm must be sha256")
 
@@ -620,6 +628,11 @@ def self_test():
                 ["compiler/Lexer.sm"],                         # non-canonical spelling
                 ["compiler/b.sm", "compiler/a.sm"]):          # unsorted: rejected, never re-sorted
         assert check_paths(bad, "compiler"), bad
+    for reserved in ("con", "nul", "aux", "prn", "com1", "lpt9"):              # Windows device names
+        assert check_paths([f"compiler/{reserved}.sm"], "compiler"), reserved
+        assert check_paths([f"compiler/{reserved}/a.sm"], "compiler"), reserved
+    assert not check_paths(["compiler/com10.sm", "compiler/console.sm"], "compiler")
+    fails("SOURCE_SET_INVALID", lambda c: c["source_set"]["reserved_components"].remove("con"))
 
     # source-set identity
     base = [("compiler/a.sm", b"fn a() {}\n"), ("compiler/b.sm", b"fn b() {}\n")]
