@@ -43,6 +43,9 @@ DEFERRED_TRACKS = [
     r"persistent compiler", r"incremental", r"query engine", r"dependency engine",
     r"admission reuse", r"prepared execution image", r"execution image", r"near-zero startup",
     r"compiler service", r"clean-build oracle",
+    # rewrite relationship in either word order, including canonical component names
+    r"\brewrit\w*\s+(?:the\s+)?(?:sm-vm|sm-verify|vm|verifier)\b",
+    r"\b(?:sm-vm|sm-verify)\s+rewrit\w*",
 ]
 OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
 # A stage's own Non-goals line legitimately names deferred work in order to exclude it.
@@ -116,19 +119,26 @@ def rendered_text(inline):
     return " ".join("".join(parts).split())
 
 
+HISTORICAL_QUOTE = re.compile(r"^historical\b", re.I)
+
+
 def active_prose(text):
     """(1-based line, rendered text) for each prose block that states active roadmap content.
-    Excluded: code blocks (no inline tokens), block quotes (quoted/historical material) and a
-    stage's own `- **Non-goals:**` field."""
+    Excluded: code blocks (no inline tokens), a stage's own `- **Non-goals:**` field, and block
+    quotes explicitly classified as historical (first text starts with "Historical"). Other
+    block quotes, including GitHub callouts such as `> [!IMPORTANT]`, are active content."""
     excluded = non_goals_lines(text)
-    quote_depth = 0
+    tokens = COMMONMARK.parse(text)
+    historical_depth = 0  # >0 while inside a block quote marked historical
     blocks = []
-    for t in COMMONMARK.parse(text):
+    for i, t in enumerate(tokens):
         if t.type == "blockquote_open":
-            quote_depth += 1
+            first = next((x for x in tokens[i + 1:] if x.type == "inline"), None)
+            if historical_depth or (first and HISTORICAL_QUOTE.match(rendered_text(first))):
+                historical_depth += 1
         elif t.type == "blockquote_close":
-            quote_depth -= 1
-        elif t.type == "inline" and t.map and not quote_depth and t.map[0] not in excluded:
+            historical_depth = max(0, historical_depth - 1)
+        elif t.type == "inline" and t.map and not historical_depth and t.map[0] not in excluded:
             blocks.append((t.map[0] + 1, rendered_text(t)))
     return blocks
 
@@ -283,6 +293,14 @@ def self_test():
     assert not check_roadmap_critical_path(good.replace(
         ROADMAP_OFF_PATH_HEADING + "\n", ROADMAP_OFF_PATH_HEADING + "\nVM **rewrite** is deferred.\n"))
     assert not check_roadmap_critical_path(stage("```text\nVM rewrite example\n```"))
+    # callouts and plain quotes inside a stage are active content
+    assert check_roadmap_critical_path(stage("> [!IMPORTANT]\n> **Deliverable:** requires VM rewrite"))
+    assert check_roadmap_critical_path(stage("> requires VM rewrite"))
+    # canonical component names and rewrite-first wording
+    for wording in ["rewrite sm-vm in Semantic", "rewrite sm-verify in Semantic",
+                    "rewriting the verifier", "sm-vm rewrite", "Rewrite the VM"]:
+        assert check_roadmap_critical_path(stage(f"- **Deliverable:** {wording}")), wording
+    assert not check_roadmap_critical_path(stage("- **Deliverable:** artifact admitted by `sm-verify`"))
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
                  "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI",
                  "persistent compiler service", "incremental syntax", "incremental IR",
