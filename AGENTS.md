@@ -202,14 +202,18 @@ paths, authorization flags) relative to the base envelope fails unless the PR to
 else, so a PR can never authorize its own payload. Each PR records its exact base in
 `constraints.base_sha`; advancing it is bookkeeping, not a transition.
 
-CI runs the checker from the base revision, so a PR cannot loosen the checker that judges it.
-GitHub still runs a PR's own workflow file, so ordinary task envelopes must list
-`scripts/harness-check.ps1` and `.github/**` under `forbidden_paths` (envelope edits are already
-bound by the transition rule); only an owner-authorized governance task may allow them.
+Trust root: `.github/workflows/harness-trusted.yml` (`pull_request_target`, job
+`scope-enforcement`) runs as it exists on the base branch, executes only the base revision's
+`scripts/harness-check.ps1`, and inspects the PR head as data only (read-only token, no secrets,
+no PR code executed). A PR may propose changes to it, but they are judged by the previous trusted
+version. Ordinary task envelopes must still list `scripts/harness-check.ps1` and `.github/**`
+under `forbidden_paths`; only an owner-authorized governance task may allow them.
 
 The Harness is never a mechanism for self-authorization. Bootstrap fact: the PR that introduced
-the Harness (issue #14) added envelope, checker and CI enforcement together under explicit owner
-GO; every later envelope transition is governed by the Harness itself. There is no bypass.
+the Harness (issue #14) added envelope, checker, CI enforcement and the trusted workflow together
+under explicit owner GO. Because the trusted workflow did not yet exist on its base, that one PR was
+qualified by exact-head owner review, CI and independent review instead. That exception ended at
+its merge; no later PR may claim it. There is no bypass.
 
 ## 9. Working loop
 

@@ -1,0 +1,45 @@
+name: harness-trusted
+
+# Trust root for Harness scope enforcement. pull_request_target runs THIS file as it exists on
+# the base branch, so a PR cannot remove or weaken the check that judges it. The PR head is
+# inspected as data only: nothing from it is executed (no scripts, no builds, no PR workflow).
+# Changes to this file take effect only after merge, judged by the previous trusted version.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  scope-enforcement:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted base (executable source)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout candidate head (data only, never executed)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Trusted scope enforcement (base checker vs PR head)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test -f trusted/scripts/harness-check.ps1 || { echo "[harness:error] no trusted checker at base $BASE_SHA"; exit 1; }
+          # The base commit comes from the trusted local clone, so fork PRs work without credentials.
+          git -C candidate fetch --no-tags "$GITHUB_WORKSPACE/trusted" "$BASE_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$HEAD_SHA"
+          pwsh -NoProfile -File trusted/scripts/harness-check.ps1 \
+            -RepoRoot "$GITHUB_WORKSPACE/candidate" -BaseRef "$BASE_SHA" -RequireEnvelopeBase

@@ -6,7 +6,7 @@ task:
   title: "Introduce fail-closed per-task Harness scope enforcement"
   type: governance_infrastructure
   mode: active
-  authorized_by: "Repository owner explicit GO 'OWNER GO - BOOTSTRAP HARNESS INTEGRATION' (2026-10-07), issue #14"
+  authorized_by: "Repository owner explicit GO 'OWNER GO - BOOTSTRAP HARNESS INTEGRATION' (2026-10-07), issue #14; trust-root extension 'OWNER AUTHORIZATION - CLOSE HARNESS TRUST-ROOT P1' (2026-10-07)"
 
 intent:
   summary: "Install the Harness envelope, checker and CI enforcement. No compiler or language implementation."
@@ -16,6 +16,7 @@ scope:
     - .harness/current.task.yaml
     - scripts/harness-check.ps1
     - .github/workflows/governance.yml
+    - .github/workflows/harness-trusted.yml
     - AGENTS.md
     - CONTRIBUTING.md
   forbidden_paths:
