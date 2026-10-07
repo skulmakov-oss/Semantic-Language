@@ -84,10 +84,11 @@ def check_roadmap_critical_path(text):
     errors = []
     in_non_goals = False
     for n, line in enumerate(head[0].splitlines(), 1):
-        # A Non-goals field continues over indented continuation lines until the next item/heading.
+        # A Non-goals field includes every indented line after it (wrapped text or child bullets)
+        # until an unindented peer field or heading begins.
         if NON_GOALS_LINE.match(line):
             in_non_goals = True
-        elif not (in_non_goals and line.startswith((" ", "\t")) and not line.lstrip().startswith("- ")):
+        elif not (in_non_goals and line.startswith((" ", "\t"))):
             in_non_goals = False
         if OFF_CRITICAL_PATH.search(line) and not in_non_goals:
             errors.append(f"docs/ROADMAP.md:{n}: post-Bootstrap work on the SHF critical path: {line.strip()}")
@@ -115,13 +116,28 @@ def check_agents_contract(text):
     return [f"AGENTS.md: required contract anchor missing: {a!r}" for a in AGENTS_ANCHORS if a not in text]
 
 
-FENCED_BLOCK = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1[ \t]*$", re.M | re.S)
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CODE_SPAN = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)", re.S)
 
 
 def strip_code(text):
-    """Remove fenced blocks and inline code spans: they render as literal text, not links."""
-    return CODE_SPAN.sub("", FENCED_BLOCK.sub("", text))
+    """Remove fenced blocks and inline code spans: they render as literal text, not links.
+
+    A fence closes on a line of the same character that is at least as long as the opener
+    (CommonMark); an unclosed fence runs to the end of the document.
+    """
+    kept, fence = [], None
+    for line in text.splitlines():
+        m = FENCE.match(line)
+        if fence is None:
+            if m:
+                fence = m.group(1)
+            else:
+                kept.append(line)
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                and not line[m.end():].strip():
+            fence = None
+    return CODE_SPAN.sub("", "\n".join(kept))
 
 
 def check_links(rel, text, base):
@@ -195,6 +211,8 @@ def self_test():
         assert not check_roadmap_critical_path(excluded), term
         wrapped = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** other work;\n  {term}\n")
         assert not check_roadmap_critical_path(wrapped), term
+        child = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:**\n  - {term}\n")
+        assert not check_roadmap_critical_path(child), term
         after = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\n- **Non-goals:** x\n- **Deliverable:** {term}\n")
         assert check_roadmap_critical_path(after), term
     ok = {"repository": "skulmakov-oss/Semantic", "sha": "a" * 40, "status": "planning-reference",
@@ -229,6 +247,9 @@ def self_test():
     assert not check_links("x.md", "use `[x](missing.md)` syntax\n", ROOT)
     assert not check_links("x.md", "```md\n[x](missing.md)\n[c]: missing.md\n```\n", ROOT)
     assert check_links("x.md", "```md\nok\n```\n[x](missing.md)\n", ROOT)
+    assert not check_links("x.md", "```\n[x](missing.md)\n````\n", ROOT)
+    assert not check_links("x.md", "~~~\n[x](missing.md)\n```\nstill code\n~~~\n", ROOT)
+    assert check_links("x.md", "````\nok\n```\n[y](inside.md)\n````\n[x](missing.md)\n", ROOT)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 
