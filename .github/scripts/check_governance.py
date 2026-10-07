@@ -244,7 +244,11 @@ def rendered_blocks(text):
         opener = tokens[i - 1] if i else None
         if opener is not None and opener.type == "heading_open":
             if opener.level != 0:
-                continue  # only top-level document headings define contract sections
+                # A nested heading (e.g. "- ### Historical rules") never defines a contract
+                # section, but it still ends the current section's own operative body.
+                if section is not None:
+                    section = f"{section} / {rendered_text(t)}"
+                continue
             kind = "heading"
             if opener.tag == "h1":
                 section = None  # a new top-level document part ends every ## section
@@ -485,6 +489,10 @@ def self_test():
                                  "\n### Historical rules\n\nDo not merge without owner GO.\n")
     assert check_agents_contract(real_agents.replace("- Do not merge without owner GO.", "") +
                                  "\n# Historical appendix\n\nDo not merge without owner GO.\n")
+    assert check_agents_contract(real_agents.replace("- Do not merge without owner GO.", "") +
+                                 "\n- ### Historical rules\n\n  Do not merge without owner GO.\n")
+    assert check_agents_contract(contract.replace(  # same case inside the minimal contract
+        "## 10. Forbidden\n\n", "## 10. Forbidden\n\n- ### Historical rules\n\n  "))
     assert check_agents_contract(real_agents.replace(  # one rule moved to another section
         "- Do not merge without owner GO.", "").replace(
         "## 9. Working loop", "## 9. Working loop\n\nDo not merge without owner GO.\n"))
