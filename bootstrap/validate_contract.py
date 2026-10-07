@@ -305,11 +305,21 @@ def frozen_digest(contract, reference, subset_text, contract_doc):
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def check_contract(contract, reference, subset_text, contract_doc):
+def literal_frozen_digests():
+    """The FROZEN_DIGESTS literal as written in this file's source (the value the base-ref
+    immutability check compares). The runtime registry must equal it: a later mutation such as
+    `FROZEN_DIGESTS[...] = ...` or `.update(...)` would otherwise pass both checks."""
+    return read_frozen_digests(Path(__file__).read_text(encoding="utf-8"))
+
+
+def check_contract(contract, reference, subset_text, contract_doc, registry=None):
     errors = []
+    literal = literal_frozen_digests() if registry is None else registry
+    if FROZEN_DIGESTS != literal:
+        errors.append("CONTRACT_DRIFT: FROZEN_DIGESTS is modified after its literal definition")
     if contract.get("protocol") != PROTOCOL:
         errors.append(f"CONTRACT_DRIFT: protocol must be {PROTOCOL!r}")
-    elif frozen_digest(contract, reference, subset_text, contract_doc) != FROZEN_DIGESTS[PROTOCOL]:
+    elif frozen_digest(contract, reference, subset_text, contract_doc) != literal.get(PROTOCOL):
         errors.append(f"CONTRACT_DRIFT: a frozen value of {PROTOCOL} changed; a contract change needs "
                       "a new protocol identifier and a recorded revision")
     errors += check_c0(contract, reference)
@@ -878,6 +888,20 @@ def self_test():
     assert check_protocol_immutability(real, rewritten)                            # same-PR bypass
     assert not check_protocol_immutability(None, real)                             # first introduction
     assert check_against_base(ROOT, "main")                                        # branch name refused
+    # runtime mutation after the literal: the literal still equals the base, but it is caught
+    assert literal_frozen_digests() == FROZEN_DIGESTS
+    saved = dict(FROZEN_DIGESTS)
+    try:
+        FROZEN_DIGESTS[PROTOCOL] = "0" * 64
+        errs = check_contract(contract, reference, subset, doc)
+        assert any("modified after its literal definition" in e for e in errs), errs
+    finally:
+        FROZEN_DIGESTS.clear()
+        FROZEN_DIGESTS.update(saved)
+    mutated_src = real + '\nFROZEN_DIGESTS[PROTOCOL] = "' + "0" * 64 + '"\n'
+    assert read_frozen_digests(mutated_src) == read_frozen_digests(real)           # AST unchanged...
+    assert not check_protocol_immutability(real, mutated_src)                       # ...so base check alone passes;
+    # the runtime == literal check in check_contract (asserted above) is what closes this path
     print("shf0 self-test: PASS")
 
 
