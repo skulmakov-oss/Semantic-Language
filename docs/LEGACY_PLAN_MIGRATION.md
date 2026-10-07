@@ -109,13 +109,17 @@ separate owner decision.
 
 ### Issue #5 — Semantic Reactive Interface (SRI)
 
-- **Old role:** TypeScript reactive tooling boundary milestone.
+- **Old role:** SRI active planning issue (TypeScript reactive tooling boundary milestone).
 - **Valuable:** TypeScript as presentation-only; no `quad` → `boolean` collapse; revision /
   cancellation / supersession model; generated bindings.
 - **Obsolete:** claim that Semantic-Language owns language semantics (rejected: upstream owns them).
 - **New destination:** [FUTURE.md](./FUTURE.md).
-- **Recommended disposition:** keep as the post-Bootstrap SRI successor, re-scoped to depend on
-  the Bootstrap Seal.
+- **Disposition (owner decision, executed):** CLOSED / not planned as an active pre-Bootstrap
+  work item. The issue was closed so that it no longer appears as active bootstrap work.
+- **Concept status:** PRESERVED / DEFERRED. SRI is not abandoned and is not part of
+  SHF-0 … SHF-17; no SRI implementation has been done.
+- **Activation:** SRI planning is created or reopened only after the Bootstrap Seal or a future
+  explicit owner GO.
 
 ### PR #6 — freeze subset and host-boundary qualification rules
 
