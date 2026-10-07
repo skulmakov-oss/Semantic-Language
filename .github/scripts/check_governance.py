@@ -16,6 +16,9 @@ from urllib.parse import unquote, urlsplit
 from markdown_it import MarkdownIt
 
 COMMONMARK = MarkdownIt("commonmark")
+# markdown-it drops links whose URL it deems unsafe (file:, javascript:, ...) and renders them as
+# plain text. The governance check must SEE every destination to judge it, so accept them all.
+COMMONMARK.validateLink = lambda url: True
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -46,6 +49,10 @@ DEFERRED_TRACKS = [
     # rewrite relationship in either word order, including canonical component names
     r"\brewrit\w*\s+(?:the\s+)?(?:sm-vm|sm-verify|vm|verifier)\b",
     r"\b(?:sm-vm|sm-verify)\s+rewrit\w*",
+    # FUTURE.md "Verifier or VM in Semantic": implementing either component in Semantic
+    r"\b(?:semantic|self-hosted)\s+(?:vm|verifier)\b",
+    r"\b(?:vm|verifier|sm-vm|sm-verify)\s+(?:written\s+)?in\s+semantic\b",
+    r"\b(?:implement|write|build|create|port|reimplement)\w*\s+(?:the\s+|a\s+)?(?:sm-vm|sm-verify)\b",
 ]
 OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
 # A stage's own Non-goals line legitimately names deferred work in order to exclude it.
@@ -56,19 +63,27 @@ REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
 # Load-bearing anchors of the root operating contract; removing any of them fails the gate.
 # They are matched against the RENDERED document (CommonMark tokens), never raw bytes, so an
 # anchor kept only inside code, an HTML comment or raw HTML does not count.
-AGENTS_HEADINGS = [
-    "2. Authority hierarchy",
-    "10. Forbidden",
-]
-AGENTS_PROSE = [  # visible sentences; inline-code text counts only as part of a sentence
-    "Indexes are retrieval tools, not sources of truth.",
-    "Any qualification oracle must be identified by: skulmakov-oss/Semantic + exact Git SHA.",
-    "Floating upstream main is never a qualification oracle.",
-    "Upstream authority: skulmakov-oss/Semantic#1910.",
-    "skulmakov-oss/Semantic#1909 (Native Reasoning / Full Sigma + t¤) is a post-self-hosting track.",
-    "First self-hosting does NOT require rewriting",
-    "Do not merge without owner GO.",
-]
+# Each required sentence must be operative prose inside its own top-level `##` section, so
+# moving a rule into any other section (e.g. "## Historical contract") removes it from force.
+AGENTS_CONTRACT = {  # section heading -> visible sentences required in that section
+    "1. Repositories and paths": [
+        "Any qualification oracle must be identified by: skulmakov-oss/Semantic + exact Git SHA.",
+    ],
+    "2. Authority hierarchy": [
+        "Indexes are retrieval tools, not sources of truth.",
+        "Floating upstream main is never a qualification oracle.",
+    ],
+    "3. Self-hosting scope": [
+        "Upstream authority: skulmakov-oss/Semantic#1910.",
+        "skulmakov-oss/Semantic#1909 (Native Reasoning / Full Sigma + t¤) is a post-self-hosting track.",
+        "First self-hosting does NOT require rewriting",
+    ],
+    "10. Forbidden": [
+        "Do not merge without owner GO.",
+    ],
+}
+AGENTS_HEADINGS = list(AGENTS_CONTRACT)
+AGENTS_PROSE = [p for sentences in AGENTS_CONTRACT.values() for p in sentences]
 
 
 def active_files(root):
@@ -212,33 +227,38 @@ def check_reference(data):
 
 
 def rendered_blocks(text):
-    """(kind, rendered text) of every operative block: 'heading' (top-level only) or 'prose'.
-    Uses the same operative rule as the roadmap guard (see operative_inlines): code, HTML and
-    historical quotes cannot satisfy the contract; callouts and other quotes can."""
+    """(kind, rendered text, section) of every operative block: kind is 'heading' (top-level
+    only) or 'prose'; section is the enclosing top-level `##` heading. Uses the same operative
+    rule as the roadmap guard (see operative_inlines): code, HTML and historical quotes cannot
+    satisfy the contract; callouts and other quotes can."""
     tokens = COMMONMARK.parse(text)
     blocks = []
+    section = None
     for i, t in operative_inlines(tokens, text.splitlines()):
         opener = tokens[i - 1] if i else None
         if opener is not None and opener.type == "heading_open":
             if opener.level != 0:
                 continue  # only top-level document headings define contract sections
             kind = "heading"
+            if opener.tag == "h2":
+                section = rendered_text(t)
         else:
             kind = "prose"
         # A block made only of inline code is a code literal, not a stated rule.
         if any(c.type == "text" and c.content.strip() for c in t.children or []):
-            blocks.append((kind, rendered_text(t)))
+            blocks.append((kind, rendered_text(t), section))
     return blocks
 
 
 def check_agents_contract(text):
     blocks = rendered_blocks(text)
-    headings = {b for kind, b in blocks if kind == "heading"}
-    prose = [b for kind, b in blocks if kind == "prose"]
+    headings = {b for kind, b, _ in blocks if kind == "heading"}
     errors = [f"AGENTS.md: required contract heading missing: {h!r}"
               for h in AGENTS_HEADINGS if h not in headings]
-    errors += [f"AGENTS.md: required contract sentence missing from active prose: {p!r}"
-               for p in AGENTS_PROSE if not any(p in b for b in prose)]
+    for section, sentences in AGENTS_CONTRACT.items():
+        prose = [b for kind, b, sec in blocks if kind == "prose" and sec == section]
+        errors += [f"AGENTS.md: required contract sentence missing from section {section!r}: {p!r}"
+                   for p in sentences if not any(p in b for b in prose)]
     return errors
 
 
@@ -269,6 +289,9 @@ def check_links(rel, text, base, root=ROOT):
         # Classify on the encoded URI; decode only the path component for the file lookup.
         parts = urlsplit(target)
         drive = len(parts.scheme) == 1  # "C:/x" is a Windows absolute path, not a URI scheme
+        if parts.scheme.lower() == "file":  # host filesystem, never a repository asset
+            errors.append(f"{rel}: link outside the repository '{target}'")
+            continue
         if (parts.scheme and not drive) or parts.netloc:
             continue
         path = unquote(target.split("#", 1)[0] if drive else parts.path)
@@ -382,7 +405,9 @@ def self_test():
         ROADMAP_OFF_PATH_HEADING + "\n", ROADMAP_OFF_PATH_HEADING + "\n<div>\nVM rewrite\n</div>\n"))
     # canonical component names and rewrite-first wording
     for wording in ["rewrite sm-vm in Semantic", "rewrite sm-verify in Semantic",
-                    "rewriting the verifier", "sm-vm rewrite", "Rewrite the VM"]:
+                    "rewriting the verifier", "sm-vm rewrite", "Rewrite the VM",
+                    "implement sm-vm in Semantic", "create a Semantic VM", "port sm-verify",
+                    "a verifier written in Semantic", "self-hosted VM"]:
         assert check_roadmap_critical_path(stage(f"- **Deliverable:** {wording}")), wording
     assert not check_roadmap_critical_path(stage("- **Deliverable:** artifact admitted by `sm-verify`"))
     for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
@@ -415,7 +440,7 @@ def self_test():
     assert check_reference({**ok, "bootstrap": {}})
     assert check_links("x.md", "[a](definitely-missing-file.md)", ROOT)
     # AGENTS.md contract: only the rendered, active document counts.
-    contract = "".join(f"## {h}\n\n" for h in AGENTS_HEADINGS) + "".join(f"{p}\n\n" for p in AGENTS_PROSE)
+    contract = "".join(f"## {h}\n\n" + "".join(f"{p}\n\n" for p in ps) for h, ps in AGENTS_CONTRACT.items())
     real_agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert not check_agents_contract(contract)
     assert not check_agents_contract(real_agents)
@@ -433,6 +458,13 @@ def self_test():
     assert len(check_agents_contract(contract.replace(AGENTS_PROSE[0], ""))) == 1
     quoted = "> Historical contract:\n>\n" + "".join(f"> {l}\n" for l in contract.splitlines())
     assert check_agents_contract(quoted)                                          # quoted history
+    # rules must stay in their own section: empty headings + rules under "## Historical contract"
+    hollow = ("".join(f"## {h}\n\n" for h in AGENTS_HEADINGS) + "## Historical contract\n\n"
+              + "".join(f"{p}\n\n" for p in AGENTS_PROSE))
+    assert len(check_agents_contract(hollow)) == len(AGENTS_PROSE)
+    assert check_agents_contract(real_agents.replace(  # one rule moved to another section
+        "- Do not merge without owner GO.", "").replace(
+        "## 9. Working loop", "## 9. Working loop\n\nDo not merge without owner GO.\n"))
     assert check_agents_contract("- item\n\n" + "".join(f"  {l}\n" for l in contract.splitlines()))
     assert len(check_agents_contract(  # one rule moved into a historical quote is no longer in force
         contract.replace(AGENTS_PROSE[-1], "> Historical rule: " + AGENTS_PROSE[-1]))) == 1
@@ -477,6 +509,8 @@ def self_test():
     here = Path(__file__).resolve()
     assert check_links("x.md", f"[abs]({here.as_posix()})\n", ROOT)          # absolute, though it exists
     assert check_links("x.md", "[host](/etc/passwd)\n", ROOT)
+    assert check_links("x.md", "[host](file:///etc/passwd)\n", ROOT)
+    assert check_links("x.md", "[host](FILE://server/share/x.md)\n", ROOT)
     with tempfile.TemporaryDirectory() as tmp:
         if sys.platform != "win32":  # on POSIX a checkout can really contain a "C:" directory
             (Path(tmp) / "C:").mkdir()
