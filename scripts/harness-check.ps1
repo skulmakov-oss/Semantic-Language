@@ -123,9 +123,15 @@ function Get-ChangedPaths([string]$base) {
     $paths | ForEach-Object { $_ -split "`0" } | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique -CaseSensitive
 }
 
-# A PR may not authorize its own payload: every changed path except the envelope itself must
-# also fit the BASE (already merged) envelope. A transition therefore lands as its own
-# envelope-only PR under owner review; the newly authorized work follows in a later PR.
+# A PR may not authorize its own payload. A scope change vs the BASE (already merged) envelope
+# (task.id, allowed/forbidden paths, authorization flags) is a transition and must be
+# envelope-only; the newly authorized work follows in a later PR. Updating only bookkeeping
+# (constraints.*, title, summary) is not a transition.
+function Get-ScopeKey($c) {
+    $auth = ($c.authorization.Keys | Sort-Object -CaseSensitive | ForEach-Object { "$_=$($c.authorization[$_])" }) -join ';'
+    "$($c.task.id)|$($c.scope.allowed_paths -join ';')|$($c.scope.forbidden_paths -join ';')|$auth"
+}
+
 function Test-Transition($cfg, [string]$base, [string[]]$paths) {
     $text = & git show "${base}:.harness/current.task.yaml" 2>$null
     if ($LASTEXITCODE -ne 0) { Write-Host "[harness] no envelope at base $base (Harness bootstrap)"; return }
@@ -135,8 +141,8 @@ function Test-Transition($cfg, [string]$base, [string[]]$paths) {
         $old = try { Read-Envelope $tmp } catch { $null }
     } finally { Remove-Item -LiteralPath $tmp }
     if (-not $old) { 'base envelope exists but is unparseable (fail closed)'; return }
-    Get-Violations $old @($paths | Where-Object { $_ -cne '.harness/current.task.yaml' }) |
-        ForEach-Object { "$_ [not authorized by base envelope $($old.task.id)]" }
+    if ((Get-ScopeKey $old) -ceq (Get-ScopeKey $cfg)) { return }
+    Write-Host '[harness] TRANSITION: envelope scope changed (requires owner authorization)'
     $added = @($cfg.scope.allowed_paths | Where-Object { $_ -cnotin $old.scope.allowed_paths })
     $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
     if ($old.task.id -cne $cfg.task.id) {
@@ -144,6 +150,8 @@ function Test-Transition($cfg, [string]$base, [string[]]$paths) {
     }
     foreach ($a in $added) { Write-Host "[harness] TRANSITION: allowed_paths + $a" }
     foreach ($f in $removed) { Write-Host "[harness] TRANSITION: forbidden_paths - $f" }
+    $paths | Where-Object { $_ -cne '.harness/current.task.yaml' } |
+        ForEach-Object { "transition PR must be envelope-only; payload path: $_" }
 }
 
 function Invoke-SelfTest {

@@ -197,8 +197,10 @@ When a task needs different paths or capabilities:
    the owner;
 5. only then make the newly authorized changes, in a later PR.
 
-CI enforces this: in `-BaseRef` mode every changed path except the envelope itself must also fit
-the base (already merged) envelope, so a PR can never authorize its own payload.
+CI enforces this: in `-BaseRef` mode a change to the envelope's scope (task id, allowed/forbidden
+paths, authorization flags) relative to the base envelope fails unless the PR touches nothing
+else, so a PR can never authorize its own payload. Each PR records its exact base in
+`constraints.base_sha`; advancing it is bookkeeping, not a transition.
 
 The Harness is never a mechanism for self-authorization. Bootstrap fact: the PR that introduced
 the Harness (issue #14) added envelope, checker and CI enforcement together under explicit owner
