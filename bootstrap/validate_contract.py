@@ -256,7 +256,12 @@ CONTRACT_DOC = "docs/BOOTSTRAP_CONTRACT.md"
 def normative_text(text):
     """A normative document without its `Status:` line, with line endings and trailing spaces
     normalized. Formatting noise does not change it; any wording change does."""
-    lines = [line.rstrip() for line in text.splitlines() if not line.startswith("Status:")]
+    lines = [line.rstrip() for line in text.splitlines()]
+    # Only the single header Status: line (within the first five lines) is excluded; any other
+    # line starting with Status: is ordinary normative text and stays in the digest.
+    header = next((i for i, line in enumerate(lines[:5]) if line.startswith("Status:")), None)
+    if header is not None:
+        del lines[header]
     return "\n".join(lines).strip()
 
 
@@ -528,6 +533,11 @@ def self_test():
     assert normative_text(doc) == normative_text(doc.replace("\n", " \r\n"))           # formatting only
     status_only = doc.replace("Status: **SHF-0", "Status: **SHF-0 (re-reviewed)", 1)
     assert normative_text(doc) == normative_text(status_only)                          # status line
+    for text, kind in ((doc, "contract"), (subset, "subset")):                         # extra Status:
+        smuggled = text + "\nStatus: byte equality is optional\n"
+        args = (smuggled, doc) if kind == "subset" else (subset, smuggled)
+        errs = check_contract(contract, reference, *args)
+        assert any("frozen value" in e for e in errs), kind
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(authority="docs/spec/other_profile.md"))
     fails("CONTRACT_DRIFT", lambda c: c["subset"].update(registry="docs/OTHER.md"))
     # the C0 reference manifest (verdict, limits, drift, contract paths) is frozen too
