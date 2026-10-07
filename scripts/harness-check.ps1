@@ -15,6 +15,7 @@ Git paths are normalized to '/'. Exit 0 = pass, 1 = any violation or envelope er
 param(
     [string]$BaseRef,
     [switch]$SelfTest,
+    [switch]$RequireEnvelopeBase,  # PR mode: constraints.base_sha must equal -BaseRef
     [string]$TaskFile = (Join-Path $PSScriptRoot '../.harness/current.task.yaml')
 )
 Set-StrictMode -Version Latest
@@ -79,9 +80,9 @@ function Test-Envelope($cfg) {
 }
 
 function Test-PatternSyntax([string]$p) {
-    if ($p -match '\\' -or $p.StartsWith('/') -or $p -match '(^|/)\.\.?(/|$)') { throw "unsupported pattern: '$p'" }
+    if ($p -match '[\\\s#]' -or $p.StartsWith('/') -or $p -match '(^|/)\.\.?(/|$)') { throw "unsupported pattern: '$p'" }
     $body = if ($p.EndsWith('/**')) { $p.Substring(0, $p.Length - 3) }
-            elseif ($p -match '^\*\.[^/*?\[]+$') { '' }
+            elseif ($p -match '^\*\.[A-Za-z0-9._-]+$') { '' }
             else { $p }
     if ($body -match '[*?\[\]{}]') { throw "unsupported pattern: '$p'" }
     return $true
@@ -111,14 +112,39 @@ function Invoke-Git {
 
 function Get-ChangedPaths([string]$base) {
     $paths = @()
-    $paths += Invoke-Git diff --name-only --no-renames --cached
-    $paths += Invoke-Git diff --name-only --no-renames
-    $paths += Invoke-Git ls-files --others --exclude-standard
+    # -z: NUL-separated, never C-quoted, so unusual names are checked verbatim.
+    $paths += Invoke-Git diff -z --name-only --no-renames --cached
+    $paths += Invoke-Git diff -z --name-only --no-renames
+    $paths += Invoke-Git ls-files -z --others --exclude-standard
     if ($base) {
         [void](Invoke-Git rev-parse --verify --quiet "$base^{commit}")
-        $paths += Invoke-Git diff --name-only --no-renames "$base...HEAD"
+        $paths += Invoke-Git diff -z --name-only --no-renames "$base...HEAD"
     }
-    $paths | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique -CaseSensitive
+    $paths | ForEach-Object { $_ -split "`0" } | Where-Object { $_ } | ForEach-Object { $_.Replace('\', '/') } | Sort-Object -Unique -CaseSensitive
+}
+
+# Envelope transition vs the base envelope. Widening allowed_paths or narrowing forbidden_paths
+# under the SAME task.id is a silent self-expansion and fails; a new task.id is a visible,
+# owner-reviewed transition and is reported loudly.
+function Test-Transition($cfg, [string]$base) {
+    $text = & git show "${base}:.harness/current.task.yaml" 2>$null
+    if ($LASTEXITCODE -ne 0) { Write-Host "[harness] no envelope at base $base (Harness bootstrap)"; return }
+    $tmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $tmp -Value $text -Encoding utf8
+        $old = try { Read-Envelope $tmp } catch { $null }
+    } finally { Remove-Item -LiteralPath $tmp }
+    if (-not $old) { Write-Host '[harness] TRANSITION: base envelope unparseable; reviewing new envelope only'; return }
+    $added = @($cfg.scope.allowed_paths | Where-Object { $_ -cnotin $old.scope.allowed_paths })
+    $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
+    if ($old.task.id -cne $cfg.task.id) {
+        Write-Host "[harness] TRANSITION: task $($old.task.id) -> $($cfg.task.id) (requires owner authorization)"
+    }
+    foreach ($a in $added) { Write-Host "[harness] TRANSITION: allowed_paths + $a" }
+    foreach ($f in $removed) { Write-Host "[harness] TRANSITION: forbidden_paths - $f" }
+    if (($added.Count -or $removed.Count) -and $old.task.id -ceq $cfg.task.id) {
+        "envelope widened without a task transition (task.id unchanged: $($cfg.task.id))"
+    }
 }
 
 function Invoke-SelfTest {
@@ -183,6 +209,7 @@ constraints:
         Check-Env 'non-boolean authorization' ($good -replace 'workflow_changes: false', 'workflow_changes: maybe') $false
         Check-Env 'duplicate key' ($good -replace 'mode: active', "mode: active`n  mode: active") $false
         Check-Env 'unsupported glob' ($good -replace '- docs/\*\*', '- docs/*/x') $false
+        Check-Env 'trailing comment on pattern' ($good -replace '- "\*\.sm"', '- *.sm # frozen') $false
         Check-Env 'dot-dot pattern' ($good -replace '- AGENTS.md', '- ../AGENTS.md') $false
         Check-Env 'empty envelope' '' $false
         Remove-Item -LiteralPath $tmp
@@ -209,6 +236,13 @@ try {
     exit 1
 }
 $violations = @(Get-Violations $envelope $paths)
+if ($BaseRef) {
+    $full = "$(& git rev-parse --verify "$BaseRef^{commit}")".Trim()
+    if ($RequireEnvelopeBase -and $envelope.constraints.base_sha -cne $full) {
+        $violations += "constraints.base_sha $($envelope.constraints.base_sha) != PR base $full (stale envelope)"
+    }
+    $violations += @(Test-Transition $envelope $BaseRef)
+}
 foreach ($v in $violations) { Write-Host "[harness:error] $v" }
 if ($violations.Count) { exit 1 }
 & git diff --check
