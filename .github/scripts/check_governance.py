@@ -25,10 +25,19 @@ RETIRED_FILES = ["docs/BOOTSTRAP.md", "docs/HOST_CAPABILITY_ABI.md", ".agents/AG
 LEGACY_EXEMPT = {"docs/LEGACY_PLAN_MIGRATION.md"}
 
 LEGACY_MILESTONE = re.compile(r"\b(?:B[0-8](?:-\d+)?|SH-\d+|IP-?\d+|SRI-\d+|BS-\d{3}|HC-\d{3})\b")
-OFF_CRITICAL_PATH = re.compile(r"instant pipeline|\bSRI\b|vm rewrite|verifier rewrite", re.I)
+# Every track that is explicitly NOT a prerequisite for the first fixed point (AGENTS.md section 3,
+# docs/FUTURE.md). None may appear inside an SHF stage of docs/ROADMAP.md.
+DEFERRED_TRACKS = [
+    r"instant pipeline", r"\bSRI\b", r"vm rewrite", r"verifier rewrite", r"native backend",
+    r"\bPROMETHEUS\b", r"\bUI\b", r"workbench", r"studio", r"#1909", r"full sigma", r"t¤",
+    r"typescript", r"\bSEMIMG\b",
+]
+OFF_CRITICAL_PATH = re.compile("|".join(DEFERRED_TRACKS), re.I)
 ROADMAP_OFF_PATH_HEADING = "## Not on the critical path"
 # Inline link destination: <angle-bracketed> or bare, optionally followed by a "title".
 LINK = re.compile(r"\]\(\s*(?:<([^>]*)>|([^)\s]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+# Reference-style link definition: [label]: <dest> or [label]: dest
+LINK_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(?:<([^>]*)>|(\S+))", re.M)
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REFERENCE_STATUSES = {"planning-reference", "qualified-reference"}
 # Load-bearing anchors of the root operating contract; removing any of them fails the gate.
@@ -96,7 +105,7 @@ def check_agents_contract(text):
 
 def check_links(rel, text, base):
     errors = []
-    for angle, bare in LINK.findall(text):
+    for angle, bare in LINK.findall(text) + LINK_DEF.findall(text):
         target = angle or bare
         if re.match(r"^[a-z]+:", target) or target.startswith("#"):
             continue
@@ -154,6 +163,10 @@ def self_test():
     assert check_roadmap_critical_path("## SHF-0 — x\nneeds the Instant Pipeline\n" + ROADMAP_OFF_PATH_HEADING)
     assert check_roadmap_critical_path(good.replace("## SHF-17 — x\n", ""))
     assert check_roadmap_critical_path("no heading")
+    for term in ["native backend", "PROMETHEUS", "UI", "Workbench", "Studio", "Semantic#1909",
+                 "Full Sigma", "TypeScript", "SEMIMG", "verifier rewrite", "VM rewrite", "SRI"]:
+        bad = good.replace("## SHF-5 — x\n", f"## SHF-5 — x\nrequires {term}\n")
+        assert check_roadmap_critical_path(bad), term
     ok = {"repository": "skulmakov-oss/Semantic", "sha": "a" * 40, "status": "planning-reference",
           "bootstrap": {"upstream_issue": 1910}}
     assert not check_reference(ok)
@@ -179,6 +192,9 @@ def self_test():
     assert check_links("x.md", '[a](missing.md "details")', ROOT)
     assert check_links("x.md", "[a](<missing file.md>)", ROOT)
     assert check_links("x.md", "[a](<missing.md> 'details')", ROOT)
+    assert check_links("x.md", "[contract][c]\n\n[c]: missing.md\n", ROOT)
+    assert check_links("x.md", '[c]: <missing file.md> "t"\n', ROOT)
+    assert not check_links("x.md", "[c]: https://example.com\n[d]: #anchor\n", ROOT)
     assert not check_links("x.md", '[a](check_governance.py "self")', Path(__file__).parent)
     print("self-test: PASS")
 

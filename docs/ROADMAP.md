@@ -236,7 +236,7 @@ no stage may compensate for a missing language contract with bootstrap-only Rust
 - **Deliverable:** fixed-point evidence on representative targets (e.g. Windows x86-64, Linux x86-64, Linux ARM64, macOS ARM64, as CI permits).
 - **Qualification:** identical canonical artifacts, diagnostics, module ordering and collection traversal; verifier-first execution on every target.
 - **Exit condition:** Seal extended with platform evidence.
-- **Non-goals:** native backend; packaging.
+- **Non-goals:** packaging; any track listed in FUTURE.md.
 
 ---
 
