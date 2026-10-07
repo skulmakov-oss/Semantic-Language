@@ -226,7 +226,7 @@ no stage may compensate for a missing language contract with bootstrap-only Rust
 - **Deliverable:** `C2.smc`; comparison under the rule frozen before the run; Bootstrap Seal.
 - **Qualification:** `Canonical(C1.smc) == Canonical(C2.smc)` (prefer byte equality); zero unexplained deltas; both admitted.
 - **Exit condition:** Bootstrap Seal recorded.
-- **Non-goals:** Instant Pipeline or any persistent/incremental machinery.
+- **Non-goals:** persistent or incremental compiler machinery (see FUTURE.md).
 
 ## SHF-17 — Cross-platform Bootstrap Qualification
 
