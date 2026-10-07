@@ -28,6 +28,7 @@ function Read-Envelope([string]$Path) {
     $n = 0
     foreach ($line in Get-Content -LiteralPath $Path -Encoding utf8) {
         $n++
+        if ($line -match '[\x00-\x1f\x7f]') { throw "line ${n}: control character in envelope" }
         if ($line -match '^\s*(#.*)?$') { continue }
         if ($line -match '^([a-z_]+):\s*$') {
             $section = $Matches[1]; $listKey = $null
@@ -150,10 +151,21 @@ function Get-ChangedPaths([string]$base) {
 # (task.id, allowed/forbidden paths, authorization flags) is a transition and must be
 # envelope-only; the newly authorized work follows in a later PR. Updating only bookkeeping
 # (constraints.*, title, summary) is not a transition.
-function Get-ScopeKey($c) {
-    # NUL / U+0001 cannot occur in an envelope line, so this serialization is unambiguous.
-    $auth = ($c.authorization.Keys | Sort-Object -CaseSensitive | ForEach-Object { "$_=$($c.authorization[$_])" }) -join "`0"
-    @($c.task.id, ($c.scope.allowed_paths -join "`0"), ($c.scope.forbidden_paths -join "`0"), $auth) -join "`u{1}"
+function Test-SameList($a, $b) {
+    $a = @($a); $b = @($b)
+    if ($a.Count -ne $b.Count) { return $false }
+    for ($i = 0; $i -lt $a.Count; $i++) { if ($a[$i] -cne $b[$i]) { return $false } }
+    return $true
+}
+
+function Test-SameScope($x, $y) {
+    $kx = @($x.authorization.Keys | Sort-Object -CaseSensitive)
+    $ky = @($y.authorization.Keys | Sort-Object -CaseSensitive)
+    return ($x.task.id -ceq $y.task.id) -and
+        (Test-SameList $x.scope.allowed_paths $y.scope.allowed_paths) -and
+        (Test-SameList $x.scope.forbidden_paths $y.scope.forbidden_paths) -and
+        (Test-SameList $kx $ky) -and
+        (Test-SameList @($kx | ForEach-Object { $x.authorization[$_] }) @($ky | ForEach-Object { $y.authorization[$_] }))
 }
 
 function Test-Transition($cfg, [string]$base, [string[]]$paths) {
@@ -165,7 +177,7 @@ function Test-Transition($cfg, [string]$base, [string[]]$paths) {
         $old = try { Read-Envelope $tmp } catch { $null }
     } finally { Remove-Item -LiteralPath $tmp }
     if (-not $old) { 'base envelope exists but is unparseable (fail closed)'; return }
-    if ((Get-ScopeKey $old) -ceq (Get-ScopeKey $cfg)) { return }
+    if (Test-SameScope $old $cfg) { return }
     Write-Host '[harness] TRANSITION: envelope scope changed (requires owner authorization)'
     $added = @($cfg.scope.allowed_paths | Where-Object { $_ -cnotin $old.scope.allowed_paths })
     $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
@@ -204,7 +216,7 @@ constraints:
   base_sha: 0123456789abcdef0123456789abcdef01234567
 '@
     $tmp = New-TemporaryFile
-    $failures = 0
+    $script:failures = 0
     function Check-Env([string]$name, [string]$text, [bool]$ok) {
         Set-Content -LiteralPath $tmp -Value $text -Encoding utf8
         $got = try { [void](Read-Envelope $tmp); $true } catch { $false }
@@ -229,7 +241,7 @@ constraints:
         )
         foreach ($c in $cases) {
             $ok = -not @(Get-Violations $e @($c[0])).Count
-            if ($ok -ne $c[1]) { Write-Host "[selftest:FAIL] $($c[2]): $($c[0])"; $failures++ } else { Write-Host "[selftest] ok: $($c[2])" }
+            if ($ok -ne $c[1]) { Write-Host "[selftest:FAIL] $($c[2]): $($c[0])"; $script:failures++ } else { Write-Host "[selftest] ok: $($c[2])" }
         }
         Check-Env 'missing allowed_paths' ($good -replace '(?ms)  allowed_paths:.*?(?=  forbidden_paths:)', '') $false
         Check-Env 'empty allowed_paths' ($good -replace '(?m)^    - (AGENTS\.md|scripts/\*\*|docs/\*\*)\r?\n', '') $false
@@ -243,15 +255,16 @@ constraints:
         Check-Env 'duplicate key' ($good -replace 'mode: active', "mode: active`n  mode: active") $false
         Check-Env 'unsupported glob' ($good -replace '- docs/\*\*', '- docs/*/x') $false
         Check-Env 'trailing comment on pattern' ($good -replace '- "\*\.sm"', '- *.sm # frozen') $false
+        Check-Env 'control character in envelope' ($good -replace 'docs/\*\*', "scripts/a`0docs/**") $false
         Check-Env 'dot-dot pattern' ($good -replace '- AGENTS.md', '- ../AGENTS.md') $false
         Check-Env 'empty envelope' '' $false
         Remove-Item -LiteralPath $tmp
         $got = try { [void](Read-Envelope $tmp); $true } catch { $false }
-        if ($got) { Write-Host '[selftest:FAIL] absent envelope'; $failures++ } else { Write-Host '[selftest] ok: absent envelope' }
+        if ($got) { Write-Host '[selftest:FAIL] absent envelope'; $script:failures++ } else { Write-Host '[selftest] ok: absent envelope' }
     } finally {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp }
     }
-    if ($failures) { Write-Host "[harness:selftest] $failures failure(s)"; exit 1 }
+    if ($script:failures) { Write-Host "[harness:selftest] $script:failures failure(s)"; exit 1 }
     Write-Host '[harness:selftest] ok'
     exit 0
 }
