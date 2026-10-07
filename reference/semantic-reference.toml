@@ -1,0 +1,35 @@
+# Semantic reference pin for the Semantic-Language bootstrap.
+#
+# status = "planning-reference": this SHA is the audited planning reference for the SHF
+# architecture. It is NOT a qualified bootstrap oracle. Qualification evidence must name its
+# own exact SHA. Floating main is never a qualification oracle. Changing this pin requires an
+# explicit drift analysis (commits between old and new SHA, invalidated evidence).
+
+repository = "skulmakov-oss/Semantic"
+sha = "5f3e230223a35384cb505e418fdac0b07102d2e6"
+status = "planning-reference"
+audited = "2026-10-07"
+
+[bootstrap]
+upstream_issue = 1910
+deferred_successor_issue = 1909
+
+# Paths verified to exist at the pinned SHA. They identify where upstream contracts live;
+# no contract version is claimed beyond the SHA itself.
+[contracts]
+constraints = "CONSTRAINTS.md"
+spec_index = "docs/spec/index.md"
+semcode_spec = "docs/spec/semcode.md"
+verifier_spec = "docs/spec/verifier.md"
+vm_spec = "docs/spec/vm.md"
+ir_spec = "docs/spec/ir.md"
+syntax_spec = "docs/spec/syntax.md"
+types_spec = "docs/spec/types.md"
+modules_spec = "docs/spec/modules.md"
+diagnostics_spec = "docs/spec/diagnostics.md"
+capabilities_spec = "docs/spec/capabilities.md"
+quad_logic_spec = "docs/spec/quad_logic_frame_v1.md"
+semcode_format_crate = "crates/sm-format"
+emitter_crate = "crates/sm-emit"
+verifier_crate = "crates/sm-verify"
+vm_crate = "crates/sm-vm"

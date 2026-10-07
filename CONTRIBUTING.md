@@ -6,12 +6,13 @@ This repository is a bootstrap and self-hosting project. Changes are evaluated f
 
 For every non-trivial bootstrap change, identify:
 
-1. the reference contract being mirrored;
-2. its current owner in `skulmakov-oss/Semantic`;
-3. the observable input/output boundary;
-4. known upstream issues that can invalidate the slice;
-5. the intended differential comparison;
-6. the exact claim the completed slice will prove.
+1. the SHF stage it belongs to ([docs/ROADMAP.md](docs/ROADMAP.md)) and its owner repository ([docs/OWNERSHIP.md](docs/OWNERSHIP.md));
+2. the reference contract being mirrored;
+3. its current owner in `skulmakov-oss/Semantic`;
+4. the observable input/output boundary;
+5. known upstream issues that can invalidate the slice;
+6. the intended differential comparison;
+7. the exact claim the completed slice will prove.
 
 If any of these are unknown and materially affect semantics, investigate before widening implementation scope.
 
@@ -21,7 +22,7 @@ Prefer narrow PRs that contain one migration or qualification unit.
 
 A good bootstrap PR explains:
 
-- **Reference point** — upstream commit/ref and contract owner;
+- **Reference point** — upstream exact SHA (never floating `main`) and contract owner;
 - **Purpose** — what is being mirrored or qualified;
 - **Scope** — what is deliberately not included;
 - **Equivalence rule** — how Rust/reference and Semantic/bootstrap outputs are compared;
@@ -57,7 +58,7 @@ If a migration exposes a flaw or desirable language change, handle it as an expl
 
 ## Qualification principle
 
-Prefer exactness over convenience.
+Prefer exactness over convenience. The full discipline is in [docs/QUALIFICATION.md](docs/QUALIFICATION.md).
 
 Where byte identity is the contract, compare bytes. Where structured identity is the contract, compare normalized structure. Do not replace a strong comparison with a weaker smoke test simply to get green CI.
 

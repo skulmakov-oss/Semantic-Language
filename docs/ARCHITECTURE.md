@@ -1,87 +1,99 @@
 # Semantic Bootstrap Architecture
 
-Status: bootstrap baseline
+Status: canonical architecture (SHF reset)
 
 ## 1. Purpose
 
-`Semantic-Language` exists to move Semantic from a Rust-hosted implementation toward progressive self-hosting without performing a risky whole-system rewrite.
+`Semantic-Language` exists to produce and qualify a compiler written substantially in Semantic
+until it reaches the C0 → C1 → C2 fixed point defined in
+[BOOTSTRAP_CONTRACT.md](./BOOTSTRAP_CONTRACT.md).
 
-The canonical reference implementation remains:
+Upstream architectural authority: `skulmakov-oss/Semantic#1910`.
 
-- `skulmakov-oss/Semantic`
-
-This repository is initially a **shadow implementation**. It becomes canonical only through explicit, evidenced migration milestones.
-
-## 2. System relationship
+## 2. Two-repository architecture
 
 ```text
-                REFERENCE ERA
-
-      Semantic source / contracts
-                  │
-                  ▼
-        Semantic (Rust-hosted)
-                  │
-                  │ oracle
-                  ▼
-        Semantic-Language bootstrap
-                  │
-                  ▼
-         differential qualification
-                  │
-                  ▼
-            migrated modules
-
-                SELF-HOSTED ERA
-
-         Semantic source
-              │
-              ▼
-     Semantic compiler in Semantic
-              │
-              ▼
-           SemCode
-              │
-              ▼
-      verifier / runtime boundary
+              skulmakov-oss/Semantic
+              ----------------------
+                Rust reference C0
+                language authority
+                SemCode authority
+                sm-verify
+                sm-vm
+                PROMETHEUS
+                     |
+                     v
+            skulmakov-oss/Semantic-Language
+            -------------------------------
+             compiler source S in Semantic
+                     |
+                 C0(S)
+                     v
+                   C1.smc
+                     |
+                 C1(S)
+                     v
+                   C2.smc
+                     |
+                     v
+         Canonical(C1) == Canonical(C2)
+                     |
+                     v
+                Bootstrap Seal
 ```
 
-## 3. Architectural ownership
+The reference is always identified as `skulmakov-oss/Semantic` + exact Git SHA, recorded in
+[`reference/semantic-reference.toml`](../reference/semantic-reference.toml). A local checkout
+or floating `main` is never the oracle by itself.
 
-### Reference repository owns, until migrated
+## 3. Compiler ownership boundary
 
-- current language semantics;
-- current source grammar and type rules;
-- current IR and SemCode behavior;
-- verifier admission behavior;
-- VM/runtime observable behavior;
-- authoritative compatibility decisions.
+`Semantic-Language` owns compiler work expressed in Semantic: lexer, parser, AST, name
+resolution, typechecking, IR, lowering, SemCode construction, compiler diagnostics, and the
+bootstrap qualification that proves them.
 
-### Bootstrap repository owns
+`Semantic` owns the language and runtime contracts the compiler is written in and compiles to.
+When `S` needs a capability that Semantic does not provide (compiler-grade text, bytes,
+integer/bit completeness, deterministic collections, executable generics, module semantics,
+binary I/O), that capability is added upstream first and qualified there. It is never smuggled
+into bootstrap-only Rust glue. See [OWNERSHIP.md](./OWNERSHIP.md).
 
-- self-hosting migration structure;
-- Semantic implementations of migrated modules;
-- differential adapters and comparison formats;
-- bootstrap qualification gates;
-- evidence that a migrated module is equivalent to its reference contract;
-- explicit records of migration/freeze decisions.
+## 4. Host / runtime boundary
 
-## 4. Non-goals
+The host performs mechanics; Semantic performs compiler meaning. The host may move declared
+bytes, expose declared capabilities and run the existing verifier/VM. It may not tokenize,
+parse, bind, typecheck, lower, select opcodes or construct compiler output. See
+[HOST_BOUNDARY.md](./HOST_BOUNDARY.md).
 
-Bootstrap does **not** require:
+## 5. SemCode boundary
 
-- closing every issue in the reference repository;
-- replacing Rust all at once;
-- reproducing the native Semantic UI stack;
-- moving Workbench into the language implementation;
-- inventing a second SemCode format;
-- changing semantics merely to make bootstrap easier.
+The SemCode format contract remains upstream (`sm-format` / `sm-emit` ownership in the
+reference). SHF-9 builds a Semantic-owned model and canonical encoder **for that same
+contract**; it does not define a second format. Once Semantic claims emission ownership, Rust
+must not choose opcode sequences, layout or sections on its behalf.
 
-UI is outside the bootstrap-critical path. External UI technologies may consume Semantic through stable host/ABI/IPC boundaries independently of language self-hosting.
+## 6. Verifier boundary
 
-## 5. Module migration state
+`sm-verify` remains the Rust admission authority. Every C1 and C2 artifact is admitted through
+it. Fixed-point equality does not substitute for admission, and raw (unverified) execution is
+never a successful qualification path.
 
-Each module has one of five states:
+## 7. VM boundary
+
+`sm-vm` remains the Rust execution authority. The first fixed point runs on the existing
+admitted runtime. A Semantic VM is not part of the self-hosting critical path.
+
+## 8. C0 / C1 / C2 path
+
+1. C0 (reference compiler at the pinned SHA) compiles `S` to `C1.smc`.
+2. `C1.smc` is admitted by `sm-verify` and executed by `sm-vm` to compile `S` to `C2.smc`.
+3. `C2.smc` is admitted by `sm-verify` (it is not executed as part of the proof).
+4. `Canonical(C1.smc)` and `Canonical(C2.smc)` are compared under the frozen rule.
+5. On success with zero unexplained deltas, a Bootstrap Seal is recorded.
+
+## 9. Migration state model
+
+Each bootstrap unit has exactly one state:
 
 ```text
 REFERENCE_ONLY
@@ -95,110 +107,22 @@ QUALIFIED
 CANONICAL
 ```
 
-### REFERENCE_ONLY
+- **REFERENCE_ONLY** — only the Rust reference is trusted.
+- **MIRRORED** — a Semantic implementation exists; equivalence is not proven.
+- **DIFFERENTIAL** — both run against a shared corpus; differences are recorded deterministically.
+- **QUALIFIED** — the unit satisfies its qualification matrix in
+  [QUALIFICATION.md](./QUALIFICATION.md).
+- **CANONICAL** — ownership has been explicitly transferred.
 
-Only the Rust-hosted implementation is trusted.
+## 10. Ownership transfer rule
 
-### MIRRORED
+`CANONICAL` is never reached automatically by tests. It requires an explicit, recorded
+ownership-transfer decision by the repository owner. A unit may remain `QUALIFIED` indefinitely
+while the Rust reference stays canonical. Rust removal is not a success criterion; proven
+Semantic ownership is.
 
-A Semantic implementation exists, but equivalence is not yet proven.
+## 11. Non-goals
 
-### DIFFERENTIAL
-
-Both implementations run against a shared corpus and differences are recorded deterministically.
-
-### QUALIFIED
-
-The bootstrap implementation satisfies the declared qualification matrix for its frozen contract.
-
-### CANONICAL
-
-An explicit migration decision transfers ownership to this repository/module. This transition is never implicit.
-
-## 6. Bootstrap blocking rule
-
-An upstream issue blocks a bootstrap slice only when it may change one of:
-
-1. Semantic meaning;
-2. the migrated module's observable public contract;
-3. serialized/wire representation consumed or produced by the module;
-4. deterministic observable behavior used by qualification.
-
-A blocker is **slice-local** unless evidence shows it invalidates a wider dependency.
-
-## 7. Differential architecture
-
-Preferred comparison shape:
-
-```text
-                 canonical input
-                      │
-             ┌────────┴────────┐
-             ▼                 ▼
-       Rust reference     Semantic mirror
-             │                 │
-             ▼                 ▼
-       canonical output   canonical output
-             │                 │
-             └────────┬────────┘
-                      ▼
-                  comparator
-                      │
-             equal / explained delta
-```
-
-Comparison should use the narrowest stable observable representation available:
-
-- tokens for lexer slices;
-- normalized AST for parser slices;
-- diagnostics/type facts for semantic slices;
-- canonical IR for lowering slices;
-- byte-for-byte output where SemCode identity is part of the contract;
-- verifier accept/reject diagnostics for admission slices;
-- deterministic value/trace results for runtime slices.
-
-## 8. Dependency rule
-
-Bootstrap follows dependency direction. A module must not smuggle a later-layer authority into an earlier slice simply to get tests green.
-
-Target direction:
-
-```text
-foundation
-   ↓
-lexical
-   ↓
-parser / AST
-   ↓
-semantic analysis
-   ↓
-IR / lowering
-   ↓
-SemCode emission
-   ↓
-verification
-   ↓
-runtime / VM
-```
-
-The actual sequence may skip ahead where contracts are independent and stable, but dependency inversions require an explicit architecture decision.
-
-## 9. Rust transition model
-
-Rust changes role over time:
-
-```text
-Stage 0  canonical implementation
-Stage 1  canonical implementation + oracle
-Stage 2  oracle + bootstrap host
-Stage 3  compatibility/reference Foundation
-Stage 4  historical Foundation
-```
-
-Rust removal is not itself a success criterion. Proven Semantic ownership is.
-
-## 10. Definition of self-hosting
-
-Semantic may be called self-hosted only after an explicit qualification milestone demonstrates that a sufficiently complete compiler toolchain written substantially in Semantic can process the source needed to reproduce that toolchain under the admitted runtime boundary.
-
-A UI implementation is not part of this definition.
+The first fixed point does not require: rewriting `sm-verify`, `sm-vm`, PROMETHEUS or a native
+backend; UI, Workbench or Studio; Instant Pipeline or SRI work; `Semantic#1909` Native
+Reasoning. These are listed in [FUTURE.md](./FUTURE.md).
