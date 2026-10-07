@@ -2,29 +2,27 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: BOOTSTRAP-HARNESS-INTEGRATION
-  title: "Introduce fail-closed per-task Harness scope enforcement"
-  type: governance_infrastructure
+  id: SHF-1-UPSTREAM-DEPENDENCY
+  title: "Hold Semantic-Language fail-closed while SHF-1 capability is delivered upstream"
+  type: dependency_wait
   mode: active
-  authorized_by: "Repository owner explicit GO 'OWNER GO - BOOTSTRAP HARNESS INTEGRATION' (2026-10-07), issue #14; trust-root extension 'OWNER AUTHORIZATION - CLOSE HARNESS TRUST-ROOT P1' (2026-10-07)"
+  supersedes: BOOTSTRAP-HARNESS-INTEGRATION
+  authorized_by: "Repository owner explicit GO - FIRST TRUSTED HARNESS RUN / SHF-1 UPSTREAM DEPENDENCY (2026-10-08)"
 
 intent:
-  summary: "Install the Harness envelope, checker and CI enforcement. No compiler or language implementation."
+  summary: "Keep Semantic-Language fail-closed while compiler-grade UTF-8 text capability remains upstream work in skulmakov-oss/Semantic. No local SHF-1B implementation is authorized."
 
 scope:
   allowed_paths:
     - .harness/current.task.yaml
-    - scripts/harness-check.ps1
-    - .github/workflows/governance.yml
-    - .github/workflows/harness-trusted.yml
-    - AGENTS.md
-    - CONTRIBUTING.md
   forbidden_paths:
-    - bootstrap/**
     - compiler/**
+    - bootstrap/**
     - reference/**
     - tests/**
     - docs/**
+    - scripts/**
+    - .github/**
     - "*.sm"
 
 authorization:
@@ -32,9 +30,9 @@ authorization:
   language_implementation: false
   compiler_implementation: false
   documentation_addition: false
-  documentation_correction: true
+  documentation_correction: false
   test_addition: false
-  workflow_changes: true
+  workflow_changes: false
   dependency_changes: false
   github_issue_lifecycle: true
   git_commit_push_pr: true
@@ -42,9 +40,9 @@ authorization:
   stable_promotion: false
 
 constraints:
-  issue: 14
+  issue: 13
   base_branch: main
-  base_sha: bc3e21e317c059df6ca9391862445b69161869ae
+  base_sha: 93f575685bb036e374d229572def6454dd852a57
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
