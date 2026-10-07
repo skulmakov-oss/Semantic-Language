@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "f5384570ad2c3d55e9199e3c83db906d0bfa60825c0972d572be2b0fe50fe41c"}
+FROZEN_DIGESTS = {PROTOCOL: "31e7d086988abf2d51c5477ad7e8746220ad1efb97ceab9e2161a558b3a3fa82"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -122,10 +122,14 @@ def load_source_set(repo, manifest, root):
     if errors:
         return None, errors
     entries = []
+    real_root = (repo / root).resolve()
     for p in files:
         f = repo / p
-        if not f.is_file() or f.is_symlink():
-            errors.append(f"SOURCE_SET_INVALID: {p}: missing or not a regular file")
+        # No symlink anywhere on the path, and the bytes must physically live under the root.
+        chain = [repo.joinpath(*p.split("/")[:i]) for i in range(1, len(p.split("/")) + 1)]
+        if any(c.is_symlink() for c in chain) or not f.is_file() \
+                or real_root not in f.resolve().parents:
+            errors.append(f"SOURCE_SET_INVALID: {p}: missing, symlinked or not a regular file under root")
             continue
         data = f.read_bytes()
         errors += check_content(p, data)
@@ -182,11 +186,18 @@ def check_capabilities(contract):
     return errors
 
 
-def frozen_digest(contract):
-    """sha256 of the canonical form of every frozen contract value. [subset] is excluded: it
-    grows as constructions are admitted and is checked through the registry linkage instead."""
-    frozen = {k: v for k, v in contract.items() if k != "subset"}
-    canonical = json.dumps(frozen, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+SUBSET_STATE_FIELDS = ("admitted", "candidate", "frozen")  # evolve via the registry linkage
+
+
+def frozen_digest(contract, reference):
+    """sha256 of the canonical form of every frozen value: the whole contract (except the
+    evolving [subset] state lists) together with the whole C0 reference manifest (verdict,
+    limits, drift, contract paths)."""
+    frozen = copy.deepcopy(contract)
+    for field in SUBSET_STATE_FIELDS:
+        frozen.get("subset", {}).pop(field, None)
+    canonical = json.dumps({"contract": frozen, "reference": reference},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -194,7 +205,7 @@ def check_contract(contract, reference, subset_text):
     errors = []
     if contract.get("protocol") != PROTOCOL:
         errors.append(f"CONTRACT_DRIFT: protocol must be {PROTOCOL!r}")
-    elif frozen_digest(contract) != FROZEN_DIGESTS[PROTOCOL]:
+    elif frozen_digest(contract, reference) != FROZEN_DIGESTS[PROTOCOL]:
         errors.append(f"CONTRACT_DRIFT: a frozen value of {PROTOCOL} changed; a contract change needs "
                       "a new protocol identifier and a recorded revision")
     errors += check_c0(contract, reference)
@@ -319,7 +330,16 @@ def self_test():
     fails("CONTRACT_DRIFT", lambda c: c["capabilities"]["artifact_write"].update(available_at_c0=True))
     for name in REQUIRED_FAILURES:  # no failure class may allow qualification to continue
         fails("CONTRACT_DRIFT", lambda c, n=name: c["failures"][n].update({"continue": True}))
-    assert not mutated(lambda c: c["subset"].update(frozen=[])), "subset is not digest-frozen"
+    # only the evolving subset state lists sit outside the digest; its authority does not
+    assert not [e for e in mutated(lambda c: c["subset"]["candidate"].remove("BSF-106"))
+                if "frozen value" in e]
+    fails("CONTRACT_DRIFT", lambda c: c["subset"].update(authority="docs/spec/other_profile.md"))
+    fails("CONTRACT_DRIFT", lambda c: c["subset"].update(registry="docs/OTHER.md"))
+    # the C0 reference manifest (verdict, limits, drift, contract paths) is frozen too
+    fails("CONTRACT_DRIFT", lambda r: r["qualification"].update(verdict="NOT QUALIFIED"), ref=True)
+    fails("CONTRACT_DRIFT", lambda r: r["qualification"]["limits"].pop(), ref=True)
+    fails("CONTRACT_DRIFT", lambda r: r["drift"].update(inherits_qualification=True), ref=True)
+    fails("CONTRACT_DRIFT", lambda r: r["contracts"].update(semcode_spec="docs/x.md"), ref=True)
 
     # source-set paths
     good = ["compiler/a.sm", "compiler/b/c.sm"]
@@ -361,6 +381,25 @@ def self_test():
         assert load_source_set(repo, man, "compiler")[1]
         assert load_source_set(repo, {**man, "files": ["compiler/missing.sm"]}, "compiler")[1]
         assert load_source_set(repo, {**man, "protocol": "v0"}, "compiler")[1]
+
+    # a symlinked root or ancestor must not let bytes come from outside the declared root
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, outside = Path(tmp) / "repo", Path(tmp) / "outside"
+        repo.mkdir()
+        outside.mkdir()
+        (outside / "x.sm").write_bytes(b"fn x() {}\n")
+        man = {"protocol": SOURCE_PROTOCOL, "root": "compiler", "files": ["compiler/x.sm"]}
+        try:
+            (repo / "compiler").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pass  # symlink creation needs privileges on some Windows hosts; CI runs on POSIX
+        else:
+            assert load_source_set(repo, man, "compiler")[1]
+            (repo / "compiler").unlink()
+            (repo / "compiler" / "sub").mkdir(parents=True)
+            (repo / "compiler" / "sub" / "link").symlink_to(outside, target_is_directory=True)
+            nested = {**man, "files": ["compiler/sub/link/x.sm"]}
+            assert load_source_set(repo, nested, "compiler")[1]
 
     # evidence binding
     record = {f: "x" for f in contract["evidence"]["required_fields"]}
