@@ -89,7 +89,7 @@ Evidence forms (used by the columns below): **T** tokens + spans, **A** normaliz
 ### Candidates (capability gaps owned upstream)
 
 A candidate must not be required by any qualification path until upstream delivers it in its
-SHF stage and this registry admits it with authority at a newly qualified C0.
+SHF capability stage (SHF-1 … SHF-9) and this registry admits it with authority at a newly qualified C0.
 
 | ID | Construction | State | Gap at C0 | Owner / stage |
 |---|---|---|---|---|

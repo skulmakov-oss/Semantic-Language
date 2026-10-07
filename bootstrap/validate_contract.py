@@ -26,7 +26,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "bc9cffd3fcb1ff5b611caee2b87c5d3324cc2cbfb7da060b9e000b47b83747d5"}
+FROZEN_DIGESTS = {PROTOCOL: "b7a3e0495ef1d028f95dbd5b05480b22c27406267106dd18af058c733aeb7136"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -67,13 +67,17 @@ def registry_rows(subset_text):
     return rows
 
 
-def valid_stages(cell):
-    """The whole cell is SHF-n or SHF-a..b with 0 <= a <= b <= 17."""
+ADMITTED_STAGES = (10, 14)   # compiler stages whose evidence an admitted entry affects (§4)
+CANDIDATE_STAGES = (1, 9)    # upstream capability stages that close a candidate gap
+
+
+def valid_stages(cell, bounds):
+    """The whole cell is SHF-n or SHF-a..b with bounds[0] <= a <= b <= bounds[1]."""
     m = SHF_RANGE.fullmatch(cell.strip())
     if not m:
         return False
     lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
-    return 0 <= lo <= hi <= 17
+    return bounds[0] <= lo <= hi <= bounds[1]
 
 
 def check_registry(subset_text):
@@ -97,14 +101,14 @@ def check_registry(subset_text):
             halves = [h.strip().lower() for h in cells[4].split(" / ")] if len(cells) > 4 else []
             if len(cells) != 6 or len(filled) != 6 or len(halves) != 2 \
                     or any(h in EMPTY_CELL for h in halves) \
-                    or not valid_stages(cells[5]):
+                    or not valid_stages(cells[5], ADMITTED_STAGES):
                 errors.append(f"CONTRACT_DRIFT: {state} registry row {bsf} is incomplete "
                               "(needs compiler use, positive / negative evidence and SHF stages)")
         elif state == "CANDIDATE":
             owner, _, stage = cells[4].rpartition(" / ") if len(cells) == 5 else ("", "", "")
             # candidates are capability gaps owned upstream: the owner is exactly that repository
             if len(cells) != 5 or len(filled) != 5 or owner.strip() not in (REPOSITORY, f"`{REPOSITORY}`") \
-                    or not valid_stages(stage):
+                    or not valid_stages(stage, CANDIDATE_STAGES):
                 errors.append(f"CONTRACT_DRIFT: CANDIDATE registry row {bsf} needs a gap and an owner / SHF stage")
         else:
             errors.append(f"CONTRACT_DRIFT: registry row {bsf} has unknown state {state!r}")
@@ -560,7 +564,11 @@ def self_test():
     for stage in ("SHF-99", "junk SHF-10 junk", "SHF-14..10", "SHF-10..18", "SHF-"):
         assert check_registry(with_row(f"| BSF-999 | x | ADMITTED | use | a / b | {stage} |"))[1], stage
         assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | owner / {stage} |"))[1], stage
-    assert not check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-17 |"))[1]
+    assert not check_registry(with_row("| BSF-999 | x | CANDIDATE | gap | `skulmakov-oss/Semantic` / SHF-9 |"))[1]
+    for stage in ("SHF-1", "SHF-17", "SHF-9..10", "SHF-15"):                    # outside SHF-10..14
+        assert check_registry(with_row(f"| BSF-999 | x | ADMITTED | use | a / b | {stage} |"))[1], stage
+    for stage in ("SHF-0", "SHF-10", "SHF-17"):                                 # outside SHF-1..9
+        assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | `skulmakov-oss/Semantic` / {stage} |"))[1], stage
     for owner in ("—", "tbd", "n/a", "someone/Semantic",                         # placeholder / wrong owner
                   "`skulmakov-oss/Semantic", "skulmakov-oss/Semantic`", "``skulmakov-oss/Semantic``"):
         assert check_registry(with_row(f"| BSF-999 | x | CANDIDATE | gap | {owner} / SHF-1 |"))[1], owner
