@@ -151,8 +151,9 @@ function Get-ChangedPaths([string]$base) {
 # envelope-only; the newly authorized work follows in a later PR. Updating only bookkeeping
 # (constraints.*, title, summary) is not a transition.
 function Get-ScopeKey($c) {
-    $auth = ($c.authorization.Keys | Sort-Object -CaseSensitive | ForEach-Object { "$_=$($c.authorization[$_])" }) -join ';'
-    "$($c.task.id)|$($c.scope.allowed_paths -join ';')|$($c.scope.forbidden_paths -join ';')|$auth"
+    # NUL / U+0001 cannot occur in an envelope line, so this serialization is unambiguous.
+    $auth = ($c.authorization.Keys | Sort-Object -CaseSensitive | ForEach-Object { "$_=$($c.authorization[$_])" }) -join "`0"
+    @($c.task.id, ($c.scope.allowed_paths -join "`0"), ($c.scope.forbidden_paths -join "`0"), $auth) -join "`u{1}"
 }
 
 function Test-Transition($cfg, [string]$base, [string[]]$paths) {
