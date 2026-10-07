@@ -52,6 +52,11 @@ DEFERRED_TRACKS = [
     # FUTURE.md "Verifier or VM in Semantic": implementing either component in Semantic
     r"\b(?:semantic|self-hosted)\s+(?:vm|verifier)\b",
     r"\b(?:vm|verifier|sm-vm|sm-verify)\s+(?:(?:written|implemented|reimplemented)\s+)?(?:in|into|to)\s+semantic\b",
+    # explicit replacement or a new implementation of the component
+    r"\breplac\w*\s+(?:the\s+)?(?:existing\s+)?(?:sm-vm|sm-verify|vm|verifier)\b",
+    r"\b(?:sm-vm|sm-verify|vm|verifier)\s+replacement\b",
+    r"\bnew\s+(?:sm-vm|sm-verify|vm|verifier)\s+implementation\b",
+    r"\bnew\s+implementation\s+of\s+(?:the\s+)?(?:sm-vm|sm-verify|vm|verifier)\b",
     # (a bare "implement/build sm-vm …" is NOT matched: integrating the existing VM/verifier,
     #  e.g. "implement sm-vm invocation", is required first-self-hosting work)
 ]
@@ -241,9 +246,11 @@ def rendered_blocks(text):
             if opener.level != 0:
                 continue  # only top-level document headings define contract sections
             kind = "heading"
-            if opener.tag == "h2":
+            if opener.tag == "h1":
+                section = None  # a new top-level document part ends every ## section
+            elif opener.tag == "h2":
                 section = rendered_text(t)
-            elif opener.tag != "h1" and section is not None:
+            elif section is not None:
                 # Anything under a subsection (e.g. "### Historical rules") is no longer the
                 # section's own operative body; required sentences must sit directly under ##.
                 section = f"{section} / {rendered_text(t)}"
@@ -412,7 +419,9 @@ def self_test():
     for wording in ["rewrite sm-vm in Semantic", "rewrite sm-verify in Semantic",
                     "rewriting the verifier", "sm-vm rewrite", "Rewrite the VM",
                     "implement sm-vm in Semantic", "create a Semantic VM", "port sm-verify to Semantic",
-                    "a verifier written in Semantic", "self-hosted VM", "reimplement the VM in Semantic"]:
+                    "a verifier written in Semantic", "self-hosted VM", "reimplement the VM in Semantic",
+                    "replace sm-vm with a new implementation", "create a new sm-verify implementation",
+                    "a new implementation of the verifier", "VM replacement"]:
         assert check_roadmap_critical_path(stage(f"- **Deliverable:** {wording}")), wording
     assert not check_roadmap_critical_path(stage("- **Deliverable:** artifact admitted by `sm-verify`"))
     # integrating the EXISTING verifier/VM is first-self-hosting work, not a rewrite
@@ -474,6 +483,8 @@ def self_test():
     # a rule kept only under a subsection of its own section is no longer the section's rule
     assert check_agents_contract(real_agents.replace("- Do not merge without owner GO.", "") +
                                  "\n### Historical rules\n\nDo not merge without owner GO.\n")
+    assert check_agents_contract(real_agents.replace("- Do not merge without owner GO.", "") +
+                                 "\n# Historical appendix\n\nDo not merge without owner GO.\n")
     assert check_agents_contract(real_agents.replace(  # one rule moved to another section
         "- Do not merge without owner GO.", "").replace(
         "## 9. Working loop", "## 9. Working loop\n\nDo not merge without owner GO.\n"))
