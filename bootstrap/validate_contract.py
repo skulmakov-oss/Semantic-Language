@@ -25,7 +25,7 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL = "shf0-bootstrap-contract-v1"
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "a74c545eeb41363e08196b5af1484a0f34ade9147211999996152b4b5688a5ea"}
+FROZEN_DIGESTS = {PROTOCOL: "d3f4c5cfb2bb8f7e1ec7b189e13e1234d907c4971f4512ab772b51dcee405dc5"}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
@@ -347,11 +347,9 @@ def check_contract(contract, reference, subset_text, contract_doc):
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
-def check_evidence(contract, reference, record, source_set_identity):
-    """A record supports the Bootstrap Seal only if it is bound to this exact contract AND
-    records an admitted C1 and C2 whose comparison held, for the CURRENT S, on a qualified C0
-    platform, with the pinned verifier/runtime and the Seal provenance of §7.
-    `source_set_identity` is required and must equal the record's."""
+def check_record(contract, reference, record, source_set_identity):
+    """Value checks of one evidence record against an ALREADY VALIDATED contract and the
+    current S identity. Internal: callers use check_evidence(repo, record)."""
     ev = contract["evidence"]
     errors = [f"CONTRACT_DRIFT: evidence field {f!r} missing"
               for f in ev["required_fields"] if f not in record]
@@ -423,6 +421,19 @@ def check_evidence(contract, reference, record, source_set_identity):
     if record.get("c0_identity") != f"{contract['c0']['repository']}@{contract['c0']['sha']}":
         errors.append("CONTRACT_DRIFT: evidence bound to a different C0")
     return errors
+
+
+def check_evidence(repo, record):
+    """The only public evidence gate. It loads the canonical contract, reference manifest,
+    registry and source set from `repo`, requires that they validate (no CONTRACT_DRIFT etc.)
+    and computes the current S identity itself, so a caller cannot supply a modified contract
+    or a stale identity. Returns errors; empty means the record supports the Bootstrap Seal."""
+    identity, errors = validate(repo)
+    if errors:
+        return ["CONTRACT_DRIFT: canonical contract does not validate; evidence cannot be accepted"] + errors
+    contract = tomllib.loads((repo / CONTRACT).read_text(encoding="utf-8"))
+    reference = tomllib.loads((repo / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
+    return check_record(contract, reference, record, identity)
 
 
 def validate(repo):
@@ -651,8 +662,28 @@ def self_test():
                   input_corpus_size=42, limitations=["Windows x64 only (C0 platform scope)"])
     assert set(record) == set(contract["evidence"]["required_fields"])
     current = record["source_set_identity"]
-    assert not check_evidence(contract, reference, record, current)
-    assert check_evidence(contract, reference, record, None)                     # current S is mandatory
+    assert not check_record(contract, reference, record, current)
+    assert check_record(contract, reference, record, None)                     # current S is mandatory
+    # public gate: canonical files only, identity computed from the repository itself
+    real_identity, _ = validate(ROOT)
+    assert not check_evidence(ROOT, {**record, "source_set_identity": real_identity})
+    assert check_evidence(ROOT, record)                                         # identity not of this S
+    import shutil
+    with tempfile.TemporaryDirectory() as tmp:                                  # tampered contract
+        repo = Path(tmp)
+        for rel in (CONTRACT, "bootstrap/source-set.toml", "reference/semantic-reference.toml",
+                    "docs/BOOTSTRAP_SUBSET.md", CONTRACT_DOC):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / rel, repo / rel)
+        (repo / "compiler").mkdir()
+        assert not check_evidence(repo, {**record, "source_set_identity": real_identity})
+        sha = contract["c0"]["sha"]
+        text = (repo / CONTRACT).read_text(encoding="utf-8")
+        (repo / CONTRACT).write_text(text.replace(sha, "1" * 40), encoding="utf-8")
+        forged = {**record, "source_set_identity": real_identity,
+                  "c0_identity": f"{REPOSITORY}@{'1' * 40}"}
+        errs = check_evidence(repo, forged)
+        assert errs and errs[0].startswith("CONTRACT_DRIFT: canonical contract"), errs
     # values, not only keys: a failed or malformed run is never Seal evidence
     for bad, cls in [({"comparison_result": "different"}, "FIXED_POINT_DELTA"),
                      ({"comparison_result": False}, "FIXED_POINT_DELTA"),
@@ -686,13 +717,13 @@ def self_test():
                      ({"limitations": []}, "CONTRACT_DRIFT"),
                      ({"limitations": [""]}, "CONTRACT_DRIFT"),
                      ({"limitations": "none"}, "CONTRACT_DRIFT")]:
-        errs = check_evidence(contract, reference, {**record, **bad}, current)
+        errs = check_record(contract, reference, {**record, **bad}, current)
         assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
-    assert check_evidence(contract, reference, record, "sha256:" + "00" * 32)  # stale evidence
-    assert check_evidence(contract, reference, {**record, "comparison_rule": "normalized-equality-v1"}, current)
-    assert check_evidence(contract, reference, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"}, current)
-    assert check_evidence(contract, reference, {**record, "c0_identity": f"{REPOSITORY}@main"}, current)
-    assert check_evidence(contract, reference, {k: v for k, v in record.items() if k != "c2_artifact_hash"}, current)
+    assert check_record(contract, reference, record, "sha256:" + "00" * 32)  # stale evidence
+    assert check_record(contract, reference, {**record, "comparison_rule": "normalized-equality-v1"}, current)
+    assert check_record(contract, reference, {**record, "contract_protocol": "shf0-bootstrap-contract-v0"}, current)
+    assert check_record(contract, reference, {**record, "c0_identity": f"{REPOSITORY}@main"}, current)
+    assert check_record(contract, reference, {k: v for k, v in record.items() if k != "c2_artifact_hash"}, current)
     print("shf0 self-test: PASS")
 
 

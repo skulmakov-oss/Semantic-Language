@@ -196,3 +196,6 @@ A record supports the Bootstrap Seal only if its values hold, not merely its key
 `sha256:<64 lowercase hex>`, `source_set_identity` equals the identity of the current `S`, both
 verifier bindings are `admitted` (else `ADMISSION_REJECT`), `comparison_result` is `equal`, and
 under `byte-equality-v1` the C1 and C2 hashes are identical (else `FIXED_POINT_DELTA`).
+Evidence is accepted only through `check_evidence(repo, record)` in the validator, which loads
+the canonical contract files from the repository, requires them to validate, and computes the
+current `S` identity itself; a caller cannot supply a modified contract or identity.
