@@ -2,26 +2,30 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF-1-UPSTREAM-LEXER-PROBE-WAIT
-  title: "Hold Semantic-Language fail-closed pending upstream SHF-1 lexer-probe qualification"
+  id: SHF-1-UPSTREAM-COMPLETE-HOLD
+  title: "Record upstream SHF-1 completion while keeping Semantic-Language fail-closed"
   type: dependency_wait
   mode: active
-  supersedes: SHF-1-UPSTREAM-DEPENDENCY
-  authorized_by: "Repository owner explicit task - REFRESH SEMANTIC-LANGUAGE SHF-1 WAIT ENVELOPE (2026-10-08)"
+  supersedes: SHF-1-UPSTREAM-LEXER-PROBE-WAIT
+  authorized_by: "Repository owner explicit task - SEMANTIC-LANGUAGE SHF-1 DOWNSTREAM CLOSEOUT (2026-10-08)"
 
 intent:
-  summary: "Keep Semantic-Language fail-closed while the upstream Semantic repository performs and qualifies the remaining SHF-1 compiler-text lexer probe. Compiler-grade UTF-8 text primitives and the required plain-u32 increment / ordering capability are already landed upstream. No local compiler or language implementation is authorized by this envelope."
+  summary: "Record that upstream Semantic SHF-1 compiler-grade text and the section 9.4 Semantic-owned byte-scanning probe are complete and qualified. Semantic-Language remains fail-closed because SHF-1 completion does not itself authorize downstream compiler implementation, C0 repinning, BSF-101 promotion, or SHF-10 work."
 
 # Evidence/context for this transition only; grants no implementation authority.
 upstream_reference:
   repository: skulmakov-oss/Semantic
   authority_issue: "1910 (OPEN)"
-  semantic_main: 50654be8f7b8e5cfcecbbb105881600f63afeca4
-  text_contract: "SHF-1A COMPLETE (semantic.compiler.text/0.1)"
-  text_primitives: "SHF-1B COMPLETE - landed and qualified upstream"
-  checked_unsigned_arithmetic: "SHF-3A COMPLETE - plain-u32 checked arithmetic and unsigned ordering landed and qualified upstream"
-  lexer_probe: "READY / NOT RUN - mechanical dependency satisfied, probe not yet qualified"
-  overall_status: "SHF-1 IN PROGRESS"
+  semantic_main: 5193e90d024e2ec1190a2db27fac5cf4c92adb04
+  text_contract: "SHF-1A COMPLETE"
+  text_primitives: "SHF-1B COMPLETE"
+  lexer_probe: "SHF-1C COMPLETE"
+  overall_status: "SHF-1 COMPLETE"
+  checked_unsigned_arithmetic: "SHF-3A COMPLETE"
+  shf_three_b: "NOT STARTED"
+  shf_ten_lexer: "NOT STARTED"
+  c_zero: 89641da8237f4fcefb50cf1958a50e4d4003aea7
+  bsf_one_zero_one: CANDIDATE
 
 scope:
   allowed_paths:
@@ -53,7 +57,7 @@ authorization:
 constraints:
   issue: 13
   base_branch: main
-  base_sha: 8cfdae62a5cce97163605ac021886bbb2267bab9
+  base_sha: 1a3d13c146296f306becb16a70f0aac0a2fdba56
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
