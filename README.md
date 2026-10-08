@@ -1,3 +1,5 @@
+<img width="902" height="817" alt="Screenshot 2026-10-09 015304" src="https://github.com/user-attachments/assets/569e469f-7ec1-4c78-a655-9f47061d7169" />
+
 # Semantic Language
 
 > **Bootstrap repository for a compiler written substantially in Semantic.**
