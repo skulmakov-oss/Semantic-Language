@@ -2,15 +2,26 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF-1-UPSTREAM-DEPENDENCY
-  title: "Hold Semantic-Language fail-closed while SHF-1 capability is delivered upstream"
+  id: SHF-1-UPSTREAM-LEXER-PROBE-WAIT
+  title: "Hold Semantic-Language fail-closed pending upstream SHF-1 lexer-probe qualification"
   type: dependency_wait
   mode: active
-  supersedes: BOOTSTRAP-HARNESS-INTEGRATION
-  authorized_by: "Repository owner explicit GO - FIRST TRUSTED HARNESS RUN / SHF-1 UPSTREAM DEPENDENCY (2026-10-08)"
+  supersedes: SHF-1-UPSTREAM-DEPENDENCY
+  authorized_by: "Repository owner explicit task - REFRESH SEMANTIC-LANGUAGE SHF-1 WAIT ENVELOPE (2026-10-08)"
 
 intent:
-  summary: "Keep Semantic-Language fail-closed while compiler-grade UTF-8 text capability remains upstream work in skulmakov-oss/Semantic. No local SHF-1B implementation is authorized."
+  summary: "Keep Semantic-Language fail-closed while the upstream Semantic repository performs and qualifies the remaining SHF-1 compiler-text lexer probe. Compiler-grade UTF-8 text primitives and the required plain-u32 increment / ordering capability are already landed upstream. No local compiler or language implementation is authorized by this envelope."
+
+# Evidence/context for this transition only; grants no implementation authority.
+upstream_reference:
+  repository: skulmakov-oss/Semantic
+  authority_issue: "1910 (OPEN)"
+  semantic_main: 50654be8f7b8e5cfcecbbb105881600f63afeca4
+  text_contract: "SHF-1A COMPLETE (semantic.compiler.text/0.1)"
+  text_primitives: "SHF-1B COMPLETE - landed and qualified upstream"
+  checked_unsigned_arithmetic: "SHF-3A COMPLETE - plain-u32 checked arithmetic and unsigned ordering landed and qualified upstream"
+  lexer_probe: "READY / NOT RUN - mechanical dependency satisfied, probe not yet qualified"
+  overall_status: "SHF-1 IN PROGRESS"
 
 scope:
   allowed_paths:
@@ -42,7 +53,7 @@ authorization:
 constraints:
   issue: 13
   base_branch: main
-  base_sha: 93f575685bb036e374d229572def6454dd852a57
+  base_sha: 8cfdae62a5cce97163605ac021886bbb2267bab9
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
