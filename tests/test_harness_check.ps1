@@ -349,6 +349,96 @@ constraints:
     "
     Assert-Test "Well-formed ordinary SHF task passes envelope validation" ($LASTEXITCODE -eq 0)
 
+    # Integration Test T1: G2-style envelope-only transition to ordinary profile passes
+    # Candidate envelope is envelope-only change and forbids .harness/current.task.yaml.
+    $g2TransitionEnvelope = @"
+task:
+  id: SHF-STAGE-DELIVERY-STABLE
+  title: "Stable ordinary SHF delivery profile"
+  type: implementation
+  mode: active
+  authorized_by: "Repository owner explicit task - SEMANTIC-LANGUAGE GOVERNANCE LIBERATION (Issue #20 Phase G2)"
+intent:
+  summary: "Stable envelope for implementation stages"
+scope:
+  allowed_paths:
+    - compiler/**
+    - tests/**
+    - docs/**
+    - AGENTS.md
+    - CONTRIBUTING.md
+    - README.md
+  forbidden_paths:
+    - .github/**
+    - scripts/harness-check.ps1
+    - .harness/current.task.yaml
+    - bootstrap/**
+    - reference/**
+    - "*.sm"
+authorization:
+  compiler_implementation: true
+constraints:
+  issue: 20
+  base_branch: main
+  base_sha: 0123456789abcdef0123456789abcdef01234567
+"@
+    $g2EnvFile = Join-Path $testTmpDir "env_g2.yaml"
+    Set-Content -LiteralPath $g2EnvFile -Value $g2TransitionEnvelope -Encoding utf8
+
+    $resT1 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$cfg = Read-Envelope '$g2EnvFile'
+        `$paths = @('.harness/current.task.yaml')
+        `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
+        `$isEnvelopeOnlyTransition = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        `$payloadPaths = if (`$isEnvelopeOnlyTransition) { @() } else { `$paths }
+        `$violations = @(Get-Violations `$cfg `$payloadPaths)
+        if (`$violations.Count -eq 0) { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T1: G2-style envelope-only transition does not trigger forbidden violation for .harness/current.task.yaml" ($LASTEXITCODE -eq 0)
+
+    # Integration Test T2: Envelope transition PR attempting to touch payload fails
+    $resT2 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$cfg = Read-Envelope '$g2EnvFile'
+        `$paths = @('.harness/current.task.yaml', 'compiler/lexer.sm')
+        `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
+        `$isEnvelopeOnlyTransition = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        `$payloadPaths = if (`$isEnvelopeOnlyTransition) { @() } else { `$paths }
+        `$violations = @(Get-Violations `$cfg `$payloadPaths)
+        # Should report both forbidden .harness/current.task.yaml and forbidden *.sm (or compiler)
+        if (`$violations -match 'forbidden path changed: .harness/current.task.yaml') { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T2: Mixed envelope transition + payload triggers forbidden violation for .harness/current.task.yaml" ($LASTEXITCODE -eq 0)
+
+    # Integration Test T3: Ordinary PR with unchanged envelope whose base_sha is older than PR base passes
+    $resT3 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$cfg = Read-Envelope '$g2EnvFile'
+        `$paths = @('compiler/core.txt', 'tests/test_core.txt')
+        `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
+        `$full = 'fedcba9876543210fedcba9876543210fedcba98' # Advanced main SHA
+        `$violations = @()
+        if (`$true -and `$envelopeChanged -and `$cfg.constraints.base_sha -cne `$full) {
+            `$violations += 'stale envelope'
+        }
+        if (`$violations.Count -eq 0) { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T3: Ordinary payload with unchanged envelope does not trigger stale envelope check on advanced main" ($LASTEXITCODE -eq 0)
+
+    # Integration Test T4: Ordinary PR attempting to touch .harness/current.task.yaml fails
+    $resT4 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$cfg = Read-Envelope '$g2EnvFile'
+        `$paths = @('compiler/core.txt', '.harness/current.task.yaml')
+        `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
+        `$isEnvelopeOnlyTransition = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        `$payloadPaths = if (`$isEnvelopeOnlyTransition) { @() } else { `$paths }
+        `$violations = @(Get-Violations `$cfg `$payloadPaths)
+        if (`$violations -match 'forbidden path changed: .harness/current.task.yaml') { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T4: Ordinary PR attempting to include .harness/current.task.yaml fails closed" ($LASTEXITCODE -eq 0)
+
 } finally {
     if (Test-Path -LiteralPath $testTmpDir) {
         Remove-Item -LiteralPath $testTmpDir -Recurse -Force

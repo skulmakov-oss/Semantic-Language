@@ -311,10 +311,18 @@ try {
     Write-Host "[harness:error] $($_.Exception.Message)"
     exit 1
 }
-$violations = @(Get-Violations $envelope $paths)
+# Check if this PR/change modifies the envelope itself.
+# When an envelope-only transition PR runs, it touches strictly .harness/current.task.yaml.
+# In that case, .harness/current.task.yaml is judged exclusively by Test-Transition (scope change
+# vs base envelope) rather than failing Get-Violations on candidate ordinary profiles that forbid it.
+$envelopeChanged = ($paths -contains '.harness/current.task.yaml')
+$isEnvelopeOnlyTransition = ($paths.Count -eq 1 -and $paths[0] -ceq '.harness/current.task.yaml')
+
+$payloadPaths = if ($isEnvelopeOnlyTransition) { @() } else { $paths }
+$violations = @(Get-Violations $envelope $payloadPaths)
 if ($BaseRef) {
     $full = "$(& git rev-parse --verify "$BaseRef^{commit}")".Trim()
-    if ($RequireEnvelopeBase -and $envelope.constraints.base_sha -cne $full) {
+    if ($RequireEnvelopeBase -and $envelopeChanged -and $envelope.constraints.base_sha -cne $full) {
         $violations += "constraints.base_sha $($envelope.constraints.base_sha) != PR base $full (stale envelope)"
     }
     $violations += @(Test-Transition $envelope $BaseRef $paths)

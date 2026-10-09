@@ -199,15 +199,16 @@ When a task needs different paths or capabilities:
 
 CI enforces this: in `-BaseRef` mode a change to the envelope's scope (task id, allowed/forbidden
 paths, authorization flags) relative to the base envelope fails unless the PR touches nothing
-else, so a PR can never authorize its own payload. Each PR records its exact base in
-`constraints.base_sha`; advancing it is bookkeeping, not a transition.
+else, so a PR can never authorize its own payload. Envelope transition PRs record their exact base in
+`constraints.base_sha`; for ordinary tasks operating under an unchanged envelope, `constraints.base_sha`
+records historical provenance and does not require per-PR bumping when `main` advances.
 
 Trust root: `.github/workflows/harness-trusted.yml` (`pull_request_target`, job
 `scope-enforcement`) runs as it exists on the base branch, executes only the base revision's
 `scripts/harness-check.ps1`, and inspects the PR head as data only (read-only token, no secrets,
 no PR code executed). A PR may propose changes to it, but they are judged by the previous trusted
-version. Ordinary task envelopes must still list `scripts/harness-check.ps1` and `.github/**`
-under `forbidden_paths`; only an owner-authorized governance task may allow them.
+version. Ordinary task envelopes must explicitly list `scripts/harness-check.ps1`, `.github/**`,
+and `.harness/current.task.yaml` under `forbidden_paths`; only an owner-authorized governance task may allow them.
 
 The Harness is never a mechanism for self-authorization. Bootstrap fact: the PR that introduced
 the Harness (issue #14) added envelope, checker, CI enforcement and the trusted workflow together
