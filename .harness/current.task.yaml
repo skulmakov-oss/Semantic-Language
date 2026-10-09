@@ -45,7 +45,7 @@ authorization:
 constraints:
   issue: 20
   base_branch: main
-  base_sha: 7716fb9f36a2c107a7505338c143ff197f4bce02
+  base_sha: c4ae9f58f9bed8f4b65b2690cef8cdf2385a2b52
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true

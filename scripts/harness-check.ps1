@@ -77,6 +77,29 @@ function Test-Envelope($cfg) {
     }
     if ($cfg.scope.allowed_paths.Count -eq 0) { throw 'scope.allowed_paths is empty' }
     foreach ($p in @($cfg.scope.allowed_paths) + @($cfg.scope.forbidden_paths)) { [void](Test-PatternSyntax $p) }
+    # Invariant governance boundaries: non-governance tasks must never touch governance/CI, checker,
+    # or the envelope file itself, and must explicitly keep them in forbidden_paths to ensure safe fail-closed return to ordinary SHF work.
+    $isGovernanceTask = ($cfg.task.type -cin 'governance', 'governance_migration')
+    if (-not $isGovernanceTask) {
+        foreach ($p in $cfg.scope.allowed_paths) {
+            # Stable ordinary engineering surfaces (Surface A):
+            # compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md.
+            $isSurfaceA = ($p -cin 'README.md', 'CONTRIBUTING.md') -or
+                ($p -cin 'compiler/**', 'tests/**', 'docs/**') -or
+                ($p.StartsWith('compiler/', [StringComparison]::Ordinal) -or
+                 $p.StartsWith('tests/', [StringComparison]::Ordinal) -or
+                 $p.StartsWith('docs/', [StringComparison]::Ordinal))
+            if (-not $isSurfaceA) {
+                throw "ordinary task allowed_paths must be restricted to stable engineering surface (compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md): '$p'"
+            }
+        }
+        $forbidsGithub = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq '.github/**' }).Count -gt 0
+        $forbidsChecker = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq 'scripts/harness-check.ps1' }).Count -gt 0
+        $forbidsEnvelope = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq '.harness/current.task.yaml' }).Count -gt 0
+        if (-not $forbidsGithub -or -not $forbidsChecker -or -not $forbidsEnvelope) {
+            throw "ordinary task must explicitly forbid governance invariant paths: '.github/**', 'scripts/harness-check.ps1', and '.harness/current.task.yaml'"
+        }
+    }
     foreach ($k in $cfg.authorization.Keys) {
         if ($cfg.authorization[$k] -cnotin 'true', 'false') { throw "authorization.$k must be true or false" }
     }
@@ -155,20 +178,24 @@ function Get-ChangedPaths([string]$base) {
 # envelope-only; the newly authorized work follows in a later PR. Updating only bookkeeping
 # (constraints.*, title, summary) is not a transition.
 function Test-SameList($a, $b) {
-    $a = @($a); $b = @($b)
-    if ($a.Count -ne $b.Count) { return $false }
-    for ($i = 0; $i -lt $a.Count; $i++) { if ($a[$i] -cne $b[$i]) { return $false } }
+    $sa = @(@($a) | Sort-Object -CaseSensitive -Unique)
+    $sb = @(@($b) | Sort-Object -CaseSensitive -Unique)
+    if ($sa.Count -ne $sb.Count) { return $false }
+    for ($i = 0; $i -lt $sa.Count; $i++) { if ($sa[$i] -cne $sb[$i]) { return $false } }
     return $true
 }
 
 function Test-SameScope($x, $y) {
     $kx = @($x.authorization.Keys | Sort-Object -CaseSensitive)
     $ky = @($y.authorization.Keys | Sort-Object -CaseSensitive)
+    if (-not (Test-SameList $kx $ky)) { return $false }
+    foreach ($k in $kx) {
+        if ($x.authorization[$k] -cne $y.authorization[$k]) { return $false }
+    }
     return ($x.task.id -ceq $y.task.id) -and
+        ($x.task.type -ceq $y.task.type) -and
         (Test-SameList $x.scope.allowed_paths $y.scope.allowed_paths) -and
-        (Test-SameList $x.scope.forbidden_paths $y.scope.forbidden_paths) -and
-        (Test-SameList $kx $ky) -and
-        (Test-SameList @($kx | ForEach-Object { $x.authorization[$_] }) @($ky | ForEach-Object { $y.authorization[$_] }))
+        (Test-SameList $x.scope.forbidden_paths $y.scope.forbidden_paths)
 }
 
 function Test-Transition($cfg, [string]$base, [string[]]$paths) {
@@ -186,6 +213,9 @@ function Test-Transition($cfg, [string]$base, [string[]]$paths) {
     $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
     if ($old.task.id -cne $cfg.task.id) {
         Write-Host "[harness] TRANSITION: task $($old.task.id) -> $($cfg.task.id) (requires owner authorization)"
+    }
+    if ($old.task.type -cne $cfg.task.type) {
+        Write-Host "[harness] TRANSITION: task type $($old.task.type) -> $($cfg.task.type) (requires owner authorization)"
     }
     foreach ($a in $added) { Write-Host "[harness] TRANSITION: allowed_paths + $a" }
     foreach ($f in $removed) { Write-Host "[harness] TRANSITION: forbidden_paths - $f" }
@@ -293,10 +323,39 @@ try {
     Write-Host "[harness:error] $($_.Exception.Message)"
     exit 1
 }
-$violations = @(Get-Violations $envelope $paths)
+# Check if this PR/change modifies the envelope itself.
+# When an envelope-only transition PR runs, it touches strictly .harness/current.task.yaml.
+# To prevent unauthorized tampering with protected envelopes, an envelope-only change is only
+# exempted from Get-Violations if it is a genuine owner-authorized transition (detected via Test-Transition
+# scope change vs BaseRef). Otherwise, if the envelope forbids .harness/current.task.yaml, Get-Violations
+# fails closed.
+$envelopeChanged = ($paths -contains '.harness/current.task.yaml')
+$isEnvelopeOnly = ($paths.Count -eq 1 -and $paths[0] -ceq '.harness/current.task.yaml')
+$isGenuineTransition = $false
+
+if ($isEnvelopeOnly -and $BaseRef) {
+    $text = & git show "${BaseRef}:.harness/current.task.yaml" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $tmpBase = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $tmpBase -Value $text -Encoding utf8
+            $oldBaseEnv = try { Read-Envelope $tmpBase } catch { $null }
+        } finally { Remove-Item -LiteralPath $tmpBase }
+        if ($oldBaseEnv -and -not (Test-SameScope $oldBaseEnv $envelope)) {
+            $hasGovernanceType = ($oldBaseEnv.task.type -cin 'governance', 'governance_migration') -or
+                                 ($envelope.task.type -cin 'governance', 'governance_migration')
+            if ($hasGovernanceType) {
+                $isGenuineTransition = $true
+            }
+        }
+    }
+}
+
+$payloadPaths = if ($isGenuineTransition) { @() } else { $paths }
+$violations = @(Get-Violations $envelope $payloadPaths)
 if ($BaseRef) {
     $full = "$(& git rev-parse --verify "$BaseRef^{commit}")".Trim()
-    if ($RequireEnvelopeBase -and $envelope.constraints.base_sha -cne $full) {
+    if ($RequireEnvelopeBase -and $envelopeChanged -and $envelope.constraints.base_sha -cne $full) {
         $violations += "constraints.base_sha $($envelope.constraints.base_sha) != PR base $full (stale envelope)"
     }
     $violations += @(Test-Transition $envelope $BaseRef $paths)
