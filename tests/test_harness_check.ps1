@@ -68,7 +68,7 @@ constraints:
             Read-Envelope '$envFile'
             exit 0
         } catch {
-            if (`$_.Exception.Message -match 'governance invariant path') { exit 42 }
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 42 }
             exit 1
         }
     "
@@ -116,7 +116,7 @@ constraints:
     "
     Assert-Test "Governance task successfully allows governance paths when type is governance_migration" ($LASTEXITCODE -eq 0)
 
-    # Adversarial Test 1: allowed: *.yml + forbidden: .github/placeholder is rejected as an invalid ordinary envelope
+    # Adversarial Test 1: allowed: compiler/** + forbidden: .github/placeholder is rejected
     $adv1 = @"
 task:
   id: SHF-ADV-1
@@ -128,7 +128,7 @@ intent:
   summary: "test"
 scope:
   allowed_paths:
-    - "*.yml"
+    - compiler/**
   forbidden_paths:
     - .github/placeholder
     - scripts/harness-check.ps1
@@ -155,7 +155,7 @@ constraints:
     "
     Assert-Test "Adversarial 1: partial .github/placeholder forbidden substitute is rejected" ($LASTEXITCODE -eq 44)
 
-    # Adversarial Test 2: allowed: *.ps1 + forbidden: scripts/harness-check.ps1.tmp is rejected
+    # Adversarial Test 2: allowed: compiler/** + forbidden: scripts/harness-check.ps1.tmp is rejected
     $adv2 = @"
 task:
   id: SHF-ADV-2
@@ -167,7 +167,7 @@ intent:
   summary: "test"
 scope:
   allowed_paths:
-    - "*.ps1"
+    - compiler/**
   forbidden_paths:
     - .github/**
     - scripts/harness-check.ps1.tmp
@@ -194,8 +194,7 @@ constraints:
     "
     Assert-Test "Adversarial 2: scripts/harness-check.ps1.tmp forbidden substitute is rejected" ($LASTEXITCODE -eq 45)
 
-    # Adversarial Test 3: allowed: *.yml + exact forbidden: .github/** validates structurally,
-    # but an attempted .github/workflows/test.yml payload is rejected by Get-Violations
+    # Adversarial Test 3: ordinary envelope cannot allow paths outside Surface A (e.g. *.yml or AGENTS.md)
     $adv3 = @"
 task:
   id: SHF-ADV-3
@@ -207,7 +206,7 @@ intent:
   summary: "test"
 scope:
   allowed_paths:
-    - "*.yml"
+    - AGENTS.md
   forbidden_paths:
     - .github/**
     - scripts/harness-check.ps1
@@ -224,15 +223,17 @@ constraints:
 
     $resAdv3 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
-        `$cfg = Read-Envelope '$adv3File'
-        `$v = @(Get-Violations `$cfg @('.github/workflows/test.yml'))
-        if (`$v.Count -gt 0 -and `$v[0] -match 'forbidden path changed') { exit 0 }
-        exit 1
+        try {
+            Read-Envelope '$adv3File'
+            exit 0
+        } catch {
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 48 }
+            exit 1
+        }
     "
-    Assert-Test "Adversarial 3: allowed *.yml + forbidden .github/** rejects .github/workflows/test.yml via Get-Violations" ($LASTEXITCODE -eq 0)
+    Assert-Test "Adversarial 3: ordinary envelope cannot include AGENTS.md in allowed_paths" ($LASTEXITCODE -eq 48)
 
-    # Adversarial Test 4: allowed: *.ps1 + exact forbidden: scripts/harness-check.ps1 validates structurally,
-    # but an attempted scripts/harness-check.ps1 payload is rejected by Get-Violations
+    # Adversarial Test 4: ordinary envelope cannot allow scripts/tool.ps1 outside Surface A
     $adv4 = @"
 task:
   id: SHF-ADV-4
@@ -244,7 +245,7 @@ intent:
   summary: "test"
 scope:
   allowed_paths:
-    - "*.ps1"
+    - scripts/tool.ps1
   forbidden_paths:
     - .github/**
     - scripts/harness-check.ps1
@@ -261,12 +262,15 @@ constraints:
 
     $resAdv4 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
-        `$cfg = Read-Envelope '$adv4File'
-        `$v = @(Get-Violations `$cfg @('scripts/harness-check.ps1'))
-        if (`$v.Count -gt 0 -and `$v[0] -match 'forbidden path changed') { exit 0 }
-        exit 1
+        try {
+            Read-Envelope '$adv4File'
+            exit 0
+        } catch {
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 49 }
+            exit 1
+        }
     "
-    Assert-Test "Adversarial 4: allowed *.ps1 + forbidden scripts/harness-check.ps1 rejects scripts/harness-check.ps1 payload" ($LASTEXITCODE -eq 0)
+    Assert-Test "Adversarial 4: ordinary envelope cannot include scripts/** in allowed_paths" ($LASTEXITCODE -eq 49)
 
     # Adversarial Test 5: Governance task behavior remains explicitly allowed only under governance authorization
     $adv5 = @"
@@ -300,11 +304,50 @@ constraints:
             Read-Envelope '$adv5File'
             exit 0
         } catch {
-            if (`$_.Exception.Message -match 'governance invariant path') { exit 46 }
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 46 }
             exit 1
         }
     "
     Assert-Test "Adversarial 5: Ordinary task cannot allow .harness/current.task.yaml to modify envelope" ($LASTEXITCODE -eq 46)
+
+    # Adversarial Test 6: Broad patterns (e.g. *.md) or paths outside Surface A (e.g. AGENTS.md, scripts/x.ps1) are rejected
+    $adv6 = @"
+task:
+  id: SHF-ADV-6
+  title: "Adversarial 6"
+  type: implementation
+  mode: active
+  authorized_by: owner
+intent:
+  summary: "test"
+scope:
+  allowed_paths:
+    - "*.md"
+  forbidden_paths:
+    - .github/**
+    - scripts/harness-check.ps1
+    - .harness/current.task.yaml
+authorization:
+  compiler_implementation: true
+constraints:
+  issue: 20
+  base_branch: main
+  base_sha: 0123456789abcdef0123456789abcdef01234567
+"@
+    $adv6File = Join-Path $testTmpDir "adv6.yaml"
+    Set-Content -LiteralPath $adv6File -Value $adv6 -Encoding utf8
+
+    $resAdv6 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        try {
+            Read-Envelope '$adv6File'
+            exit 0
+        } catch {
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 47 }
+            exit 1
+        }
+    "
+    Assert-Test "Adversarial 6: Ordinary task cannot allow broad pattern *.md outside Surface A" ($LASTEXITCODE -eq 47)
 
     # Test 6: Properly formed ordinary SHF task passes validation
     $envOrdinaryGood = @"

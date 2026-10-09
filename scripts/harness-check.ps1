@@ -82,10 +82,13 @@ function Test-Envelope($cfg) {
     $isGovernanceTask = ($cfg.task.type -in 'governance', 'governance_migration')
     if (-not $isGovernanceTask) {
         foreach ($p in $cfg.scope.allowed_paths) {
-            if ($p -in '.github/**', 'scripts/harness-check.ps1', '.harness/current.task.yaml' -or
-                $p.StartsWith('.github/') -or $p.StartsWith('.harness/') -or
-                $p -in 'scripts/**', '.github', 'scripts') {
-                throw "ordinary task cannot include governance invariant path in allowed_paths: '$p'"
+            # Stable ordinary engineering surfaces (Surface A):
+            # compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md.
+            $isSurfaceA = ($p -in 'README.md', 'CONTRIBUTING.md') -or
+                ($p -in 'compiler/**', 'tests/**', 'docs/**') -or
+                ($p.StartsWith('compiler/') -or $p.StartsWith('tests/') -or $p.StartsWith('docs/'))
+            if (-not $isSurfaceA) {
+                throw "ordinary task allowed_paths must be restricted to stable engineering surface (compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md): '$p'"
             }
         }
         $forbidsGithub = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq '.github/**' }).Count -gt 0
