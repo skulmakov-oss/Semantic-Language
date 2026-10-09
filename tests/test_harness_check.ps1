@@ -327,7 +327,6 @@ scope:
     - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
-    - "*.sm"
 authorization:
   compiler_implementation: true
 constraints:
@@ -365,7 +364,6 @@ scope:
     - compiler/**
     - tests/**
     - docs/**
-    - AGENTS.md
     - CONTRIBUTING.md
     - README.md
   forbidden_paths:
