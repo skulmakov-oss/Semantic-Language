@@ -176,9 +176,10 @@ function Get-ChangedPaths([string]$base) {
 # envelope-only; the newly authorized work follows in a later PR. Updating only bookkeeping
 # (constraints.*, title, summary) is not a transition.
 function Test-SameList($a, $b) {
-    $a = @($a); $b = @($b)
-    if ($a.Count -ne $b.Count) { return $false }
-    for ($i = 0; $i -lt $a.Count; $i++) { if ($a[$i] -cne $b[$i]) { return $false } }
+    $sa = @(@($a) | Sort-Object -CaseSensitive -Unique)
+    $sb = @(@($b) | Sort-Object -CaseSensitive -Unique)
+    if ($sa.Count -ne $sb.Count) { return $false }
+    for ($i = 0; $i -lt $sa.Count; $i++) { if ($sa[$i] -cne $sb[$i]) { return $false } }
     return $true
 }
 

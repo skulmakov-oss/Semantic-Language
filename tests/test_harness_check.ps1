@@ -465,6 +465,15 @@ constraints:
     "
     Assert-Test "Integration T1b: Non-transition envelope-only edit under ordinary profile fails closed in Get-Violations" ($LASTEXITCODE -eq 0)
 
+    # Integration Test T1c: Test-SameList treats reordered lists with identical elements as same scope
+    $resT1c = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$list1 = @('compiler/**', 'tests/**', 'docs/**')
+        `$list2 = @('docs/**', 'compiler/**', 'tests/**')
+        if (Test-SameList `$list1 `$list2) { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T1c: Test-SameList treats reordered lists as identical set membership" ($LASTEXITCODE -eq 0)
+
     # Integration Test T2: Envelope transition PR attempting to touch payload fails
     $resT2 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
