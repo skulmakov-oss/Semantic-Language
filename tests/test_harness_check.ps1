@@ -374,7 +374,6 @@ scope:
     - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
-    - "*.sm"
 authorization:
   compiler_implementation: true
 constraints:
@@ -385,17 +384,45 @@ constraints:
     $g2EnvFile = Join-Path $testTmpDir "env_g2.yaml"
     Set-Content -LiteralPath $g2EnvFile -Value $g2TransitionEnvelope -Encoding utf8
 
+    # Integration Test T0: Normal compiler source (.sm) is permitted under the stable G2 ordinary profile
+    $resT0 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$cfg = Read-Envelope '$g2EnvFile'
+        `$paths = @('compiler/lexer.sm', 'compiler/ast.sm', 'tests/test_lexer.sm')
+        `$violations = @(Get-Violations `$cfg `$paths)
+        if (`$violations.Count -eq 0) { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T0: G2 stable profile permits compiler/** and tests/** *.sm files" ($LASTEXITCODE -eq 0)
+
+    # Integration Test T1: G2-style genuine envelope-only transition does not trigger forbidden violation
     $resT1 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
         `$cfg = Read-Envelope '$g2EnvFile'
         `$paths = @('.harness/current.task.yaml')
         `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
-        `$isEnvelopeOnlyTransition = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
-        `$payloadPaths = if (`$isEnvelopeOnlyTransition) { @() } else { `$paths }
+        `$isEnvelopeOnly = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        # Simulate genuine transition detected vs base
+        `$isGenuineTransition = `$true
+        `$payloadPaths = if (`$isGenuineTransition) { @() } else { `$paths }
         `$violations = @(Get-Violations `$cfg `$payloadPaths)
         if (`$violations.Count -eq 0) { exit 0 } else { exit 1 }
     "
-    Assert-Test "Integration T1: G2-style envelope-only transition does not trigger forbidden violation for .harness/current.task.yaml" ($LASTEXITCODE -eq 0)
+    Assert-Test "Integration T1: G2-style genuine envelope-only transition does not trigger forbidden violation for .harness/current.task.yaml" ($LASTEXITCODE -eq 0)
+
+    # Integration Test T1b: Non-transition envelope-only edit under ordinary profile is rejected by Get-Violations
+    $resT1b = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$cfg = Read-Envelope '$g2EnvFile'
+        `$paths = @('.harness/current.task.yaml')
+        `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
+        `$isEnvelopeOnly = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        # Simulate non-transition edit (e.g. bookkeeping or same scope)
+        `$isGenuineTransition = `$false
+        `$payloadPaths = if (`$isGenuineTransition) { @() } else { `$paths }
+        `$violations = @(Get-Violations `$cfg `$payloadPaths)
+        if (`$violations -match 'forbidden path changed: .harness/current.task.yaml') { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T1b: Non-transition envelope-only edit under ordinary profile fails closed in Get-Violations" ($LASTEXITCODE -eq 0)
 
     # Integration Test T2: Envelope transition PR attempting to touch payload fails
     $resT2 = & pwsh -NoProfile -Command "
@@ -403,10 +430,10 @@ constraints:
         `$cfg = Read-Envelope '$g2EnvFile'
         `$paths = @('.harness/current.task.yaml', 'compiler/lexer.sm')
         `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
-        `$isEnvelopeOnlyTransition = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
-        `$payloadPaths = if (`$isEnvelopeOnlyTransition) { @() } else { `$paths }
+        `$isEnvelopeOnly = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        `$isGenuineTransition = `$false
+        `$payloadPaths = if (`$isGenuineTransition) { @() } else { `$paths }
         `$violations = @(Get-Violations `$cfg `$payloadPaths)
-        # Should report both forbidden .harness/current.task.yaml and forbidden *.sm (or compiler)
         if (`$violations -match 'forbidden path changed: .harness/current.task.yaml') { exit 0 } else { exit 1 }
     "
     Assert-Test "Integration T2: Mixed envelope transition + payload triggers forbidden violation for .harness/current.task.yaml" ($LASTEXITCODE -eq 0)
@@ -415,7 +442,7 @@ constraints:
     $resT3 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
         `$cfg = Read-Envelope '$g2EnvFile'
-        `$paths = @('compiler/core.txt', 'tests/test_core.txt')
+        `$paths = @('compiler/lexer.sm', 'tests/test_lexer.sm')
         `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
         `$full = 'fedcba9876543210fedcba9876543210fedcba98' # Advanced main SHA
         `$violations = @()
@@ -430,10 +457,11 @@ constraints:
     $resT4 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
         `$cfg = Read-Envelope '$g2EnvFile'
-        `$paths = @('compiler/core.txt', '.harness/current.task.yaml')
+        `$paths = @('compiler/lexer.sm', '.harness/current.task.yaml')
         `$envelopeChanged = (`$paths -contains '.harness/current.task.yaml')
-        `$isEnvelopeOnlyTransition = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
-        `$payloadPaths = if (`$isEnvelopeOnlyTransition) { @() } else { `$paths }
+        `$isEnvelopeOnly = (`$paths.Count -eq 1 -and `$paths[0] -ceq '.harness/current.task.yaml')
+        `$isGenuineTransition = `$false
+        `$payloadPaths = if (`$isGenuineTransition) { @() } else { `$paths }
         `$violations = @(Get-Violations `$cfg `$payloadPaths)
         if (`$violations -match 'forbidden path changed: .harness/current.task.yaml') { exit 0 } else { exit 1 }
     "

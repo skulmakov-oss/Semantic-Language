@@ -183,6 +183,7 @@ function Test-SameScope($x, $y) {
     $kx = @($x.authorization.Keys | Sort-Object -CaseSensitive)
     $ky = @($y.authorization.Keys | Sort-Object -CaseSensitive)
     return ($x.task.id -ceq $y.task.id) -and
+        ($x.task.type -ceq $y.task.type) -and
         (Test-SameList $x.scope.allowed_paths $y.scope.allowed_paths) -and
         (Test-SameList $x.scope.forbidden_paths $y.scope.forbidden_paths) -and
         (Test-SameList $kx $ky) -and
@@ -204,6 +205,9 @@ function Test-Transition($cfg, [string]$base, [string[]]$paths) {
     $removed = @($old.scope.forbidden_paths | Where-Object { $_ -cnotin $cfg.scope.forbidden_paths })
     if ($old.task.id -cne $cfg.task.id) {
         Write-Host "[harness] TRANSITION: task $($old.task.id) -> $($cfg.task.id) (requires owner authorization)"
+    }
+    if ($old.task.type -cne $cfg.task.type) {
+        Write-Host "[harness] TRANSITION: task type $($old.task.type) -> $($cfg.task.type) (requires owner authorization)"
     }
     foreach ($a in $added) { Write-Host "[harness] TRANSITION: allowed_paths + $a" }
     foreach ($f in $removed) { Write-Host "[harness] TRANSITION: forbidden_paths - $f" }
@@ -313,12 +317,29 @@ try {
 }
 # Check if this PR/change modifies the envelope itself.
 # When an envelope-only transition PR runs, it touches strictly .harness/current.task.yaml.
-# In that case, .harness/current.task.yaml is judged exclusively by Test-Transition (scope change
-# vs base envelope) rather than failing Get-Violations on candidate ordinary profiles that forbid it.
+# To prevent unauthorized tampering with protected envelopes, an envelope-only change is only
+# exempted from Get-Violations if it is a genuine owner-authorized transition (detected via Test-Transition
+# scope change vs BaseRef). Otherwise, if the envelope forbids .harness/current.task.yaml, Get-Violations
+# fails closed.
 $envelopeChanged = ($paths -contains '.harness/current.task.yaml')
-$isEnvelopeOnlyTransition = ($paths.Count -eq 1 -and $paths[0] -ceq '.harness/current.task.yaml')
+$isEnvelopeOnly = ($paths.Count -eq 1 -and $paths[0] -ceq '.harness/current.task.yaml')
+$isGenuineTransition = $false
 
-$payloadPaths = if ($isEnvelopeOnlyTransition) { @() } else { $paths }
+if ($isEnvelopeOnly -and $BaseRef) {
+    $text = & git show "${BaseRef}:.harness/current.task.yaml" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $tmpBase = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $tmpBase -Value $text -Encoding utf8
+            $oldBaseEnv = try { Read-Envelope $tmpBase } catch { $null }
+        } finally { Remove-Item -LiteralPath $tmpBase }
+        if ($oldBaseEnv -and -not (Test-SameScope $oldBaseEnv $envelope)) {
+            $isGenuineTransition = $true
+        }
+    }
+}
+
+$payloadPaths = if ($isGenuineTransition) { @() } else { $paths }
 $violations = @(Get-Violations $envelope $payloadPaths)
 if ($BaseRef) {
     $full = "$(& git rev-parse --verify "$BaseRef^{commit}")".Trim()
