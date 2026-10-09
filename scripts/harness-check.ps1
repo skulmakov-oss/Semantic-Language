@@ -186,12 +186,14 @@ function Test-SameList($a, $b) {
 function Test-SameScope($x, $y) {
     $kx = @($x.authorization.Keys | Sort-Object -CaseSensitive)
     $ky = @($y.authorization.Keys | Sort-Object -CaseSensitive)
+    if (-not (Test-SameList $kx $ky)) { return $false }
+    foreach ($k in $kx) {
+        if ($x.authorization[$k] -cne $y.authorization[$k]) { return $false }
+    }
     return ($x.task.id -ceq $y.task.id) -and
         ($x.task.type -ceq $y.task.type) -and
         (Test-SameList $x.scope.allowed_paths $y.scope.allowed_paths) -and
-        (Test-SameList $x.scope.forbidden_paths $y.scope.forbidden_paths) -and
-        (Test-SameList $kx $ky) -and
-        (Test-SameList @($kx | ForEach-Object { $x.authorization[$_] }) @($ky | ForEach-Object { $y.authorization[$_] }))
+        (Test-SameList $x.scope.forbidden_paths $y.scope.forbidden_paths)
 }
 
 function Test-Transition($cfg, [string]$base, [string[]]$paths) {

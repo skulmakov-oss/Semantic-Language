@@ -474,6 +474,20 @@ constraints:
     "
     Assert-Test "Integration T1c: Test-SameList treats reordered lists as identical set membership" ($LASTEXITCODE -eq 0)
 
+    # Integration Test T1d: Test-SameScope preserves key-to-value pairing in authorization
+    $resT1d = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$env1 = Read-Envelope '$g2EnvFile'
+        `$env2 = Read-Envelope '$g2EnvFile'
+        # Add two keys with opposite booleans
+        `$env1.authorization['k1'] = 'true'
+        `$env1.authorization['k2'] = 'false'
+        `$env2.authorization['k1'] = 'false'
+        `$env2.authorization['k2'] = 'true'
+        if (-not (Test-SameScope `$env1 `$env2)) { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T1d: Test-SameScope detects swapped authorization values as scope change" ($LASTEXITCODE -eq 0)
+
     # Integration Test T2: Envelope transition PR attempting to touch payload fails
     $resT2 = & pwsh -NoProfile -Command "
         . '$CheckerPath'
