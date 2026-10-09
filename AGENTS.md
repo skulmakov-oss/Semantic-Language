@@ -221,6 +221,46 @@ single PR cycle within the active envelope) rather than fragmented micro-PRs. Ho
 remains strictly fail-closed: ordinary tasks cannot touch `.github/**` or `scripts/harness-check.ps1`,
 and C0 remains a reproducible historical executable reference evaluated by deterministic fixed-point proof.
 
+### Stable ordinary SHF delivery profile & Surface Classification
+
+Post-migration operations are organized into four distinct surfaces:
+
+1. **Stable ordinary engineering surfaces (A):**
+   `compiler/**`, `tests/**`, `docs/**`, `README.md`, `CONTRIBUTING.md`.
+   Ordinary SHF delivery occurs within these surfaces. No envelope transition PR is needed between
+   normal SHF stages; the active task/stage is authorized by owner instruction and tracked in the
+   relevant Issue and PR.
+2. **Protected governance/trust surfaces (B):**
+   `.github/**`, `scripts/harness-check.ps1`, `.harness/current.task.yaml`.
+   Permanently forbidden to ordinary tasks. An ordinary task envelope must explicitly list these in
+   `forbidden_paths` and cannot include them in `allowed_paths`. Any change to these surfaces requires
+   an owner-authorized governance task (`task.type: governance` or `governance_migration`) via an
+   envelope transition PR.
+3. **Reference / C0 identity changes (C):**
+   `reference/**`.
+   Changes to reference pins or manifests require explicit owner authority and drift analysis.
+4. **Release and Bootstrap Seal surfaces (D):**
+   `bootstrap/**`.
+   Changes to the frozen bootstrap contract protocol or seal generation require dedicated authorization.
+
+### Envelope transition criteria
+
+An envelope transition PR (`envelope-only PR -> payload PR`) is NOT a routine per-SHF requirement.
+It is required exclusively for:
+- Alterations to protected governance/trust surfaces (`.github/**`, `scripts/harness-check.ps1`);
+- Re-scoping task types or modifying permanently protected paths;
+- Reference/C0 identity changes (`reference/**`) or bootstrap contract changes (`bootstrap/**`).
+
+Normal SHF implementation, tests, bugfixes, and documentation inside the stable engineering boundary
+proceed directly without recurring governance transition PRs.
+
+### One-Time G2 Closeout Plan
+
+Issue #20 migration is structured in distinct stages:
+- **Phase G0 (Complete):** Landed envelope `GOVERNANCE-MIGRATION-ISSUE-20` on `main` (#21).
+- **Phase G1 (Active PR #22):** Implements invariant checker protection, regression test suite, CI wiring, and normative document reconciliation.
+- **Phase G2 (One-Time Closeout):** Following merge of PR #22 under owner GO, a final envelope-only PR transitions `.harness/current.task.yaml` into the stable ordinary SHF delivery profile (`task.type: implementation`). G2 is a one-time migration closeout, not a recurring per-SHF workflow. Issue #20 remains open until G2 is merged.
+
 ## 9. Working loop
 
 1. Read current Git status, exact repository identity and `.harness/current.task.yaml`.

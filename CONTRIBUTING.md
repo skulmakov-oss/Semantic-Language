@@ -8,11 +8,14 @@ For every non-trivial bootstrap change, identify:
 
 1. the SHF stage it belongs to ([docs/ROADMAP.md](docs/ROADMAP.md)) and its owner repository ([docs/OWNERSHIP.md](docs/OWNERSHIP.md));
 2. the reference contract being mirrored;
-3. its current owner in `skulmakov-oss/Semantic`;
+3. the frozen reference specification in `skulmakov-oss/Semantic`;
 4. the observable input/output boundary;
-5. known upstream issues that can invalidate the slice;
-6. the intended differential comparison;
-7. the exact claim the completed slice will prove.
+5. the intended differential comparison;
+6. the exact claim the completed slice will prove.
+
+Distinguish technical contract dependencies from administrative repository dependencies:
+downstream bootstrap implementation depends on frozen normative contracts and exact reference SHAs,
+never on live upstream GitHub issue or PR lifecycles.
 
 If any of these are unknown and materially affect semantics, investigate before widening implementation scope.
 
@@ -24,7 +27,8 @@ Every change runs under the active task envelope `.harness/current.task.yaml` (r
 - **Before commit:** `pwsh -File scripts/harness-check.ps1` and `git diff --check`.
 - **Before PR handoff:** `pwsh -File scripts/harness-check.ps1 -BaseRef <exact-base-sha>`, `git diff --name-only <base>...HEAD`, `git status`.
 
-A task that needs paths outside the envelope stops and asks the owner; it does not edit the envelope on its own.
+Ordinary SHF tasks work within the stable engineering boundary without recurring envelope transition PRs.
+A task that needs changes to protected governance surfaces stops and asks the owner for a governance transition.
 
 ## Pull request shape
 

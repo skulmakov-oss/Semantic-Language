@@ -30,6 +30,9 @@ Status: canonical ownership map (SHF reset)
    (see the `CANONICAL` state in [ARCHITECTURE.md](./ARCHITECTURE.md)).
 5. **TypeScript is never a language authority.** Any future tooling client is a presentation
    consumer (see [FUTURE.md](./FUTURE.md)).
+6. **Technical dependency != administrative dependency.** The bootstrap implementation depends on
+   frozen technical contracts and exact Git SHAs in `skulmakov-oss/Semantic`. It does not depend on
+   upstream GitHub issue or PR administrative lifecycles.
 
 ## Classifying a change
 

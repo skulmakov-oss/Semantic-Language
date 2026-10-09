@@ -77,19 +77,22 @@ function Test-Envelope($cfg) {
     }
     if ($cfg.scope.allowed_paths.Count -eq 0) { throw 'scope.allowed_paths is empty' }
     foreach ($p in @($cfg.scope.allowed_paths) + @($cfg.scope.forbidden_paths)) { [void](Test-PatternSyntax $p) }
-    # Invariant governance boundaries: non-governance tasks must never touch governance/CI or checker,
-    # and must explicitly keep them in forbidden_paths to ensure safe fail-closed return to ordinary SHF work.
+    # Invariant governance boundaries: non-governance tasks must never touch governance/CI, checker,
+    # or the envelope file itself, and must explicitly keep them in forbidden_paths to ensure safe fail-closed return to ordinary SHF work.
     $isGovernanceTask = ($cfg.task.type -in 'governance', 'governance_migration')
     if (-not $isGovernanceTask) {
         foreach ($p in $cfg.scope.allowed_paths) {
-            if ($p -match '^(\.github/|scripts/harness-check\.ps1|scripts/\*\*)') {
+            if ($p -in '.github/**', 'scripts/harness-check.ps1', '.harness/current.task.yaml' -or
+                $p.StartsWith('.github/') -or $p.StartsWith('.harness/') -or
+                $p -in 'scripts/**', '.github', 'scripts') {
                 throw "ordinary task cannot include governance invariant path in allowed_paths: '$p'"
             }
         }
-        $forbidsGithub = @($cfg.scope.forbidden_paths | Where-Object { $_ -match '^\.github/' }).Count -gt 0
-        $forbidsChecker = @($cfg.scope.forbidden_paths | Where-Object { $_ -match '^(scripts/harness-check\.ps1|scripts/\*\*)' }).Count -gt 0
-        if (-not $forbidsGithub -or -not $forbidsChecker) {
-            throw "ordinary task must forbid governance invariant paths (.github/** and scripts/harness-check.ps1)"
+        $forbidsGithub = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq '.github/**' }).Count -gt 0
+        $forbidsChecker = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq 'scripts/harness-check.ps1' }).Count -gt 0
+        $forbidsEnvelope = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq '.harness/current.task.yaml' }).Count -gt 0
+        if (-not $forbidsGithub -or -not $forbidsChecker -or -not $forbidsEnvelope) {
+            throw "ordinary task must explicitly forbid governance invariant paths: '.github/**', 'scripts/harness-check.ps1', and '.harness/current.task.yaml'"
         }
     }
     foreach ($k in $cfg.authorization.Keys) {
