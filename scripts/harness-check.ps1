@@ -79,14 +79,16 @@ function Test-Envelope($cfg) {
     foreach ($p in @($cfg.scope.allowed_paths) + @($cfg.scope.forbidden_paths)) { [void](Test-PatternSyntax $p) }
     # Invariant governance boundaries: non-governance tasks must never touch governance/CI, checker,
     # or the envelope file itself, and must explicitly keep them in forbidden_paths to ensure safe fail-closed return to ordinary SHF work.
-    $isGovernanceTask = ($cfg.task.type -in 'governance', 'governance_migration')
+    $isGovernanceTask = ($cfg.task.type -cin 'governance', 'governance_migration')
     if (-not $isGovernanceTask) {
         foreach ($p in $cfg.scope.allowed_paths) {
             # Stable ordinary engineering surfaces (Surface A):
             # compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md.
-            $isSurfaceA = ($p -in 'README.md', 'CONTRIBUTING.md') -or
-                ($p -in 'compiler/**', 'tests/**', 'docs/**') -or
-                ($p.StartsWith('compiler/') -or $p.StartsWith('tests/') -or $p.StartsWith('docs/'))
+            $isSurfaceA = ($p -cin 'README.md', 'CONTRIBUTING.md') -or
+                ($p -cin 'compiler/**', 'tests/**', 'docs/**') -or
+                ($p.StartsWith('compiler/', [StringComparison]::Ordinal) -or
+                 $p.StartsWith('tests/', [StringComparison]::Ordinal) -or
+                 $p.StartsWith('docs/', [StringComparison]::Ordinal))
             if (-not $isSurfaceA) {
                 throw "ordinary task allowed_paths must be restricted to stable engineering surface (compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md): '$p'"
             }

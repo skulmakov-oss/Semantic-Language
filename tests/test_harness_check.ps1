@@ -349,6 +349,84 @@ constraints:
     "
     Assert-Test "Adversarial 6: Ordinary task cannot allow broad pattern *.md outside Surface A" ($LASTEXITCODE -eq 47)
 
+    # Adversarial Test 7: Case-insensitive task.type (e.g. GOVERNANCE) cannot bypass ordinary restrictions
+    $adv7 = @"
+task:
+  id: SHF-ADV-7
+  title: "Adversarial 7"
+  type: GOVERNANCE
+  mode: active
+  authorized_by: owner
+intent:
+  summary: "test"
+scope:
+  allowed_paths:
+    - scripts/**
+  forbidden_paths:
+    - .github/**
+    - scripts/harness-check.ps1
+    - .harness/current.task.yaml
+authorization:
+  compiler_implementation: true
+constraints:
+  issue: 20
+  base_branch: main
+  base_sha: 0123456789abcdef0123456789abcdef01234567
+"@
+    $adv7File = Join-Path $testTmpDir "adv7.yaml"
+    Set-Content -LiteralPath $adv7File -Value $adv7 -Encoding utf8
+
+    $resAdv7 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        try {
+            Read-Envelope '$adv7File'
+            exit 0
+        } catch {
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 50 }
+            exit 1
+        }
+    "
+    Assert-Test "Adversarial 7: Uppercase task.type GOVERNANCE cannot bypass ordinary restrictions" ($LASTEXITCODE -eq 50)
+
+    # Adversarial Test 8: Non-canonical casing for Surface A paths (e.g. Compiler/** or readme.md) is rejected
+    $adv8 = @"
+task:
+  id: SHF-ADV-8
+  title: "Adversarial 8"
+  type: implementation
+  mode: active
+  authorized_by: owner
+intent:
+  summary: "test"
+scope:
+  allowed_paths:
+    - Compiler/**
+  forbidden_paths:
+    - .github/**
+    - scripts/harness-check.ps1
+    - .harness/current.task.yaml
+authorization:
+  compiler_implementation: true
+constraints:
+  issue: 20
+  base_branch: main
+  base_sha: 0123456789abcdef0123456789abcdef01234567
+"@
+    $adv8File = Join-Path $testTmpDir "adv8.yaml"
+    Set-Content -LiteralPath $adv8File -Value $adv8 -Encoding utf8
+
+    $resAdv8 = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        try {
+            Read-Envelope '$adv8File'
+            exit 0
+        } catch {
+            if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 51 }
+            exit 1
+        }
+    "
+    Assert-Test "Adversarial 8: Non-canonical casing Compiler/** in allowed_paths is rejected" ($LASTEXITCODE -eq 51)
+
     # Test 6: Properly formed ordinary SHF task passes validation
     $envOrdinaryGood = @"
 task:
