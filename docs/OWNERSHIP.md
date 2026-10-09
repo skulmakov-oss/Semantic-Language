@@ -5,7 +5,7 @@ Status: canonical ownership map (SHF reset)
 | Surface | Current authority | Bootstrap target |
 |---|---|---|
 | Language semantics | `Semantic` | remains upstream until explicit transfer |
-| Rust C0 compiler | `Semantic` | reference / oracle |
+| Rust C0 compiler | `Semantic` (exact SHA) | reproducible historical executable reference |
 | Compiler source `S` | `Semantic-Language` | Semantic |
 | Lexer / parser / sema / IR / emitter | `Semantic-Language` implementation | Semantic |
 | SemCode contract | `Semantic` (`sm-format` / `sm-emit`) | initially remains upstream |

@@ -215,6 +215,12 @@ under explicit owner GO. Because the trusted workflow did not yet exist on its b
 qualified by exact-head owner review, CI and independent review instead. That exception ended at
 its merge; no later PR may claim it. There is no bypass.
 
+Under Strategy v1.1 (Issue #20: Implementation Independence, Specification Unity, Deterministic Proof),
+ordinary SHF tasks are authorized for full-stage delivery (compiler code, tests, and documentation in a
+single PR cycle within the active envelope) rather than fragmented micro-PRs. However, governance invariants
+remains strictly fail-closed: ordinary tasks cannot touch `.github/**` or `scripts/harness-check.ps1`,
+and C0 remains a reproducible historical executable reference evaluated by deterministic fixed-point proof.
+
 ## 9. Working loop
 
 1. Read current Git status, exact repository identity and `.harness/current.task.yaml`.

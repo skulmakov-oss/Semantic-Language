@@ -28,11 +28,14 @@ A task that needs paths outside the envelope stops and asks the owner; it does n
 
 ## Pull request shape
 
-Prefer narrow PRs that contain one migration or qualification unit.
+Prefer focused PRs that deliver complete stage units under an authorized SHF envelope.
+Under Strategy v1.1, ordinary SHF tasks may deliver implementation, tests, and documentation
+in a unified PR cycle, eliminating artificial multi-PR fragmentation while maintaining strict
+fail-closed governance boundaries.
 
 A good bootstrap PR explains:
 
-- **Reference point** — upstream exact SHA (never floating `main`) and contract owner;
+- **Reference point** — upstream exact SHA (never floating `main`), treated as a reproducible historical executable reference;
 - **Purpose** — what is being mirrored or qualified;
 - **Scope** — what is deliberately not included;
 - **Equivalence rule** — how Rust/reference and Semantic/bootstrap outputs are compared;

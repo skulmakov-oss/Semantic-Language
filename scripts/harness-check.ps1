@@ -77,6 +77,21 @@ function Test-Envelope($cfg) {
     }
     if ($cfg.scope.allowed_paths.Count -eq 0) { throw 'scope.allowed_paths is empty' }
     foreach ($p in @($cfg.scope.allowed_paths) + @($cfg.scope.forbidden_paths)) { [void](Test-PatternSyntax $p) }
+    # Invariant governance boundaries: non-governance tasks must never touch governance/CI or checker,
+    # and must explicitly keep them in forbidden_paths to ensure safe fail-closed return to ordinary SHF work.
+    $isGovernanceTask = ($cfg.task.type -in 'governance', 'governance_migration')
+    if (-not $isGovernanceTask) {
+        foreach ($p in $cfg.scope.allowed_paths) {
+            if ($p -match '^(\.github/|scripts/harness-check\.ps1|scripts/\*\*)') {
+                throw "ordinary task cannot include governance invariant path in allowed_paths: '$p'"
+            }
+        }
+        $forbidsGithub = @($cfg.scope.forbidden_paths | Where-Object { $_ -match '^\.github/' }).Count -gt 0
+        $forbidsChecker = @($cfg.scope.forbidden_paths | Where-Object { $_ -match '^(scripts/harness-check\.ps1|scripts/\*\*)' }).Count -gt 0
+        if (-not $forbidsGithub -or -not $forbidsChecker) {
+            throw "ordinary task must forbid governance invariant paths (.github/** and scripts/harness-check.ps1)"
+        }
+    }
     foreach ($k in $cfg.authorization.Keys) {
         if ($cfg.authorization[$k] -cnotin 'true', 'false') { throw "authorization.$k must be true or false" }
     }
