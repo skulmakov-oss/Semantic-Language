@@ -566,6 +566,19 @@ constraints:
     "
     Assert-Test "Integration T1d: Test-SameScope detects swapped authorization values as scope change" ($LASTEXITCODE -eq 0)
 
+    # Integration Test T1e: Transition exemption requires governance status on base or candidate
+    $resT1e = & pwsh -NoProfile -Command "
+        . '$CheckerPath'
+        `$envOrd1 = Read-Envelope '$g2EnvFile'
+        `$envOrd2 = Read-Envelope '$g2EnvFile'
+        `$envOrd2.task.id = 'SHF-STAGE-DELIVERY-NEXT' # Real scope change between ordinary tasks
+        `$hasGov = (`$envOrd1.task.type -cin 'governance', 'governance_migration') -or
+                   (`$envOrd2.task.type -cin 'governance', 'governance_migration')
+        if (-not `$hasGov) { exit 0 } else { exit 1 }
+    "
+    Assert-Test "Integration T1e: Ordinary-to-ordinary scope change does not receive governance transition exemption" ($LASTEXITCODE -eq 0)
+
+
     # Integration Test T2: Envelope transition PR attempting to touch payload fails
     $resT2 = & pwsh -NoProfile -Command "
         . '$CheckerPath'

@@ -342,7 +342,11 @@ if ($isEnvelopeOnly -and $BaseRef) {
             $oldBaseEnv = try { Read-Envelope $tmpBase } catch { $null }
         } finally { Remove-Item -LiteralPath $tmpBase }
         if ($oldBaseEnv -and -not (Test-SameScope $oldBaseEnv $envelope)) {
-            $isGenuineTransition = $true
+            $hasGovernanceType = ($oldBaseEnv.task.type -cin 'governance', 'governance_migration') -or
+                                 ($envelope.task.type -cin 'governance', 'governance_migration')
+            if ($hasGovernanceType) {
+                $isGenuineTransition = $true
+            }
         }
     }
 }
