@@ -2,40 +2,38 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: GOVERNANCE-MIGRATION-ISSUE-20
-  title: "Authorize governance migration for independent SHF delivery (Issue #20)"
-  type: governance_migration
+  id: SHF-STAGE-DELIVERY-STABLE
+  title: "Stable ordinary SHF delivery profile (Issue #20 Phase G2)"
+  type: implementation
   mode: active
-  supersedes: SHF-1-UPSTREAM-COMPLETE-HOLD
-  authorized_by: "Repository owner explicit task - SEMANTIC-LANGUAGE GOVERNANCE LIBERATION (Issue #20)"
+  supersedes: GOVERNANCE-MIGRATION-ISSUE-20
+  authorized_by: "Repository owner explicit task - SEMANTIC-LANGUAGE GOVERNANCE LIBERATION (Issue #20 Phase G2)"
 
 intent:
-  summary: "Transition envelope authorizing implementation of Strategy v1.1 approved in Issue #20: establish independent downstream SHF delivery, eliminate upstream PR/issue administrative couplings, retain strict specification unity, and allow authorized governance and workflow improvements."
+  summary: "Stable ordinary SHF delivery envelope under Strategy v1.1: authorizes full-stage ordinary implementation delivery (compiler code, tests, documentation) within Surface A without recurring scope transitions, while strictly preserving protected governance, reference, and bootstrap seal boundaries (Surfaces B, C, D)."
 
 scope:
   allowed_paths:
-    - .harness/current.task.yaml
-    - scripts/**
-    - .github/**
-    - docs/**
-    - AGENTS.md
-    - CONTRIBUTING.md
-    - README.md
-    - tests/**
-  forbidden_paths:
     - compiler/**
+    - tests/**
+    - docs/**
+    - README.md
+    - CONTRIBUTING.md
+  forbidden_paths:
+    - .github/**
+    - scripts/harness-check.ps1
+    - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
-    - "*.sm"
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: false
+  compiler_implementation: true
   documentation_addition: true
   documentation_correction: true
   test_addition: true
-  workflow_changes: true
+  workflow_changes: false
   dependency_changes: false
   github_issue_lifecycle: true
   git_commit_push_pr: true
@@ -45,7 +43,7 @@ authorization:
 constraints:
   issue: 20
   base_branch: main
-  base_sha: c4ae9f58f9bed8f4b65b2690cef8cdf2385a2b52
+  base_sha: 8dbb842ab8e35335f7177d581c2bb2a28ecca60a
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
