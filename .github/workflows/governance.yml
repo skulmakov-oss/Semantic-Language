@@ -39,6 +39,9 @@ jobs:
       - name: Harness self-test
         shell: pwsh
         run: ./scripts/harness-check.ps1 -SelfTest
+      - name: Harness regression tests
+        shell: pwsh
+        run: ./tests/test_harness_check.ps1
       - name: Harness scope enforcement vs exact base
         # Pull requests: the immutable PR base SHA. Pushes to main: the previous tip.
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000')

@@ -5,7 +5,7 @@ Status: canonical ownership map (SHF reset)
 | Surface | Current authority | Bootstrap target |
 |---|---|---|
 | Language semantics | `Semantic` | remains upstream until explicit transfer |
-| Rust C0 compiler | `Semantic` | reference / oracle |
+| Rust C0 compiler | `Semantic` (exact SHA) | reproducible historical executable reference |
 | Compiler source `S` | `Semantic-Language` | Semantic |
 | Lexer / parser / sema / IR / emitter | `Semantic-Language` implementation | Semantic |
 | SemCode contract | `Semantic` (`sm-format` / `sm-emit`) | initially remains upstream |
@@ -30,6 +30,9 @@ Status: canonical ownership map (SHF reset)
    (see the `CANONICAL` state in [ARCHITECTURE.md](./ARCHITECTURE.md)).
 5. **TypeScript is never a language authority.** Any future tooling client is a presentation
    consumer (see [FUTURE.md](./FUTURE.md)).
+6. **Technical dependency != administrative dependency.** The bootstrap implementation depends on
+   frozen technical contracts and exact Git SHAs in `skulmakov-oss/Semantic`. It does not depend on
+   upstream GitHub issue or PR administrative lifecycles.
 
 ## Classifying a change
 
