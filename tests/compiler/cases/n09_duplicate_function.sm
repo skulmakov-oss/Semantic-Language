@@ -1,0 +1,11 @@
+fn f() {
+    return;
+}
+
+fn f() {
+    return;
+}
+
+fn main() {
+    return;
+}

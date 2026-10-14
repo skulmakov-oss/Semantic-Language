@@ -1,0 +1,16 @@
+fn first_multiple(of: i32, from: i32) -> i32 {
+    let mut i: i32 = from;
+    while true {
+        if i % of == 0 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn main() {
+    assert(first_multiple(7, 50) == 56);
+    assert(first_multiple(5, 5) == 5);
+    return;
+}

@@ -1,0 +1,8 @@
+fn down(n: i32) -> i32 {
+    return down(n + 1);
+}
+
+fn main() {
+    let x: i32 = down(0);
+    return;
+}
