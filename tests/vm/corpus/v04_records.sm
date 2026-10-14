@@ -1,0 +1,23 @@
+record Point {
+    x: i32,
+    y: i32
+}
+
+record Box {
+    lo: Point,
+    hi: Point,
+    name: text
+}
+
+fn area(b: Box) -> i32 {
+    return (b.hi.x - b.lo.x) * (b.hi.y - b.lo.y);
+}
+
+fn main() {
+    let a: Point = Point { x: 1, y: 2 };
+    let b: Point = a with { y: 10 };
+    let bx: Box = Box { lo: a, hi: Point { x: 4, y: 6 }, name: "box" };
+    print(to_text(a.x) + " " + to_text(b.y) + " " + to_text(area(bx)) + " " + bx.name);
+    print(to_text(a == Point { x: 1, y: 2 }) + " " + to_text(a == b) + " " + to_text(bx.lo == a));
+    return;
+}

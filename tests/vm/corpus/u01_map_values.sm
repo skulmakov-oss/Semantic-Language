@@ -1,0 +1,6 @@
+fn main() {
+    let mut m: Map(i32, text) = map_empty();
+    m = map_set(m, 1, "one");
+    print(map_get(m, 1, "none") + " " + map_get(m, 2, "none"));
+    return;
+}

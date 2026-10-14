@@ -1,0 +1,19 @@
+fn main() {
+    print("and");
+    print("N: " + to_text(qtruth_and(N, N)) + to_text(qtruth_and(N, F)) + to_text(qtruth_and(N, T)) + to_text(qtruth_and(N, S)));
+    print("F: " + to_text(qtruth_and(F, N)) + to_text(qtruth_and(F, F)) + to_text(qtruth_and(F, T)) + to_text(qtruth_and(F, S)));
+    print("T: " + to_text(qtruth_and(T, N)) + to_text(qtruth_and(T, F)) + to_text(qtruth_and(T, T)) + to_text(qtruth_and(T, S)));
+    print("S: " + to_text(qtruth_and(S, N)) + to_text(qtruth_and(S, F)) + to_text(qtruth_and(S, T)) + to_text(qtruth_and(S, S)));
+    print("or");
+    print("N: " + to_text(qtruth_or(N, N)) + to_text(qtruth_or(N, F)) + to_text(qtruth_or(N, T)) + to_text(qtruth_or(N, S)));
+    print("F: " + to_text(qtruth_or(F, N)) + to_text(qtruth_or(F, F)) + to_text(qtruth_or(F, T)) + to_text(qtruth_or(F, S)));
+    print("T: " + to_text(qtruth_or(T, N)) + to_text(qtruth_or(T, F)) + to_text(qtruth_or(T, T)) + to_text(qtruth_or(T, S)));
+    print("S: " + to_text(qtruth_or(S, N)) + to_text(qtruth_or(S, F)) + to_text(qtruth_or(S, T)) + to_text(qtruth_or(S, S)));
+    print("impl");
+    print("N: " + to_text(qtruth_impl(N, N)) + to_text(qtruth_impl(N, F)) + to_text(qtruth_impl(N, T)) + to_text(qtruth_impl(N, S)));
+    print("F: " + to_text(qtruth_impl(F, N)) + to_text(qtruth_impl(F, F)) + to_text(qtruth_impl(F, T)) + to_text(qtruth_impl(F, S)));
+    print("T: " + to_text(qtruth_impl(T, N)) + to_text(qtruth_impl(T, F)) + to_text(qtruth_impl(T, T)) + to_text(qtruth_impl(T, S)));
+    print("S: " + to_text(qtruth_impl(S, N)) + to_text(qtruth_impl(S, F)) + to_text(qtruth_impl(S, T)) + to_text(qtruth_impl(S, S)));
+    print(to_text(qtruth_not(N)) + to_text(qtruth_not(F)) + to_text(qtruth_not(T)) + to_text(qtruth_not(S)));
+    return;
+}

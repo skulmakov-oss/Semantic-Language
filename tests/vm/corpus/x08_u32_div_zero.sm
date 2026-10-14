@@ -1,0 +1,5 @@
+fn main() {
+    let z: u32 = 0u32;
+    print(to_text(5u32 / z));
+    return;
+}

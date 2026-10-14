@@ -1,0 +1,6 @@
+fn main() {
+    print("before");
+    assert(2 + 2 == 5);
+    print("after");
+    return;
+}

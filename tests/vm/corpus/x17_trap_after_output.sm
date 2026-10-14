@@ -1,0 +1,13 @@
+fn risky(n: i32) -> i32 {
+    print("risky " + to_text(n));
+    return 100 / n;
+}
+
+fn main() {
+    let mut i: i32 = 3;
+    while i >= 0 {
+        print(to_text(risky(i)));
+        i = i - 1;
+    }
+    return;
+}
