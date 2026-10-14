@@ -3,7 +3,9 @@
 Status: deferred. **None of the work below is a prerequisite for C0 → C1 → C2.**
 
 These tracks may only build on proven semantics. They consume the result of the self-hosting
-fixed point; they do not define it.
+fixed point; they do not define it. The one explicit exception is the Semantic VM track
+(SEM-VM-001, Issue #29), which the repository owner authorized to start before the Seal; it is
+still not a prerequisite for the fixed point (see the last section).
 
 ```text
 Self-hosting / Bootstrap Seal
@@ -53,5 +55,11 @@ Sibling post-self-hosting track upstream. Not part of the bootstrap work queue.
 
 ## Verifier or VM in Semantic
 
-A Semantic verifier or VM may be considered after the Seal through the normal migration states
-and an explicit ownership-transfer decision. It is not required for first self-hosting.
+A Semantic verifier may be considered after the Seal through the normal migration states and an
+explicit ownership-transfer decision. It is not required for first self-hosting.
+
+The Semantic VM is the explicit early exception: an owner-authorized independent track in
+`vm/**` (SEM-VM-001, Issue #29; see [ARCHITECTURE.md](./ARCHITECTURE.md) §7) that proceeds
+before the Seal. It stays outside the first self-hosting critical path and holds no execution
+authority; it may advance through MIRRORED, DIFFERENTIAL and QUALIFIED, and any transfer of
+authority (CANONICAL) still requires an explicit decision.

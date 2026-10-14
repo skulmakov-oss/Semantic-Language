@@ -83,14 +83,16 @@ function Test-Envelope($cfg) {
     if (-not $isGovernanceTask) {
         foreach ($p in $cfg.scope.allowed_paths) {
             # Stable ordinary engineering surfaces (Surface A):
-            # compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md.
+            # compiler/**, vm/**, tests/**, docs/**, README.md, CONTRIBUTING.md.
+            # vm/** is the Semantic VM track (SEM-VM-001, Issue #29).
             $isSurfaceA = ($p -cin 'README.md', 'CONTRIBUTING.md') -or
-                ($p -cin 'compiler/**', 'tests/**', 'docs/**') -or
+                ($p -cin 'compiler/**', 'vm/**', 'tests/**', 'docs/**') -or
                 ($p.StartsWith('compiler/', [StringComparison]::Ordinal) -or
+                 $p.StartsWith('vm/', [StringComparison]::Ordinal) -or
                  $p.StartsWith('tests/', [StringComparison]::Ordinal) -or
                  $p.StartsWith('docs/', [StringComparison]::Ordinal))
             if (-not $isSurfaceA) {
-                throw "ordinary task allowed_paths must be restricted to stable engineering surface (compiler/**, tests/**, docs/**, README.md, CONTRIBUTING.md): '$p'"
+                throw "ordinary task allowed_paths must be restricted to stable engineering surface (compiler/**, vm/**, tests/**, docs/**, README.md, CONTRIBUTING.md): '$p'"
             }
         }
         $forbidsGithub = @($cfg.scope.forbidden_paths | Where-Object { $_ -ceq '.github/**' }).Count -gt 0

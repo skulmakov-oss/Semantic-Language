@@ -71,6 +71,19 @@ binary I/O, …) ask: *does this change the Semantic language/runtime contract?*
 - NO, ordinary compiler logic (lexer, parser, AST, analysis, IR, lowering, SemCode emitter,
   bootstrap harness, C1/C2 comparison) → belongs here.
 
+### Semantic VM track (SEM-VM-001)
+
+The repository owner authorized an independent virtual machine written in Semantic, developed
+in `vm/**` (Issue #29). It is a separate track, not a prerequisite for the fixed point above:
+- `sm-vm` remains the bootstrap host and the reference execution authority (exact SHA);
+- the Semantic VM decodes and executes admitted SemCode itself and, during bootstrap, runs as a
+  guest program of `sm-vm`; its results are differential evidence, never execution authority;
+- the C0 -> C1 -> C2 proof and the Bootstrap Seal definition are unchanged;
+- any proof that involves the Semantic VM requires a separately authorized contract revision.
+
+The VM must not hide guest execution in the host: the host may move artifact bytes (hex
+transport) but never decodes instructions, resolves control flow or executes the guest.
+
 ## 4. Superpowers (process)
 
 Use the smallest relevant process; do not invoke skills mechanically.
@@ -227,7 +240,8 @@ and C0 remains a reproducible historical executable reference evaluated by deter
 Post-migration operations are organized into four distinct surfaces:
 
 1. **Stable ordinary engineering surfaces (A):**
-   `compiler/**`, `tests/**`, `docs/**`, `README.md`, `CONTRIBUTING.md`.
+   `compiler/**`, `vm/**`, `tests/**`, `docs/**`, `README.md`, `CONTRIBUTING.md`.
+   `vm/**` holds the Semantic VM track (SEM-VM-001, Issue #29); see section 3.
    Ordinary SHF delivery occurs within these surfaces. No envelope transition PR is needed between
    normal SHF stages; the active task/stage is authorized by owner instruction and tracked in the
    relevant Issue and PR.
