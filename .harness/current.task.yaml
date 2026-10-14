@@ -2,34 +2,35 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SEM-VM-001-GOVERNANCE
-  title: "Admit vm/** as the Semantic VM implementation surface (SEM-VM-001, Issue #29)"
-  type: governance
+  id: SHF-STAGE-DELIVERY-STABLE
+  title: "Stable ordinary delivery profile: SHF stages and the Semantic VM track (Issue #20 G2, Issue #29)"
+  type: implementation
   mode: active
-  supersedes: SHF-STAGE-DELIVERY-STABLE
-  authorized_by: "Repository owner explicit task - SEM-VM-001 Build a New Virtual Machine Entirely in Semantic (section 4: repository governance transition)"
+  supersedes: SEM-VM-001-GOVERNANCE
+  authorized_by: "Repository owner explicit task - SEM-VM-001 Build a New Virtual Machine Entirely in Semantic (section 4), extending the Issue #20 Phase G2 stable profile"
 
 intent:
-  summary: "One-time governance task: add vm/** to the stable ordinary engineering surface in scripts/harness-check.ps1 (with tests) and record in AGENTS.md and docs/** that the Rust VM remains the bootstrap host and reference execution authority, the Semantic VM is an independent track, and the frozen C0 -> C1 -> C2 protocol is unchanged. No compiler, VM, bootstrap, reference or workflow change."
+  summary: "Stable ordinary delivery envelope under Strategy v1.1, extended with the Semantic VM implementation surface vm/** (SEM-VM-001): ordinary implementation, tests and documentation within Surface A without recurring scope transitions, while strictly preserving protected governance, reference and bootstrap seal boundaries (Surfaces B, C, D)."
 
 scope:
   allowed_paths:
-    - scripts/harness-check.ps1
-    - tests/test_harness_check.ps1
-    - AGENTS.md
+    - compiler/**
+    - vm/**
+    - tests/**
     - docs/**
+    - README.md
+    - CONTRIBUTING.md
   forbidden_paths:
     - .github/**
+    - scripts/harness-check.ps1
     - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
-    - compiler/**
-    - vm/**
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: false
+  compiler_implementation: true
   documentation_addition: true
   documentation_correction: true
   test_addition: true
@@ -43,7 +44,7 @@ authorization:
 constraints:
   issue: 29
   base_branch: main
-  base_sha: d474fe72ba94d588e389e36058d704f1fe66ea93
+  base_sha: 8e25660fdda38daee1aa95a51697cd5c9c3995fa
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
