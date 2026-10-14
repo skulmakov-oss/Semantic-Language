@@ -1,6 +1,6 @@
 # The Semantic compiler (`compiler/`)
 
-Status: **MIRRORED / DIFFERENTIAL for a function-level subset — not QUALIFIED, not CANONICAL.**
+Status: **MIRRORED / DIFFERENTIAL for the subset below — not QUALIFIED, not CANONICAL.**
 
 `compiler/` is a SemCode compiler written in Semantic. Every compiler-meaning stage runs as Semantic code on the existing verifier and VM:
 - tokenizing;
@@ -17,161 +17,177 @@ The host only transports bytes (see "Host boundary").
 
 ## 1. Supported source subset
 
-A program is one or more functions:
-
 ```
-program   = { "fn" IDENT "(" [ param { "," param } ] ")" [ "->" type ] block }
-param     = IDENT ":" type
-type      = "i32" | "bool"
-block     = "{" { stmt } "}"
-stmt      = "let" ["mut"] IDENT [":" type] "=" expr ";"
-          | IDENT "=" expr ";"
-          | "if" expr block [ "else" ( if-stmt | block ) ]
-          | "while" expr block
-          | "break" ";" | "continue" ";"
-          | "return" [ expr ] ";"
-          | "assert" "(" expr ")" ";"
-          | expr ";"
-expr      = binary(1) over  || && == != < <= > >= + - * / %   (left-associative)
-unary     = ( "-" | "!" ) unary | primary
-primary   = INT | "true" | "false" | IDENT | IDENT "(" [ expr { "," expr } ] ")" | "(" expr ")"
+program   = { record-decl | fn-decl }
+record    = "record" NAME "{" field ":" type { "," field ":" type } [","] "}"
+fn        = "fn" NAME "(" [ param { "," param } ] ")" [ "->" type ] block
+type      = "i32" | "bool" | "u32" | "text" | NAME (record)
+          | "Sequence" "(" type ")" | "Option" "(" type ")" | "(" type "," type { "," type } ")"
+stmt      = "let" ["mut"] NAME [":" type] "=" expr ";" | "let" ["mut"] "(" NAME {"," NAME} ")" [":" type] "=" expr ";"
+          | NAME "=" expr ";" | "(" NAME {"," NAME} ")" "=" expr ";"
+          | "if" expr block [ "else" ( if-stmt | block ) ] | "while" expr block
+          | "for" NAME "in" expr block | "break" ";" | "continue" ";"
+          | "return" [ expr ] ";" | "assert" "(" expr ")" ";" | match-expr [";"] | expr ";"
+expr      = binary over  || && == != < <= > >= + - * / %   (left-associative), unary - !
+postfix   = primary { "." field | "[" expr "]" | "with" "{" field ":" expr {"," ...} "}" }
+primary   = INT | INT"u32" | TEXT | "true" | "false" | NAME | NAME "(" args ")"
+          | NAME "{" field ":" expr {"," ...} "}" | "(" expr ")" | "(" expr "," expr {"," expr} ")"
+          | "[" [ expr {"," expr} ] "]" | match-expr | "if" expr block-expr "else" (block-expr | if-expr)
+match     = "match" expr "{" { pattern "=>" ( expr | block-expr ) [","] } "}"
+pattern   = "_" | INT | INT"u32" | "Option" "::" "Some" "(" NAME ")" | "Option" "::" "None"
+block-expr= "{" { stmt } [ expr ] "}"
 ```
 
 `//` comments are accepted.
 
+### Builtins
+
+| Builtin | Lowered as |
+|---|---|
+| `len(Sequence) -> i32` | `SEQUENCE_LEN` |
+| `push(Sequence(T), T)` | `SEQUENCE_PUSH` |
+| `pop(Sequence)` | `SEQUENCE_POP` |
+| `to_text(i32\|u32\|bool\|text) -> text` | name-dispatched `CALL` |
+| `text_len(text) -> u32` | name-dispatched `CALL` |
+| `text_byte_at(text, u32) -> Option(u32)` | name-dispatched `CALL` |
+| `text_slice(text, u32, u32) -> Option(text)` | name-dispatched `CALL` |
+
+The name-dispatched `CALL`s are exactly how the reference compiler lowers these builtins.
+
 ### Static rules
 
-**Functions and calls:**
-- Functions may be called before they are defined, and recursion and mutual recursion are allowed.
-- Arguments must match the callee's parameter count and types.
-- `main` must exist, take no parameters and return `unit`.
+These follow the reference compiler; each one in the second group was checked against it, and the first two were caught by differential tests.
 
-**Types and operators:**
-- Types are `i32`, `bool` and `unit` (no return type). A `unit` value can't be an operand, an initializer, an argument or a condition.
-- Operators follow Semantic's typing rules.
+**Rules taken from the reference compiler:**
+- A function with a non-`unit` return type must **end with a top-level `return`**. An `if`/`else` whose branches both return is rejected (`n25`).
+- **`break`/`continue` are allowed only inside `while`**, not inside `for … in` (`n39`).
+- Unsuffixed integer patterns match both `i32` and `u32` scrutinees (`a13`).
 
-**Variables:**
-- Variables are block-scoped and may be shadowed.
-- Assignment must keep the variable's type. This includes parameters and `let` bindings without `mut`, which the reference compiler admits too.
-
-**Returns and loops:**
-- A function with a non-`unit` return type must **end with a top-level `return`**. This is the reference compiler's rule: an `if`/`else` whose branches both return is rejected (`n25`).
-- `break` and `continue` are only allowed inside a loop.
+**Other rules:**
+- **Values:**
+  - an empty `[]` needs a contextual `Sequence(T)` type;
+  - record literals give every field exactly once, and are evaluated in declaration-slot order;
+  - equality is defined on `i32`, `u32`, `bool` and `text` only;
+  - `u32` and `i32` never mix.
+- **`match`:**
+  - the scrutinee is `i32`, `u32` or `Option(T)`, and all arms have one type;
+  - a `_` arm is required unless `Option::Some` and `Option::None` are both covered.
 
 ### Runtime semantics
 
 All runtime behaviour belongs to the VM:
-- `i32` arithmetic wraps;
+- `i32` wraps;
+- `u32` traps on overflow;
 - `/` and `%` trap on zero and on `i32::MIN / -1`;
+- indexing traps out of bounds;
 - `&&` and `||` evaluate both operands, exactly like the reference.
 
 ### Outside the subset
 
 These forms are rejected with category `unsupported`:
-- other types;
-- records, enums and other top-level items;
-- text and other literal families;
-- `.` `[` `]` `|` `&` `?` syntax;
-- `for`, `loop` and `const`;
+- enums;
+- `Map`, `Result`, `quad`, `f64`, `fx` and `Bytes`;
+- `Import`;
+- closures and function values;
+- method calls;
+- ranges and `loop`;
+- `const`;
 - compound assignment;
-- tuples;
+- match guards and other patterns;
+- record or tuple equality;
+- tuple field access;
+- field punning;
 - default parameters, contracts and expression-bodied functions;
-- function values;
 - bare blocks.
-
-### Diagnostics
-
-Each diagnostic has the form `error <syntax|name|type|context|unsupported> @<byte offset>: <message>`.
 
 ## 2. Architecture
 
 | Module | Responsibility |
 |---|---|
-| `lexer.sm` | UTF-8 bytes to tokens. One loop with no user-function call per byte. |
-| `ast.sm` | Node arena, `Func`, `Prog`. |
-| `parser.sm` | Recursive descent for items and statements, precedence climbing for expressions. Tokens are read directly from the stream, not through helper calls. |
-| `sema.sm` | Function table, scopes, types, arity, the return rule, loop context. The results are side tables (`Map` by node id): expression types, local slots, callees. |
-| `lower.sm` | AST to a linear IR per function, with symbolic labels. Registers are allocated function-locally and linearly: parameters in `r0..r(n-1)`, then one fresh register per expression. Locals are VM local slots, one string-table symbol per declaration. |
-| `semcode.sm` | IR to SemCode. A first pass maps labels to byte offsets; a second pass encodes instructions inline. |
-| `bytes.sm` | Byte encoding through a 256-entry literal table, `i32` little-endian without bit operations, and UTF-8 text bytes. |
-| `driver.sm` | `compile_source(text) -> "hex …" \| "error …"`. |
-| `main.sm` | Entry point: `args_read(0)` then `fs_read_text`, then `stdout_write`. |
-
-### Output format
-
-The output header is **`SEMCOD22` (revision 23)**, the revision the pinned C0 itself emits. It contains:
-- an `ADT0` section with the standard `Option`/`Result` prelude descriptors;
-- per function: the string table, an empty `OWN0`, `SIG0` with the parameter families (`i32` = 7, `bool` = 2), and the instructions.
-
-Because `SIG0` is present, the verifier runs its definite-register-assignment proof on every generated function.
-
-### Instructions emitted
-
-`LOAD_BOOL`, `LOAD_I32`, `LOAD_VAR`, `STORE_VAR`, `ADD/SUB/MUL/DIV/MOD_I32`, `CMP_EQ`, `CMP_NE`, `CMP_I32_LT`, `CMP_I32_LE`, `BOOL_AND`, `BOOL_OR`, `BOOL_NOT`, `JMP`, `JMP_IF`, `CALL`, `RET`, `ASSERT`.
+| `lexer.sm` | UTF-8 bytes to tokens. One loop with no user-function call per byte. Exact `i32` and `u32` literal range checks; text literals stay raw (release limit R2). |
+| `ast.sm` | Node arena, `Func`, `Rec`, `Prog`. |
+| `parser.sm` | Recursive descent for items and statements, precedence climbing for expressions; postfix field, index and `with`; record literals (`Name { field: …`); `match`; value-producing `if` and blocks. |
+| `sema.sm` | Interned type table; record and function tables; scopes; expected-type propagation (for `[]`); typing of builtins; `match` exhaustiveness; loop context; the return rule. The results are side tables (`Map` by node id): types, slots, callees, field indices. Hidden slots hold `if`/`match` results and `for` state. |
+| `lower.sm` | AST to a linear IR per function, with symbolic labels. Registers are allocated function-locally and linearly. `match` on `Option` uses `ADT_TAG`/`ADT_GET`, followed by a guard trap (`LOAD_BOOL 0; ASSERT`), as in the reference. |
+| `semcode.sm` | IR to SemCode. A first pass maps labels to offsets; a second pass encodes inline. The header is `SEMCOD22` (rev 23), or `SEMCOD23` (rev 24) when `u32` arithmetic or ordering is used, which is those opcodes' minimum revision. It writes the `ADT0` prelude (`Option`, `Result`), the string table (text literals keep their quotes, as the reference stores them), `OWN0`, and `SIG0` families. |
+| `bytes.sm`, `driver.sm`, `main.sm` | Byte encoding; `compile_source`; the entry point (`args_read`, `fs_read_text`, `stdout_write`). |
 
 ### Design constraint: Calls
 
-The VM meters **user-function calls** with a fixed, cumulative per-run quota of 16,384 in every CLI envelope. Builtins such as `text_byte_at` and `map_get` are not counted. The compiler is therefore written to spend few calls per source byte:
-- the lexer makes no calls per byte;
-- the parser accesses tokens directly;
-- the encoder writes bytes inline;
-- analysis results go into `Map`s.
+The VM meters **user-function calls** with a fixed, cumulative per-run quota of **16,384** in every CLI envelope (measured: `quota_exceeded: Calls`, `used 16385`). Builtins are free. See section 6.
 
 ## 3. Host boundary
 
-The host is `tests/compiler/hex2bin.py` plus the test runner. It only does three things:
-1. passes a file name and grants read access to one root;
+The host is `tests/compiler/hex2bin.py` plus the test runner. It does three things only:
+1. grants read access to one root and passes a file name;
 2. decodes the compiler's lowercase hex output into bytes;
 3. runs the existing verifier and VM.
 
-The hex step exists because the C0 host boundary has no binary output (`HOST_BOUNDARY.md` §9, SHF-2 gap). `hex2bin.py` rejects anything that is not even-length lowercase hex, and it doesn't parse, choose, repair or add any byte.
+The hex step exists because the C0 host boundary has no binary output (`HOST_BOUNDARY.md` §9, SHF-2 gap). `hex2bin.py` parses, chooses, repairs and adds nothing.
 
-## 4. Reference compatibility (important)
+## 4. Reference compatibility
 
-**The compiler source cannot be compiled by the pinned C0 (`Semantic@89641da8`, v1.2.0).** A lexer needs byte access to source text. At C0:
-- `text_len`, `text_byte_at` and `text_slice` do not exist (`unknown function`);
-- `u32` arithmetic and comparison are not admitted.
+**The compiler source cannot be compiled by the pinned C0 (`Semantic@89641da8`, v1.2.0).** At C0:
+- `text_len`, `text_byte_at` and `text_slice` do not exist;
+- `u32` arithmetic is rejected.
 
-These are exactly the registry gaps BSF-101 (text inspection) and BSF-103 (`u32`) in `BOOTSTRAP_SUBSET.md`. No C0 operation decomposes a `text` value, so any lexer, and therefore any self-hosted compiler, requires a C0 that includes SHF-1 and SHF-3. This was verified with a C0 build (`smc-cli` SHA-256 `cbb435d3…`, `source_fingerprint` `7f10f50c82216db2`) against minimal probes.
+These are registry gaps BSF-101 and BSF-103. No C0 operation decomposes a `text`, so no lexer can exist at C0.
 
-Consequences, with the manifest and the bootstrap contract left unchanged:
-- **The compiler is developed and run on an exploratory reference**, `Semantic@94c5c50d16c3f2efc7691456755461bedae83b18` (`source_fingerprint` `1cd4707ec728c07a`). Results from it are **not C0 qualification**.
-- **The programs it compiles** use nothing beyond C0. Their artifacts are verified and executed with **the pinned C0's own verifier and VM**, and compared with C0's compiler output. That part is real C0 differential evidence.
-- **`bootstrap/source-set.toml` stays empty.** Registering `compiler/` there is a protected (`bootstrap/**`) contract change.
-- **The required owner decision:** re-pin C0 to a qualified reference that includes SHF-1B (text inspection) and SHF-3A (`u32`), with the drift analysis the contract requires, and admit BSF-101/BSF-103.
+**What the compiler runs on:** it is developed and run on the exploratory reference `Semantic@94c5c50d16c3f2efc7691456755461bedae83b18`. A separate C0 reference-transition proposal covers re-pinning (`docs/proposals/`, its own PR). Nothing here is C0 qualification.
+
+**What C0 judges:** programs compiled by this compiler that use nothing beyond C0 are verified and executed with **C0's own verifier and VM**, and compared with C0's own compilation. The cases that use post-C0 capabilities (text inspection, `u32` arithmetic) are tagged `c0_comparable: false` **by hand** in the corpus. They are judged against the exploratory toolchain only, and C0's outcome is recorded:
+- C0's verifier rejects them (`UnknownCallTarget 'text_len'` or `UnsupportedVersion 'SEMCOD23'`);
+- C0's compiler rejects their source.
 
 ## 5. Evidence (tests/compiler)
 
-Run `tests/compiler/run_tests.py` with `SEMANTIC_SMC` (the exploratory `smc-cli`) and `SEMANTIC_C0_SMC` (the pinned C0 `smc-cli`). The runner is fail-closed.
+Run `tests/compiler/run_tests.py` with `SEMANTIC_SMC` and `SEMANTIC_C0_SMC`. The runner is fail-closed and writes its output outside the tree.
 
-For every case in `cases.json` it:
-1. compiles twice with the Semantic compiler and requires identical output;
-2. decodes the result, verifies it with **both** verifiers and runs it on **both** VMs;
-3. compiles the same source with C0 and with the exploratory compiler, then compares outcomes;
-4. checks the expected outcome or diagnostic category and text;
+For every case it:
+1. compiles twice and requires identical output;
+2. decodes the result, verifies it and runs it;
+3. compares with the reference compilers;
+4. checks the expected category and text;
 5. finally checks that 8 mutations of a generated artifact are rejected by both verifiers.
 
-Result on 2026-10-14: **45/45 cases and 8/8 mutations**:
-- 15 positive programs, all executing correctly and matching the C0 compiler's outcome;
-- 4 runtime traps (assertion in a callee, `DivisionByZero`, `ArithmeticOverflow`, frame-quota exhaustion from unbounded recursion), matching C0;
-- 26 rejected sources with the expected category. C0 also rejects 21 of them; the other 5 are valid Semantic outside the subset.
+**Result: 74/74 cases and 8/8 mutations.** The cases include:
+- 30 positive programs: recursion, mutual recursion, records, nested records and `with`, tuples and destructuring, sequences, `for`, text, `u32`, `match` on `i32`/`u32`/`Option`, value `if`, sequences of records, and a mini-lexer workload;
+- 6 runtime traps;
+- 38 rejected sources. The reference compiler also rejects 34 of them; the other 4 are valid Semantic outside the subset.
 
-### Resource measurements
+5 cases use post-C0 capabilities.
 
-The compiler runs under `--envelope trusted-compiler`. Calls (16,384) and Frames (256) are unchanged; only the Steps budget is raised.
+### Two findings
 
-| Measure | Range |
-|---|---|
-| Source size | 26–484 bytes |
-| Steps | 14,235–152,978 (≈ 14k + ≈ 280 per source byte) |
-| Calls | 71–1,020 (≈ 2.1 per source byte) |
-| Peak frames | 18 |
-| Cases within verified-local (100,000 steps) | 41 of 45 |
+1. **`OWN0`:** the reference emits ownership *write events* for record construction and for `STORE_VAR` of aggregates. This compiler emits an empty `OWN0`. **Both verifiers (C0 and exploratory) admit the artifacts**, and their behaviour matches the reference on every case. The events support runtime write-path enforcement for borrows, and this subset has no borrows. Generating them is required work before borrows (`ref` patterns) are admitted.
+2. **Admission without a capability:** a C0 verifier rejects post-C0 artifacts (unknown builtin call target, newer header). That is the expected and correct fail-closed behaviour.
 
-## 6. What is not demonstrated
+## 6. Scaling and the Calls budget (measured)
 
-- **No C0 qualification of the compiler itself** (section 4).
-- **No self-compilation.** The compiler source (≈ 55 KB) uses records, tuples, `Sequence`, `Map`, `Option` match, text and `u32`. The subset doesn't cover these, and they need `MAKE_RECORD`, `TUPLE_*`, `SEQUENCE_*`, `ADT_*`, text and `u32` opcodes, plus non-empty `OWN0` ownership events (the reference emits about 3.8k of them for a compiler of this kind).
-- **Self-compilation would also exceed the Calls quota** at the measured ≈ 2.1 calls per byte: about 115k calls for 55 KB against 16,384. Either the per-byte call rate must fall by about 7×, or the quota model needs an owner decision.
-- **The equivalence evidence is behavioural**, on a hand-written corpus: assertion outcomes and traps. Byte identity with C0 is not a goal; register numbering and branch layout differ.
-- **Platform:** Linux (WSL2) only. C0's qualified platform is `x86_64-pc-windows-msvc`.
+**Small cases (≤ 1.6 KB):** steps grow linearly at about 280 per source byte; calls at about 2 per byte.
+
+**Self-compilation probe:** the compiler's own module `compiler/lexer.sm`, plus a test `main` (10,930 bytes, 2,110 tokens, 1,154 AST nodes):
+
+| Stage | Steps | Calls |
+|---|---|---|
+| Lexing | 868,967 | 1 |
+| Parsing | +342,261 | +6,810 (≈ 5.9 per node) |
+| Analysis | +206,329 | +3,330 (≈ 2.9 per node) |
+| Lowering + encoding | — | `quota_exceeded: Calls 16385` at 1.71M total steps |
+
+**Calls, not steps, are the binding limit.** Calls scale with AST nodes (≈ 14 per node across stages), because recursive descent and the recursive tree walks pay one call per node.
+
+### Plan, with no runtime change
+
+1. **Per-function compilation units.** The call-free lexer splits a module into items. Each run compiles one function body against the parsed signatures of all items. A Semantic linker run then assembles the artifact. The per-run limit then bounds the largest *function*, not the program.
+2. **Iterative traversal** (explicit stacks) in the parser and the tree walks, to cut calls per node.
+
+A quota change is proposed to the owner only if measurements after 1 and 2 still exceed the limit.
+
+## 7. What is not demonstrated
+
+- **C0 qualification of the compiler itself** (section 4).
+- **Self-compilation.** The constructs the compiler uses are now nearly all inside the subset; `Map` and `Import` are missing. But the Calls budget stops even one module (section 6).
+- **Ownership metadata** (`OWN0` events) and borrows.
+- **Byte identity with C0.** Not a goal; equivalence is behavioural, on a hand-written corpus.
+- **Other platforms.** Only Linux (WSL2) was used.
