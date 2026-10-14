@@ -103,6 +103,10 @@
   "expect": "ok",
   "semvm": null
  },
+ "v13_non_ascii_unexecuted": {
+  "expect": "ok",
+  "semvm": null
+ },
  "w01_counting_loop": {
   "expect": "ok",
   "semvm": null

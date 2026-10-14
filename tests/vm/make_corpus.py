@@ -631,6 +631,25 @@ fn main() {
 }
 """)
 
+case("v13_non_ascii_unexecuted", "ok", """
+record P {
+    a: i32
+}
+
+fn make() -> P {
+    if 1 == 2 {
+        print("café");
+    }
+    return P { a: 7 };
+}
+
+fn main() {
+    let p: P = make();
+    print("record " + to_text(p.a));
+    return;
+}
+""")
+
 # ---------------------------------------------------------------- explicitly unsupported
 case("u01_map_values", "ok", """
 fn main() {

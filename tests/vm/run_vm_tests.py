@@ -39,6 +39,27 @@ def need(name):
 
 SMC = need("SEMANTIC_SMC")
 C0 = pathlib.Path(os.environ["SEMANTIC_C0_SMC"]) if os.environ.get("SEMANTIC_C0_SMC") else None
+
+# The oracle is an exact reference revision, never "whatever smc-cli is on the path".
+# smc-cli reports a fingerprint of the source it was built from; the binary SHA-256 is
+# recorded as well (it also depends on the toolchain that built it).
+ORACLE = {"git": "94c5c50d16c3f2efc7691456755461bedae83b18", "source_fingerprint": "1cd4707ec728c07a"}
+C0_PIN = {"git": "89641da8", "source_fingerprint": "7f10f50c82216db2"}
+
+
+def fingerprint(smc):
+    p = subprocess.run([str(smc), "version", "--json"], capture_output=True, text=True, timeout=60)
+    try:
+        return json.loads(p.stdout).get("source_fingerprint")
+    except ValueError:
+        return None
+
+
+if fingerprint(SMC) != ORACLE["source_fingerprint"]:
+    sys.exit(f"run_vm_tests: SEMANTIC_SMC is not the pinned oracle "
+             f"(source_fingerprint {fingerprint(SMC)!r}, expected {ORACLE['source_fingerprint']} = Semantic@{ORACLE['git']})")
+if C0 and fingerprint(C0) != C0_PIN["source_fingerprint"]:
+    sys.exit(f"run_vm_tests: SEMANTIC_C0_SMC is not the pinned C0 (source_fingerprint {fingerprint(C0)!r})")
 OUT = pathlib.Path(os.environ.get("SEMANTIC_TEST_OUT", pathlib.Path(tempfile.gettempdir()) / "semantic-vm-tests")).resolve()
 if REPO in OUT.parents or OUT == REPO:
     sys.exit("run_vm_tests: SEMANTIC_TEST_OUT must be outside the source tree")
@@ -110,11 +131,15 @@ def judge(name, spec, oracle, counters, vm):
         checks["semvm_fails_explicitly_unsupported"] = rep["status"].startswith("error unsupported:")
         return ("UNSUPPORTED" if all(checks.values()) else "FAIL"), checks
     want_status = "ok" if oracle["rc"] == 0 else "error " + oracle["error"]
+    # an admitted artifact must never be rejected by the Semantic VM's loader
+    checks["not_rejected_at_load"] = not rep["status"].startswith("reject ")
     checks["status_identical"] = rep["status"] == want_status
     # The oracle CLI delivers collected print observations only after a successful run, so
     # the observation stream is comparable on success only (recorded either way).
     if oracle["rc"] == 0:
         checks["prints_identical"] = rep["prints"] == oracle["prints"]
+    else:
+        vm["observations_not_exposed_by_oracle_cli"] = rep["prints"]
     if counters:
         m = rep["metrics"]
         checks["guest_steps_identical"] = m.get("guest_steps") == counters.get("steps")
@@ -161,7 +186,8 @@ for name, spec in sorted(cases.items()):
         cls = "FAIL"
     row.update({"class": cls, "checks": checks, "artifact_sha256": sha(data), "artifact_bytes": len(data),
                 "oracle": oracle, "oracle_counters": counters, "c0": c0,
-                "semvm": first["report"], "host": first["host"]})
+                "semvm": first["report"], "host": first["host"],
+                "observations_not_exposed_by_oracle_cli": first.get("observations_not_exposed_by_oracle_cli")})
     rows.append(row)
     if cls == "FAIL":
         failures.append(name)
@@ -304,15 +330,19 @@ if os.environ.get("SEMVM_SKIP_MUTATIONS") != "1":
         applied = s.count(old) == 1
         if applied:
             f.write_text(s.replace(old, new))
-        killed_by = []
+        killed_by, invalid = [], []
         for tname in targets:
             r = next(r for r in rows if r["case"] == tname)
             vm = semvm(d, OUT / "hex", f"{tname}.hex")
+            if vm["report"] is None or vm["host"]["outcome"] != "ok":
+                invalid.append(tname)          # the mutant did not run: not a semantic kill
+                continue
             cls, _ = judge(tname, cases[tname], r["oracle"], r["oracle_counters"], vm)
             if cls == "FAIL":
                 killed_by.append(tname)
-        ok = applied and bool(killed_by)
-        mut_rows.append({"mutation": mname, "applied": applied, "killed_by": killed_by, "pass": ok})
+        ok = applied and bool(killed_by) and not invalid
+        mut_rows.append({"mutation": mname, "applied": applied, "killed_by": killed_by,
+                         "mutant_did_not_run": invalid, "pass": ok})
         if not ok:
             failures.append(f"mutation:{mname}")
         print(f"{'KILLED' if ok else 'SURVIVED':<11} mutation:{mname:<30} by {killed_by}", flush=True)
@@ -324,7 +354,7 @@ for r in rows:
 summary = {
     "runner": "tests/vm/run_vm_tests.py",
     "vm_source_sha256": {p.name: sha(p.read_bytes()) for p in sorted(VM.glob("*.sm"))},
-    "oracle_smc": {"sha256": sha(SMC.read_bytes()), "version": run([SMC, "version", "--json"])[1]},
+    "oracle_smc": {"pin": ORACLE, "sha256": sha(SMC.read_bytes()), "version": run([SMC, "version", "--json"])[1]},
     "c0_smc": {"sha256": sha(C0.read_bytes()), "version": run([C0, "version", "--json"])[1]} if C0 else None,
     "host_envelope": {"envelope": "trusted-compiler", "max_steps": int(HOST_MAX_STEPS)},
     "classes": classes, "failures": failures, "rows": rows, "raw": raw_rows, "mutations": mut_rows,

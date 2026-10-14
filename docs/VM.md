@@ -29,7 +29,7 @@ Semantic VM's behalf, and the host performs byte transport only (§3).
 
 | Role | Identity |
 |---|---|
-| Oracle (compiler, verifier, VM) | `skulmakov-oss/Semantic@94c5c50d16c3f2efc7691456755461bedae83b18`, `smc-cli` SHA-256 `efac7456ce51feb24f5ac3ef6e2c5b881552b9227171031ca5f73fab50458485` (clean release build, byte-identical to the exploratory build used for the compiler) |
+| Oracle (compiler, verifier, VM; the runner refuses any other `source_fingerprint`) | `skulmakov-oss/Semantic@94c5c50d16c3f2efc7691456755461bedae83b18`, `smc-cli` SHA-256 `efac7456ce51feb24f5ac3ef6e2c5b881552b9227171031ca5f73fab50458485` (clean release build, byte-identical to the exploratory build used for the compiler) |
 | C0 (recorded, not judged) | `89641da8`, `smc-cli` SHA-256 `cbb435d3…` |
 | Host route for the Semantic VM | the oracle's `smc run vm/main.sm --profile cli-read-only --envelope trusted-compiler --max-steps 200000000` |
 
@@ -193,7 +193,7 @@ identical on every comparable case.
 
 ## 6. Evidence
 
-`tests/vm/make_corpus.py` writes 48 programs to `tests/vm/corpus/`. `tests/vm/run_vm_tests.py`
+`tests/vm/make_corpus.py` writes 49 programs to `tests/vm/corpus/`. `tests/vm/run_vm_tests.py`
 runs the qualification (§3), writes `results.json` outside the tree, and exits nonzero on any
 failure.
 
@@ -204,7 +204,7 @@ SEMANTIC_SMC=<oracle smc-cli> SEMANTIC_C0_SMC=<C0 smc-cli> SEMANTIC_TEST_OUT=<di
 
 Results at the head of this branch (Linux x86_64):
 
-**Corpus: 46 VERIFIED, 2 UNSUPPORTED (as expected), 0 failures.**
+**Corpus: 47 VERIFIED, 2 UNSUPPORTED (as expected), 0 failures.**
 - **Positive cases:** empty main, integer and bool logic, branching, loops with
   `break` / `continue`, assert, parameters of four families, nested calls, recursion, mutual
   recursion, fibonacci, unit functions, text, sequences, tuples, records, Option, user enums,
@@ -237,7 +237,8 @@ the Semantic VM's own decoder rejects it for the stated reason:
 - invalid hex in transport.
 
 **Mutations, 10/10 caught.** Each one deliberately breaks the VM and is detected by the
-comparison:
+comparison. A mutant counts only if it still compiles and runs and its report differs from the
+oracle; a mutant that does not run is a failure, not a kill:
 - `ADD` computes `SUB`;
 - `JMP_IF` polarity;
 - QTruth AND uses the lattice rule;
@@ -252,7 +253,7 @@ comparison:
 A record-name-only equality mutation is equivalent (`==` is typed, so compared records always
 share a name) and was replaced by an observable one.
 
-**C0 (recorded):** C0 admits 41 of the 48 artifacts and behaves identically to the oracle on
+**C0 (recorded):** C0 admits 41 of the first 48 artifacts and behaves identically to the oracle on
 all 41. The other 7 need post-C0 capabilities (`text_len` and related builtins, `SEMCOD23`).
 
 ### Observation delivery

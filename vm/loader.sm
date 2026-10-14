@@ -543,10 +543,8 @@ fn decode(bt: Raw) -> Prog {
                         // instructions that name a string: type, variant or literal
                         let r1: i32 = bi[o + 2] + bi[o + 3] * 256;
                         let sid: i32 = if op == 69 || op == 71 || op == 90 { r1 } else { bi[o + 4] + bi[o + 5] * 256 };
-                        let mut sid2: i32 = 0;
-                        if op == 71 {
-                            sid2 = bi[o + 4] + bi[o + 5] * 256;
-                        }
+                        let two: bool = op == 71;
+                        let sid2: i32 = if two { bi[o + 4] + bi[o + 5] * 256 } else { sid };
                         if sid >= sc || sid2 >= sc {
                             err = "load: invalid string id";
                         } else if !sok[sid] || !sok[sid2] {
