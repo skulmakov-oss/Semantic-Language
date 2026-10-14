@@ -1,0 +1,22 @@
+fn gcd(a: i32, b: i32) -> i32 {
+    let mut x: i32 = a;
+    let mut y: i32 = b;
+    while y != 0 {
+        let t: i32 = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+fn weighted(a: i32, b: i32, c: i32, d: i32, e: i32) -> i32 {
+    return a * 1 + b * 2 + c * 3 + d * 4 + e * 5;
+}
+
+fn main() {
+    assert(gcd(48, 18) == 6);
+    assert(gcd(17, 5) == 1);
+    assert(weighted(1, 1, 1, 1, 1) == 15);
+    assert(weighted(5, 4, 3, 2, 1) == 35);
+    return;
+}

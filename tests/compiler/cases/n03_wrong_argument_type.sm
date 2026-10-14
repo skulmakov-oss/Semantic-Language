@@ -1,0 +1,8 @@
+fn neg(a: i32) -> i32 {
+    return -a;
+}
+
+fn main() {
+    let x: i32 = neg(true);
+    return;
+}

@@ -1,0 +1,9 @@
+fn inc(x: i32) -> i32 {
+    return x + 1;
+}
+
+fn main() {
+    let big: i32 = 2147483647;
+    assert(inc(big) == -2147483647 - 1);
+    return;
+}

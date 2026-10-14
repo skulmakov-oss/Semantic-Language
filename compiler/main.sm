@@ -1,0 +1,10 @@
+// Compiler entry point (application profile cli-read-only):
+// argument 0 names the source file under the granted root; the result line
+// from compile_source is written to stdout.
+Import "driver.sm"
+
+fn main() {
+    let path: text = args_read(0u32);
+    stdout_write(compile_source(fs_read_text(path)));
+    return;
+}

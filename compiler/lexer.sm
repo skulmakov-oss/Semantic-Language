@@ -1,0 +1,188 @@
+// lexer: UTF-8 source bytes -> token sequence.
+//
+// The whole scan is one loop with no user-function calls per byte: the VM
+// counts every user-function call against a fixed per-run Calls quota, while
+// builtins such as text_byte_at are free. Byte classification and keyword
+// recognition are therefore written inline.
+//
+// Token kinds:
+//   0 EOF  1 INT  2 IDENT
+//   3 let  4 mut  5 fn  6 assert  7 return  8 true  9 false  10 i32  11 bool
+//   12 if  13 else  14 while  15 const  16 break  17 continue  18 loop  19 for
+//   20 (  21 )  22 {  23 }  24 ;  25 :  26 =  27 ,  28 ->
+//   30 +  31 -  32 *  33 /  34 %  35 ==  36 !=  37 <  38 <=  39 >  40 >=
+//   41 &&  42 ||  43 !
+// Identifiers that name other language items (record, enum, match, Import, ...)
+// stay IDENT here; the parser reports them as outside the supported subset.
+
+record Tok {
+    kind: i32,
+    word: text,
+    num: i32,
+    pos: u32,
+}
+
+record Lexed {
+    toks: Sequence(Tok),
+    err: text,
+    cat: text,
+    errpos: u32,
+}
+
+fn lex(src: text) -> Lexed {
+    let n: u32 = text_len(src);
+    let mut toks: Sequence(Tok) = [];
+    let mut i: u32 = 0u32;
+    while i < n {
+        let b: u32 = match text_byte_at(src, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == 32u32 || b == 10u32 || b == 13u32 || b == 9u32 {
+            i = i + 1u32;
+        } else if b == 47u32 && match text_byte_at(src, i + 1u32) { Option::Some(x) => { x == 47u32 } Option::None => { false } } {
+            // line comment: skip to end of line
+            let mut c: u32 = b;
+            while c != 10u32 && i < n {
+                i = i + 1u32;
+                c = match text_byte_at(src, i) {
+                    Option::Some(x) => { x }
+                    Option::None => { 10u32 }
+                };
+            }
+        } else if b >= 48u32 && b <= 57u32 {
+            let start: u32 = i;
+            let mut v: i32 = 0;
+            let mut c: u32 = b;
+            let mut overflow: bool = false;
+            while c >= 48u32 && c <= 57u32 {
+                let d: i32 = match c {
+                    48 => { 0 }
+                    49 => { 1 }
+                    50 => { 2 }
+                    51 => { 3 }
+                    52 => { 4 }
+                    53 => { 5 }
+                    54 => { 6 }
+                    55 => { 7 }
+                    56 => { 8 }
+                    _ => { 9 }
+                };
+                // i32 literal range 0 ..= 2147483647, checked before multiplying
+                if v > 214748364 || (v == 214748364 && d > 7) {
+                    overflow = true;
+                } else {
+                    v = v * 10 + d;
+                }
+                i = i + 1u32;
+                c = match text_byte_at(src, i) {
+                    Option::Some(x) => { x }
+                    Option::None => { 0u32 }
+                };
+            }
+            if overflow {
+                return Lexed { toks: toks, err: "integer literal out of i32 range", cat: "syntax", errpos: start };
+            }
+            if (c >= 97u32 && c <= 122u32) || (c >= 65u32 && c <= 90u32) || c == 95u32 {
+                return Lexed { toks: toks, err: "typed or malformed integer literal is outside the supported subset", cat: "unsupported", errpos: start };
+            }
+            let w: text = match text_slice(src, start, i) {
+                Option::Some(s) => { s }
+                Option::None => { "" }
+            };
+            toks = push(toks, Tok { kind: 1, word: w, num: v, pos: start });
+        } else if (b >= 97u32 && b <= 122u32) || (b >= 65u32 && b <= 90u32) || b == 95u32 {
+            let start: u32 = i;
+            let mut c: u32 = b;
+            while (c >= 97u32 && c <= 122u32) || (c >= 65u32 && c <= 90u32) || c == 95u32 || (c >= 48u32 && c <= 57u32) {
+                i = i + 1u32;
+                c = match text_byte_at(src, i) {
+                    Option::Some(x) => { x }
+                    Option::None => { 0u32 }
+                };
+            }
+            let w: text = match text_slice(src, start, i) {
+                Option::Some(s) => { s }
+                Option::None => { "" }
+            };
+            let mut k: i32 = 2;
+            if w == "let" { k = 3; }
+            else if w == "mut" { k = 4; }
+            else if w == "fn" { k = 5; }
+            else if w == "assert" { k = 6; }
+            else if w == "return" { k = 7; }
+            else if w == "true" { k = 8; }
+            else if w == "false" { k = 9; }
+            else if w == "i32" { k = 10; }
+            else if w == "bool" { k = 11; }
+            else if w == "if" { k = 12; }
+            else if w == "else" { k = 13; }
+            else if w == "while" { k = 14; }
+            else if w == "const" { k = 15; }
+            else if w == "break" { k = 16; }
+            else if w == "continue" { k = 17; }
+            else if w == "loop" { k = 18; }
+            else if w == "for" { k = 19; }
+            toks = push(toks, Tok { kind: k, word: w, num: 0, pos: start });
+        } else {
+            let nx: u32 = match text_byte_at(src, i + 1u32) {
+                Option::Some(x) => { x }
+                Option::None => { 0u32 }
+            };
+            let mut k: i32 = 0;
+            let mut width: u32 = 1u32;
+            if b == 61u32 {
+                if nx == 61u32 { k = 35; width = 2u32; } else { k = 26; }
+            } else if b == 33u32 {
+                if nx == 61u32 { k = 36; width = 2u32; } else { k = 43; }
+            } else if b == 60u32 {
+                if nx == 61u32 { k = 38; width = 2u32; } else { k = 37; }
+            } else if b == 62u32 {
+                if nx == 61u32 { k = 40; width = 2u32; } else { k = 39; }
+            } else if b == 45u32 {
+                if nx == 62u32 { k = 28; width = 2u32; } else { k = 31; }
+            } else if b == 38u32 {
+                if nx == 38u32 { k = 41; width = 2u32; }
+            } else if b == 124u32 {
+                if nx == 124u32 { k = 42; width = 2u32; }
+            } else {
+                k = match b {
+                    40 => { 20 }
+                    41 => { 21 }
+                    123 => { 22 }
+                    125 => { 23 }
+                    59 => { 24 }
+                    58 => { 25 }
+                    44 => { 27 }
+                    43 => { 30 }
+                    42 => { 32 }
+                    47 => { 33 }
+                    37 => { 34 }
+                    _ => { 0 }
+                };
+            }
+            if k == 0 {
+                // characters of Semantic syntax that the subset does not accept
+                let word: text = match text_slice(src, i, i + 1u32) {
+                    Option::Some(s) => { s }
+                    Option::None => { "?" }
+                };
+                if b == 34u32 {
+                    return Lexed { toks: toks, err: "text literals are outside the supported subset", cat: "unsupported", errpos: i };
+                }
+                if b == 46u32 || b == 91u32 || b == 93u32 || b == 124u32 || b == 38u32 || b == 63u32 {
+                    return Lexed { toks: toks, err: "'" + word + "' (field access, ranges, indexing, closures or single-character operators) is outside the supported subset", cat: "unsupported", errpos: i };
+                }
+                return Lexed { toks: toks, err: "unexpected character", cat: "syntax", errpos: i };
+            }
+            let w: text = match text_slice(src, i, i + width) {
+                Option::Some(s) => { s }
+                Option::None => { "" }
+            };
+            toks = push(toks, Tok { kind: k, word: w, num: 0, pos: i });
+            i = i + width;
+        }
+    }
+    toks = push(toks, Tok { kind: 0, word: "<eof>", num: 0, pos: n });
+    return Lexed { toks: toks, err: "", cat: "", errpos: 0u32 };
+}

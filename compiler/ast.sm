@@ -1,0 +1,44 @@
+// ast: syntax tree arena and program structure.
+Import "lexer.sm"
+
+// Node kinds
+//   expressions: 1 Int(v)  2 Bool(v 0/1)  4 Var(name)  5 Unary(v = op token, a)
+//                6 Binary(v = op token, a, b)  7 Call(name, kids = arguments)
+//   statements:  10 Let(name, a = init, v = declared type or 0, c = 1 if mut)
+//                11 Assign(name, a)  12 If(a = cond, b = then block, c = else node or -1)
+//                13 While(a = cond, b = body)  14 Return(a = value or -1)  15 Block(kids)
+//                16 ExprStmt(a)  17 Assert(a)  18 Break  19 Continue
+// Types: 0 unit, 1 i32, 2 bool (also the declared-type encoding).
+record Node {
+    k: i32,
+    a: i32,
+    b: i32,
+    c: i32,
+    v: i32,
+    name: text,
+    pos: u32,
+    kids: Sequence(i32),
+}
+
+record Func {
+    name: text,
+    pnames: Sequence(text),
+    ptypes: Sequence(i32),
+    ret: i32,
+    body: i32,
+    pos: u32,
+}
+
+record Prog {
+    nodes: Sequence(Node),
+    funcs: Sequence(Func),
+}
+
+fn type_name(t: i32) -> text {
+    return match t {
+        0 => { "unit" }
+        1 => { "i32" }
+        2 => { "bool" }
+        _ => { "?" }
+    };
+}
