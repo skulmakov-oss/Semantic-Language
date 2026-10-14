@@ -245,4 +245,5 @@ no stage may compensate for a missing language contract with bootstrap-only Rust
 
 Verifier rewrite, VM rewrite, Instant Pipeline, SRI, TypeScript tooling, native backend, UI,
 Workbench, Studio and `Semantic#1909` are not prerequisites for the fixed point. See
-[FUTURE.md](./FUTURE.md).
+[FUTURE.md](./FUTURE.md). The owner-authorized Semantic VM track in `vm/**` (Issue #29) proceeds
+independently of the SHF stages above and is not a prerequisite either.

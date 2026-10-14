@@ -55,3 +55,8 @@ Sibling post-self-hosting track upstream. Not part of the bootstrap work queue.
 
 A Semantic verifier or VM may be considered after the Seal through the normal migration states
 and an explicit ownership-transfer decision. It is not required for first self-hosting.
+
+The VM part has started early as an owner-authorized independent track in `vm/**`
+(SEM-VM-001, Issue #29; see [ARCHITECTURE.md](./ARCHITECTURE.md) §7). It stays outside the
+first self-hosting critical path, holds no execution authority, and any transfer still goes
+through the migration states and an explicit decision. A Semantic verifier remains future work.
