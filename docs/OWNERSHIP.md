@@ -11,7 +11,7 @@ Status: canonical ownership map (SHF reset)
 | SemCode contract | `Semantic` (`sm-format` / `sm-emit`) | initially remains upstream |
 | Verifier | `Semantic` (`sm-verify`) | remains Rust initially |
 | VM | `Semantic` (`sm-vm`) | remains Rust initially |
-| Semantic VM implementation (`vm/**`) | `Semantic-Language` (MIRRORED at most; no execution authority) | independent track, Issue #29 |
+| Semantic VM implementation (`vm/**`) | `Semantic-Language` implementation; may advance through MIRRORED, DIFFERENTIAL and QUALIFIED; no execution authority before an explicit CANONICAL transfer | independent track, Issue #29 |
 | PROMETHEUS host boundary | `Semantic` | remains host/runtime |
 | Bootstrap qualification | `Semantic-Language` | `Semantic-Language` |
 
