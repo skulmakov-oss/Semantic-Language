@@ -1,0 +1,5 @@
+fn main() {
+    let a: u32 = 65536u32;
+    print(to_text(a * a));
+    return;
+}

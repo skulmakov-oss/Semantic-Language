@@ -1,0 +1,16 @@
+fn name(q: quad) -> text {
+    return match q {
+        N => { "unknown" }
+        F => { "false" }
+        T => { "true" }
+        _ => { "conflict" }
+    };
+}
+
+fn main() {
+    let qs: Sequence(quad) = [N, F, T, S];
+    for q in qs {
+        print(name(q) + " " + to_text(q == T) + " " + to_text(q != N));
+    }
+    return;
+}

@@ -1,0 +1,4 @@
+fn main() {
+    print(args_read(0u32));
+    return;
+}

@@ -1,0 +1,14 @@
+fn add3(a: i32, b: i32, c: i32) -> i32 {
+    return a + b + c;
+}
+
+fn main() {
+    let mut i: i32 = 0;
+    let mut s: i32 = 0;
+    while i < 2000 {
+        s = add3(s, i, 1) % 100000;
+        i = i + 1;
+    }
+    print(to_text(s));
+    return;
+}

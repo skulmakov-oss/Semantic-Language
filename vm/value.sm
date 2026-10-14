@@ -1,0 +1,83 @@
+// value: runtime values of the Semantic VM.
+//
+// A guest value is one flat record. Scalars are stored inline:
+//   k  family tag, the same numbers SemCode uses in SIG0
+//      (1 quad, 2 bool, 3 text, 4 sequence, 7 i32, 8 u32, 11 tuple,
+//       12 record, 13 adt, 14 unit); k = 0 marks an undefined register
+//   i  i32 payload, bool (0/1), quad (0 N, 1 F, 2 T, 3 S: bit 1 = truth
+//      plane, bit 0 = falsity plane)
+//   u  u32 payload
+//   t  text payload
+//   h  heap index of an aggregate
+// Aggregates are immutable objects in an append-only heap (Sequence(Obj)).
+// An update (SEQUENCE_PUSH, ...) creates a new object; nothing is shared
+// mutably, so guest value semantics hold without reference counting.
+
+record V {
+    k: i32,
+    i: i32,
+    u: u32,
+    t: text,
+    h: i32
+}
+
+// name: record or ADT type name; vname/tag: ADT variant.
+record Obj {
+    k: i32,
+    name: text,
+    vname: text,
+    tag: i32,
+    items: Sequence(V)
+}
+
+fn undef() -> V {
+    return V { k: 0, i: 0, u: 0u32, t: "", h: 0 };
+}
+
+// Structural equality of two values of the same static type. Scalars are
+// compared inline by the engine; this is the aggregate path. Iterative (an
+// explicit pair stack) so deep values cost no host frames.
+fn veq(heap: Sequence(Obj), a: V, b: V) -> bool {
+    let mut xs: Sequence(V) = [a];
+    let mut ys: Sequence(V) = [b];
+    let mut eq: bool = true;
+    while eq && len(xs) > 0 {
+        let x: V = xs[len(xs) - 1];
+        let y: V = ys[len(ys) - 1];
+        xs = pop(xs);
+        ys = pop(ys);
+        if x.k != y.k {
+            eq = false;
+        } else if x.k == 3 {
+            eq = x.t == y.t;
+        } else if x.k == 8 {
+            eq = x.u == y.u;
+        } else if x.k == 4 || x.k == 11 || x.k == 12 || x.k == 13 {
+            let ox: Obj = heap[x.h];
+            let oy: Obj = heap[y.h];
+            if ox.name != oy.name || ox.vname != oy.vname || ox.tag != oy.tag || len(ox.items) != len(oy.items) {
+                eq = false;
+            } else {
+                for v in ox.items {
+                    xs = push(xs, v);
+                }
+                for v in oy.items {
+                    ys = push(ys, v);
+                }
+            }
+        } else {
+            eq = x.i == y.i;
+        }
+    }
+    return eq;
+}
+
+// Family names as the reference prints them in signature mismatches.
+fn family_name(k: i32) -> text {
+    let names: Sequence(text) = ["Undefined", "Quad", "Bool", "Text", "Sequence", "Map", "Closure",
+        "I32", "U32", "Fx", "F64", "Tuple", "Record", "Adt", "Unit", "Bytes"];
+    if k >= 0 && k < 16 {
+        return names[k];
+    }
+    return "Unknown";
+}

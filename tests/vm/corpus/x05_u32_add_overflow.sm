@@ -1,0 +1,5 @@
+fn main() {
+    let a: u32 = 4294967295u32;
+    print(to_text(a + 1u32));
+    return;
+}

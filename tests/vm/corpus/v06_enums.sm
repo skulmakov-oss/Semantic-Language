@@ -1,0 +1,23 @@
+enum Shape {
+    Circle(i32),
+    Rect(i32, i32),
+    Empty
+}
+
+fn area(s: Shape) -> i32 {
+    return match s {
+        Shape::Circle(r) => { 3 * r * r }
+        Shape::Rect(w, h) => { w * h }
+        Shape::Empty => { 0 }
+    };
+}
+
+fn main() {
+    let shapes: Sequence(Shape) = [Shape::Circle(2), Shape::Rect(3, 4), Shape::Empty];
+    let mut total: i32 = 0;
+    for s in shapes {
+        total = total + area(s);
+    }
+    print(to_text(total) + " " + to_text(area(Shape::Rect(1, 2))));
+    return;
+}
