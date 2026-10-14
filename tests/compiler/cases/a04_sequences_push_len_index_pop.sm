@@ -1,0 +1,19 @@
+fn squares(n: i32) -> Sequence(i32) {
+    let mut out: Sequence(i32) = [];
+    let mut i: i32 = 1;
+    while i <= n {
+        out = push(out, i * i);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn main() {
+    let xs: Sequence(i32) = squares(5);
+    assert(len(xs) == 5 && xs[0] == 1 && xs[4] == 25);
+    let ys: Sequence(i32) = pop(xs);
+    assert(len(ys) == 4 && len(xs) == 5);
+    let lit: Sequence(bool) = [true, false, true];
+    assert(lit[1] == false && len(lit) == 3);
+    return;
+}

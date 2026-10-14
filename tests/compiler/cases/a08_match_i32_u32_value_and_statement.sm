@@ -1,0 +1,19 @@
+fn name_of(n: i32) -> text {
+    return match n {
+        1 => { "one" }
+        2 => { "two" }
+        _ => { "many" }
+    };
+}
+
+fn main() {
+    assert(name_of(1) == "one" && name_of(2) == "two" && name_of(9) == "many");
+    let mut hits: i32 = 0;
+    let b: u32 = 65u32;
+    match b {
+        65u32 => { hits = hits + 1; }
+        _ => { hits = hits + 100; }
+    }
+    assert(hits == 1);
+    return;
+}

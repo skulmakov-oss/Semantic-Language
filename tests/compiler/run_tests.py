@@ -78,9 +78,11 @@ def outcome_key(o):
 cases = json.loads((HERE / "cases.json").read_text())
 case_dir = HERE / "cases"
 rows, failures = [], []
-for name, expect in sorted(cases.items()):
+for name, spec in sorted(cases.items()):
+    expect = spec["expect"]
+    c0_comparable = spec["c0_comparable"]
     src_file = case_dir / f"{name}.sm"
-    row = {"case": name, "expect": expect, "checks": {}}
+    row = {"case": name, "expect": expect, "c0_comparable": c0_comparable, "checks": {}}
     first, second = compile_native(case_dir, src_file.name), compile_native(case_dir, src_file.name)
     row["compiler_run"] = first
     row["checks"]["deterministic"] = first["line"] == second["line"] and first["rc"] == second["rc"]
@@ -121,10 +123,15 @@ for name, expect in sorted(cases.items()):
     else:
         kind = "ok" if expect == "ok" else "trap"
         frag = expect.split(":", 1)[1] if kind == "trap" else ""
-        for vm in ("c0", "dev"):
+        # Post-C0 cases are judged against the exploratory toolchain only; what C0 does
+        # with them (expected: it cannot compile or admit them) is recorded, not judged.
+        sides = ("c0", "dev") if c0_comparable else ("dev",)
+        if not c0_comparable:
+            row["c0_outcome_recorded"] = {"native_on_c0": native.get("c0"), "c0_reference": reference["c0"]}
+        for vm in sides:
             o = native.get(vm)
             row["checks"][f"expected_on_{vm}_vm"] = bool(o) and o["kind"] == kind and frag in o.get("detail", "")
-        for ref in ("c0", "dev"):
+        for ref in sides:
             r = reference[ref]
             row["checks"][f"matches_{ref}_reference"] = r["kind"] != "compile_error" and native.get(ref) is not None \
                 and outcome_key(native[ref]) == outcome_key(r)
@@ -133,7 +140,8 @@ for name, expect in sorted(cases.items()):
         failures.append(name)
     c = first["counters"] or {}
     bad = " ".join(k for k, v in row["checks"].items() if not v)
-    print(f"{'PASS' if row['pass'] else 'FAIL'} {name:<46} steps={c.get('steps')} calls={c.get('calls')} frames={c.get('peak_frames')} {bad}", flush=True)
+    tag = "" if c0_comparable else " [post-C0: dev only]"
+    print(f"{'PASS' if row['pass'] else 'FAIL'} {name:<46} steps={c.get('steps')} calls={c.get('calls')} frames={c.get('peak_frames')}{tag} {bad}", flush=True)
     rows.append(row)
 
 # ---------------------------------------------------------------- artifact mutations

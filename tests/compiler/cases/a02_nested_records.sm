@@ -1,0 +1,16 @@
+record Inner {
+    v: i32,
+    ok: bool,
+}
+
+record Outer {
+    name: text,
+    inner: Inner,
+}
+
+fn main() {
+    let o: Outer = Outer { name: "box", inner: Inner { v: 7, ok: true } };
+    let o2: Outer = o with { inner: o.inner with { v: 8 } };
+    assert(o.inner.v == 7 && o2.inner.v == 8 && o2.inner.ok && o2.name == "box");
+    return;
+}

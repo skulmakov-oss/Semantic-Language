@@ -1,0 +1,27 @@
+fn main() {
+    let xs: Sequence(i32) = [3, 8, 1, 9, 4, 7];
+    let mut sum: i32 = 0;
+    let mut seen: i32 = 0;
+    for x in xs {
+        seen = seen + 1;
+        if x % 2 == 1 {
+            sum = sum + x;
+        }
+    }
+    assert(sum == 20 && seen == 6);
+    let mut i: i32 = 0;
+    let mut odd: i32 = 0;
+    while i < len(xs) {
+        let x: i32 = xs[i];
+        i = i + 1;
+        if x % 2 == 0 {
+            continue;
+        }
+        if x == 9 {
+            break;
+        }
+        odd = odd + x;
+    }
+    assert(odd == 4);
+    return;
+}

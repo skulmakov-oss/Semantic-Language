@@ -1,0 +1,8 @@
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: true };
+    return;
+}

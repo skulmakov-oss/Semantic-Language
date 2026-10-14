@@ -1,0 +1,4 @@
+fn main() {
+    let z: u32 = 0u32 - 1u32;
+    return;
+}

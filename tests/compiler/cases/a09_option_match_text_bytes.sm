@@ -1,0 +1,31 @@
+fn count_byte(s: text, target: u32) -> i32 {
+    let mut i: u32 = 0u32;
+    let mut n: i32 = 0;
+    let len_s: u32 = text_len(s);
+    while i < len_s {
+        let b: u32 = match text_byte_at(s, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == target {
+            n = n + 1;
+        }
+        i = i + 1u32;
+    }
+    return n;
+}
+
+fn main() {
+    assert(count_byte("banana", 97u32) == 3);
+    let first: text = match text_slice("semantic", 0u32, 3u32) {
+        Option::Some(t) => { t }
+        Option::None => { "" }
+    };
+    assert(first == "sem");
+    let none: bool = match text_byte_at("ab", 5u32) {
+        Option::Some(x) => { false }
+        Option::None => { true }
+    };
+    assert(none);
+    return;
+}

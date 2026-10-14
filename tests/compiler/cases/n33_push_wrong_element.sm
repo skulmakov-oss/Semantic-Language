@@ -1,0 +1,5 @@
+fn main() {
+    let xs: Sequence(i32) = [1];
+    let ys: Sequence(i32) = push(xs, true);
+    return;
+}
