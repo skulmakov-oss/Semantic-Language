@@ -3,6 +3,10 @@
 (tests/compiler/cases.json). The programs are hand-written Semantic source; expectations are
 written by hand from the language rules, independently of both compilers. Run once after editing.
 
+Cases listed in POST_C0 use capabilities the pinned C0 (v1.2.0) lacks (text inspection
+builtins, u32 arithmetic). They are compared with the exploratory reference only; C0's
+outcome is recorded, never counted as a pass.
+
 expect:
   ok                    compiles, admitted, runs to completion
   trap:<fragment>       compiles, admitted, VM run fails with a message containing <fragment>
@@ -12,6 +16,7 @@ import json, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 CASES = {}
+POST_C0 = set(['a06_text_ops', 'a07_u32_arithmetic_and_ordering', 'a09_option_match_text_bytes', 'a12_mini_lexer_workload', 't06_u32_underflow'])
 
 def case(name, expect, src):
     CASES[name] = {"expect": expect, "src": src.strip("\n") + "\n"}
@@ -404,7 +409,7 @@ fn main() {
     return;
 }
 """)
-case("n08_break_outside_loop", "reject:context:'break' outside of a loop", """
+case("n08_break_outside_loop", "reject:context:'break' is allowed only inside a while loop", """
 fn main() {
     break;
 }
@@ -448,7 +453,7 @@ fn main() {
     return;
 }
 """)
-case("n14_arith_on_bool", "reject:type:arithmetic expects i32 operands", """
+case("n14_arith_on_bool", "reject:type:arithmetic expects i32 or u32 operands", """
 fn main() {
     assert(true + 1 == 2);
     return;
@@ -473,7 +478,7 @@ fn main() {
     return;
 }
 """)
-case("n18_unsupported_record", "reject:unsupported:top-level item 'record'", """
+case("p16_record_declaration_unused", "ok", """
 record R {
     a: i32,
 }
@@ -482,7 +487,7 @@ fn main() {
     return;
 }
 """)
-case("n19_unsupported_text_literal", "reject:unsupported:text literals are outside the supported subset", """
+case("p17_text_literal_binding", "ok", """
 fn main() {
     let s: text = "hi";
     return;
@@ -495,7 +500,7 @@ fn main() {
     return;
 }
 """)
-case("n21_unsupported_for_loop", "reject:unsupported:'.' (field access, ranges", """
+case("n21_unsupported_range_loop", "reject:unsupported:ranges are outside the supported subset", """
 fn main() {
     for i in 0..3 {
         assert(true);
@@ -519,7 +524,7 @@ fn main() {
     return;
 }
 """)
-case("n24_unsupported_type_annotation", "reject:unsupported:only i32 and bool types", """
+case("n24_unsupported_type_annotation", "reject:unsupported:type 'quad'", """
 fn f(q: quad) {
     return;
 }
@@ -549,6 +554,434 @@ fn main() {
 }
 """)
 
+# ---------------------------------------------------------------- aggregates, text, u32, match
+case("a01_records_field_with", "ok", """
+record Pt {
+    x: i32,
+    y: i32,
+}
+
+fn shift(p: Pt, d: i32) -> Pt {
+    return p with { x: p.x + d };
+}
+
+fn main() {
+    let a: Pt = Pt { y: 2, x: 1 };
+    let b: Pt = shift(a, 10);
+    assert(b.x == 11 && b.y == 2);
+    assert(a.x == 1);
+    return;
+}
+""")
+case("a02_nested_records", "ok", """
+record Inner {
+    v: i32,
+    ok: bool,
+}
+
+record Outer {
+    name: text,
+    inner: Inner,
+}
+
+fn main() {
+    let o: Outer = Outer { name: "box", inner: Inner { v: 7, ok: true } };
+    let o2: Outer = o with { inner: o.inner with { v: 8 } };
+    assert(o.inner.v == 7 && o2.inner.v == 8 && o2.inner.ok && o2.name == "box");
+    return;
+}
+""")
+case("a03_tuples_and_destructuring", "ok", """
+fn divmod(a: i32, b: i32) -> (i32, i32) {
+    return (a / b, a % b);
+}
+
+fn main() {
+    let (q, r) = divmod(17, 5);
+    assert(q == 3 && r == 2);
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
+    (x, y) = divmod(9, 4);
+    assert(x == 2 && y == 1);
+    let t: (i32, bool, text) = (1, false, "z");
+    let (n, f, s) = t;
+    assert(n == 1 && !f && s == "z");
+    return;
+}
+""")
+case("a04_sequences_push_len_index_pop", "ok", """
+fn squares(n: i32) -> Sequence(i32) {
+    let mut out: Sequence(i32) = [];
+    let mut i: i32 = 1;
+    while i <= n {
+        out = push(out, i * i);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn main() {
+    let xs: Sequence(i32) = squares(5);
+    assert(len(xs) == 5 && xs[0] == 1 && xs[4] == 25);
+    let ys: Sequence(i32) = pop(xs);
+    assert(len(ys) == 4 && len(xs) == 5);
+    let lit: Sequence(bool) = [true, false, true];
+    assert(lit[1] == false && len(lit) == 3);
+    return;
+}
+""")
+case("a05_for_in_and_while_break_continue", "ok", """
+fn main() {
+    let xs: Sequence(i32) = [3, 8, 1, 9, 4, 7];
+    let mut sum: i32 = 0;
+    let mut seen: i32 = 0;
+    for x in xs {
+        seen = seen + 1;
+        if x % 2 == 1 {
+            sum = sum + x;
+        }
+    }
+    assert(sum == 20 && seen == 6);
+    let mut i: i32 = 0;
+    let mut odd: i32 = 0;
+    while i < len(xs) {
+        let x: i32 = xs[i];
+        i = i + 1;
+        if x % 2 == 0 {
+            continue;
+        }
+        if x == 9 {
+            break;
+        }
+        odd = odd + x;
+    }
+    assert(odd == 4);
+    return;
+}
+""")
+case("a06_text_ops", "ok", """
+fn greet(name: text) -> text {
+    return "hello, " + name;
+}
+
+fn main() {
+    let g: text = greet("sm");
+    assert(g == "hello, sm");
+    assert(g != "hello");
+    assert(text_len(g) == 9u32);
+    assert(to_text(42) == "42" && to_text(true) == "true");
+    return;
+}
+""")
+case("a07_u32_arithmetic_and_ordering", "ok", """
+fn sum_to(n: u32) -> u32 {
+    let mut s: u32 = 0u32;
+    let mut i: u32 = 1u32;
+    while i <= n {
+        s = s + i;
+        i = i + 1u32;
+    }
+    return s;
+}
+
+fn main() {
+    assert(sum_to(10u32) == 55u32);
+    assert(4294967295u32 > 2147483647u32);
+    assert(7u32 / 2u32 == 3u32 && 7u32 % 2u32 == 1u32);
+    return;
+}
+""")
+case("a08_match_i32_u32_value_and_statement", "ok", """
+fn name_of(n: i32) -> text {
+    return match n {
+        1 => { "one" }
+        2 => { "two" }
+        _ => { "many" }
+    };
+}
+
+fn main() {
+    assert(name_of(1) == "one" && name_of(2) == "two" && name_of(9) == "many");
+    let mut hits: i32 = 0;
+    let b: u32 = 65u32;
+    match b {
+        65u32 => { hits = hits + 1; }
+        _ => { hits = hits + 100; }
+    }
+    assert(hits == 1);
+    return;
+}
+""")
+case("a09_option_match_text_bytes", "ok", """
+fn count_byte(s: text, target: u32) -> i32 {
+    let mut i: u32 = 0u32;
+    let mut n: i32 = 0;
+    let len_s: u32 = text_len(s);
+    while i < len_s {
+        let b: u32 = match text_byte_at(s, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == target {
+            n = n + 1;
+        }
+        i = i + 1u32;
+    }
+    return n;
+}
+
+fn main() {
+    assert(count_byte("banana", 97u32) == 3);
+    let first: text = match text_slice("semantic", 0u32, 3u32) {
+        Option::Some(t) => { t }
+        Option::None => { "" }
+    };
+    assert(first == "sem");
+    let none: bool = match text_byte_at("ab", 5u32) {
+        Option::Some(x) => { false }
+        Option::None => { true }
+    };
+    assert(none);
+    return;
+}
+""")
+case("a10_value_if_expression", "ok", """
+fn abs(x: i32) -> i32 {
+    let r: i32 = if x < 0 { -x } else { x };
+    return r;
+}
+
+fn main() {
+    assert(abs(-5) == 5 && abs(3) == 3);
+    let label: text = if abs(-1) == 1 { "ok" } else { "bad" };
+    assert(label == "ok");
+    return;
+}
+""")
+case("a11_sequence_of_records", "ok", """
+record Tok {
+    kind: i32,
+    word: text,
+}
+
+fn tokens() -> Sequence(Tok) {
+    let mut out: Sequence(Tok) = [];
+    out = push(out, Tok { kind: 1, word: "let" });
+    out = push(out, Tok { kind: 2, word: "x" });
+    return out;
+}
+
+fn main() {
+    let ts: Sequence(Tok) = tokens();
+    let mut words: text = "";
+    for t in ts {
+        words = words + t.word + ";";
+    }
+    assert(words == "let;x;" && ts[1].kind == 2);
+    return;
+}
+""")
+case("a12_mini_lexer_workload", "ok", """
+record Tok {
+    kind: i32,
+    start: u32,
+    stop: u32,
+}
+
+fn lex(src: text) -> Sequence(Tok) {
+    let n: u32 = text_len(src);
+    let mut toks: Sequence(Tok) = [];
+    let mut i: u32 = 0u32;
+    while i < n {
+        let b: u32 = match text_byte_at(src, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == 32u32 {
+            i = i + 1u32;
+        } else if b >= 48u32 && b <= 57u32 {
+            let start: u32 = i;
+            let mut c: u32 = b;
+            while c >= 48u32 && c <= 57u32 {
+                i = i + 1u32;
+                c = match text_byte_at(src, i) {
+                    Option::Some(x) => { x }
+                    Option::None => { 0u32 }
+                };
+            }
+            toks = push(toks, Tok { kind: 1, start: start, stop: i });
+        } else {
+            toks = push(toks, Tok { kind: 2, start: i, stop: i + 1u32 });
+            i = i + 1u32;
+        }
+    }
+    return toks;
+}
+
+fn main() {
+    let ts: Sequence(Tok) = lex("12 + 345 * 6");
+    assert(len(ts) == 5);
+    assert(ts[0].kind == 1 && ts[1].kind == 2 && ts[2].stop == 8u32);
+    let w: text = match text_slice("12 + 345 * 6", ts[2].start, ts[2].stop) {
+        Option::Some(t) => { t }
+        Option::None => { "?" }
+    };
+    assert(w == "345");
+    return;
+}
+""")
+case("t05_index_out_of_bounds", "trap:out of bounds", """
+fn main() {
+    let xs: Sequence(i32) = [1, 2];
+    let v: i32 = xs[5];
+    return;
+}
+""")
+case("t06_u32_underflow", "trap:ArithmeticOverflow", """
+fn main() {
+    let z: u32 = 0u32 - 1u32;
+    return;
+}
+""")
+case("n27_unknown_field", "reject:name:has no field 'z'", """
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: 1 };
+    let v: i32 = p.z;
+    return;
+}
+""")
+case("n28_missing_record_field", "reject:type:must give every field exactly once", """
+record Pt {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: 1 };
+    return;
+}
+""")
+case("n29_wrong_field_type", "reject:type:field 'x' expects i32, got bool", """
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: true };
+    return;
+}
+""")
+case("n30_non_exhaustive_match", "reject:type:match is not exhaustive", """
+fn main() {
+    let n: i32 = 3;
+    let v: i32 = match n {
+        1 => { 10 }
+    };
+    return;
+}
+""")
+case("n31_match_arm_types_differ", "reject:type:match arms have different types", """
+fn main() {
+    let n: i32 = 3;
+    let v: i32 = match n {
+        1 => { 10 }
+        _ => { true }
+    };
+    return;
+}
+""")
+case("n32_empty_sequence_without_type", "reject:type:element type of '[]' cannot be inferred", """
+fn main() {
+    let xs = [];
+    return;
+}
+""")
+case("n33_push_wrong_element", "reject:type:invalid arguments for builtin 'push'", """
+fn main() {
+    let xs: Sequence(i32) = [1];
+    let ys: Sequence(i32) = push(xs, true);
+    return;
+}
+""")
+case("n34_mixed_u32_i32", "reject:type:of one family", """
+fn main() {
+    let a: u32 = 1u32;
+    let b: i32 = 2;
+    let c: u32 = a + b;
+    return;
+}
+""")
+case("n35_tuple_arity_mismatch", "reject:type:destructuring expects a 3-tuple", """
+fn main() {
+    let (a, b, c) = (1, 2);
+    return;
+}
+""")
+case("n36_record_equality_unsupported", "reject:unsupported:equality on", """
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let a: Pt = Pt { x: 1 };
+    let b: Pt = Pt { x: 1 };
+    assert(a == b);
+    return;
+}
+""")
+case("n37_option_pattern_on_i32", "reject:type:match pattern does not fit", """
+fn main() {
+    let n: i32 = 1;
+    let v: i32 = match n {
+        Option::Some(x) => { x }
+        _ => { 0 }
+    };
+    return;
+}
+""")
+case("n38_u32_literal_out_of_range", "reject:syntax:out of u32 range", """
+fn main() {
+    let x: u32 = 4294967296u32;
+    return;
+}
+""")
+
+case("n39_continue_inside_for", "reject:context:'continue' is allowed only inside a while loop", """
+fn main() {
+    let xs: Sequence(i32) = [1, 2];
+    for x in xs {
+        continue;
+    }
+    return;
+}
+""")
+case("n40_builtin_wrong_arity", "reject:type:expects 1 argument(s), got 0", """
+fn main() {
+    let n: i32 = len();
+    return;
+}
+""")
+
+case("a13_u32_match_unsuffixed_arms", "ok", """
+fn digit(b: u32) -> i32 {
+    return match b {
+        48 => { 0 }
+        49 => { 1 }
+        57 => { 9 }
+        _ => { 0 - 1 }
+    };
+}
+
+fn main() {
+    assert(digit(48u32) == 0 && digit(57u32) == 9 && digit(65u32) == -1);
+    return;
+}
+""")
+
 def main():
     d = HERE / "cases"
     d.mkdir(exist_ok=True)
@@ -557,8 +990,10 @@ def main():
     table = {}
     for name in sorted(CASES):
         (d / f"{name}.sm").write_bytes(CASES[name]["src"].encode("utf-8"))
-        table[name] = CASES[name]["expect"]
+        table[name] = {"expect": CASES[name]["expect"], "c0_comparable": name not in POST_C0}
     (HERE / "cases.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    unknown = POST_C0 - set(table)
+    assert not unknown, unknown
     print(f"{len(table)} cases written")
 
 if __name__ == "__main__":

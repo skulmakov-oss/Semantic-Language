@@ -1,0 +1,6 @@
+fn main() {
+    let a: u32 = 1u32;
+    let b: i32 = 2;
+    let c: u32 = a + b;
+    return;
+}

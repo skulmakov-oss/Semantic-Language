@@ -1,0 +1,13 @@
+fn digit(b: u32) -> i32 {
+    return match b {
+        48 => { 0 }
+        49 => { 1 }
+        57 => { 9 }
+        _ => { 0 - 1 }
+    };
+}
+
+fn main() {
+    assert(digit(48u32) == 0 && digit(57u32) == 9 && digit(65u32) == -1);
+    return;
+}

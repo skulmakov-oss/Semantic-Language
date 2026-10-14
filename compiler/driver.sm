@@ -12,7 +12,7 @@ fn compile_source(src: text) -> text {
     if p.err != "" {
         return "error " + p.cat + " @" + to_text(p.errpos) + ": " + p.err;
     }
-    let sem: Sem = analyze(Prog { nodes: p.nodes, funcs: p.funcs });
+    let sem: Sem = analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
     if sem.err != "" {
         return "error " + sem.cat + " @" + to_text(sem.errpos) + ": " + sem.err;
     }
@@ -22,5 +22,5 @@ fn compile_source(src: text) -> text {
         fns = push(fns, lower_function(sem, i));
         i = i + 1;
     }
-    return "hex " + join_hex(encode_program(fns));
+    return "hex " + join_hex(encode_program(fns, sem.u32arith));
 }

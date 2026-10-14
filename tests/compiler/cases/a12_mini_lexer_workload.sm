@@ -1,0 +1,47 @@
+record Tok {
+    kind: i32,
+    start: u32,
+    stop: u32,
+}
+
+fn lex(src: text) -> Sequence(Tok) {
+    let n: u32 = text_len(src);
+    let mut toks: Sequence(Tok) = [];
+    let mut i: u32 = 0u32;
+    while i < n {
+        let b: u32 = match text_byte_at(src, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == 32u32 {
+            i = i + 1u32;
+        } else if b >= 48u32 && b <= 57u32 {
+            let start: u32 = i;
+            let mut c: u32 = b;
+            while c >= 48u32 && c <= 57u32 {
+                i = i + 1u32;
+                c = match text_byte_at(src, i) {
+                    Option::Some(x) => { x }
+                    Option::None => { 0u32 }
+                };
+            }
+            toks = push(toks, Tok { kind: 1, start: start, stop: i });
+        } else {
+            toks = push(toks, Tok { kind: 2, start: i, stop: i + 1u32 });
+            i = i + 1u32;
+        }
+    }
+    return toks;
+}
+
+fn main() {
+    let ts: Sequence(Tok) = lex("12 + 345 * 6");
+    assert(len(ts) == 5);
+    assert(ts[0].kind == 1 && ts[1].kind == 2 && ts[2].stop == 8u32);
+    let w: text = match text_slice("12 + 345 * 6", ts[2].start, ts[2].stop) {
+        Option::Some(t) => { t }
+        Option::None => { "?" }
+    };
+    assert(w == "345");
+    return;
+}

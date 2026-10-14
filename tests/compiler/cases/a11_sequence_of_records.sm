@@ -1,0 +1,21 @@
+record Tok {
+    kind: i32,
+    word: text,
+}
+
+fn tokens() -> Sequence(Tok) {
+    let mut out: Sequence(Tok) = [];
+    out = push(out, Tok { kind: 1, word: "let" });
+    out = push(out, Tok { kind: 2, word: "x" });
+    return out;
+}
+
+fn main() {
+    let ts: Sequence(Tok) = tokens();
+    let mut words: text = "";
+    for t in ts {
+        words = words + t.word + ";";
+    }
+    assert(words == "let;x;" && ts[1].kind == 2);
+    return;
+}
