@@ -1,0 +1,247 @@
+// lower: checked AST -> per-function linear IR with symbolic labels.
+//
+// Register allocation is function-local and linear: parameters arrive in
+// r0..r(n-1) (SemCode calling convention), every expression result gets the
+// next fresh register. Locals live in the VM local store, one string-table
+// symbol per declaration slot. Control flow uses label ids that the encoder
+// resolves to byte offsets.
+Import "sema.sm"
+
+// IR instruction. `op` is the SemCode opcode byte, or -1 for a label.
+//   LOAD_BOOL 2: a=dst imm=0/1        LOAD_I32 3: a=dst imm=value
+//   LOAD_VAR 4: a=dst b=symbol        STORE_VAR 5: a=symbol b=src
+//   binary ops: a=dst b=lhs c=rhs     BOOL_NOT 22: a=dst b=src
+//   JMP 48: imm=label                 JMP_IF 49: a=cond imm=label
+//   CALL 64: a=has_dst b=dst c=callee symbol args=argument registers
+//   RET 65: a=has_src b=src           ASSERT 66: a=cond
+//   label -1: imm=label id
+record Ins {
+    op: i32,
+    a: i32,
+    b: i32,
+    c: i32,
+    imm: i32,
+    args: Sequence(i32),
+}
+
+record FnIr {
+    name: text,
+    ptypes: Sequence(i32),
+    strings: Sequence(text),
+    ins: Sequence(Ins),
+}
+
+record L {
+    sem: Sem,
+    ins: Sequence(Ins),
+    reg: i32,
+    labels: i32,
+    strings: Sequence(text),
+    strmap: Map(text, i32),
+    breaks: Sequence(i32),
+    conts: Sequence(i32),
+}
+
+fn emit(l: L, op: i32, a: i32, b: i32, c: i32, imm: i32) -> L {
+    return l with { ins: push(l.ins, Ins { op: op, a: a, b: b, c: c, imm: imm, args: [] }) };
+}
+
+fn fresh(l: L) -> (L, i32) {
+    return (l with { reg: l.reg + 1 }, l.reg);
+}
+
+fn new_label(l: L) -> (L, i32) {
+    return (l with { labels: l.labels + 1 }, l.labels);
+}
+
+// String-table index of a callee name (locals occupy the first entries).
+fn callee_symbol(l: L, name: text) -> (L, i32) {
+    if map_contains(l.strmap, name) {
+        return (l, map_get(l.strmap, name, 0));
+    }
+    let sid: i32 = len(l.strings);
+    return (l with { strings: push(l.strings, name), strmap: map_set(l.strmap, name, sid) }, sid);
+}
+
+fn binop_byte(op: i32) -> i32 {
+    return match op {
+        30 => { 7 }
+        31 => { 8 }
+        32 => { 9 }
+        33 => { 10 }
+        34 => { 11 }
+        35 => { 32 }
+        36 => { 33 }
+        37 => { 34 }
+        38 => { 35 }
+        41 => { 20 }
+        _ => { 21 }
+    };
+}
+
+fn lower_expr(l0: L, id: i32) -> (L, i32) {
+    let nd: Node = l0.sem.prog.nodes[id];
+    let mut l: L = l0;
+    let mut d: i32 = 0;
+    if nd.k == 1 {
+        (l, d) = fresh(l);
+        return (emit(l, 3, d, 0, 0, nd.v), d);
+    }
+    if nd.k == 2 {
+        (l, d) = fresh(l);
+        return (emit(l, 2, d, 0, 0, nd.v), d);
+    }
+    if nd.k == 4 {
+        (l, d) = fresh(l);
+        return (emit(l, 4, d, map_get(l.sem.slots, id, 0), 0, 0), d);
+    }
+    if nd.k == 7 {
+        let mut args: Sequence(i32) = [];
+        for kid in nd.kids {
+            let mut r: i32 = 0;
+            (l, r) = lower_expr(l, kid);
+            args = push(args, r);
+        }
+        let mut sid: i32 = 0;
+        (l, sid) = callee_symbol(l, nd.name);
+        let callee: Func = l.sem.prog.funcs[map_get(l.sem.callees, id, 0)];
+        let has_dst: i32 = if callee.ret != 0 { 1 } else { 0 };
+        if has_dst == 1 {
+            (l, d) = fresh(l);
+        }
+        let call: Ins = Ins { op: 64, a: has_dst, b: d, c: sid, imm: 0, args: args };
+        return (l with { ins: push(l.ins, call) }, d);
+    }
+    let mut a: i32 = 0;
+    if nd.k == 5 {
+        (l, a) = lower_expr(l, nd.a);
+        if nd.v == 31 {
+            // -x is 0 - x
+            let mut z: i32 = 0;
+            (l, z) = fresh(l);
+            l = emit(l, 3, z, 0, 0, 0);
+            (l, d) = fresh(l);
+            return (emit(l, 8, d, z, a, 0), d);
+        }
+        (l, d) = fresh(l);
+        return (emit(l, 22, d, a, 0, 0), d);
+    }
+    let mut b: i32 = 0;
+    (l, a) = lower_expr(l, nd.a);
+    (l, b) = lower_expr(l, nd.b);
+    (l, d) = fresh(l);
+    // a > b is b < a and a >= b is b <= a: SemCode has only LT/LE for i32
+    if nd.v == 39 { return (emit(l, 34, d, b, a, 0), d); }
+    if nd.v == 40 { return (emit(l, 35, d, b, a, 0), d); }
+    return (emit(l, binop_byte(nd.v), d, a, b, 0), d);
+}
+
+fn lower_block(l0: L, id: i32) -> L {
+    let nd: Node = l0.sem.prog.nodes[id];
+    let mut l: L = l0;
+    for kid in nd.kids {
+        l = lower_stmt(l, kid);
+    }
+    return l;
+}
+
+fn lower_stmt(l0: L, id: i32) -> L {
+    let nd: Node = l0.sem.prog.nodes[id];
+    let mut l: L = l0;
+    let mut r: i32 = 0;
+    if nd.k == 10 || nd.k == 11 {
+        (l, r) = lower_expr(l, nd.a);
+        return emit(l, 5, map_get(l.sem.slots, id, 0), r, 0, 0);
+    }
+    if nd.k == 17 {
+        (l, r) = lower_expr(l, nd.a);
+        return emit(l, 66, r, 0, 0, 0);
+    }
+    if nd.k == 16 {
+        (l, r) = lower_expr(l, nd.a);
+        return l;
+    }
+    if nd.k == 14 {
+        if nd.a < 0 {
+            return emit(l, 65, 0, 0, 0, 0);
+        }
+        (l, r) = lower_expr(l, nd.a);
+        return emit(l, 65, 1, r, 0, 0);
+    }
+    if nd.k == 12 {
+        // cond; n = !cond; if n goto else; then; [goto end]; else: ...; end:
+        (l, r) = lower_expr(l, nd.a);
+        let mut n: i32 = 0;
+        (l, n) = fresh(l);
+        l = emit(l, 22, n, r, 0, 0);
+        let mut else_l: i32 = 0;
+        let mut end_l: i32 = 0;
+        (l, else_l) = new_label(l);
+        (l, end_l) = new_label(l);
+        l = emit(l, 49, n, 0, 0, else_l);
+        l = lower_block(l, nd.b);
+        if nd.c >= 0 {
+            // a then-branch that always returns needs no jump over the else-branch
+            if !always_returns(l.sem.prog.nodes, nd.b) {
+                l = emit(l, 48, 0, 0, 0, end_l);
+            }
+            l = emit(l, 0 - 1, 0, 0, 0, else_l);
+            if l.sem.prog.nodes[nd.c].k == 12 {
+                l = lower_stmt(l, nd.c);
+            } else {
+                l = lower_block(l, nd.c);
+            }
+            return emit(l, 0 - 1, 0, 0, 0, end_l);
+        }
+        return emit(l, 0 - 1, 0, 0, 0, else_l);
+    }
+    if nd.k == 13 {
+        // top: cond; n = !cond; if n goto end; body; goto top; end:
+        let mut top_l: i32 = 0;
+        let mut end_l: i32 = 0;
+        (l, top_l) = new_label(l);
+        (l, end_l) = new_label(l);
+        l = emit(l, 0 - 1, 0, 0, 0, top_l);
+        (l, r) = lower_expr(l, nd.a);
+        let mut n: i32 = 0;
+        (l, n) = fresh(l);
+        l = emit(l, 22, n, r, 0, 0);
+        l = emit(l, 49, n, 0, 0, end_l);
+        let saved_b: Sequence(i32) = l.breaks;
+        let saved_c: Sequence(i32) = l.conts;
+        l = lower_block(l with { breaks: push(l.breaks, end_l), conts: push(l.conts, top_l) }, nd.b);
+        l = emit(l with { breaks: saved_b, conts: saved_c }, 48, 0, 0, 0, top_l);
+        return emit(l, 0 - 1, 0, 0, 0, end_l);
+    }
+    if nd.k == 18 {
+        return emit(l, 48, 0, 0, 0, l.breaks[len(l.breaks) - 1]);
+    }
+    if nd.k == 19 {
+        return emit(l, 48, 0, 0, 0, l.conts[len(l.conts) - 1]);
+    }
+    return lower_block(l, id);
+}
+
+fn lower_function(sem: Sem, fi: i32) -> FnIr {
+    let f: Func = sem.prog.funcs[fi];
+    let names: Sequence(text) = sem.locals[fi];
+    // locals take the first string-table entries: slot k -> symbol k
+    let mut strings: Sequence(text) = [];
+    let mut k: i32 = 0;
+    for nm in names {
+        strings = push(strings, nm + "#" + to_text(k));
+        k = k + 1;
+    }
+    let mut l: L = L { sem: sem, ins: [], reg: len(f.ptypes), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [] };
+    // prologue: parameters arrive in r0..; store them into their slots
+    let mut p: i32 = 0;
+    while p < len(f.ptypes) {
+        l = emit(l, 5, p, p, 0, 0);
+        p = p + 1;
+    }
+    l = lower_block(l, f.body);
+    if f.ret == 0 && !always_returns(sem.prog.nodes, f.body) {
+        l = emit(l, 65, 0, 0, 0, 0);
+    }
+    return FnIr { name: f.name, ptypes: f.ptypes, strings: l.strings, ins: l.ins };
+}
