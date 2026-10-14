@@ -2,13 +2,24 @@
 Import "lexer.sm"
 
 // Node kinds
-//   expressions: 1 Int(v)  2 Bool(v 0/1)  4 Var(name)  5 Unary(v = op token, a)
-//                6 Binary(v = op token, a, b)  7 Call(name, kids = arguments)
-//   statements:  10 Let(name, a = init, v = declared type or 0, c = 1 if mut)
-//                11 Assign(name, a)  12 If(a = cond, b = then block, c = else node or -1)
-//                13 While(a = cond, b = body)  14 Return(a = value or -1)  15 Block(kids)
-//                16 ExprStmt(a)  17 Assert(a)  18 Break  19 Continue
-// Types: 0 unit, 1 i32, 2 bool (also the declared-type encoding).
+//   expressions:
+//     1 Int(v)  2 Bool(v 0/1)  3 Text(name = literal slice with quotes)  4 Var(name)
+//     5 Unary(v = op token, a)  6 Binary(v = op token, a, b)  7 Call(name, kids = arguments)
+//     8 U32(v = 32-bit pattern)
+//     20 Field(a, name)  21 With(a, kids = FieldInit)  22 Tuple(kids)  23 SeqLit(kids)
+//     24 Index(a, b)  25 Match(a = scrutinee, kids = Arm)  26 IfExpr(a = cond, b = then, c = else)
+//     27 BlockExpr(kids = statements, a = tail expression or -1)  29 RecordLit(name, kids = FieldInit)
+//     31 FieldInit(name, a)  32 Arm(v = pattern kind, b = literal, name = binding, a = body)
+//        pattern kinds: 0 `_`, 1 i32 literal, 2 u32 literal, 3 Option::Some(name), 4 Option::None
+//     33 Name(name) - an item of a destructuring list
+//   statements:
+//     10 Let(name, a = init, v = type node or -1, c = 1 if mut)  11 Assign(name, a)
+//     12 If(a = cond, b = then block, c = else node or -1)  13 While(a = cond, b = body)
+//     14 Return(a = value or -1)  15 Block(kids)  16 ExprStmt(a)  17 Assert(a)  18 Break  19 Continue
+//     40 LetTuple(kids = Name, a = init, v = type node or -1)  41 TupleAssign(kids = Name, a)
+//     42 ForIn(name, a = sequence, b = body)
+//   types:
+//     60 TypeRef(name, kids = type arguments)  61 TupleType(kids)
 record Node {
     k: i32,
     a: i32,
@@ -20,6 +31,7 @@ record Node {
     kids: Sequence(i32),
 }
 
+// ptypes / ret / ftypes hold type-node ids (ret = -1 for unit).
 record Func {
     name: text,
     pnames: Sequence(text),
@@ -29,16 +41,15 @@ record Func {
     pos: u32,
 }
 
+record Rec {
+    name: text,
+    fnames: Sequence(text),
+    ftypes: Sequence(i32),
+    pos: u32,
+}
+
 record Prog {
     nodes: Sequence(Node),
     funcs: Sequence(Func),
-}
-
-fn type_name(t: i32) -> text {
-    return match t {
-        0 => { "unit" }
-        1 => { "i32" }
-        2 => { "bool" }
-        _ => { "?" }
-    };
+    recs: Sequence(Rec),
 }
