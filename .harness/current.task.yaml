@@ -2,34 +2,34 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF-STAGE-DELIVERY-STABLE
-  title: "Stable ordinary SHF delivery profile (Issue #20 Phase G2)"
-  type: implementation
+  id: SEM-VM-001-GOVERNANCE
+  title: "Admit vm/** as the Semantic VM implementation surface (SEM-VM-001, Issue #29)"
+  type: governance
   mode: active
-  supersedes: GOVERNANCE-MIGRATION-ISSUE-20
-  authorized_by: "Repository owner explicit task - SEMANTIC-LANGUAGE GOVERNANCE LIBERATION (Issue #20 Phase G2)"
+  supersedes: SHF-STAGE-DELIVERY-STABLE
+  authorized_by: "Repository owner explicit task - SEM-VM-001 Build a New Virtual Machine Entirely in Semantic (section 4: repository governance transition)"
 
 intent:
-  summary: "Stable ordinary SHF delivery envelope under Strategy v1.1: authorizes full-stage ordinary implementation delivery (compiler code, tests, documentation) within Surface A without recurring scope transitions, while strictly preserving protected governance, reference, and bootstrap seal boundaries (Surfaces B, C, D)."
+  summary: "One-time governance task: add vm/** to the stable ordinary engineering surface in scripts/harness-check.ps1 (with tests) and record in AGENTS.md and docs/** that the Rust VM remains the bootstrap host and reference execution authority, the Semantic VM is an independent track, and the frozen C0 -> C1 -> C2 protocol is unchanged. No compiler, VM, bootstrap, reference or workflow change."
 
 scope:
   allowed_paths:
-    - compiler/**
-    - tests/**
+    - scripts/harness-check.ps1
+    - tests/test_harness_check.ps1
+    - AGENTS.md
     - docs/**
-    - README.md
-    - CONTRIBUTING.md
   forbidden_paths:
     - .github/**
-    - scripts/harness-check.ps1
     - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
+    - compiler/**
+    - vm/**
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: true
+  compiler_implementation: false
   documentation_addition: true
   documentation_correction: true
   test_addition: true
@@ -41,9 +41,9 @@ authorization:
   stable_promotion: false
 
 constraints:
-  issue: 20
+  issue: 29
   base_branch: main
-  base_sha: 8dbb842ab8e35335f7177d581c2bb2a28ecca60a
+  base_sha: d474fe72ba94d588e389e36058d704f1fe66ea93
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
