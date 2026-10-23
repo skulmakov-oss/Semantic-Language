@@ -863,7 +863,7 @@ fn analyze(prog: Prog) -> Sem {
         }
         c = check_block(c, f.body);
         sem = c.sem;
-        if sem.err == "" && sem.frets[i] != 0 && !ends_with_return(prog.nodes, f.body) {
+        if sem.err == "" && sem.frets[i] != 0 && !always_returns(prog.nodes, f.body) {
             sem = serr(sem, "type", "function '" + f.name + "' may exit without returning " + ty_text(sem, sem.frets[i]), f.pos);
         }
         sem = sem with { locals: push(sem.locals, c.names) };

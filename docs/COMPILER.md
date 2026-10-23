@@ -59,7 +59,7 @@ The name-dispatched `CALL`s are exactly how the reference compiler lowers these 
 These follow the reference compiler; each one in the second group was checked against it, and the first two were caught by differential tests.
 
 **Rules taken from the reference compiler:**
-- A function with a non-`unit` return type must **end with a top-level `return`**. An `if`/`else` whose branches both return is rejected (`n25`).
+- A function with a non-`unit` return type must ensure all control flow paths return (`always_returns`). This matches modern candidate Semantic (S2043 CP04 / commit `30f395d3`), which accepts symmetric `if`/`else` blocks where both branches return (`p18`), while rejecting missing branches or paths that fall through (`n25`).
 - **`break`/`continue` are allowed only inside `while`**, not inside `for … in` (`n39`).
 - Unsuffixed integer patterns match both `i32` and `u32` scrutinees (`a13`).
 
