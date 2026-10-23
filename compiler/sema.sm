@@ -327,7 +327,7 @@ fn analyze(prog: Prog) -> Sem {
         }
         c = check_block(c, f.body);
         sem = c.sem;
-        if sem.err == "" && f.ret != 0 && !ends_with_return(prog.nodes, f.body) {
+        if sem.err == "" && f.ret != 0 && !always_returns(prog.nodes, f.body) {
             sem = sem with { err: "function '" + f.name + "' may exit without returning " + type_name(f.ret), cat: "type", errpos: f.pos };
         }
         sem = sem with { locals: push(sem.locals, c.names) };

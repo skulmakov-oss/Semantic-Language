@@ -43,5 +43,6 @@
  "t01_assert_in_callee": "trap:assertion failed",
  "t02_division_by_zero_in_callee": "trap:DivisionByZero",
  "t03_min_div_minus_one": "trap:ArithmeticOverflow",
- "t04_unbounded_recursion_frame_quota": "trap:quota"
+ "t04_unbounded_recursion_frame_quota": "trap:quota",
+ "p16_if_else_both_return": "ok"
 }

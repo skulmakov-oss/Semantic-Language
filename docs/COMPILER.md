@@ -55,7 +55,7 @@ primary   = INT | "true" | "false" | IDENT | IDENT "(" [ expr { "," expr } ] ")"
 - Assignment must keep the variable's type. This includes parameters and `let` bindings without `mut`, which the reference compiler admits too.
 
 **Returns and loops:**
-- A function with a non-`unit` return type must **end with a top-level `return`**. This is the reference compiler's rule: an `if`/`else` whose branches both return is rejected (`n25`).
+- A function with a non-`unit` return type must ensure all control flow paths return (`always_returns`). This matches modern candidate Semantic (S2043 CP04 / commit `30f395d3`), which accepts symmetric `if`/`else` blocks where both branches return (`p16`), while rejecting missing branches or paths that fall through (`n25`).
 - `break` and `continue` are only allowed inside a loop.
 
 ### Runtime semantics
