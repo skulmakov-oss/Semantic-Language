@@ -469,6 +469,49 @@ constraints:
     "
     Assert-Test "Well-formed ordinary SHF task passes envelope validation" ($LASTEXITCODE -eq 0)
 
+    # SEM-VM-001 (#29): vm/** is part of Surface A; look-alike prefixes are not.
+    function New-OrdinaryEnvelope([string]$allowed) {
+        return @"
+task:
+  id: SEM-VM-SURFACE-TEST
+  title: "Ordinary task"
+  type: implementation
+  mode: active
+  authorized_by: owner
+intent:
+  summary: "test"
+scope:
+  allowed_paths:
+    - $allowed
+  forbidden_paths:
+    - .github/**
+    - scripts/harness-check.ps1
+    - .harness/current.task.yaml
+authorization:
+  compiler_implementation: true
+constraints:
+  issue: 29
+  base_branch: main
+  base_sha: 0123456789abcdef0123456789abcdef01234567
+"@
+    }
+    foreach ($case in @(@('vm/**', 0), @('vm/exec.sm', 0), @('vmx/**', 42), @('VM/**', 42), @('vm', 42))) {
+        $vmFile = Join-Path $testTmpDir "env_vm_surface.yaml"
+        Set-Content -LiteralPath $vmFile -Value (New-OrdinaryEnvelope $case[0]) -Encoding utf8
+        $null = & pwsh -NoProfile -Command "
+            . '$CheckerPath'
+            try {
+                Read-Envelope '$vmFile' | Out-Null
+                exit 0
+            } catch {
+                if (`$_.Exception.Message -match 'restricted to stable engineering surface') { exit 42 }
+                exit 1
+            }
+        "
+        $verdict = if ($case[1] -eq 0) { 'is admitted' } else { 'is rejected' }
+        Assert-Test "SEM-VM-001: ordinary allowed path '$($case[0])' $verdict" ($LASTEXITCODE -eq $case[1])
+    }
+
     # Integration Test T1: G2-style envelope-only transition to ordinary profile passes
     # Candidate envelope is envelope-only change and forbids .harness/current.task.yaml.
     $g2TransitionEnvelope = @"
