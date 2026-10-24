@@ -1,11 +1,11 @@
 # Bootstrap Contract
 
-Status: **SHF-0 QUALIFIED / COMPLETE (issue #11) — executable protocol `shf0-bootstrap-contract-v1` in §10**
+Status: **BOOTSTRAP CONTRACT V2 QUALIFIED / COMPLETE — executable protocol `shf0-bootstrap-contract-v2` in §10**
 
 This document fixes the vocabulary and invariants of the self-hosting proof. §1–§9 state them at
-architecture level; §10 records the executable protocol frozen by SHF-0, whose machine-readable
+architecture level; §10 records the executable protocol frozen by Bootstrap Contract v2, whose machine-readable
 form is [`bootstrap/contract.toml`](../bootstrap/contract.toml) and whose validator is
-[`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). No compiler exists yet.
+[`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). A Semantic-written compiler implementation exists (advancing through frontend and aggregate phases), but full self-hosting fixed-point verification (C1/C2) is not yet completed.
 
 ## 1. Terms
 
@@ -98,39 +98,26 @@ Recorded only when the fixed point passes with zero unexplained deltas. It conta
 ## 9. Evidence requirements
 
 Each qualification run records: reference repository and SHA, source-set identity, input
-corpus, comparison form, positive/negative/boundary results, mutation proof, and unexplained
-delta count (required: 0). See [QUALIFICATION.md](./QUALIFICATION.md).
+corpus, comparison form, positive/negative/boundary results, mutation-check status, count of
+unexplained deltas (required to be 0), and explicit limitations.
 
-## 10. Executable protocol (SHF-0)
+## 10. Executable Protocol (`shf0-bootstrap-contract-v2`)
 
-Protocol `shf0-bootstrap-contract-v1`. **Authority:** the machine-readable files
-(`bootstrap/contract.toml`, `bootstrap/source-set.toml`, `reference/semantic-reference.toml`)
-are authoritative; this prose explains them, and on any conflict the machine-readable contract
-wins. Changing any value below is a contract revision with a
-new protocol identifier, never an edit made to fit a failed run (`CONTRACT_DRIFT`).
-The validator enforces this mechanically: it binds the protocol identifier to a sha256 of the
-canonical form of every frozen value: all of `bootstrap/contract.toml`, including the `[subset]`
-state lists (admitting or dropping a construction is a contract change, BOOTSTRAP_SUBSET.md §8),
-together with the whole C0 reference manifest `reference/semantic-reference.toml` and the
-full normative text of this document and of `docs/BOOTSTRAP_SUBSET.md` (everything except the
-`Status:` line; line endings and trailing spaces are normalized), so prose and data cannot
-diverge under one protocol identifier.
+Protocol `shf0-bootstrap-contract-v2` succeeds `shf0-bootstrap-contract-v1`. It establishes the
+qualified baseline C0 (`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`), admits
+`BSF-101` (text inspection) and `BSF-103` (u32 arithmetic and bitwise ops), and formalizes the
+execution quota envelope for the self-hosted compiler.
 
-### 10.1 C0
+### 10.1 C0 identity
 
-`skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7` — the `v1.2.0` Stable
-Foundation release, verdict "ORACLE QUALIFIED WITH EXPLICIT LIMITS" (qualification campaign
-`Semantic#1983`, platform `x86_64-pc-windows-msvc`, limits R1–R4). Upstream development `main`
-(`5f3e2302…`) is 16 commits ahead with compiler-relevant changes and does **not** inherit that
-qualification. Details and contract paths: [`reference/semantic-reference.toml`](../reference/semantic-reference.toml).
+`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
+Reference manifest: [`reference/semantic-reference.toml`](../reference/semantic-reference.toml).
 
-SemCode format ownership at C0 is taken from `CONSTRAINTS.md` (`sm-format` owns the binary
-format); the "owner: `sm-ir`" wording in `docs/spec/semcode.md` is historical per that file.
+### 10.2 Source-set invariants (`shf0-source-set-v1`)
 
-### 10.2 Source set `S` (`shf0-source-set-v1`)
-
-| Rule | Value |
+| Invariant | Value |
 |---|---|
+| Manifest | `bootstrap/source-set.toml` |
 | Root | `compiler/` |
 | Membership | exactly the files listed in [`bootstrap/source-set.toml`](../bootstrap/source-set.toml); never a directory scan |
 | Path form | relative, POSIX `/`, ASCII, components `[a-z0-9_]+`, file suffix `.sm`; each component (with suffix) at most 100 characters and the whole relative path at most 160 (portable under Windows MAX_PATH with the checkout directory) |
@@ -154,7 +141,7 @@ framing makes path/content boundaries unambiguous.
 ### 10.3 Compiler interface
 
 `Compile(source_set, declared_config, declared_capability_results) -> (artifact, diagnostics, status)`
-with status `ok | rejected | failed`. Protocol v1 admits no configuration inputs. The artifact is
+with status `ok | rejected | failed`. Protocol v2 admits no configuration inputs. The artifact is
 SemCode under the upstream `sm-format` contract at C0. CLI spelling is not part of the contract.
 
 ### 10.4 Fixed point
@@ -165,9 +152,11 @@ as complete byte sequences. Basis: at C0 the SemCode format has canonical framin
 section holds only `(pc, line, col)`, no time/path/random field exists, and
 `tests/cli_artifact_lifecycle.rs` asserts byte-deterministic compile output.
 
-### 10.5 Host capabilities
+### 10.5 Host capabilities and execution quotas
 
 See [HOST_BOUNDARY.md](./HOST_BOUNDARY.md) §9. Default environment inputs: none.
+Default VM execution limits: Calls 16,384, Frames 256, Steps 10,000,000.
+Authorized trusted compiler envelope: `--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`.
 
 ### 10.6 Failure taxonomy
 
