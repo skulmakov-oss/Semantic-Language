@@ -2,35 +2,33 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF-STAGE-DELIVERY-STABLE
-  title: "Stable ordinary delivery profile: SHF stages and the Semantic VM track (Issue #20 G2, Issue #29)"
-  type: implementation
+  id: GOVERNANCE-BOOTSTRAP-CONTRACT-V2
+  title: "Authorize governance migration for Bootstrap Contract v2 (refs #1910)"
+  type: governance
   mode: active
-  supersedes: SEM-VM-001-GOVERNANCE
-  authorized_by: "Repository owner explicit task - SEM-VM-001 Build a New Virtual Machine Entirely in Semantic (section 4), extending the Issue #20 Phase G2 stable profile"
+  supersedes: SHF-STAGE-DELIVERY-STABLE
+  authorized_by: "Repository owner explicit task - C0 Qualification Closeout & Bootstrap v2 Governance Transition"
 
 intent:
-  summary: "Stable ordinary delivery envelope under Strategy v1.1, extended with the Semantic VM implementation surface vm/** (SEM-VM-001): ordinary implementation, tests and documentation within Surface A without recurring scope transitions, while strictly preserving protected governance, reference and bootstrap seal boundaries (Surfaces B, C, D)."
+  summary: "Envelope-only governance transition: authorize subsequent payload PR to update Bootstrap Contract v2, candidate C0 pin Semantic@1d1e76c7, validator, reference manifest, and sealed documentation while forbidding compiler/**, vm/**, .github/**, and the envelope itself."
 
 scope:
   allowed_paths:
-    - compiler/**
-    - vm/**
-    - tests/**
-    - docs/**
-    - README.md
-    - CONTRIBUTING.md
-  forbidden_paths:
-    - .github/**
-    - scripts/harness-check.ps1
-    - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
+    - docs/**
+    - tests/**
+    - scripts/harness-check.ps1
+  forbidden_paths:
+    - .github/**
+    - .harness/current.task.yaml
+    - compiler/**
+    - vm/**
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: true
+  compiler_implementation: false
   documentation_addition: true
   documentation_correction: true
   test_addition: true
@@ -42,9 +40,9 @@ authorization:
   stable_promotion: false
 
 constraints:
-  issue: 29
+  issue: 28
   base_branch: main
-  base_sha: 8e25660fdda38daee1aa95a51697cd5c9c3995fa
+  base_sha: 473c9817b8bc7e0b49d424afd6c5ba0fc817216f
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
