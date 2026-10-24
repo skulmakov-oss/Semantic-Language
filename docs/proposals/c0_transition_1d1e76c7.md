@@ -154,10 +154,11 @@ To respect the immutable trust root in `.github/workflows/harness-trusted.yml`, 
 ## 6. Formal Promotion Gate & Owner Decision Required
 
 **Current Status:**
-`TECHNICAL QUALIFICATION EVIDENCE — PASS`
-`C0 CANDIDATE STATUS — CANDIDATE NOT YET PROMOTED`
+- `TECHNICAL QUALIFICATION EVIDENCE — PASS`
+- `QUALIFICATION RECORD — FROZEN IN docs/qualification/c0_1d1e76c7_final_review.md`
+- `C0 CANDIDATE STATUS — READY FOR OWNER C0 PROMOTION REVIEW`
 
-The candidate reference passes all reference, compiler, and differential tests. However, under the authority hierarchy of this repository:
-- Candidate `1d1e76c7` is **NOT** yet the official bootstrap C0.
-- No protected surfaces have been modified.
-- Promotion requires an explicit, separate **OWNER C0 PROMOTION GO** authorizing the governance transition sequence.
+The candidate reference passes all reference, compiler, differential, and self-compilation benchmarks, and its binary distribution provenance is conclusively resolved. Full technical evidence is recorded in [`docs/qualification/c0_1d1e76c7_final_review.md`](../qualification/c0_1d1e76c7_final_review.md). Under the authority hierarchy of this repository:
+- Candidate `1d1e76c7` is technically qualified and positioned for formal C0 adoption.
+- No protected surfaces (`bootstrap/**`, `reference/**`, `.github/**`) have been modified in this proposal.
+- Promotion requires an explicit, separate **OWNER C0 PROMOTION GO** authorizing the three-step governance transition sequence.
