@@ -24,9 +24,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = "bootstrap/contract.toml"
 
-PROTOCOL = "shf0-bootstrap-contract-v1"
+PROTOCOL_V1 = "shf0-bootstrap-contract-v1"
+PROTOCOL_V2 = "shf0-bootstrap-contract-v2"
+PROTOCOL = PROTOCOL_V2
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
-FROZEN_DIGESTS = {PROTOCOL: "6f80db639198bfcb90ec49678024e8a793ab497b1300bc308eb2063543027908"}
+FROZEN_DIGESTS = {
+    PROTOCOL_V1: "6f80db639198bfcb90ec49678024e8a793ab497b1300bc308eb2063543027908",
+    PROTOCOL_V2: "8a2b910989c55e871c6099c673c6a1c65fbaffb5f8ac5eb876466fe9b7fd727b",
+}
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
