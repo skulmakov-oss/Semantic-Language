@@ -83,6 +83,21 @@ never a successful qualification path.
 `sm-vm` remains the Rust execution authority. The first fixed point runs on the existing
 admitted runtime. A Semantic VM is not part of the self-hosting critical path.
 
+Four execution concerns are kept distinct:
+
+1. **Rust VM (`sm-vm`)**: the bootstrap host and the reference execution authority, identified
+   as `skulmakov-oss/Semantic` + exact SHA. It executes every artifact of the C0 → C1 → C2
+   proof and is the behavioural oracle for any other execution engine.
+2. **Semantic VM (`vm/**`, SEM-VM-001, Issue #29)**: an independent virtual machine written in
+   Semantic, under development. It decodes and executes admitted SemCode with its own engine;
+   during bootstrap it runs as a guest program of `sm-vm`. It holds no execution authority:
+   its results are differential evidence against `sm-vm`, and admission stays with `sm-verify`.
+3. **The C0 → C1 → C2 proof** (§8) is unchanged and remains valid under its frozen protocol
+   ([BOOTSTRAP_CONTRACT.md](./BOOTSTRAP_CONTRACT.md)). The Semantic VM is not part of it.
+4. **Any future proof involving the Semantic VM** (for example, executing C1 on it) requires a
+   separately authorized contract revision. Nothing in `vm/**` changes the Bootstrap Seal
+   definition.
+
 ## 8. C0 / C1 / C2 path
 
 1. C0 (reference compiler at the pinned SHA) compiles `S` to `C1.smc`.
