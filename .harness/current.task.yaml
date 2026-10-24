@@ -2,33 +2,35 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: GOVERNANCE-BOOTSTRAP-CONTRACT-V2
-  title: "Authorize governance migration for Bootstrap Contract v2 (refs #1910)"
-  type: governance
+  id: SHF-STAGE-DELIVERY-STABLE
+  title: "Restore stable SHF compiler and Semantic VM engineering delivery"
+  type: implementation
   mode: active
-  supersedes: SHF-STAGE-DELIVERY-STABLE
-  authorized_by: "Repository owner explicit task - C0 Qualification Closeout & Bootstrap v2 Governance Transition"
+  supersedes: GOVERNANCE-BOOTSTRAP-CONTRACT-V2
+  authorized_by: "Repository owner explicit GO - PR 3/3 stable engineering restoration"
 
 intent:
-  summary: "Envelope-only governance transition: authorize subsequent payload PR to update Bootstrap Contract v2, candidate C0 pin Semantic@1d1e76c7, validator, reference manifest, and sealed documentation while forbidding scripts/harness-check.ps1, compiler/**, vm/**, .github/**, and the envelope itself."
+  summary: "Restore ordinary compiler and Semantic VM engineering following qualified Bootstrap Contract v2 migration; preserve frozen bootstrap/reference and trusted governance boundaries."
 
 scope:
   allowed_paths:
-    - bootstrap/**
-    - reference/**
-    - docs/**
+    - compiler/**
+    - vm/**
     - tests/**
+    - docs/**
+    - README.md
+    - CONTRIBUTING.md
   forbidden_paths:
     - .github/**
     - scripts/harness-check.ps1
     - .harness/current.task.yaml
-    - compiler/**
-    - vm/**
+    - bootstrap/**
+    - reference/**
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: false
+  compiler_implementation: true
   documentation_addition: true
   documentation_correction: true
   test_addition: true
@@ -40,9 +42,9 @@ authorization:
   stable_promotion: false
 
 constraints:
-  issue: 28
+  issue: 29
   base_branch: main
-  base_sha: 473c9817b8bc7e0b49d424afd6c5ba0fc817216f
+  base_sha: 8f930ae1dcc5cd7c21e1a86dfc7f2e296847c046
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
