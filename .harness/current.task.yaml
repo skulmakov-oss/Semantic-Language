@@ -10,7 +10,7 @@ task:
   authorized_by: "Repository owner explicit task - C0 Qualification Closeout & Bootstrap v2 Governance Transition"
 
 intent:
-  summary: "Envelope-only governance transition: authorize subsequent payload PR to update Bootstrap Contract v2, candidate C0 pin Semantic@1d1e76c7, validator, reference manifest, and sealed documentation while forbidding compiler/**, vm/**, .github/**, and the envelope itself."
+  summary: "Envelope-only governance transition: authorize subsequent payload PR to update Bootstrap Contract v2, candidate C0 pin Semantic@1d1e76c7, validator, reference manifest, and sealed documentation while forbidding scripts/harness-check.ps1, compiler/**, vm/**, .github/**, and the envelope itself."
 
 scope:
   allowed_paths:
@@ -18,9 +18,9 @@ scope:
     - reference/**
     - docs/**
     - tests/**
-    - scripts/harness-check.ps1
   forbidden_paths:
     - .github/**
+    - scripts/harness-check.ps1
     - .harness/current.task.yaml
     - compiler/**
     - vm/**
