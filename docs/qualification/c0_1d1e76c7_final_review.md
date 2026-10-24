@@ -23,11 +23,11 @@ All mandatory qualification gates have been executed against isolated checkouts 
 |---|---|---|---|
 | **Upstream CI Anchor** | 100% passing automated workflow suite on `1d1e76c7` | **PASS** | Run `39895580480` (CI: test, clippy, fmt, docs) & Run `39923421025` (7hell full qualification) |
 | **Binary Provenance** | Binary correspondence between release installer and source build | **PASS** | `build_provenance.json` exactly matches installed `smc.exe`; 28-byte PE header difference fully resolved as deterministic timestamp/GUID metadata |
-| **Language Surfaces** | Core language, pattern matching, `if let`, `must_return`, ASCII byte literals | **PASS** | 201 CLI tests passed; all S2043 feature suites passed |
+| **Language Surfaces** | Core language, pattern matching, `if let`, `must_return`, ASCII byte literals | **PASS** | All core feature suites passed (137 tests across 11 suites) |
 | **SHF Capabilities** | Text processing, U32 arithmetic, Persistent Map, bytes/binary | **PASS** | 15/15 `shf1b`, 13/13 `shf3a`, 4/4 `shf_p1`, 2/2 `shf1c` passed |
-| **Differential Parity** | Semantic-Language compiler AST & Lexer against candidate runtime | **PASS** | PR #26 (46/46 passed, 8 mutations killed); PR #27 (75/75 passed, 8 mutations killed) |
-| **Self-Compilation** | Semantic-written compiler execution under candidate C0 | **PASS** | `compiler/main.sm` executed via `smc run` under trusted envelope compiling test programs to valid `SEMCOD22` binaries |
-| **Execution Envelopes** | Quota enforcement fail-closed & bounded trusted compiler overrides | **PASS** | 25/25 `shf_r_execution_envelope` tests passed; traps fail-closed at limit + 1 |
+| **Differential Parity** | Semantic-Language compiler AST & Lexer against candidate runtime | **PASS** | PR #26 (46 cases passed, 8 mutations killed); PR #27 (75 cases passed, 8 mutations killed) |
+| **Self-Execution Proof** | Semantic-written compiler execution under candidate C0 | **PASS** | `compiler/main.sm` executed via `smc run` under trusted envelope compiling test programs to valid `SEMCOD22` binaries |
+| **Execution Envelopes** | Quota enforcement fail-closed & bounded trusted compiler overrides | **PASS** | 25/25 `shf_r_execution_envelope` tests passed; bounded `--max-calls` override verified; default limit traps fail-closed at limit + 1 |
 
 ---
 
@@ -61,20 +61,16 @@ The difference between the distributed Windows installer binary and a fresh sour
 
 ---
 
-## 4. Technical Qualification Suite Results
+## 4. Reconciled Technical Qualification Accounting
 
-The full qualification test matrix was executed against candidate C0 commit `1d1e76c7` on Windows x64.
-Tests are categorized into **Upstream C0 Independent Functional Test Targets** and **Downstream Semantic Compiler Integration Cases**:
+Qualification evidence is divided into four distinct categories to avoid conflating test cases with repeated executions:
 
-### Upstream Candidate C0 Independent Tests (338 tests)
+### Category 1: Upstream Candidate C0 Target Suites (137 tests)
+Executed directly against the pinned upstream candidate `1d1e76c7` (verified via `cargo test`):
 
 ```text
 Suite Name                          Tests Run   Passed   Failed   Ignored
 -------------------------------------------------------------------------
-cli_command_shape_diagnostics              73       73        0         0
-cli_public_smoke_matrix                    35       35        0         0
-cli_artifact_lifecycle                     27       27        0         0
-artifact_command_diagnostics               24       24        0         0
 build_identity_fail_closed                 13       13        0         0
 s2043_language_surface                      5        5        0         0
 s2043_must_return                           3        3        0         0
@@ -87,23 +83,36 @@ shf_p1_persistent_map                       4        4        0         0
 shf_r_execution_envelope                   25       25        0         0
 ssf09_d2_2_adt0_admission                  35       35        0         0
 golden_semcode                              4        4        0         0
-canonical_examples                         47       47        0         0
 -------------------------------------------------------------------------
-Subtotal Upstream Independent Targets     338      338        0         0
+Total Upstream Test Targets               137      137        0         0
 ```
 
-### Downstream Semantic Compiler Differential Suite (121 cases + 8 mutations)
+### Category 2: Downstream Semantic-Written Compiler Differential Cases (79 unique programs)
+End-to-end program test cases compiled with the Semantic-written compiler and verified against Rust reference compilers/VMs:
 
-```text
-Suite Name                          Cases Run   Passed   Failed   Mutations Killed
-----------------------------------------------------------------------------------
-PR #26 Native Compiler (AST/Lexer)         46       46        0       8 / 8
-PR #27 Compiler Aggregates (Sema/Lower)    75       75        0       8 / 8
-----------------------------------------------------------------------------------
-Total Downstream Compiler Cases           121      121        0       8 / 8
-```
+- **PR #26 Pipeline Cases:** 46 test cases (Lexer, Parser, AST, Expressions, Control Flow).
+- **PR #27 Pipeline Cases:** 75 test cases (Aggregates, Tuples, Records, Collections, Sema, Lowering).
+- **Unique Case Definitions:** **79 unique programs** (42 cases shared across PR #26 and PR #27; 4 cases retired/refactored; 33 newly added in PR #27).
+- **Total Test Case Executions:** **121 case runs** across the two PR branches.
+- **Verification Status:** 100% passed on both branches.
 
-Total qualification coverage represents **459 distinct test cases and verification points** (338 upstream unit/integration tests + 121 Semantic-written compiler pipeline test cases, plus 8 negative artifact mutation rejection checks). Zero regressions or failures were observed across the entire matrix.
+### Category 3: Bytecode Mutation Resistance Experiments (8 unique mutations)
+Artifact corruption resistance verified via `tests/compiler/hex2bin.py` / `smc verify`:
+
+- **Unique Mutation Definitions:** **8 unique mutations** (truncation, bad magic, corrupted ADT count, invalid CALL argc, out-of-range symbol target, corrupted SIG0 header, corrupted OWN0 header, and unmodified control).
+- **Executions:** Executed on PR #26 (8 runs) and PR #27 (8 runs) = **16 total verification trials**.
+- **Result:** 100% killed (all 8 corruptions rejected fail-closed by both C0 and dev verifiers).
+
+### Category 4: Aggregate Accounting Summary
+
+| Category | Unique Definitions | Total Executions | Verified Successes | Failures / Blockers |
+|---|---|---|---|---|
+| **Upstream Candidate C0 Tests** | 137 | 137 | 137 | 0 |
+| **Downstream Semantic Compiler Cases** | 79 | 121 | 121 | 0 |
+| **Bytecode Mutation Experiments** | 8 | 16 | 16 | 0 |
+| **Total Qualification Points** | **224** | **274** | **274** | **0** |
+
+All tests and verification trials completed with zero failures or regressions.
 
 ---
 
@@ -139,6 +148,11 @@ smc.exe run "compiler/main.sm" `
     -- "a01_records_field_with.sm"
 ```
 
+> [!NOTE]
+> **Quota Accounting Accuracy:** This specific invocation explicitly overrides the Steps limit (`--max-steps 20000000`) while leaving the Calls quota at its default value (`16,384`). The runtime metrics confirm: `effective_quotas: { "max_steps": 20000000, "max_calls": 16384, "max_frames": 256 }`.
+>
+> Capability for explicit Calls quota expansion (`--max-calls <N>`) is independently demonstrated and verified in upstream test suite `shf_r_execution_envelope` (`test p3_calls_override_admits_old_blocker_and_numeric_boundaries`).
+
 ### 5.3 Execution Metrics and Audit Trace
 
 The runtime executed with complete capability containment:
@@ -148,10 +162,10 @@ schema=semantic.foundation.application.audit/0.1 seq=1 capability=fs.read decisi
 schema=semantic.foundation.application.audit/0.1 seq=2 capability=stdout.write decision=allow bytes=748 path_hash=- payload_hash=a66215267ea47d5d
 {"schema":"semantic.run.metrics/0.1","envelope":"trusted-compiler","effective_quotas":{"max_steps":20000000,"max_calls":16384,"max_frames":256,"max_stack_depth":256,"max_effect_calls":1024},"phase_reached":"execute","execution_started":true,"outcome":"ok","counters":{"steps":92096,"calls":641,"peak_frames":16,"effect_calls":3},"quota_exceeded":null,"error":null}
 ```
-- **Steps executed:** 92,096
-- **Function calls:** 641
-- **Peak stack frames:** 16
-- **Result:** Successfully emitted `hex 53454d434f443232...`
+- **Steps executed:** 92,096 (under 20,000,000 step budget)
+- **Function calls:** 641 (under 16,384 default call limit)
+- **Peak stack frames:** 16 (under 256 frame limit)
+- **Result:** Emitted `hex 53454d434f443232...` to stdout.
 
 ### 5.4 Emitted SemCode Verification
 
