@@ -10,7 +10,10 @@ import unittest
 class CorpusGenerationTests(unittest.TestCase):
     def test_generator_reproduces_committed_corpus_bytes_and_is_deterministic(self):
         here = pathlib.Path(__file__).resolve().parent
-        expected = {"cases.json": (here / "cases.json").read_bytes()}
+        # Git's canonical blob is independent of checkout core.autocrlf policy.
+        manifest = subprocess.run(["git", "show", ":tests/compiler/cases.json"],
+                                  cwd=here, capture_output=True, check=True)
+        expected = {"cases.json": manifest.stdout}
         expected.update({"cases/" + p.name: p.read_bytes() for p in (here / "cases").glob("*.sm")})
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

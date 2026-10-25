@@ -575,7 +575,7 @@ def main():
             source = source.removesuffix("\n")
         (d / f"{name}.sm").write_bytes(source.encode("utf-8"))
         table[name] = CASES[name]["expect"]
-    (HERE / "cases.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    (HERE / "cases.json").write_bytes((json.dumps(table, indent=1, sort_keys=True) + "\n").encode("utf-8"))
     print(f"{len(table)} cases written")
 
 if __name__ == "__main__":

@@ -141,6 +141,9 @@ fn lower_block(l0: L, id: i32) -> L {
     let mut l: L = l0;
     for kid in nd.kids {
         l = lower_stmt(l, kid);
+        if always_returns(l.sem.prog.nodes, kid) {
+            return l;
+        }
     }
     return l;
 }
