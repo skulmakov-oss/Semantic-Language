@@ -40,9 +40,9 @@
  "p13_nested_loops_with_calls": "ok",
  "p14_else_if_chain_function": "ok",
  "p15_discarded_value_call": "ok",
+ "p16_if_else_both_return": "ok",
  "t01_assert_in_callee": "trap:assertion failed",
  "t02_division_by_zero_in_callee": "trap:DivisionByZero",
  "t03_min_div_minus_one": "trap:ArithmeticOverflow",
- "t04_unbounded_recursion_frame_quota": "trap:quota",
- "p16_if_else_both_return": "ok"
+ "t04_unbounded_recursion_frame_quota": "trap:quota"
 }

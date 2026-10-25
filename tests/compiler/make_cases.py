@@ -533,12 +533,25 @@ case("n25_if_else_both_return_not_enough", "reject:type:may exit without returni
 fn sign(x: i32) -> i32 {
     if x < 0 {
         return -1;
+    }
+}
+
+fn main() {
+    return;
+}
+""")
+case("p16_if_else_both_return", "ok", """
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
     } else {
         return 1;
     }
 }
 
 fn main() {
+    assert(sign(5) == 1);
+    assert(sign(-3) == -1);
     return;
 }
 """)
@@ -556,7 +569,11 @@ def main():
         old.unlink()
     table = {}
     for name in sorted(CASES):
-        (d / f"{name}.sm").write_bytes(CASES[name]["src"].encode("utf-8"))
+        source = CASES[name]["src"]
+        # Preserve the approved return-path fixtures' exact bytes (no final LF).
+        if name in ("n25_if_else_both_return_not_enough", "p16_if_else_both_return"):
+            source = source.removesuffix("\n")
+        (d / f"{name}.sm").write_bytes(source.encode("utf-8"))
         table[name] = CASES[name]["expect"]
     (HERE / "cases.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     print(f"{len(table)} cases written")
