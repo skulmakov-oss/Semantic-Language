@@ -394,6 +394,9 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         return (cerr(c, "name", "record '" + rec.name + "' has no field '" + nd.name + "'", nd.pos), 0 - 1);
     }
     if k == 29 || k == 21 {
+        if k == 21 && len(nd.kids) == 0 {
+            return (cerr(c, "type", "record copy-with requires at least one explicit override field", nd.pos), 0 - 1);
+        }
         let mut ri: i32 = 0;
         let mut rt: i32 = 0;
         if k == 29 {
@@ -650,6 +653,9 @@ fn check_stmt(c0: C, id: i32) -> C {
         }
         (c, t) = check_value(c, nd.a, want, "destructured value");
         if t < 0 { return c; }
+        if want >= 0 && t != want {
+            return cerr(c, "type", "tuple annotation expects " + ty_text(c.sem, want) + ", got " + ty_text(c.sem, t), nd.pos);
+        }
         let info: TyInfo = c.sem.tys[t];
         if info.k != 6 || len(info.kids) != len(nd.kids) {
             return cerr(c, "type", "destructuring expects a " + to_text(len(nd.kids)) + "-tuple, got " + ty_text(c.sem, t), nd.pos);

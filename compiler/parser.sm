@@ -186,38 +186,12 @@ fn parse_block_expr(p0: P) -> (P, i32) {
         let k: i32 = p.toks[p.i].kind;
         if k == 0 {
             p = fail_cat(p, "syntax", "expected '}'");
-        } else if k == 12 {
-            let mut trial: P = p;
-            let mut e: i32 = 0 - 1;
-            (trial, e) = parse_expr(trial, 1);
-            if trial.err == "" && trial.toks[trial.i].kind == 23 {
-                p = trial;
-                tail = e;
-            } else if trial.err == "" && trial.toks[trial.i].kind == 24 {
-                p = trial with { i: trial.i + 1 };
-                let mut s: i32 = 0 - 1;
-                (p, s) = add_node(p, 16, e, 0 - 1, 0 - 1, 0, "", open.pos, []);
-                kids = push(kids, s);
-            } else {
-                let mut statement: P = p;
-                let mut s: i32 = 0 - 1;
-                (statement, s) = parse_if(statement);
-                if statement.err == "" {
-                    p = statement;
-                    kids = push(kids, s);
-                } else {
-                    p = trial;
-                    if p.err == "" { p = fail_cat(p, "syntax", "expected ';' or '}' after if expression"); }
-                }
-            }
-        } else if k == 3 || k == 6 || k == 7 || k == 14 || k == 16 || k == 17 || k == 19 || k == 15 || k == 18 {
+        } else if k == 3 || k == 6 || k == 15 {
             let mut s: i32 = 0 - 1;
             (p, s) = parse_stmt(p);
             kids = push(kids, s);
-        } else if k == 2 && kind_at(p, 1) == 26 {
-            let mut s: i32 = 0 - 1;
-            (p, s) = parse_stmt(p);
-            kids = push(kids, s);
+        } else if k == 7 || k == 14 || k == 16 || k == 17 || k == 19 || k == 18 || (k == 2 && kind_at(p, 1) == 26) {
+            p = fail_cat(p, "unsupported", "statement-only form is not admitted in a value-producing block");
         } else {
             let mut e: i32 = 0 - 1;
             (p, e) = parse_expr(p, 1);
@@ -271,7 +245,7 @@ fn parse_if_expr(p0: P) -> (P, i32) {
 }
 
 // match scrutinee { pattern => expr-or-block [,] ... }
-fn parse_match(p0: P) -> (P, i32) {
+fn parse_match(p0: P, statement: bool) -> (P, i32) {
     let t: Tok = p0.toks[p0.i];
     let mut p: P = p0 with { i: p0.i + 1 };
     let mut scrut: i32 = 0 - 1;
@@ -319,7 +293,15 @@ fn parse_match(p0: P) -> (P, i32) {
         let mut body: i32 = 0 - 1;
         if p.err == "" {
             if p.toks[p.i].kind == 22 {
-                (p, body) = parse_block_expr(p);
+                if statement {
+                    let mut block: i32 = 0 - 1;
+                    (p, block) = parse_block(p);
+                    if p.err == "" {
+                        (p, body) = add_node(p, 27, 0 - 1, 0 - 1, 0 - 1, 0, "", pt.pos, p.nodes[block].kids);
+                    }
+                } else {
+                    (p, body) = parse_block_expr(p);
+                }
             } else {
                 (p, body) = parse_expr(p, 1);
             }
@@ -358,7 +340,7 @@ fn parse_primary(p0: P) -> (P, i32) {
         return add_node(p with { i: p.i + 1 }, 2, 0 - 1, 0 - 1, 0 - 1, v, "", t.pos, []);
     }
     if t.kind == 52 {
-        return parse_match(p);
+        return parse_match(p, false);
     }
     if t.kind == 12 {
         return parse_if_expr(p);
@@ -555,6 +537,19 @@ fn parse_name_list(p0: P) -> (P, Sequence(i32)) {
     return (p, names);
 }
 
+fn starts_tuple_assignment(p: P) -> bool {
+    if kind_at(p, 0) != 20 || kind_at(p, 1) != 2 || kind_at(p, 2) != 27 { return false; }
+    let mut depth: i32 = 1;
+    let mut i: i32 = 1;
+    while depth > 0 && kind_at(p, i) != 0 {
+        let k: i32 = kind_at(p, i);
+        if k == 20 { depth = depth + 1; }
+        if k == 21 { depth = depth - 1; }
+        i = i + 1;
+    }
+    return depth == 0 && kind_at(p, i) == 26;
+}
+
 fn parse_stmt(p0: P) -> (P, i32) {
     let t: Tok = p0.toks[p0.i];
     let mut p: P = p0;
@@ -606,7 +601,7 @@ fn parse_stmt(p0: P) -> (P, i32) {
             return (fail_cat(p with { i: p.i + 1 }, "unsupported", "compound assignment is outside the supported subset"), 0 - 1);
         }
     }
-    if t.kind == 20 && kind_at(p, 1) == 2 && kind_at(p, 2) == 27 {
+    if starts_tuple_assignment(p) {
         // (a, b) = expr;
         let mut names: Sequence(i32) = [];
         (p, names) = parse_name_list(p);
@@ -678,7 +673,7 @@ fn parse_stmt(p0: P) -> (P, i32) {
     }
     if t.kind == 52 {
         // match statement: arms produce unit; no ';' needed
-        (p, e) = parse_match(p);
+        (p, e) = parse_match(p, true);
         if p.err == "" && p.toks[p.i].kind == 24 {
             p = p with { i: p.i + 1 };
         }

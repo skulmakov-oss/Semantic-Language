@@ -1,0 +1,1 @@
+fn main() { let n: i32 = { let (x, y) = (1, 2); assert(x == 1); x + y }; assert(n == 3); return; }

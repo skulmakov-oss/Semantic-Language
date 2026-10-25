@@ -44,6 +44,8 @@ Value-position blocks support nested blocks and value-producing conditional tail
 Tuple assignment remains statement-level: it is not admitted inside a value-producing
 block by the frozen C0 or its v0 block-body contract. Recovery does not widen that contract.
 The ordinary statement form retains its arity, target and type checks.
+Statement-form match arms use ordinary statement blocks, not the restricted value-block
+body contract. Assignments and returns remain supported in those statement arms.
 
 ### Builtins
 
@@ -71,7 +73,7 @@ These follow the reference compiler; each one in the second group was checked ag
 **Other rules:**
 - **Values:**
   - an empty `[]` needs a contextual `Sequence(T)` type;
-  - record literals give every field exactly once, and are evaluated in declaration-slot order;
+  - record literals give every field exactly once; literals and copy-with overrides evaluate expressions in written source order, then arrange the resulting values in declaration-slot order;
   - equality is defined on `i32`, `u32`, `bool` and `text` only;
   - `u32` and `i32` never mix.
 - **`match`:**

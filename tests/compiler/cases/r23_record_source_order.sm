@@ -1,0 +1,1 @@
+record R { a: i32, b: i32 } fn div(x: i32) -> i32 { return 1 / x; } fn fail() -> i32 { assert(false); return 0; } fn main() { let p: R = R { b: div(0), a: fail() }; return; }

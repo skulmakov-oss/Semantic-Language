@@ -205,19 +205,19 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         }
         let mut sid: i32 = 0;
         (l, sid) = symbol(l, rec.name);
-        // field values in declaration-slot order
+        // Evaluate supplied expressions once in source order, then arrange slots.
+        let mut given: Map(i32, i32) = map_empty();
+        for fid in nd.kids {
+            let mut r: i32 = 0;
+            (l, r) = lower_expr(l, l.sem.prog.nodes[fid].a);
+            given = map_set(given, map_get(l.sem.fieldix, fid, 0), r);
+        }
         let mut regs: Sequence(i32) = [];
         let mut slot: i32 = 0;
         while slot < len(rec.fnames) {
-            let mut given: i32 = 0 - 1;
-            for fid in nd.kids {
-                if map_get(l.sem.fieldix, fid, 0 - 1) == slot {
-                    given = l.sem.prog.nodes[fid].a;
-                }
-            }
             let mut r: i32 = 0;
-            if given >= 0 {
-                (l, r) = lower_expr(l, given);
+            if map_contains(given, slot) {
+                r = map_get(given, slot, 0);
             } else {
                 (l, r) = fresh(l);
                 l = emit(l, 70, r, base, sid, slot);

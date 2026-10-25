@@ -1,0 +1,1 @@
+fn main() { let n: i32 = { while false {} 0 }; return; }

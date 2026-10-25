@@ -47,5 +47,12 @@
   "r18_tuple_assignment_type": "reject:at 0: type mismatch in tuple assignment to 'y': I32 vs Bool",
   "r19_tuple_assignment_unknown": "reject:at 0: unknown tuple assignment target 'missing'",
   "r20_tuple_assignment_target": "reject:at 36: expected identifier",
-  "r21_match_guard_subset_limit": "ok"
+  "r21_match_guard_subset_limit": "ok",
+  "r25_tuple_annotation_type": "reject:at 0: type mismatch in tuple destructuring bind: Tuple([I32, Bool]) vs Tuple([I32, I32])",
+  "r26_tuple_annotation_arity": "reject:at 0: tuple arity mismatch in typed position: expected 3, got 2",
+  "r27_assignment_in_value_block": "reject:at 49: expected '}' after value-producing block",
+  "r28_return_in_value_block": "reject:at 27: value-producing block currently supports only const-bindings, let-bindings, discard binds, and expression statements before the tail value",
+  "r29_while_in_value_block": "reject:at 27: expected primary expression",
+  "r30_empty_with": "reject:at 0: record copy-with requires at least one explicit override field",
+  "r32_statement_if_in_value_block": "reject:at 51: value-producing block requires trailing value expression before '}'"
 }

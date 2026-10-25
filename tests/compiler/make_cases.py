@@ -1029,6 +1029,23 @@ case("r20_tuple_assignment_target", "reject:syntax:expected name", "fn main() { 
 case("r21_match_guard_subset_limit", "reject:unsupported:match guards", "fn main() { let n: i32 = match 1 { 1 if true => { 2 } _ => { 0 } }; assert(n == 2); return; }")
 case("r22_i32_min_value", "ok", "fn main() { let n: i32 = 0 - 2147483647 - 1; assert(n < 0); return; }")
 
+case("r23_record_source_order", "trap:DivisionByZero", "record R { a: i32, b: i32 } fn div(x: i32) -> i32 { return 1 / x; } fn fail() -> i32 { assert(false); return 0; } fn main() { let p: R = R { b: div(0), a: fail() }; return; }")
+case("r24_with_source_order", "trap:DivisionByZero", "record R { a: i32, b: i32 } fn div(x: i32) -> i32 { return 1 / x; } fn fail() -> i32 { assert(false); return 0; } fn main() { let p: R = R { a: 0, b: 0 }; let q: R = p with { b: div(0), a: fail() }; return; }")
+case("r25_tuple_annotation_type", "reject:type:tuple annotation", "fn main() { let (x, y): (i32, bool) = (1, 2); return; }")
+case("r26_tuple_annotation_arity", "reject:type:tuple annotation", "fn main() { let (x, y): (i32, i32, bool) = (1, 2); return; }")
+case("r27_assignment_in_value_block", "reject:unsupported:statement-only", "fn main() { let mut x: i32 = 0; let n: i32 = { x = 1; x }; assert(n == 1); return; }")
+case("r28_return_in_value_block", "reject:unsupported:statement-only", "fn main() { let n: i32 = { return; 0 }; return; }")
+case("r29_while_in_value_block", "reject:unsupported:statement-only", "fn main() { let n: i32 = { while false {} 0 }; return; }")
+case("r30_empty_with", "reject:type:at least one explicit override", "record R { a: i32 } fn main() { let p: R = R { a: 1 }; let q: R = p with {}; return; }")
+case("r31_tuple_binding_in_value_block", "ok", "fn main() { let n: i32 = { let (x, y) = (1, 2); assert(x == 1); x + y }; assert(n == 3); return; }")
+case("r32_statement_if_in_value_block", "reject:syntax:needs an 'else'", "fn main() { let n: i32 = { if true { assert(true); } 2 }; return; }")
+
+case("r33_tuple_expression_statement", "ok", "fn main() { let x: i32 = 1; let y: i32 = 2; (x, y); return; }")
+case("r34_tuple_expression_call", "trap:assertion failed", "fn fail() -> i32 { assert(false); return 0; } fn main() { let x: i32 = 1; (x, fail()); return; }")
+
+case("r35_statement_match_tuple_assignment", "ok", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; match 1 { 1 => { (x, y) = (3, 4); } _ => {} } assert(x == 3 && y == 4); return; }")
+case("r36_statement_match_return", "ok", "fn main() { match 1 { 1 => { return; } _ => { return; } } }")
+
 def main():
     d = HERE / "cases"
     d.mkdir(exist_ok=True)
