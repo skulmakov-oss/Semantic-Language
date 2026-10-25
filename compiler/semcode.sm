@@ -128,12 +128,27 @@ fn adt_section(hx: Sequence(text)) -> Sequence(text) {
     return b;
 }
 
-fn encode_program(fns: Sequence(FnIr)) -> Sequence(text) {
+fn encode_program(fns: Sequence(FnIr)) -> (Sequence(text), text) {
+    // C0 sm-format caps str16 at 1024 bytes and tables at 256 entries, below u16.
+    // Check every dynamic input before constructing any artifact bytes.
+    for f in fns {
+        if text_len(f.name) > 1024u32 {
+            return ([], "SemCode function name exceeds 1024 UTF-8 bytes");
+        }
+        if len(f.strings) > 256 {
+            return ([], "SemCode string table exceeds 256 entries");
+        }
+        for s in f.strings {
+            if text_len(s) > 1024u32 {
+                return ([], "SemCode string entry exceeds 1024 UTF-8 bytes");
+            }
+        }
+    }
     let hx: Sequence(text) = hex_table();
     let (magic, n) = put_text(hx, [], "SEMCOD22");
     let mut art: Sequence(text) = append(magic, adt_section(hx));
     for f in fns {
         art = encode_function(hx, art, f);
     }
-    return art;
+    return (art, "");
 }

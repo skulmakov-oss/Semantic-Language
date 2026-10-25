@@ -111,7 +111,10 @@ Because `SIG0` is present, the verifier runs its definite-register-assignment pr
 
 ### Design constraint: Calls
 
-The VM meters **user-function calls** with a fixed, cumulative per-run quota of 16,384 in every CLI envelope. Builtins such as `text_byte_at` and `map_get` are not counted. The compiler is therefore written to spend few calls per source byte:
+The VM meters cumulative **user-function calls**. Bootstrap Contract v2 authorizes the
+trusted-compiler path with 20,000,000 Steps, 50,000 Calls and 256 Frames. This does not change
+the defaults for ordinary applications or release runtime borrows. Builtins such as
+`text_byte_at` and `map_get` are not counted as user calls. The compiler spends few calls per byte:
 - the lexer makes no calls per byte;
 - the parser accesses tokens directly;
 - the encoder writes bytes inline;
@@ -128,37 +131,71 @@ The hex step exists because the C0 host boundary has no binary output (`HOST_BOU
 
 ## 4. Reference compatibility (important)
 
-**The compiler source cannot be compiled by the pinned C0 (`Semantic@89641da8`, v1.2.0).** A lexer needs byte access to source text. At C0:
-- `text_len`, `text_byte_at` and `text_slice` do not exist (`unknown function`);
-- `u32` arithmetic and comparison are not admitted.
+The exact reference is **`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`**,
+as recorded by `reference/semantic-reference.toml` and frozen Bootstrap Contract v2.
+It supports the text inspection and u32 operations used by the compiler implementation.
+The old v1.2.0/exploratory-reference observations are historical, not the current pin.
 
-These are exactly the registry gaps BSF-101 (text inspection) and BSF-103 (`u32`) in `BOOTSTRAP_SUBSET.md`. No C0 operation decomposes a `text` value, so any lexer, and therefore any self-hosted compiler, requires a C0 that includes SHF-1 and SHF-3. This was verified with a C0 build (`smc-cli` SHA-256 `cbb435d3…`, `source_fingerprint` `7f10f50c82216db2`) against minimal probes.
+Semantic 1.3.0-beta.1 identifies a Windows x64 Developer Preview distribution; it is not a
+replacement for the Git identity. Qualification requires a clean exact-SHA canonical checkout,
+the frozen contract, matching build/anchor provenance, binary identity and a source fingerprint
+computed using that checkout's build-identity implementation. A supplied binary path, hash or
+`version --json` assertion alone is insufficient. Unsigned local build attestation is explicitly
+distinguished from distribution provenance and is not cryptographic execution proof or a Seal.
+Experimental WSL execution cannot inherit the Windows qualification status.
 
-Consequences, with the manifest and the bootstrap contract left unchanged:
-- **The compiler is developed and run on an exploratory reference**, `Semantic@94c5c50d16c3f2efc7691456755461bedae83b18` (`source_fingerprint` `1cd4707ec728c07a`). Results from it are **not C0 qualification**.
-- **The programs it compiles** use nothing beyond C0. Their artifacts are verified and executed with **the pinned C0's own verifier and VM**, and compared with C0's compiler output. That part is real C0 differential evidence.
-- **`bootstrap/source-set.toml` stays empty.** Registering `compiler/` there is a protected (`bootstrap/**`) contract change.
-- **The required owner decision:** re-pin C0 to a qualified reference that includes SHF-1B (text inspection) and SHF-3A (`u32`), with the drift analysis the contract requires, and admit BSF-101/BSF-103.
+**`bootstrap/source-set.toml` stays empty and protected.** The compiler's working module graph
+is not automatically canonical `S`; no C0(S) / C1(S) fixed-point claim follows from these tests.
+
+### Encoding boundaries
+
+All dynamic function names and string-table entries are checked before encoding any artifact
+bytes. Although str16 uses a u16 wire length, C0's decoder limits these strings to **1024 UTF-8
+bytes**, and each function's table to **256 entries**. Limits are byte-based, include generated
+local-slot suffixes, and preserve the admitted boundary values. Oversized input returns a
+deterministic `error unsupported` line, never a partially emitted `hex` artifact or a successful
+VM trap. Encoding errors use the existing `@0` marker; precise token attribution is not claimed
+for IR-level metadata failures.
 
 ## 5. Evidence (tests/compiler)
 
-Run `tests/compiler/run_tests.py` with `SEMANTIC_SMC` (the exploratory `smc-cli`) and `SEMANTIC_C0_SMC` (the pinned C0 `smc-cli`). The runner is fail-closed.
+Run `tests/compiler/run_tests.py` with `SEMANTIC_SMC`, `SEMANTIC_C0_SMC`,
+`SEMANTIC_C0_CHECKOUT`, `SEMANTIC_C0_PROVENANCE` and `SEMANTIC_C0_ANCHOR`.
+The last two name the distribution build-provenance and upstream-anchor JSON records.
+Set `SEMANTIC_TEST_OUT` outside the repository. Identity checks run before any differential
+execution or evidence creation. Reusing one attested executable for both roles does not create
+independent C0 evidence.
+If the host role is an independently linked C0 build, provide its own
+`SEMANTIC_SMC_PROVENANCE`; PE byte identity between separate builds is not required.
 
 For every case in `cases.json` it:
 1. compiles twice with the Semantic compiler and requires identical output;
 2. decodes the result, verifies it with **both** verifiers and runs it on **both** VMs;
-3. compiles the same source with C0 and with the exploratory compiler, then compares outcomes;
+3. compiles the same source with the pinned executable roles at O0 and O1, then compares outcomes;
 4. checks the expected outcome or diagnostic category and text;
-5. finally checks that 8 mutations of a generated artifact are rejected by both verifiers.
+5. checks eight negative artifact mutations and one unchanged positive admission control.
 
-Result on 2026-10-14: **45/45 cases and 8/8 mutations**:
+Compiler implementation artifacts are separately compiled and admitted at O0/O1. The pinned
+`smc run` application path has fixed source compilation; `run-smc` does not expose application
+capabilities or trusted-compiler quota flags. Therefore this runner does not claim execution
+of an O1 compiler artifact through that CLI. O0/O1 test-program reference artifacts are executed.
+No upstream CLI or admission change is implied.
+
+`run_string_boundaries.py` covers admitted byte boundaries, oversized names, generated local
+suffixes and multibyte UTF-8 entries. Accepted artifacts must pass canonical verification and
+execution. `test_reference_identity.py` checks early rejection. Native command exits, output,
+source/artifact hashes and compiler counters are retained outside the repository.
+
+Historical result on 2026-10-14 (not fresh v2 qualification): **45/45 cases and eight mutation/control rows**:
 - 15 positive programs, all executing correctly and matching the C0 compiler's outcome;
 - 4 runtime traps (assertion in a callee, `DivisionByZero`, `ArithmeticOverflow`, frame-quota exhaustion from unbounded recursion), matching C0;
 - 26 rejected sources with the expected category. C0 also rejects 21 of them; the other 5 are valid Semantic outside the subset.
 
 ### Resource measurements
 
-The compiler runs under `--envelope trusted-compiler`. Calls (16,384) and Frames (256) are unchanged; only the Steps budget is raised.
+The following table is historical, not a current bound or fresh qualification result. Current
+runs use the approved `--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`
+with Frames 256. Actual per-case counters and effective quotas belong to each evidence record.
 
 | Measure | Range |
 |---|---|
@@ -170,8 +207,11 @@ The compiler runs under `--envelope trusted-compiler`. Calls (16,384) and Frames
 
 ## 6. What is not demonstrated
 
-- **No C0 qualification of the compiler itself** (section 4).
+- **No C1/C2 fixed-point qualification or Bootstrap Seal.** Supported-subset differential
+  evidence and successful compilation of the implementation by C0 do not prove self-hosting.
 - **No self-compilation.** The compiler source (≈ 55 KB) uses records, tuples, `Sequence`, `Map`, `Option` match, text and `u32`. The subset doesn't cover these, and they need `MAKE_RECORD`, `TUPLE_*`, `SEQUENCE_*`, `ADT_*`, text and `u32` opcodes, plus non-empty `OWN0` ownership events (the reference emits about 3.8k of them for a compiler of this kind).
-- **Self-compilation would also exceed the Calls quota** at the measured ≈ 2.1 calls per byte: about 115k calls for 55 KB against 16,384. Either the per-byte call rate must fall by about 7×, or the quota model needs an owner decision.
+- **Self-compilation budgets are not established.** The old per-byte extrapolation is not a
+  measurement under v2; no larger quota than the approved trusted-compiler envelope is admitted.
 - **The equivalence evidence is behavioural**, on a hand-written corpus: assertion outcomes and traps. Byte identity with C0 is not a goal; register numbering and branch layout differ.
-- **Platform:** Linux (WSL2) only. C0's qualified platform is `x86_64-pc-windows-msvc`.
+- **Platform:** historical tests were WSL2 experiments; current v2 qualification is explicitly
+  platform-bound. C0's qualified platform is `x86_64-pc-windows-msvc`.

@@ -22,5 +22,9 @@ fn compile_source(src: text) -> text {
         fns = push(fns, lower_function(sem, i));
         i = i + 1;
     }
-    return "hex " + join_hex(encode_program(fns));
+    let (artifact, encoding_error) = encode_program(fns);
+    if encoding_error != "" {
+        return "error unsupported @0: " + encoding_error;
+    }
+    return "hex " + join_hex(artifact);
 }

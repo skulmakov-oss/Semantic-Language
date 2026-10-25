@@ -95,14 +95,14 @@ logic. If the capability changes the runtime contract, it is defined upstream fi
 ## 9. First-bootstrap capability policy (SHF-0)
 
 Frozen in [`bootstrap/contract.toml`](../bootstrap/contract.toml). "Permitted" is policy;
-"available at C0" is what exists at `Semantic@89641da8`; a gap is planned work upstream and does
+"available at C0" is what exists at `Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`; a gap is planned work upstream and does
 not invent an ABI here.
 
 | Capability / effect | Permitted | Available at C0 | Future gap | Owner |
 |---|---|---|---|---|
 | Declared source byte input | yes | yes — `fs.read`, UTF-8 text under one canonical root | — | Semantic |
 | Declared artifact byte output | yes | **no** — only UTF-8 text writes exist | SHF-2 (binary output) | Semantic |
-| Arguments / config transport | yes | yes — `args.read`; protocol v1 declares no config | — | Semantic |
+| Arguments / config transport | yes | yes — `args.read`; protocol v2 declares no config | — | Semantic |
 | Existing verifier execution | yes | yes — `sm-verify` admits C1 and C2 | — | Semantic |
 | Existing VM execution | yes | yes — `sm-vm` runs admitted C1 only | — | Semantic |
 | Environment variables | **no** | — | — | — |
@@ -111,3 +111,7 @@ not invent an ABI here.
 Forbidden host logic (any occurrence is `HOST_LOGIC_LEAK`): tokenization, parsing, symbol
 binding, typechecking, IR selection, lowering, opcode selection, SemCode construction, diagnostic
 meaning, compiler ordering decisions.
+
+Bootstrap Contract v2 permits the existing trusted-compiler execution path with Steps
+20,000,000, Calls 50,000 and Frames 256. This is not an authorization to widen ordinary
+application quotas, alter capability checks or execute unverified artifacts.
