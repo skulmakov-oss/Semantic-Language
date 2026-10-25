@@ -32,13 +32,18 @@ expr      = binary over  || && == != < <= > >= + - * / %   (left-associative), u
 postfix   = primary { "." field | "[" expr "]" | "with" "{" field ":" expr {"," ...} "}" }
 primary   = INT | INT"u32" | TEXT | "true" | "false" | NAME | NAME "(" args ")"
           | NAME "{" field ":" expr {"," ...} "}" | "(" expr ")" | "(" expr "," expr {"," expr} ")"
-          | "[" [ expr {"," expr} ] "]" | match-expr | "if" expr block-expr "else" (block-expr | if-expr)
+          | "[" [ expr {"," expr} ] "]" | block-expr | match-expr | "if" expr block-expr "else" (block-expr | if-expr)
 match     = "match" expr "{" { pattern "=>" ( expr | block-expr ) [","] } "}"
 pattern   = "_" | INT | INT"u32" | "Option" "::" "Some" "(" NAME ")" | "Option" "::" "None"
 block-expr= "{" { stmt } [ expr ] "}"
 ```
 
 `//` comments are accepted.
+
+Value-position blocks support nested blocks and value-producing conditional tails.
+Tuple assignment remains statement-level: it is not admitted inside a value-producing
+block by the frozen C0 or its v0 block-body contract. Recovery does not widen that contract.
+The ordinary statement form retains its arity, target and type checks.
 
 ### Builtins
 
@@ -59,7 +64,7 @@ The name-dispatched `CALL`s are exactly how the reference compiler lowers these 
 These follow the reference compiler; each one in the second group was checked against it, and the first two were caught by differential tests.
 
 **Rules taken from the reference compiler:**
-- A function with a non-`unit` return type must ensure all control flow paths return (`always_returns`). This matches modern candidate Semantic (S2043 CP04 / commit `30f395d3`), which accepts symmetric `if`/`else` blocks where both branches return (`p18`), while rejecting missing branches or paths that fall through (`n25`).
+- A function with a non-`unit` return type must ensure all control flow paths return (`always_returns`). The frozen C0 accepts symmetric `if`/`else` blocks where both branches return (`p18`), while rejecting missing branches or paths that fall through (`n25`).
 - **`break`/`continue` are allowed only inside `while`**, not inside `for … in` (`n39`).
 - Unsuffixed integer patterns match both `i32` and `u32` scrutinees (`a13`).
 
@@ -98,7 +103,7 @@ These forms are rejected with category `unsupported`:
 - tuple field access;
 - field punning;
 - default parameters, contracts and expression-bodied functions;
-- bare blocks.
+- statement-only bare blocks (value-position blocks are supported).
 
 ## 2. Architecture
 

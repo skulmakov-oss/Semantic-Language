@@ -1,0 +1,1 @@
+fn main() { let n: i32 = match 1 { 1 if true => { 2 } _ => { 0 } }; assert(n == 2); return; }

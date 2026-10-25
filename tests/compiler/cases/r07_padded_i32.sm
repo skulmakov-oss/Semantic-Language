@@ -1,0 +1,1 @@
+fn main() { let n: i32 = 00000000000001i32; assert(n == 1); return; }

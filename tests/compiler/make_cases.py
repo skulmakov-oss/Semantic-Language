@@ -1005,6 +1005,30 @@ fn main() {
 }
 """)
 
+# Recovery regressions: literal ranges, value tails and existing tuple contracts.
+case("r01_padded_u32_one", "ok", "fn main() { let n: u32 = 00000000001u32; assert(n == 1u32); return; }")
+case("r02_padded_u32_zero", "ok", "fn main() { let n: u32 = 00000000000000000000000000000000u32; assert(n == 0u32); return; }")
+case("r03_padded_u32_max", "ok", "fn main() { let n: u32 = 0000000004294967295u32; assert(n == 4294967295u32); return; }")
+case("r04_long_u32_overflow", "reject:syntax:out of u32 range", "fn main() { let n: u32 = 999999999999999999999999u32; return; }")
+case("r05_bad_u32_suffix", "reject:unsupported:malformed", "fn main() { let n: u32 = 1u32wrong; return; }")
+case("r06_i32_max", "ok", "fn main() { let n: i32 = 2147483647i32; assert(n > 0); return; }")
+case("r07_padded_i32", "ok", "fn main() { let n: i32 = 00000000000001i32; assert(n == 1); return; }")
+case("r08_i32_min", "reject:syntax:out of i32 range", "fn main() { let n: i32 = -2147483648i32; assert(n < 0); return; }")
+case("r09_if_tail", "ok", "fn main() { let n: i32 = match 1 { 1 => { if true { 10 } else { 20 } } _ => { 0 } }; assert(n == 10); return; }")
+case("r10_nested_if_tail", "ok", "fn main() { let n: i32 = { if false { 1 } else { if true { 2 } else { 3 } } }; assert(n == 2); return; }")
+case("r11_if_followed_by_statement", "ok", "fn main() { let n: i32 = { if true { 1 } else { 2 }; assert(true); 3 }; assert(n == 3); return; }")
+case("r12_if_tail_without_else", "reject:syntax:needs an 'else'", "fn main() { let n: i32 = { if true { 1 } }; return; }")
+case("r13_if_branch_types", "reject:type:branches have different types", "fn main() { let n: i32 = { if true { 1 } else { false } }; return; }")
+case("r14_nested_block_tail", "ok", "fn main() { let n: i32 = { { if true { 1 } else { 2 } } }; assert(n == 1); return; }")
+case("r15_tuple_statement", "ok", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (3, 4); assert(x == 3 && y == 4); return; }")
+case("r16_tuple_block_contract_limit", "reject:syntax:expected '}'", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; let n: i32 = { (x, y) = (3, 4); x }; return; }")
+case("r17_tuple_assignment_arity", "reject:type:destructuring expects", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (1, 2, 3); return; }")
+case("r18_tuple_assignment_type", "reject:type:cannot assign", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (1, false); return; }")
+case("r19_tuple_assignment_unknown", "reject:name:undefined variable", "fn main() { let mut x: i32 = 0; (x, missing) = (1, 2); return; }")
+case("r20_tuple_assignment_target", "reject:syntax:expected name", "fn main() { let mut x: i32 = 0; (x, 1) = (1, 2); return; }")
+case("r21_match_guard_subset_limit", "reject:unsupported:match guards", "fn main() { let n: i32 = match 1 { 1 if true => { 2 } _ => { 0 } }; assert(n == 2); return; }")
+case("r22_i32_min_value", "ok", "fn main() { let n: i32 = 0 - 2147483647 - 1; assert(n < 0); return; }")
+
 def main():
     d = HERE / "cases"
     d.mkdir(exist_ok=True)

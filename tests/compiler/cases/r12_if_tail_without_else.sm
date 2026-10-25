@@ -1,0 +1,1 @@
+fn main() { let n: i32 = { if true { 1 } }; return; }

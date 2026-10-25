@@ -36,5 +36,16 @@
   "n37_option_pattern_on_i32": "reject:at 0: ADT pattern plan: scrutinee is not a sum type",
   "n38_u32_literal_out_of_range": "reject:at 29: invalid u32 literal",
   "n39_continue_inside_for": "reject:at 0: continue is allowed only inside while or statement loop",
-  "n40_builtin_wrong_arity": "reject:at 0: builtin 'len' takes exactly one positional argument"
+  "n40_builtin_wrong_arity": "reject:at 0: builtin 'len' takes exactly one positional argument",
+  "r04_long_u32_overflow": "reject:at 25: invalid u32 literal",
+  "r05_bad_u32_suffix": "reject:at 29: expected ';'",
+  "r08_i32_min": "reject:at 26: invalid i32 literal",
+  "r12_if_tail_without_else": "reject:at 41: if expression requires explicit else branch",
+  "r13_if_branch_types": "reject:at 0: if expression branch type mismatch: then I32, else Bool",
+  "r16_tuple_block_contract_limit": "reject:at 74: expected '}' after value-producing block",
+  "r17_tuple_assignment_arity": "reject:at 0: tuple destructuring assignment arity mismatch: expected 2, got 3",
+  "r18_tuple_assignment_type": "reject:at 0: type mismatch in tuple assignment to 'y': I32 vs Bool",
+  "r19_tuple_assignment_unknown": "reject:at 0: unknown tuple assignment target 'missing'",
+  "r20_tuple_assignment_target": "reject:at 36: expected identifier",
+  "r21_match_guard_subset_limit": "ok"
 }

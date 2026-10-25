@@ -186,7 +186,31 @@ fn parse_block_expr(p0: P) -> (P, i32) {
         let k: i32 = p.toks[p.i].kind;
         if k == 0 {
             p = fail_cat(p, "syntax", "expected '}'");
-        } else if k == 3 || k == 6 || k == 7 || k == 12 || k == 14 || k == 16 || k == 17 || k == 19 || k == 15 || k == 18 || k == 22 {
+        } else if k == 12 {
+            let mut trial: P = p;
+            let mut e: i32 = 0 - 1;
+            (trial, e) = parse_expr(trial, 1);
+            if trial.err == "" && trial.toks[trial.i].kind == 23 {
+                p = trial;
+                tail = e;
+            } else if trial.err == "" && trial.toks[trial.i].kind == 24 {
+                p = trial with { i: trial.i + 1 };
+                let mut s: i32 = 0 - 1;
+                (p, s) = add_node(p, 16, e, 0 - 1, 0 - 1, 0, "", open.pos, []);
+                kids = push(kids, s);
+            } else {
+                let mut statement: P = p;
+                let mut s: i32 = 0 - 1;
+                (statement, s) = parse_if(statement);
+                if statement.err == "" {
+                    p = statement;
+                    kids = push(kids, s);
+                } else {
+                    p = trial;
+                    if p.err == "" { p = fail_cat(p, "syntax", "expected ';' or '}' after if expression"); }
+                }
+            }
+        } else if k == 3 || k == 6 || k == 7 || k == 14 || k == 16 || k == 17 || k == 19 || k == 15 || k == 18 {
             let mut s: i32 = 0 - 1;
             (p, s) = parse_stmt(p);
             kids = push(kids, s);
@@ -317,6 +341,9 @@ fn parse_match(p0: P) -> (P, i32) {
 fn parse_primary(p0: P) -> (P, i32) {
     let mut p: P = p0;
     let t: Tok = p.toks[p.i];
+    if t.kind == 22 {
+        return parse_block_expr(p);
+    }
     if t.kind == 1 {
         return add_node(p with { i: p.i + 1 }, 1, 0 - 1, 0 - 1, 0 - 1, t.num, "", t.pos, []);
     }

@@ -80,17 +80,20 @@ fn lex(src: text) -> Lexed {
                 if v > 214748364 || (v == 214748364 && d > 7) || v < 0 {
                     over_i32 = true;
                 }
-                if digits < 10 && cmp == 0 {
-                    let ld: u32 = match text_byte_at(limit, li) {
-                        Option::Some(x) => { x }
-                        Option::None => { 48u32 }
-                    };
-                    if c < ld { cmp = 0 - 1; }
-                    if c > ld { cmp = 1; }
+                // Range compares significant digits, not zero padding.
+                if d != 0 || digits > 0 {
+                    if digits < 10 && cmp == 0 {
+                        let ld: u32 = match text_byte_at(limit, li) {
+                            Option::Some(x) => { x }
+                            Option::None => { 48u32 }
+                        };
+                        if c < ld { cmp = 0 - 1; }
+                        if c > ld { cmp = 1; }
+                    }
+                    digits = digits + 1;
+                    li = li + 1u32;
                 }
                 v = v * 10 + d;
-                digits = digits + 1;
-                li = li + 1u32;
                 i = i + 1u32;
                 c = match text_byte_at(src, i) {
                     Option::Some(x) => { x }

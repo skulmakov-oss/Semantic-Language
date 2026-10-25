@@ -1,0 +1,1 @@
+fn main() { let n: i32 = { if true { 1 } else { 2 }; assert(true); 3 }; assert(n == 3); return; }
