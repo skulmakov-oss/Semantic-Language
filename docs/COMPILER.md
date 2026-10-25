@@ -114,7 +114,14 @@ These forms are rejected with category `unsupported`:
 
 ### Design constraint: Calls
 
-The VM meters **user-function calls** with a fixed, cumulative per-run quota of **16,384** in every CLI envelope (measured: `quota_exceeded: Calls`, `used 16385`). Builtins are free. See section 6.
+The VM meters cumulative **user-function calls**. Bootstrap Contract v2 authorizes the
+trusted-compiler path with 20,000,000 Steps, 50,000 Calls and 256 Frames. This does not change
+the defaults for ordinary applications or release runtime borrows. Builtins such as
+`text_byte_at` and `map_get` are not counted as user calls. The compiler spends few calls per byte:
+- the lexer makes no calls per byte;
+- the parser accesses tokens directly;
+- the encoder writes bytes inline;
+- analysis results go into `Map`s.
 
 ## 3. Host boundary
 
@@ -127,67 +134,70 @@ The hex step exists because the C0 host boundary has no binary output (`HOST_BOU
 
 ## 4. Reference compatibility
 
-**The compiler source cannot be compiled by the pinned C0 (`Semantic@89641da8`, v1.2.0).** At C0:
-- `text_len`, `text_byte_at` and `text_slice` do not exist;
-- `u32` arithmetic is rejected.
+The exact reference is **`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`**,
+as recorded by `reference/semantic-reference.toml` and frozen Bootstrap Contract v2.
+It supports the text inspection and u32 operations used by the compiler implementation.
+The old v1.2.0/exploratory-reference observations are historical, not the current pin.
 
-These are registry gaps BSF-101 and BSF-103. No C0 operation decomposes a `text`, so no lexer can exist at C0.
+Semantic 1.3.0-beta.1 identifies a Windows x64 Developer Preview distribution; it is not a
+replacement for the Git identity. Qualification requires a clean exact-SHA canonical checkout,
+the frozen contract, matching build/anchor provenance, binary identity and a source fingerprint
+computed using that checkout's build-identity implementation. A supplied binary path, hash or
+`version --json` assertion alone is insufficient. Unsigned local build attestation is explicitly
+distinguished from distribution provenance and is not cryptographic execution proof or a Seal.
+Experimental WSL execution cannot inherit the Windows qualification status.
 
-**What the compiler runs on:** it is developed and run on the exploratory reference `Semantic@94c5c50d16c3f2efc7691456755461bedae83b18`. A separate C0 reference-transition proposal covers re-pinning (`docs/proposals/`, its own PR). Nothing here is C0 qualification.
+**`bootstrap/source-set.toml` stays empty and protected.** The compiler's working module graph
+is not automatically canonical `S`; no C0(S) / C1(S) fixed-point claim follows from these tests.
 
-**What C0 judges:** programs compiled by this compiler that use nothing beyond C0 are verified and executed with **C0's own verifier and VM**, and compared with C0's own compilation. The cases that use post-C0 capabilities (text inspection, `u32` arithmetic) are tagged `c0_comparable: false` **by hand** in the corpus. They are judged against the exploratory toolchain only, and C0's outcome is recorded:
-- C0's verifier rejects them (`UnknownCallTarget 'text_len'` or `UnsupportedVersion 'SEMCOD23'`);
-- C0's compiler rejects their source.
+### Encoding boundaries
+
+All dynamic function names and string-table entries are checked before encoding any artifact
+bytes. Although str16 uses a u16 wire length, C0's decoder limits these strings to **1024 UTF-8
+bytes**, and each function's table to **256 entries**. Limits are byte-based, include generated
+local-slot suffixes, and preserve the admitted boundary values. Oversized input returns a
+deterministic `error unsupported` line, never a partially emitted `hex` artifact or a successful
+VM trap. Encoding errors use the existing `@0` marker; precise token attribution is not claimed
+for IR-level metadata failures.
 
 ## 5. Evidence (tests/compiler)
 
-Run `tests/compiler/run_tests.py` with `SEMANTIC_SMC` and `SEMANTIC_C0_SMC`. The runner is fail-closed and writes its output outside the tree.
+Run `tests/compiler/run_tests.py` with `SEMANTIC_SMC`, `SEMANTIC_C0_SMC`,
+`SEMANTIC_C0_CHECKOUT`, `SEMANTIC_C0_PROVENANCE` and `SEMANTIC_C0_ANCHOR`.
+The last two name the distribution build-provenance and upstream-anchor JSON records.
+Set `SEMANTIC_TEST_OUT` outside the repository. Identity checks run before any differential
+execution or evidence creation. Reusing one attested executable for both roles does not create
+independent C0 evidence.
+If the host role is an independently linked C0 build, provide its own
+`SEMANTIC_SMC_PROVENANCE`; PE byte identity between separate builds is not required.
 
-For every case it:
-1. compiles twice and requires identical output;
-2. decodes the result, verifies it and runs it;
-3. compares with the reference compilers;
-4. checks the expected category and text;
-5. finally checks that 8 mutations of a generated artifact are rejected by both verifiers.
+For every case in `cases.json` it:
+1. compiles twice with the Semantic compiler and requires identical output;
+2. decodes the result, verifies it with **both** verifiers and runs it on **both** VMs;
+3. compiles the same source with the pinned executable roles at O0 and O1, then compares outcomes;
+4. checks the expected outcome or diagnostic category and text;
+5. checks eight negative artifact mutations and one unchanged positive admission control.
 
-**Result: 74/74 cases and 8/8 mutations.** The cases include:
-- 30 positive programs: recursion, mutual recursion, records, nested records and `with`, tuples and destructuring, sequences, `for`, text, `u32`, `match` on `i32`/`u32`/`Option`, value `if`, sequences of records, and a mini-lexer workload;
-- 6 runtime traps;
-- 38 rejected sources. The reference compiler also rejects 34 of them; the other 4 are valid Semantic outside the subset.
+Compiler implementation artifacts are separately compiled and admitted at O0/O1. The pinned
+`smc run` application path has fixed source compilation; `run-smc` does not expose application
+capabilities or trusted-compiler quota flags. Therefore this runner does not claim execution
+of an O1 compiler artifact through that CLI. O0/O1 test-program reference artifacts are executed.
+No upstream CLI or admission change is implied.
 
-5 cases use post-C0 capabilities.
+`run_string_boundaries.py` covers admitted byte boundaries, oversized names, generated local
+suffixes and multibyte UTF-8 entries. Accepted artifacts must pass canonical verification and
+execution. `test_reference_identity.py` checks early rejection. Native command exits, output,
+source/artifact hashes and compiler counters are retained outside the repository.
 
-### Two findings
+Historical result on 2026-10-14 (not fresh v2 qualification): **45/45 cases and eight mutation/control rows**:
+- 15 positive programs, all executing correctly and matching the C0 compiler's outcome;
+- 4 runtime traps (assertion in a callee, `DivisionByZero`, `ArithmeticOverflow`, frame-quota exhaustion from unbounded recursion), matching C0;
+- 26 rejected sources with the expected category. C0 also rejects 21 of them; the other 5 are valid Semantic outside the subset.
 
-1. **`OWN0`:** the reference emits ownership *write events* for record construction and for `STORE_VAR` of aggregates. This compiler emits an empty `OWN0`. **Both verifiers (C0 and exploratory) admit the artifacts**, and their behaviour matches the reference on every case. The events support runtime write-path enforcement for borrows, and this subset has no borrows. Generating them is required work before borrows (`ref` patterns) are admitted.
-2. **Admission without a capability:** a C0 verifier rejects post-C0 artifacts (unknown builtin call target, newer header). That is the expected and correct fail-closed behaviour.
+## 6. Qualification and remaining limits
 
-## 6. Scaling and the Calls budget (measured)
+Historical aggregate results and Calls=16384 measurements do not qualify the current v2 candidate. Fresh per-case counters are retained externally. The approved trusted-compiler budget is 20M Steps / 50K Calls / 256 Frames.
 
-**Small cases (≤ 1.6 KB):** steps grow linearly at about 280 per source byte; calls at about 2 per byte.
+The subset emits empty OWN0. It admits no ref patterns and does not claim general borrow support; canonical Borrow/Write metadata is required before such support can be enabled. Verifier-first execution remains mandatory.
 
-**Self-compilation probe:** the compiler's own module `compiler/lexer.sm`, plus a test `main` (10,930 bytes, 2,110 tokens, 1,154 AST nodes):
-
-| Stage | Steps | Calls |
-|---|---|---|
-| Lexing | 868,967 | 1 |
-| Parsing | +342,261 | +6,810 (≈ 5.9 per node) |
-| Analysis | +206,329 | +3,330 (≈ 2.9 per node) |
-| Lowering + encoding | — | `quota_exceeded: Calls 16385` at 1.71M total steps |
-
-**Calls, not steps, are the binding limit.** Calls scale with AST nodes (≈ 14 per node across stages), because recursive descent and the recursive tree walks pay one call per node.
-
-### Plan, with no runtime change
-
-1. **Per-function compilation units.** The call-free lexer splits a module into items. Each run compiles one function body against the parsed signatures of all items. A Semantic linker run then assembles the artifact. The per-run limit then bounds the largest *function*, not the program.
-2. **Iterative traversal** (explicit stacks) in the parser and the tree walks, to cut calls per node.
-
-A quota change is proposed to the owner only if measurements after 1 and 2 still exceed the limit.
-
-## 7. What is not demonstrated
-
-- **C0 qualification of the compiler itself** (section 4).
-- **Self-compilation.** The constructs the compiler uses are now nearly all inside the subset; `Map` and `Import` are missing. But the Calls budget stops even one module (section 6).
-- **Ownership metadata** (`OWN0` events) and borrows.
-- **Byte identity with C0.** Not a goal; equivalence is behavioural, on a hand-written corpus.
-- **Other platforms.** Only Linux (WSL2) was used.
+Map and Import remain compiler self-coverage gaps, not missing upstream C0 capabilities. No canonical source set, C1/C2 fixed point, self-hosting or Seal is established. Platform qualification is Windows MSVC; experimental WSL cannot inherit it.

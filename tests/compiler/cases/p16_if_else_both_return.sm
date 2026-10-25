@@ -1,0 +1,13 @@
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+fn main() {
+    assert(sign(5) == 1);
+    assert(sign(-3) == -1);
+    return;
+}

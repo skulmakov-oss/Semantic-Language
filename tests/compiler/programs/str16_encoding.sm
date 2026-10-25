@@ -1,0 +1,25 @@
+Import "../../../compiler/semcode.sm"
+
+fn main() {
+    let value: text = fs_read_text(args_read(0u32));
+    let count_arg: text = args_read(1u32);
+    let mut count: i32 = 1;
+    if count_arg == "256" { count = 256; }
+    if count_arg == "257" { count = 257; }
+    let mut strings: Sequence(text) = [];
+    let mut i: i32 = 0;
+    while i < count { strings = push(strings, value); i = i + 1; }
+    let f: FnIr = FnIr {
+        name: "main",
+        families: [],
+        strings: strings,
+        ins: [Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }],
+    };
+    let (artifact, error) = encode_program([f], false);
+    if error != "" {
+        stdout_write("error unsupported @0: " + error);
+    } else {
+        stdout_write("hex " + join_hex(artifact));
+    }
+    return;
+}

@@ -1,15 +1,15 @@
-# SHF-0 executable bootstrap contract (issue #11).
+# SHF-0 executable bootstrap contract (Bootstrap Contract v2).
 # Normative prose: docs/BOOTSTRAP_CONTRACT.md. Validator: bootstrap/validate_contract.py.
 # Any change to a frozen value below is a contract revision (bump `protocol`), never an edit
 # made to fit a failed bootstrap run.
 
-protocol = "shf0-bootstrap-contract-v1"
+protocol = "shf0-bootstrap-contract-v2"
 status = "frozen"
 
 # ---------------------------------------------------------------- C0
 [c0]
 repository = "skulmakov-oss/Semantic"
-sha = "89641da8237f4fcefb50cf1958a50e4d4003aea7"   # must equal reference/semantic-reference.toml
+sha = "1d1e76c7509a03baa0133abaaa5819f5d32582b2"   # must equal reference/semantic-reference.toml
 reference_manifest = "reference/semantic-reference.toml"
 required_reference_status = "qualified-reference"
 
@@ -50,7 +50,7 @@ format = "sha256:<64 lowercase hex>"
 inputs = ["source_set", "declared_config", "declared_capability_results"]
 outputs = ["artifact", "diagnostics", "status"]
 statuses = ["ok", "rejected", "failed"]
-declared_config = []        # no configuration inputs are admitted in protocol v1
+declared_config = []        # no configuration inputs are admitted in protocol v2
 artifact_format = "semcode" # upstream sm-format contract at C0
 
 [deterministic_inputs]
@@ -82,13 +82,13 @@ upstream = "docs/spec/controlled_application_boundary_v0.md"
 
 [capabilities.artifact_write]
 permitted = true
-available_at_c0 = false         # only UTF-8 text writes exist; SemCode is binary
+available_at_c0 = false         # only UTF-8 text writes exist in foundation source profile; SemCode transport uses hex formatting
 gap_owner = "skulmakov-oss/Semantic"
 gap_stage = "SHF-2"
 
 [capabilities.args_read]
 permitted = true
-available_at_c0 = true          # args.read; protocol v1 declares no config, so not required yet
+available_at_c0 = true          # args.read; protocol v2 declares no config, so not required yet
 upstream = "docs/spec/controlled_application_boundary_v0.md"
 
 [capabilities.verifier_execution]
@@ -185,8 +185,8 @@ required_fields = [
 qualification_results = { cases = "pass", mutation_proof = "detected", unexplained_deltas = 0 }
 # platform must be one of the C0 reference manifest's qualified platforms ([qualification].platform_scope).
 # verifier_contract / runtime_contract must name the pinned C0 components:
-verifier_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-verify"
-runtime_contract = "skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7:crates/sm-vm"
+verifier_contract = "skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2:crates/sm-verify"
+runtime_contract = "skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2:crates/sm-vm"
 # remaining_rust_responsibilities: exactly these categories, each once (all remain in Rust at the first Seal).
 rust_responsibility_categories = ["oracle", "host_mechanics", "verifier_runtime_foundation"]
 # A record passes record validation only with these values. Seal acceptance additionally needs
@@ -199,6 +199,9 @@ comparison_result_holds = "equal"                    # byte-equality-v1 also req
 [subset]
 registry = "docs/BOOTSTRAP_SUBSET.md"
 authority = "docs/spec/foundation_source_profile_v1.md"   # semantic.foundation.source/1.2 at C0
-admitted = ["BSF-001", "BSF-002", "BSF-003", "BSF-004", "BSF-005", "BSF-006", "BSF-007", "BSF-008", "BSF-009", "BSF-010"]
-candidate = ["BSF-101", "BSF-102", "BSF-103", "BSF-104", "BSF-105", "BSF-106"]
+admitted = [
+    "BSF-001", "BSF-002", "BSF-003", "BSF-004", "BSF-005", "BSF-006", "BSF-007", "BSF-008",
+    "BSF-009", "BSF-010", "BSF-101", "BSF-103",
+]
+candidate = ["BSF-102", "BSF-104", "BSF-105", "BSF-106"]
 frozen = []

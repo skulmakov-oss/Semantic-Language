@@ -3,14 +3,14 @@
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
   id: SHF-STAGE-DELIVERY-STABLE
-  title: "Stable ordinary delivery profile: SHF stages and the Semantic VM track (Issue #20 G2, Issue #29)"
+  title: "Restore stable SHF compiler and Semantic VM engineering delivery"
   type: implementation
   mode: active
-  supersedes: SEM-VM-001-GOVERNANCE
-  authorized_by: "Repository owner explicit task - SEM-VM-001 Build a New Virtual Machine Entirely in Semantic (section 4), extending the Issue #20 Phase G2 stable profile"
+  supersedes: GOVERNANCE-BOOTSTRAP-CONTRACT-V2
+  authorized_by: "Repository owner explicit GO - PR 3/3 stable engineering restoration"
 
 intent:
-  summary: "Stable ordinary delivery envelope under Strategy v1.1, extended with the Semantic VM implementation surface vm/** (SEM-VM-001): ordinary implementation, tests and documentation within Surface A without recurring scope transitions, while strictly preserving protected governance, reference and bootstrap seal boundaries (Surfaces B, C, D)."
+  summary: "Restore ordinary compiler and Semantic VM engineering following qualified Bootstrap Contract v2 migration; preserve frozen bootstrap/reference and trusted governance boundaries."
 
 scope:
   allowed_paths:
@@ -44,7 +44,7 @@ authorization:
 constraints:
   issue: 29
   base_branch: main
-  base_sha: 8e25660fdda38daee1aa95a51697cd5c9c3995fa
+  base_sha: 8f930ae1dcc5cd7c21e1a86dfc7f2e296847c046
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true

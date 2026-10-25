@@ -3,9 +3,7 @@
 (tests/compiler/cases.json). The programs are hand-written Semantic source; expectations are
 written by hand from the language rules, independently of both compilers. Run once after editing.
 
-Cases listed in POST_C0 use capabilities the pinned C0 (v1.2.0) lacks (text inspection
-builtins, u32 arithmetic). They are compared with the exploratory reference only; C0's
-outcome is recorded, never counted as a pass.
+All cases are qualified against the frozen Bootstrap Contract v2 C0.
 
 expect:
   ok                    compiles, admitted, runs to completion
@@ -16,7 +14,6 @@ import json, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 CASES = {}
-POST_C0 = set(['a06_text_ops', 'a07_u32_arithmetic_and_ordering', 'a09_option_match_text_bytes', 'a12_mini_lexer_workload', 't06_u32_underflow'])
 
 def case(name, expect, src):
     CASES[name] = {"expect": expect, "src": src.strip("\n") + "\n"}
@@ -538,12 +535,38 @@ case("n25_if_else_both_return_not_enough", "reject:type:may exit without returni
 fn sign(x: i32) -> i32 {
     if x < 0 {
         return -1;
+    }
+}
+
+fn main() {
+    return;
+}
+""")
+case("p18_if_else_both_return", "ok", """
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
     } else {
         return 1;
     }
 }
 
 fn main() {
+    return;
+}
+""")
+case("p16_if_else_both_return", "ok", """
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+fn main() {
+    assert(sign(5) == 1);
+    assert(sign(-3) == -1);
     return;
 }
 """)
@@ -989,11 +1012,13 @@ def main():
         old.unlink()
     table = {}
     for name in sorted(CASES):
-        (d / f"{name}.sm").write_bytes(CASES[name]["src"].encode("utf-8"))
-        table[name] = {"expect": CASES[name]["expect"], "c0_comparable": name not in POST_C0}
-    (HERE / "cases.json").write_text(json.dumps(table, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    unknown = POST_C0 - set(table)
-    assert not unknown, unknown
+        source = CASES[name]["src"]
+        # Preserve the approved return-path fixtures' exact bytes (no final LF).
+        if name == "n25_if_else_both_return_not_enough":
+            source = source.removesuffix("\n")
+        (d / f"{name}.sm").write_bytes(source.encode("utf-8"))
+        table[name] = CASES[name]["expect"]
+    (HERE / "cases.json").write_bytes((json.dumps(table, indent=1, sort_keys=True) + "\n").encode("utf-8"))
     print(f"{len(table)} cases written")
 
 if __name__ == "__main__":

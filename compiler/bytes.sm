@@ -84,6 +84,8 @@ fn put_text(hx: Sequence(text), buf0: Sequence(text), t: text) -> (Sequence(text
 }
 
 // u16 byte-length prefix followed by the UTF-8 bytes (names, string-table entries).
+// Dynamic callers are validated by encode_program before any bytes are emitted;
+// adt_section's prelude names are fixed ASCII strings within the same bound.
 fn put_str16(hx: Sequence(text), buf: Sequence(text), t: text) -> Sequence(text) {
     let (bytes, n) = put_text(hx, [], t);
     let mut out: Sequence(text) = put_u16(hx, buf, n);

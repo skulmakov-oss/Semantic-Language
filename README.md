@@ -96,9 +96,12 @@ Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 
 ## Current phase
 
-**SHF-0 qualified / complete (issue #11): executable bootstrap contract frozen.** SHF-1 not started; no compiler code exists yet.
+**Bootstrap Contract v2 is frozen; a Semantic-written compiler exists in `compiler/`.**
+Differential qualification of its supported subset is in progress. C1/C2 self-compilation and
+the fixed point are not yet proven; this is not stable self-hosting or full language coverage.
 
-C0 reference pin: `skulmakov-oss/Semantic@89641da8` (`v1.2.0`, qualified with explicit limits) —
+C0 reference pin: `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
+(Semantic 1.3.0-beta.1 Windows x64 Developer Preview, with explicit limits) —
 [`reference/semantic-reference.toml`](reference/semantic-reference.toml). Floating `main` of the
 reference repository is never a qualification oracle.
 
