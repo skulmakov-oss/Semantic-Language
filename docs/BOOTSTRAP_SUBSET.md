@@ -1,6 +1,6 @@
 # Bootstrap Source Subset
 
-Status: **initial registry populated by SHF-0 (issue #11) — no construction FROZEN yet**
+Status: **registry updated for Bootstrap Contract v2 (C0 @ 1d1e76c7509a03baa0133abaaa5819f5d32582b2) — no construction FROZEN yet**
 
 Salvaged from PR #6 (`docs/BOOTSTRAP_SUBSET.md` @ `3714ce27`) and re-owned under the SHF
 architecture.
@@ -58,7 +58,7 @@ An entry missing any field stays `CANDIDATE`.
 
 ## 5. Registry
 
-Authority for every entry: `skulmakov-oss/Semantic@89641da8237f4fcefb50cf1958a50e4d4003aea7`
+Authority for every entry: `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
 (C0), `docs/spec/foundation_source_profile_v1.md` — contract `semantic.foundation.source/1.2`,
 section "Included executable surface", with executable evidence mapped in
 `docs/roadmap/stable_foundation/stable_public_language_contract.md`. An entry is `ADMITTED`
@@ -85,6 +85,8 @@ Evidence forms (used by the columns below): **T** tokens + spans, **A** normaliz
 | BSF-008 | `Map(K, V)`: empty, get, set, contains (no traversal) | ADMITTED | symbol tables by key lookup | T A F I B / key/value type diagnostics | SHF-12..14 |
 | BSF-009 | `text`: UTF-8 literals, equality, concatenation, `to_text` | ADMITTED | identifiers and diagnostic messages | T A F I B / indexing and cross-family negatives | SHF-10..14 |
 | BSF-010 | Direct local-path bare and selected imports; missing-file, duplicate and cycle rejection | ADMITTED | splitting `S` into modules | T A F I B / alias, wildcard, re-export, cycle negatives | SHF-11..12 |
+| BSF-101 | `text` length, byte inspection, and slicing | ADMITTED | lexer character and byte scanning; source token slicing | T A F I B / out-of-bounds byte/slice indexing, invalid utf8 slice boundaries | SHF-10..14 |
+| BSF-103 | `u32` arithmetic, bitwise shifts, bitwise ops, comparisons, conversions | ADMITTED | binary encoding, bitmasking, instruction layout, unsigned offsets | T A F I B / u32 overflow traps, negative shift amounts, invalid family coercion | SHF-10..14 |
 
 ### Candidates (capability gaps owned upstream)
 
@@ -93,9 +95,7 @@ SHF capability stage (SHF-1 … SHF-9) and this registry admits it with authorit
 
 | ID | Construction | State | Gap at C0 | Owner / stage |
 |---|---|---|---|---|
-| BSF-101 | `text` byte inspection, slicing and search | CANDIDATE | indexing/slicing not Included | `skulmakov-oss/Semantic` / SHF-1 |
-| BSF-102 | Byte values, binary buffers, binary file output | CANDIDATE | only UTF-8 text I/O exists | `skulmakov-oss/Semantic` / SHF-2 |
-| BSF-103 | `u32` arithmetic, bit operations, conversions | CANDIDATE | `u32` arithmetic deferred (SSF-07) | `skulmakov-oss/Semantic` / SHF-3 |
+| BSF-102 | Byte values, binary buffers, binary file output | CANDIDATE | only UTF-8 text I/O exists; SemCode transport uses hex formatting | `skulmakov-oss/Semantic` / SHF-2 |
 | BSF-104 | Deterministic `Map`/`Set` traversal and `Set` | CANDIDATE | traversal order not in contract | `skulmakov-oss/Semantic` / SHF-4 |
 | BSF-105 | Executable generics / monomorphisation | CANDIDATE | broad generics experimental | `skulmakov-oss/Semantic` / SHF-5 |
 | BSF-106 | Module exports and project resolution for a multi-module `S` | CANDIDATE | exports/namespace access not Included | `skulmakov-oss/Semantic` / SHF-7 |
