@@ -7,7 +7,20 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
+
+
+class _IdentityDirectory(tempfile.TemporaryDirectory):
+    def cleanup(self):
+        # Windows can retain a sharing lock briefly after the helper exits.
+        for attempt in range(101):
+            try:
+                return super().cleanup()
+            except PermissionError as error:
+                if getattr(error, "winerror", None) != 32 or attempt == 100:
+                    raise
+                time.sleep(0.1)
 
 
 def file_hash(path):
@@ -86,7 +99,7 @@ def qualify_reference(repo, smc, c0, env):
             if file_hash(binary) != artifact["sha256"] or binary.stat().st_size != artifact["bytes"]:
                 raise ValueError("supplied compiler binary differs from the attested build artifact")
         # Execute the pinned build-identity implementation, not a host reimplementation of its algorithm.
-        with tempfile.TemporaryDirectory(prefix="semantic-c0-identity-") as directory:
+        with _IdentityDirectory(prefix="semantic-c0-identity-") as directory:
             identity = pathlib.Path(directory) / "identity.exe"
             command(["rustc", "--edition=2021", checkout / "crates/smc-cli/build.rs", "-o", identity])
             identity_env = os.environ.copy()
