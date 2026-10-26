@@ -2,49 +2,57 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF-STAGE-DELIVERY-STABLE
-  title: "Restore stable SHF compiler and Semantic VM engineering delivery"
-  type: implementation
+  id: SHF-LICENSE-GOVERNANCE-G1
+  title: "Admit prospective licensing payload paths"
+  type: governance_migration
   mode: active
-  supersedes: GOVERNANCE-BOOTSTRAP-CONTRACT-V2
-  authorized_by: "Repository owner explicit GO - PR 3/3 stable engineering restoration"
+  supersedes: SHF-STAGE-DELIVERY-STABLE
+  authorized_by: "Repository owner explicit GOVERNANCE GO 2026-10-26; issue #38"
 
 intent:
-  summary: "Restore ordinary compiler and Semantic VM engineering following qualified Bootstrap Contract v2 migration; preserve frozen bootstrap/reference and trusted governance boundaries."
+  summary: "Admit a temporary, narrowly scoped prospective licensing payload while preserving compiler, VM, bootstrap, reference and trusted governance boundaries."
 
 scope:
   allowed_paths:
-    - compiler/**
-    - vm/**
-    - tests/**
-    - docs/**
+    - LICENSE
+    - COMMERCIAL-LICENSE.md
     - README.md
     - CONTRIBUTING.md
+    - docs/governance/**
   forbidden_paths:
     - .github/**
     - scripts/harness-check.ps1
     - .harness/current.task.yaml
     - bootstrap/**
     - reference/**
+    - compiler/**
+    - vm/**
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: true
+  compiler_implementation: false
   documentation_addition: true
   documentation_correction: true
-  test_addition: true
+  test_addition: false
+  license_migration: true
+  commercial_policy: true
+  contributor_rights_policy: true
   workflow_changes: false
   dependency_changes: false
-  github_issue_lifecycle: true
+  github_issue_lifecycle: false
   git_commit_push_pr: true
   merge_after_review_and_checks: false
   stable_promotion: false
+  release: false
+  visibility_change: false
 
 constraints:
-  issue: 29
+  issue: 38
   base_branch: main
-  base_sha: 8f930ae1dcc5cd7c21e1a86dfc7f2e296847c046
+  base_sha: a28987be1b1af1afaceadb47785ee3d18b4366c0
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
+  no_release: true
+  no_visibility_change: true
