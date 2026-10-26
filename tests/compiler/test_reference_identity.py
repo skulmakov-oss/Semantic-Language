@@ -4,11 +4,61 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 from reference_identity import qualify_reference
 
 
 class ReferenceIdentityTests(unittest.TestCase):
+    def qualify_with_cleanup_lock(self, release_delay):
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        smc = pathlib.Path(os.environ["SEMANTIC_SMC"])
+        original = tempfile.TemporaryDirectory.cleanup
+        handles, timers, directories = [], [], []
+
+        def lock_once(directory):
+            executable = pathlib.Path(directory.name) / "identity.exe"
+            if not handles and executable.exists():
+                handle = executable.open("rb")
+                handles.append(handle)
+                directories.append(directory)
+                if release_delay is not None:
+                    timer = threading.Timer(release_delay, handle.close)
+                    timers.append(timer)
+                    timer.start()
+            return original(directory)
+
+        try:
+            with mock.patch.object(tempfile.TemporaryDirectory, "cleanup", lock_once):
+                return qualify_reference(repo, smc, smc, os.environ)
+        finally:
+            self.assertTrue(handles, "did not reach the real fingerprint executable cleanup")
+            for timer in timers:
+                timer.join()
+            for handle in handles:
+                handle.close()
+            for directory in directories:
+                for attempt in range(100):
+                    try:
+                        original(directory)
+                        break
+                    except PermissionError:
+                        if attempt == 99:
+                            raise
+                        time.sleep(0.1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows executable sharing contract")
+    def test_transient_cleanup_lock_does_not_replace_valid_identity_with_mismatch(self):
+        proof = self.qualify_with_cleanup_lock(0.2)
+        self.assertEqual(proof["sha"], "1d1e76c7509a03baa0133abaaa5819f5d32582b2")
+
+    @unittest.skipUnless(os.name == "nt", "Windows executable sharing contract")
+    def test_persistent_cleanup_lock_still_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "REFERENCE_MISMATCH"):
+            self.qualify_with_cleanup_lock(None)
+
     def test_wrong_binary_with_complete_valid_proof_is_rejected(self):
         repo = pathlib.Path(__file__).resolve().parents[2]
         smc = os.environ.get("SEMANTIC_SMC")
