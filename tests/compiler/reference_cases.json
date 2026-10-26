@@ -1,4 +1,10 @@
 {
+"m07_wrong_key": "reject:at 0: builtin 'map_get' key type Bool does not match map key type I32",
+"m08_wrong_value": "reject:at 0: builtin 'map_set' value type Bool does not match map value type I32",
+"m09_contains_arity": "reject:at 0: builtin 'map_contains' takes exactly two positional arguments",
+"m10_empty_arity": "reject:at 0: map_empty() requires a contextual Map(K, V) type; use 'let q: Map(K, V) = map_empty()'",
+"m11_wrong_default": "reject:at 0: builtin 'map_get' default type Bool does not match map value type I32",
+"m12_missing_context": "reject:at 0: map_empty() requires a contextual Map(K, V) type; use 'let q: Map(K, V) = map_empty()'",
   "n01_unknown_function": "reject:at 0: unknown function 'nope'",
   "n02_wrong_arity": "reject:at 0: function 'add' is missing argument for parameter 'b'",
   "n03_wrong_argument_type": "reject:at 0: arg 0 for 'neg' has type Bool, expected I32",

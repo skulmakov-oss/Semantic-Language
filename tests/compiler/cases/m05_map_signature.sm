@@ -1,0 +1,1 @@
+fn update(m: Map(i32, Sequence(i32))) -> Map(i32, Sequence(i32)) { return map_set(m, 1, [3, 4]); } fn main() { let m: Map(i32, Sequence(i32)) = map_empty(); let n: Map(i32, Sequence(i32)) = update(m); let fallback: Sequence(i32) = []; let v: Sequence(i32) = map_get(n, 1, fallback); assert(v[0] == 3 && v[1] == 4); return; }
