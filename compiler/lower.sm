@@ -138,6 +138,13 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         let mut args: Sequence(i32) = [];
         (l, args) = lower_args(l, nd.kids);
         let callee: i32 = map_get(l.sem.callees, id, 0);
+        if callee <= 0 - 9 && callee >= 0 - 12 {
+            (l, d) = fresh(l);
+            if callee == 0 - 9 { return (emit(l, 112, d, 0, 0, 0), d); }
+            if callee == 0 - 10 { return (emit(l, 113, d, args[0], args[1], 0), d); }
+            let op: i32 = if callee == 0 - 11 { 114 } else { 115 };
+            return (emit(l, op, d, args[0], args[1], args[2]), d);
+        }
         if callee == 0 - 2 {
             (l, d) = fresh(l);
             return (emit(l, 95, d, args[0], 0, 0), d);
@@ -518,6 +525,7 @@ fn family_byte(s: Sem, t: i32) -> i32 {
         6 => { 11 }
         7 => { 12 }
         8 => { 13 }
+        9 => { 5 }
         _ => { 14 }
     };
 }

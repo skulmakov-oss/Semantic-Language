@@ -1,0 +1,1 @@
+fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, 7); assert(!map_contains(m, 1)); assert(map_contains(n, 1)); assert(map_get(n, 1, 0) == 7); assert(map_get(n, 2, 9) == 9); return; }

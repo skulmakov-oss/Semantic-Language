@@ -22,7 +22,8 @@ program   = { record-decl | fn-decl }
 record    = "record" NAME "{" field ":" type { "," field ":" type } [","] "}"
 fn        = "fn" NAME "(" [ param { "," param } ] ")" [ "->" type ] block
 type      = "i32" | "bool" | "u32" | "text" | NAME (record)
-          | "Sequence" "(" type ")" | "Option" "(" type ")" | "(" type "," type { "," type } ")"
+          | "Sequence" "(" type ")" | "Option" "(" type ")" | "Map" "(" type "," type ")"
+          | "(" type "," type { "," type } ")"
 stmt      = "let" ["mut"] NAME [":" type] "=" expr ";" | "let" ["mut"] "(" NAME {"," NAME} ")" [":" type] "=" expr ";"
           | NAME "=" expr ";" | "(" NAME {"," NAME} ")" "=" expr ";"
           | "if" expr block [ "else" ( if-stmt | block ) ] | "while" expr block
@@ -54,12 +55,23 @@ body contract. Assignments and returns remain supported in those statement arms.
 | `len(Sequence) -> i32` | `SEQUENCE_LEN` |
 | `push(Sequence(T), T)` | `SEQUENCE_PUSH` |
 | `pop(Sequence)` | `SEQUENCE_POP` |
+| `map_empty() -> Map(K, V)` (requires expected Map type) | `MAP_EMPTY` |
+| `map_contains(Map(K, V), K) -> bool` | `MAP_CONTAINS` |
+| `map_get(Map(K, V), K, V) -> V` | `MAP_GET` |
+| `map_set(Map(K, V), K, V) -> Map(K, V)` | `MAP_SET` |
 | `to_text(i32\|u32\|bool\|text) -> text` | name-dispatched `CALL` |
 | `text_len(text) -> u32` | name-dispatched `CALL` |
 | `text_byte_at(text, u32) -> Option(u32)` | name-dispatched `CALL` |
 | `text_slice(text, u32, u32) -> Option(text)` | name-dispatched `CALL` |
 
 The name-dispatched `CALL`s are exactly how the reference compiler lowers these builtins.
+
+Map keys in this compiler slice are `i32`, `bool`, `u32`, or `text`.
+Operations preserve functional Map values; traversal is not admitted. A Map
+parameter uses the existing SIG0 Map family; no wire format or VM change is made.
+For sequence defaults, use an explicitly typed variable: the frozen C0 rejects
+direct `map_get(m, key, [])` during lowering even when this compiler can infer it.
+That upstream limitation is not counted as successful differential parity.
 
 ### Static rules
 
@@ -93,7 +105,7 @@ All runtime behaviour belongs to the VM:
 
 These forms are rejected with category `unsupported`:
 - enums;
-- `Map`, `Result`, `quad`, `f64`, `fx` and `Bytes`;
+- Map traversal and non-scalar Map keys; `Result`, `quad`, `f64`, `fx` and `Bytes`;
 - `Import`;
 - closures and function values;
 - method calls;
@@ -207,4 +219,7 @@ Historical aggregate results and Calls=16384 measurements do not qualify the cur
 
 The subset emits empty OWN0. It admits no ref patterns and does not claim general borrow support; canonical Borrow/Write metadata is required before such support can be enabled. Verifier-first execution remains mandatory.
 
-Map and Import remain compiler self-coverage gaps, not missing upstream C0 capabilities. No canonical source set, C1/C2 fixed point, self-hosting or Seal is established. Platform qualification is Windows MSVC; experimental WSL cannot inherit it.
+Import and cross-module nominal linking remain compiler self-coverage gaps.
+Map empty/get/set/contains now cover the scalar-key lookup contour; traversal
+remains excluded. No canonical source set, C1/C2 fixed point, self-hosting or Seal
+is established. Platform qualification is Windows MSVC; experimental WSL cannot inherit it.
