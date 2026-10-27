@@ -20,25 +20,60 @@ The host only transports bytes (see "Host boundary").
 A program is one or more functions:
 
 ```
-program   = { "fn" IDENT "(" [ param { "," param } ] ")" [ "->" type ] block }
-param     = IDENT ":" type
-type      = "i32" | "bool"
-block     = "{" { stmt } "}"
-stmt      = "let" ["mut"] IDENT [":" type] "=" expr ";"
-          | IDENT "=" expr ";"
-          | "if" expr block [ "else" ( if-stmt | block ) ]
-          | "while" expr block
-          | "break" ";" | "continue" ";"
-          | "return" [ expr ] ";"
-          | "assert" "(" expr ")" ";"
-          | expr ";"
-expr      = binary(1) over  || && == != < <= > >= + - * / %   (left-associative)
-unary     = ( "-" | "!" ) unary | primary
-primary   = INT | "true" | "false" | IDENT | IDENT "(" [ expr { "," expr } ] ")" | "(" expr ")"
+program   = { record-decl | fn-decl }
+record    = "record" NAME "{" field ":" type { "," field ":" type } [","] "}"
+fn        = "fn" NAME "(" [ param { "," param } ] ")" [ "->" type ] block
+type      = "i32" | "bool" | "u32" | "text" | NAME (record)
+          | "Sequence" "(" type ")" | "Option" "(" type ")" | "Map" "(" type "," type ")"
+          | "(" type "," type { "," type } ")"
+stmt      = "let" ["mut"] NAME [":" type] "=" expr ";" | "let" ["mut"] "(" NAME {"," NAME} ")" [":" type] "=" expr ";"
+          | NAME "=" expr ";" | "(" NAME {"," NAME} ")" "=" expr ";"
+          | "if" expr block [ "else" ( if-stmt | block ) ] | "while" expr block
+          | "for" NAME "in" expr block | "break" ";" | "continue" ";"
+          | "return" [ expr ] ";" | "assert" "(" expr ")" ";" | match-expr [";"] | expr ";"
+expr      = binary over  || && == != < <= > >= + - * / %   (left-associative), unary - !
+postfix   = primary { "." field | "[" expr "]" | "with" "{" field ":" expr {"," ...} "}" }
+primary   = INT | INT"u32" | TEXT | "true" | "false" | NAME | NAME "(" args ")"
+          | NAME "{" field ":" expr {"," ...} "}" | "(" expr ")" | "(" expr "," expr {"," expr} ")"
+          | "[" [ expr {"," expr} ] "]" | block-expr | match-expr | "if" expr block-expr "else" (block-expr | if-expr)
+match     = "match" expr "{" { pattern "=>" ( expr | block-expr ) [","] } "}"
+pattern   = "_" | INT | INT"u32" | "Option" "::" "Some" "(" NAME ")" | "Option" "::" "None"
+block-expr= "{" { stmt } [ expr ] "}"
 ```
 
 `//` comments are accepted.
 
+Value-position blocks support nested blocks and value-producing conditional tails.
+Tuple assignment remains statement-level: it is not admitted inside a value-producing
+block by the frozen C0 or its v0 block-body contract. Recovery does not widen that contract.
+The ordinary statement form retains its arity, target and type checks.
+Statement-form match arms use ordinary statement blocks, not the restricted value-block
+body contract. Assignments and returns remain supported in those statement arms.
+
+### Builtins
+
+| Builtin | Lowered as |
+|---|---|
+| `len(Sequence) -> i32` | `SEQUENCE_LEN` |
+| `push(Sequence(T), T)` | `SEQUENCE_PUSH` |
+| `pop(Sequence)` | `SEQUENCE_POP` |
+| `map_empty() -> Map(K, V)` (requires expected Map type) | `MAP_EMPTY` |
+| `map_contains(Map(K, V), K) -> bool` | `MAP_CONTAINS` |
+| `map_get(Map(K, V), K, V) -> V` | `MAP_GET` |
+| `map_set(Map(K, V), K, V) -> Map(K, V)` | `MAP_SET` |
+| `to_text(i32\|u32\|bool\|text) -> text` | name-dispatched `CALL` |
+| `text_len(text) -> u32` | name-dispatched `CALL` |
+| `text_byte_at(text, u32) -> Option(u32)` | name-dispatched `CALL` |
+| `text_slice(text, u32, u32) -> Option(text)` | name-dispatched `CALL` |
+
+The name-dispatched `CALL`s are exactly how the reference compiler lowers these builtins.
+
+Map keys in this compiler slice are `i32`, `bool`, `u32`, or `text`.
+Operations preserve functional Map values; traversal is not admitted. A Map
+parameter uses the existing SIG0 Map family; no wire format or VM change is made.
+For sequence defaults, use an explicitly typed variable: the frozen C0 rejects
+direct `map_get(m, key, [])` during lowering even when this compiler can infer it.
+That upstream limitation is not counted as successful differential parity.
 ### Static rules
 
 **Functions and calls:**
@@ -47,7 +82,7 @@ primary   = INT | "true" | "false" | IDENT | IDENT "(" [ expr { "," expr } ] ")"
 - `main` must exist, take no parameters and return `unit`.
 
 **Types and operators:**
-- Types are `i32`, `bool` and `unit` (no return type). A `unit` value can't be an operand, an initializer, an argument or a condition.
+- Types include `i32`, `bool`, `u32`, `text`, records, tuples, `Sequence(T)`, `Option(T)` and scalar-key `Map(K,V)`. A `unit` value can't be an operand, an initializer, an argument or a condition.
 - Operators follow Semantic's typing rules.
 
 **Variables:**
@@ -56,7 +91,10 @@ primary   = INT | "true" | "false" | IDENT | IDENT "(" [ expr { "," expr } ] ")"
 
 **Returns and loops:**
 - A function with a non-`unit` return type must ensure all control flow paths return (`always_returns`). This matches modern candidate Semantic (S2043 CP04 / commit `30f395d3`), which accepts symmetric `if`/`else` blocks where both branches return (`p16`), while rejecting missing branches or paths that fall through (`n25`).
-- `break` and `continue` are only allowed inside a loop.
+- `break` and `continue` are only allowed inside `while`, not `for`.
+- Unsuffixed integer patterns match both `i32` and `u32` scrutinees.
+- Empty sequences require contextual type; record and copy-with expressions preserve source evaluation order before declaration-slot layout; `i32` and `u32` do not mix.
+- Map keys are limited to `i32`, `bool`, `u32` and `text`; traversal and non-scalar keys are unsupported.
 
 ### Runtime semantics
 
@@ -68,11 +106,14 @@ All runtime behaviour belongs to the VM:
 ### Outside the subset
 
 These forms are rejected with category `unsupported`:
-- other types;
-- records, enums and other top-level items;
-- text and other literal families;
-- `.` `[` `]` `|` `&` `?` syntax;
-- `for`, `loop` and `const`;
+- enums;
+- Map traversal and non-scalar Map keys; `Result`, `quad`, `f64`, `fx` and `Bytes`;
+- `Import`;
+- closures and function values;
+- method calls;
+- ranges and `loop`;
+- `const`;
+- match guards, record/tuple equality, tuple field access and field punning;
 - compound assignment;
 - tuples;
 - default parameters, contracts and expression-bodied functions;
@@ -88,11 +129,11 @@ Each diagnostic has the form `error <syntax|name|type|context|unsupported> @<byt
 | Module | Responsibility |
 |---|---|
 | `lexer.sm` | UTF-8 bytes to tokens. One loop with no user-function call per byte. |
-| `ast.sm` | Node arena, `Func`, `Prog`. |
+| `ast.sm` | Node arena, `Func`, `Rec`, `Prog`. |
 | `parser.sm` | Recursive descent for items and statements, precedence climbing for expressions. Tokens are read directly from the stream, not through helper calls. |
-| `sema.sm` | Function table, scopes, types, arity, the return rule, loop context. The results are side tables (`Map` by node id): expression types, local slots, callees. |
-| `lower.sm` | AST to a linear IR per function, with symbolic labels. Registers are allocated function-locally and linearly: parameters in `r0..r(n-1)`, then one fresh register per expression. Locals are VM local slots, one string-table symbol per declaration. |
-| `semcode.sm` | IR to SemCode. A first pass maps labels to byte offsets; a second pass encodes instructions inline. |
+| `sema.sm` | Interned type, record and function tables; scopes; expected-type propagation; builtin typing; match exhaustiveness; loop context; return analysis; side tables for types, slots, callees and field indices. |
+| `lower.sm` | AST to a linear IR per function, with symbolic labels. Registers are allocated function-locally and linearly; aggregate and Map operations lower to existing opcodes. |
+| `semcode.sm` | IR to SemCode. A first pass maps labels to byte offsets; a second pass encodes instructions inline, including aggregate and Map signatures. |
 | `bytes.sm` | Byte encoding through a 256-entry literal table, `i32` little-endian without bit operations, and UTF-8 text bytes. |
 | `driver.sm` | `compile_source(text) -> "hex …" \| "error …"`. |
 | `main.sm` | Entry point: `args_read(0)` then `fs_read_text`, then `stdout_write`. |
@@ -101,13 +142,13 @@ Each diagnostic has the form `error <syntax|name|type|context|unsupported> @<byt
 
 The output header is **`SEMCOD22` (revision 23)**, the revision the pinned C0 itself emits. It contains:
 - an `ADT0` section with the standard `Option`/`Result` prelude descriptors;
-- per function: the string table, an empty `OWN0`, `SIG0` with the parameter families (`i32` = 7, `bool` = 2), and the instructions.
+- per function: the string table, `OWN0`, `SIG0` with parameter families and aggregate/Map signatures, and the instructions.
 
 Because `SIG0` is present, the verifier runs its definite-register-assignment proof on every generated function.
 
 ### Instructions emitted
 
-`LOAD_BOOL`, `LOAD_I32`, `LOAD_VAR`, `STORE_VAR`, `ADD/SUB/MUL/DIV/MOD_I32`, `CMP_EQ`, `CMP_NE`, `CMP_I32_LT`, `CMP_I32_LE`, `BOOL_AND`, `BOOL_OR`, `BOOL_NOT`, `JMP`, `JMP_IF`, `CALL`, `RET`, `ASSERT`.
+`LOAD_BOOL`, `LOAD_I32`, `LOAD_U32`, `LOAD_VAR`, `STORE_VAR`, record/tuple/sequence/ADT operations, `MAP_EMPTY`, `MAP_GET`, `MAP_SET`, `MAP_CONTAINS`, arithmetic/comparison, control flow, `CALL`, `RET`, `ASSERT`.
 
 ### Design constraint: Calls
 
@@ -215,3 +256,10 @@ with Frames 256. Actual per-case counters and effective quotas belong to each ev
 - **The equivalence evidence is behavioural**, on a hand-written corpus: assertion outcomes and traps. Byte identity with C0 is not a goal; register numbering and branch layout differ.
 - **Platform:** historical tests were WSL2 experiments; current v2 qualification is explicitly
   platform-bound. C0's qualified platform is `x86_64-pc-windows-msvc`.
+
+The current compiler slice emits empty OWN0 and does not claim general borrow support;
+canonical Borrow/Write metadata is required before such support can be enabled.
+Verifier-first execution remains mandatory. Import and cross-module nominal linking remain
+compiler self-coverage gaps. Map empty/get/set/contains cover the scalar-key lookup contour;
+traversal remains excluded. No canonical source set, C1/C2 fixed point, self-hosting or Seal
+is established.

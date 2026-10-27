@@ -90,6 +90,10 @@ fn tuple_of(s: Sem, elems: Sequence(i32)) -> (Sem, i32) {
     return intern(s, key, TyInfo { k: 6, a: 0, kids: elems, name: "" });
 }
 
+fn map_of(s: Sem, key: i32, value: i32) -> (Sem, i32) {
+    return intern(s, "M" + to_text(key) + "," + to_text(value), TyInfo { k: 9, a: key, kids: [value], name: "" });
+}
+
 fn ty_text(s: Sem, t: i32) -> text {
     if t < 0 { return "?"; }
     let info: TyInfo = s.tys[t];
@@ -100,6 +104,7 @@ fn ty_text(s: Sem, t: i32) -> text {
     if info.k == 4 { return "text"; }
     if info.k == 5 { return "Sequence(" + ty_text(s, info.a) + ")"; }
     if info.k == 8 { return "Option(" + ty_text(s, info.a) + ")"; }
+    if info.k == 9 { return "Map(" + ty_text(s, info.a) + ", " + ty_text(s, info.kids[0]) + ")"; }
     if info.k == 7 { return info.name; }
     let mut out: text = "(";
     let mut first: bool = true;
@@ -141,6 +146,18 @@ fn resolve_type(s0: Sem, id: i32) -> (Sem, i32) {
         if e < 0 { return (s, 0 - 1); }
         if n == "Sequence" { return seq_of(s, e); }
         return option_of(s, e);
+    }
+    if n == "Map" && len(nd.kids) == 2 {
+        let mut key: i32 = 0;
+        let mut value: i32 = 0;
+        (s, key) = resolve_type(s, nd.kids[0]);
+        if key < 0 { return (s, 0 - 1); }
+        (s, value) = resolve_type(s, nd.kids[1]);
+        if value < 0 { return (s, 0 - 1); }
+        if key < 1 || key > 4 {
+            return (serr(s, "unsupported", "Map key requires i32, bool, u32 or text", nd.pos), 0 - 1);
+        }
+        return map_of(s, key, value);
     }
     if n == "Map" || n == "Result" || n == "quad" || n == "f64" || n == "fx" || n == "Bytes" || n == "Sequence" || n == "Option" {
         return (serr(s, "unsupported", "type '" + n + "' (as written) is outside the supported subset", nd.pos), 0 - 1);
@@ -197,6 +214,10 @@ fn builtin_code(name: text) -> i32 {
     if name == "text_len" { return 5; }
     if name == "text_byte_at" { return 6; }
     if name == "text_slice" { return 7; }
+    if name == "map_empty" { return 8; }
+    if name == "map_contains" { return 9; }
+    if name == "map_get" { return 10; }
+    if name == "map_set" { return 11; }
     return 0;
 }
 
@@ -214,7 +235,39 @@ fn check_args(c0: C, nd: Node, wants: Sequence(i32)) -> (C, Sequence(i32)) {
     return (c, tys);
 }
 
-fn check_builtin(c0: C, id: i32, nd: Node, code: i32) -> (C, i32) {
+fn check_map_builtin(c0: C, id: i32, nd: Node, code: i32, want: i32) -> (C, i32) {
+    let mut c: C = c0;
+    let arity: i32 = if code == 8 { 0 } else { if code == 9 { 2 } else { 3 } };
+    if len(nd.kids) != arity {
+        return (cerr(c, "type", "invalid arguments for builtin '" + nd.name + "'", nd.pos), 0 - 1);
+    }
+    let mut mt: i32 = want;
+    if code != 8 {
+        (c, mt) = check_value(c, nd.kids[0], 0 - 1, "map operand");
+        if c.sem.err != "" { return (c, 0 - 1); }
+    }
+    if mt < 0 { return (cerr(c, "type", "map_empty requires a Map type context", nd.pos), 0 - 1); }
+    let info: TyInfo = c.sem.tys[mt];
+    if info.k != 9 { return (cerr(c, "type", "map builtin requires Map", nd.pos), 0 - 1); }
+    if code != 8 {
+        let mut key: i32 = 0;
+        (c, key) = check_value(c, nd.kids[1], info.a, "map key");
+        c = expect_type(c, key, info.a, "map key", nd.pos);
+        if code == 10 || code == 11 {
+            let mut value: i32 = 0;
+            (c, value) = check_value(c, nd.kids[2], info.kids[0], "map value");
+            c = expect_type(c, value, info.kids[0], "map value", nd.pos);
+        }
+    }
+    if c.sem.err != "" { return (c, 0 - 1); }
+    c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, 0 - 1 - code) } };
+    if code == 9 { return typed(c, id, 2); }
+    if code == 10 { return typed(c, id, info.kids[0]); }
+    return typed(c, id, mt);
+}
+
+fn check_builtin(c0: C, id: i32, nd: Node, code: i32, want: i32) -> (C, i32) {
+    if code >= 8 { return check_map_builtin(c0, id, nd, code, want); }
     let mut c: C = c0;
     let mut tys: Sequence(i32) = [];
     (c, tys) = check_args(c, nd, []);
@@ -305,7 +358,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         if !map_contains(c.sem.fnidx, nd.name) {
             let code: i32 = builtin_code(nd.name);
             if code > 0 {
-                return check_builtin(c, id, nd, code);
+                return check_builtin(c, id, nd, code, want);
             }
             return (cerr(c, "name", "unknown function '" + nd.name + "'", nd.pos), 0 - 1);
         }
