@@ -35,6 +35,9 @@ fn ins_size(i: Ins) -> i32 {
         64 => { 8 + 2 * n }
         65 => { if i.a == 1 { 4 } else { 2 } }
         66 => { 3 }
+        112 => { 3 }
+        114 => { 9 }
+        115 => { 9 }
         67 => { 5 + 2 * n }
         91 => { 5 + 2 * n }
         69 => { 7 + 2 * n }
@@ -109,7 +112,7 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
             if i.a == 1 {
                 code = push(push(code, hx[i.b % 256]), hx[i.b / 256]);
             }
-        } else if op == 66 {
+        } else if op == 66 || op == 112 {
             code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
         } else if op == 67 || op == 91 || op == 69 {
             code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
@@ -123,7 +126,7 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
             }
         } else if op == 68 {
             code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.imm % 256]), hx[i.imm / 256]);
-        } else if op == 70 || op == 73 {
+        } else if op == 70 || op == 73 || op == 114 || op == 115 {
             code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
             code = push(push(code, hx[i.imm % 256]), hx[i.imm / 256]);
         } else if op >= 0 {

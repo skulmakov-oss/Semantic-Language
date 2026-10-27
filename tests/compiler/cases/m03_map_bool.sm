@@ -1,0 +1,1 @@
+fn main() { let m: Map(bool, i32) = map_empty(); let n: Map(bool, i32) = map_set(m, true, 7); assert(map_get(n, true, 0) == 7); return; }

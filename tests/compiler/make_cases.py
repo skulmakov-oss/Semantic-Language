@@ -1074,6 +1074,20 @@ case("r34_tuple_expression_call", "trap:assertion failed", "fn fail() -> i32 { a
 case("r35_statement_match_tuple_assignment", "ok", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; match 1 { 1 => { (x, y) = (3, 4); } _ => {} } assert(x == 3 && y == 4); return; }")
 case("r36_statement_match_return", "ok", "fn main() { match 1 { 1 => { return; } _ => { return; } } }")
 
+case("m01_map_i32", "ok", "fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, 7); assert(!map_contains(m, 1)); assert(map_contains(n, 1)); assert(map_get(n, 1, 0) == 7); assert(map_get(n, 2, 9) == 9); return; }")
+case("m02_map_text", "ok", 'fn main() { let m: Map(text, i32) = map_empty(); let n: Map(text, i32) = map_set(m, "k", 7); assert(map_get(n, "k", 0) == 7); return; }')
+case("m03_map_bool", "ok", "fn main() { let m: Map(bool, i32) = map_empty(); let n: Map(bool, i32) = map_set(m, true, 7); assert(map_get(n, true, 0) == 7); return; }")
+case("m04_map_u32", "ok", "fn main() { let m: Map(u32, i32) = map_empty(); let n: Map(u32, i32) = map_set(m, 1u32, 7); assert(map_get(n, 1u32, 0) == 7); return; }")
+case("m05_map_signature", "ok", "fn update(m: Map(i32, Sequence(i32))) -> Map(i32, Sequence(i32)) { return map_set(m, 1, [3, 4]); } fn main() { let m: Map(i32, Sequence(i32)) = map_empty(); let n: Map(i32, Sequence(i32)) = update(m); let fallback: Sequence(i32) = []; let v: Sequence(i32) = map_get(n, 1, fallback); assert(v[0] == 3 && v[1] == 4); return; }")
+case("m06_map_overwrite", "ok", "fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(map_set(m, 1, 3), 1, 8); assert(map_get(n, 1, 0) == 8); return; }")
+
+case('m07_wrong_key', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_empty(); let x: i32 = map_get(m, true, 0); return; }')
+case('m08_wrong_value', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, true); return; }')
+case('m09_contains_arity', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_empty(); assert(map_contains(m)); return; }')
+case('m10_empty_arity', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_empty(1); return; }')
+case('m11_wrong_default', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_empty(); let x: i32 = map_get(m, 1, true); return; }')
+case('m12_missing_context', 'reject:type:', 'fn main() { let m = map_empty(); return; }')
+
 def main():
     d = HERE / "cases"
     d.mkdir(exist_ok=True)
