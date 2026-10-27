@@ -14,10 +14,7 @@ class CorpusGenerationTests(unittest.TestCase):
         manifest = subprocess.run(["git", "show", ":tests/compiler/cases.json"],
                                   cwd=here, capture_output=True, check=True)
         expected = {"cases.json": manifest.stdout}
-        for path in (here / "cases").glob("*.sm"):
-            blob = subprocess.run(["git", "show", ":tests/compiler/cases/" + path.name],
-                                  cwd=here, capture_output=True, check=True)
-            expected["cases/" + path.name] = blob.stdout
+        expected.update({"cases/" + p.name: p.read_bytes() for p in (here / "cases").glob("*.sm")})
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             shutil.copyfile(here / "make_cases.py", root / "make_cases.py")
