@@ -1,0 +1,337 @@
+// sema: name resolution and type checking.
+//
+// Produces side tables keyed by AST node id instead of rewriting the tree:
+//   types:   expression node -> type (0 unit, 1 i32, 2 bool)
+//   slots:   Var / Let / Assign node -> local slot of its function
+//   callees: Call node -> index of the called function in Prog.funcs
+// and, per function, the ordered list of local slot names.
+// Diagnostic categories: name, type, context.
+Import "parser.sm"
+
+record Sym {
+    name: text,
+    ty: i32,
+    slot: i32,
+}
+
+record Sem {
+    prog: Prog,
+    fnidx: Map(text, i32),
+    types: Map(i32, i32),
+    slots: Map(i32, i32),
+    callees: Map(i32, i32),
+    locals: Sequence(Sequence(text)),
+    err: text,
+    cat: text,
+    errpos: u32,
+}
+
+// Per-function checking state.
+record C {
+    sem: Sem,
+    syms: Sequence(Sym),
+    names: Sequence(text),
+    loops: i32,
+    fret: i32,
+}
+
+fn cerr(c: C, cat: text, msg: text, pos: u32) -> C {
+    if c.sem.err != "" {
+        return c;
+    }
+    return c with { sem: c.sem with { err: msg, cat: cat, errpos: pos } };
+}
+
+fn lookup(syms: Sequence(Sym), name: text) -> i32 {
+    let mut i: i32 = len(syms) - 1;
+    while i >= 0 {
+        if syms[i].name == name {
+            return i;
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+fn set_type(c: C, id: i32, t: i32) -> (C, i32) {
+    return (c with { sem: c.sem with { types: map_set(c.sem.types, id, t) } }, t);
+}
+
+// Declares a local (parameter or let) and records its slot for `id`.
+fn declare(c: C, id: i32, name: text, t: i32) -> C {
+    let slot: i32 = len(c.names);
+    let sem: Sem = c.sem with { slots: map_set(c.sem.slots, id, slot) };
+    return c with { sem: sem, syms: push(c.syms, Sym { name: name, ty: t, slot: slot }), names: push(c.names, name) };
+}
+
+fn check_expr(c0: C, id: i32) -> (C, i32) {
+    let nd: Node = c0.sem.prog.nodes[id];
+    let mut c: C = c0;
+    if nd.k == 1 { return set_type(c, id, 1); }
+    if nd.k == 2 { return set_type(c, id, 2); }
+    if nd.k == 4 {
+        let at: i32 = lookup(c.syms, nd.name);
+        if at < 0 {
+            if map_contains(c.sem.fnidx, nd.name) {
+                return (cerr(c, "unsupported", "function values are outside the supported subset ('" + nd.name + "')", nd.pos), 0 - 1);
+            }
+            return (cerr(c, "name", "undefined variable '" + nd.name + "'", nd.pos), 0 - 1);
+        }
+        let sym: Sym = c.syms[at];
+        c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
+        return set_type(c, id, sym.ty);
+    }
+    if nd.k == 7 {
+        if !map_contains(c.sem.fnidx, nd.name) {
+            return (cerr(c, "name", "unknown function '" + nd.name + "'", nd.pos), 0 - 1);
+        }
+        let fi: i32 = map_get(c.sem.fnidx, nd.name, 0);
+        let f: Func = c.sem.prog.funcs[fi];
+        if len(nd.kids) != len(f.ptypes) {
+            return (cerr(c, "type", "function '" + nd.name + "' expects " + to_text(len(f.ptypes)) + " argument(s), got " + to_text(len(nd.kids)), nd.pos), 0 - 1);
+        }
+        let mut i: i32 = 0;
+        while i < len(nd.kids) {
+            let mut at: i32 = 0;
+            (c, at) = check_expr(c, nd.kids[i]);
+            if at < 0 { return (c, 0 - 1); }
+            if at != f.ptypes[i] {
+                return (cerr(c, "type", "argument " + to_text(i + 1) + " of '" + nd.name + "' expects " + type_name(f.ptypes[i]) + ", got " + type_name(at), c.sem.prog.nodes[nd.kids[i]].pos), 0 - 1);
+            }
+            i = i + 1;
+        }
+        c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, fi) } };
+        return set_type(c, id, f.ret);
+    }
+    let mut l: i32 = 0;
+    if nd.k == 5 {
+        (c, l) = check_expr(c, nd.a);
+        if l < 0 { return (c, 0 - 1); }
+        if nd.v == 31 && l != 1 { return (cerr(c, "type", "unary '-' expects i32, got " + type_name(l), nd.pos), 0 - 1); }
+        if nd.v == 43 && l != 2 { return (cerr(c, "type", "'!' expects bool, got " + type_name(l), nd.pos), 0 - 1); }
+        return set_type(c, id, l);
+    }
+    let mut r: i32 = 0;
+    (c, l) = check_expr(c, nd.a);
+    if l < 0 { return (c, 0 - 1); }
+    (c, r) = check_expr(c, nd.b);
+    if r < 0 { return (c, 0 - 1); }
+    let op: i32 = nd.v;
+    if l == 0 || r == 0 {
+        return (cerr(c, "type", "a unit value cannot be an operand", nd.pos), 0 - 1);
+    }
+    if op >= 30 && op <= 34 {
+        if l != 1 || r != 1 {
+            return (cerr(c, "type", "arithmetic expects i32 operands, got " + type_name(l) + " and " + type_name(r), nd.pos), 0 - 1);
+        }
+        return set_type(c, id, 1);
+    }
+    if op >= 37 && op <= 40 {
+        if l != 1 || r != 1 {
+            return (cerr(c, "type", "ordering expects i32 operands, got " + type_name(l) + " and " + type_name(r), nd.pos), 0 - 1);
+        }
+        return set_type(c, id, 2);
+    }
+    if op == 35 || op == 36 {
+        if l != r {
+            return (cerr(c, "type", "cannot compare " + type_name(l) + " with " + type_name(r), nd.pos), 0 - 1);
+        }
+        return set_type(c, id, 2);
+    }
+    if l != 2 || r != 2 {
+        return (cerr(c, "type", "logical operator expects bool operands, got " + type_name(l) + " and " + type_name(r), nd.pos), 0 - 1);
+    }
+    return set_type(c, id, 2);
+}
+
+// A value expression must not be unit.
+fn check_value(c0: C, id: i32, what: text) -> (C, i32) {
+    let mut c: C = c0;
+    let mut t: i32 = 0;
+    (c, t) = check_expr(c, id);
+    if t == 0 {
+        return (cerr(c, "type", what + " has unit type", c.sem.prog.nodes[id].pos), 0 - 1);
+    }
+    return (c, t);
+}
+
+fn check_cond(c0: C, id: i32, what: text) -> C {
+    let mut c: C = c0;
+    let mut t: i32 = 0;
+    (c, t) = check_value(c, id, what);
+    if t > 0 && t != 2 {
+        return cerr(c, "type", what + " expects bool, got " + type_name(t), c.sem.prog.nodes[id].pos);
+    }
+    return c;
+}
+
+fn check_block(c0: C, id: i32) -> C {
+    let nd: Node = c0.sem.prog.nodes[id];
+    let saved: i32 = len(c0.syms);
+    let mut c: C = c0;
+    for kid in nd.kids {
+        if c.sem.err == "" {
+            c = check_stmt(c, kid);
+        }
+    }
+    let mut syms: Sequence(Sym) = c.syms;
+    while len(syms) > saved {
+        syms = pop(syms);
+    }
+    return c with { syms: syms };
+}
+
+fn check_stmt(c0: C, id: i32) -> C {
+    let nd: Node = c0.sem.prog.nodes[id];
+    let mut c: C = c0;
+    let mut t: i32 = 0;
+    if nd.k == 10 {
+        (c, t) = check_value(c, nd.a, "initializer of '" + nd.name + "'");
+        if t < 0 { return c; }
+        if nd.v != 0 && nd.v != t {
+            return cerr(c, "type", "variable '" + nd.name + "' declared " + type_name(nd.v) + " but initialized with " + type_name(t), nd.pos);
+        }
+        return declare(c, id, nd.name, t);
+    }
+    if nd.k == 11 {
+        let at: i32 = lookup(c.syms, nd.name);
+        if at < 0 {
+            return cerr(c, "name", "assignment to undefined variable '" + nd.name + "'", nd.pos);
+        }
+        (c, t) = check_value(c, nd.a, "assigned value");
+        if t < 0 { return c; }
+        let sym: Sym = c.syms[at];
+        if t != sym.ty {
+            return cerr(c, "type", "cannot assign " + type_name(t) + " to '" + nd.name + "' of type " + type_name(sym.ty), nd.pos);
+        }
+        return c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
+    }
+    if nd.k == 17 {
+        return check_cond(c, nd.a, "assert");
+    }
+    if nd.k == 16 {
+        (c, t) = check_expr(c, nd.a);
+        return c;
+    }
+    if nd.k == 14 {
+        if nd.a < 0 {
+            if c.fret != 0 {
+                return cerr(c, "type", "'return;' in a function returning " + type_name(c.fret), nd.pos);
+            }
+            return c;
+        }
+        (c, t) = check_value(c, nd.a, "returned value");
+        if t < 0 { return c; }
+        if c.fret == 0 {
+            return cerr(c, "type", "a function returning unit cannot return a value", nd.pos);
+        }
+        if t != c.fret {
+            return cerr(c, "type", "function returns " + type_name(c.fret) + " but this returns " + type_name(t), nd.pos);
+        }
+        return c;
+    }
+    if nd.k == 12 {
+        c = check_cond(c, nd.a, "if condition");
+        if c.sem.err != "" { return c; }
+        c = check_block(c, nd.b);
+        if c.sem.err == "" && nd.c >= 0 {
+            if c.sem.prog.nodes[nd.c].k == 12 {
+                c = check_stmt(c, nd.c);
+            } else {
+                c = check_block(c, nd.c);
+            }
+        }
+        return c;
+    }
+    if nd.k == 13 {
+        c = check_cond(c, nd.a, "while condition");
+        if c.sem.err != "" { return c; }
+        c = check_block(c with { loops: c.loops + 1 }, nd.b);
+        return c with { loops: c.loops - 1 };
+    }
+    if nd.k == 18 || nd.k == 19 {
+        if c.loops == 0 {
+            let w: text = if nd.k == 18 { "break" } else { "continue" };
+            return cerr(c, "context", "'" + w + "' outside of a loop", nd.pos);
+        }
+        return c;
+    }
+    return check_block(c, id);
+}
+
+// True when every path through statement `id` ends in a return.
+fn always_returns(nodes: Sequence(Node), id: i32) -> bool {
+    let nd: Node = nodes[id];
+    if nd.k == 14 { return true; }
+    if nd.k == 15 {
+        for kid in nd.kids {
+            if always_returns(nodes, kid) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if nd.k == 12 {
+        if nd.c < 0 { return false; }
+        if always_returns(nodes, nd.b) {
+            return always_returns(nodes, nd.c);
+        }
+        return false;
+    }
+    return false;
+}
+
+// Semantic's return-path rule (as enforced by the reference compiler at C0):
+// a function with a non-unit return type must end with a top-level `return`
+// statement. Branches that all return (if/else) do not satisfy it.
+fn ends_with_return(nodes: Sequence(Node), body: i32) -> bool {
+    let kids: Sequence(i32) = nodes[body].kids;
+    let n: i32 = len(kids);
+    if n == 0 {
+        return false;
+    }
+    return nodes[kids[n - 1]].k == 14;
+}
+
+fn analyze(prog: Prog) -> Sem {
+    let mut sem: Sem = Sem { prog: prog, fnidx: map_empty(), types: map_empty(), slots: map_empty(), callees: map_empty(),
+                             locals: [], err: "", cat: "", errpos: 0u32 };
+    let mut i: i32 = 0;
+    while i < len(prog.funcs) && sem.err == "" {
+        let f: Func = prog.funcs[i];
+        if map_contains(sem.fnidx, f.name) {
+            sem = sem with { err: "function '" + f.name + "' is defined more than once", cat: "name", errpos: f.pos };
+        }
+        sem = sem with { fnidx: map_set(sem.fnidx, f.name, i) };
+        i = i + 1;
+    }
+    if sem.err == "" {
+        if !map_contains(sem.fnidx, "main") {
+            sem = sem with { err: "missing entry function 'fn main()'", cat: "name", errpos: 0u32 };
+        } else {
+            let m: Func = prog.funcs[map_get(sem.fnidx, "main", 0)];
+            if len(m.ptypes) != 0 || m.ret != 0 {
+                sem = sem with { err: "'main' must take no parameters and return unit", cat: "type", errpos: m.pos };
+            }
+        }
+    }
+    i = 0;
+    while i < len(prog.funcs) && sem.err == "" {
+        let f: Func = prog.funcs[i];
+        let mut c: C = C { sem: sem, syms: [], names: [], loops: 0, fret: f.ret };
+        let mut k: i32 = 0;
+        while k < len(f.pnames) {
+            // parameters occupy the first slots; keyed by a negative pseudo-id
+            c = declare(c, 0 - 1 - k, f.pnames[k], f.ptypes[k]);
+            k = k + 1;
+        }
+        c = check_block(c, f.body);
+        sem = c.sem;
+        if sem.err == "" && f.ret != 0 && !always_returns(prog.nodes, f.body) {
+            sem = sem with { err: "function '" + f.name + "' may exit without returning " + type_name(f.ret), cat: "type", errpos: f.pos };
+        }
+        sem = sem with { locals: push(sem.locals, c.names) };
+        i = i + 1;
+    }
+    return sem;
+}

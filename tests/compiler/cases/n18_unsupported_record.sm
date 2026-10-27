@@ -1,0 +1,7 @@
+record R {
+    a: i32,
+}
+
+fn main() {
+    return;
+}

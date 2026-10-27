@@ -1,0 +1,13 @@
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn is_pos(x: i32) -> bool {
+    return x > 0;
+}
+
+fn main() {
+    let s: i32 = add(2, 3);
+    assert(s == 5 && is_pos(s));
+    return;
+}

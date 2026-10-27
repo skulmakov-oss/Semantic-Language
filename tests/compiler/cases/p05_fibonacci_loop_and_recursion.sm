@@ -1,0 +1,26 @@
+fn fib_rec(n: i32) -> i32 {
+    if n < 2 {
+        return n;
+    }
+    return fib_rec(n - 1) + fib_rec(n - 2);
+}
+
+fn fib_loop(n: i32) -> i32 {
+    let mut a: i32 = 0;
+    let mut b: i32 = 1;
+    let mut i: i32 = 0;
+    while i < n {
+        let t: i32 = a + b;
+        a = b;
+        b = t;
+        i = i + 1;
+    }
+    return a;
+}
+
+fn main() {
+    assert(fib_rec(10) == 55);
+    assert(fib_loop(10) == 55);
+    assert(fib_loop(20) == 6765);
+    return;
+}

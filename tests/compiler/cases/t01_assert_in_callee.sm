@@ -1,0 +1,9 @@
+fn need_positive(x: i32) {
+    assert(x > 0);
+}
+
+fn main() {
+    need_positive(3);
+    need_positive(-1);
+    return;
+}

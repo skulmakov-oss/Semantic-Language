@@ -1,0 +1,26 @@
+fn max(a: i32, b: i32) -> i32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn pick(flag: bool, a: i32, b: i32) -> i32 {
+    if flag {
+        return a;
+    }
+    return b;
+}
+
+fn clamp(x: i32, lo: i32, hi: i32) -> i32 {
+    return max(lo, -max(-x, -hi));
+}
+
+fn main() {
+    assert(max(max(1, 9), max(4, 3)) == 9);
+    assert(pick(3 < 2, 10, 20) == 20);
+    assert(clamp(50, 0, 10) == 10);
+    assert(clamp(-5, 0, 10) == 0);
+    assert(clamp(7, 0, 10) == 7);
+    return;
+}
