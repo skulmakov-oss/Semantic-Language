@@ -1,0 +1,12 @@
+fn greet(name: text) -> text {
+    return "hello, " + name;
+}
+
+fn main() {
+    let g: text = greet("sm");
+    assert(g == "hello, sm");
+    assert(g != "hello");
+    assert(text_len(g) == 9u32);
+    assert(to_text(42) == "42" && to_text(true) == "true");
+    return;
+}

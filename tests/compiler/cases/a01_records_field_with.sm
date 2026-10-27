@@ -1,0 +1,16 @@
+record Pt {
+    x: i32,
+    y: i32,
+}
+
+fn shift(p: Pt, d: i32) -> Pt {
+    return p with { x: p.x + d };
+}
+
+fn main() {
+    let a: Pt = Pt { y: 2, x: 1 };
+    let b: Pt = shift(a, 10);
+    assert(b.x == 11 && b.y == 2);
+    assert(a.x == 1);
+    return;
+}

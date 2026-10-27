@@ -3,6 +3,8 @@
 (tests/compiler/cases.json). The programs are hand-written Semantic source; expectations are
 written by hand from the language rules, independently of both compilers. Run once after editing.
 
+All cases are qualified against the frozen Bootstrap Contract v2 C0.
+
 expect:
   ok                    compiles, admitted, runs to completion
   trap:<fragment>       compiles, admitted, VM run fails with a message containing <fragment>
@@ -404,7 +406,7 @@ fn main() {
     return;
 }
 """)
-case("n08_break_outside_loop", "reject:context:'break' outside of a loop", """
+case("n08_break_outside_loop", "reject:context:'break' is allowed only inside a while loop", """
 fn main() {
     break;
 }
@@ -448,7 +450,7 @@ fn main() {
     return;
 }
 """)
-case("n14_arith_on_bool", "reject:type:arithmetic expects i32 operands", """
+case("n14_arith_on_bool", "reject:type:arithmetic expects i32 or u32 operands", """
 fn main() {
     assert(true + 1 == 2);
     return;
@@ -473,7 +475,7 @@ fn main() {
     return;
 }
 """)
-case("n18_unsupported_record", "reject:unsupported:top-level item 'record'", """
+case("p16_record_declaration_unused", "ok", """
 record R {
     a: i32,
 }
@@ -482,7 +484,7 @@ fn main() {
     return;
 }
 """)
-case("n19_unsupported_text_literal", "reject:unsupported:text literals are outside the supported subset", """
+case("p17_text_literal_binding", "ok", """
 fn main() {
     let s: text = "hi";
     return;
@@ -495,7 +497,7 @@ fn main() {
     return;
 }
 """)
-case("n21_unsupported_for_loop", "reject:unsupported:'.' (field access, ranges", """
+case("n21_unsupported_range_loop", "reject:unsupported:ranges are outside the supported subset", """
 fn main() {
     for i in 0..3 {
         assert(true);
@@ -519,7 +521,7 @@ fn main() {
     return;
 }
 """)
-case("n24_unsupported_type_annotation", "reject:unsupported:only i32 and bool types", """
+case("n24_unsupported_type_annotation", "reject:unsupported:type 'quad'", """
 fn f(q: quad) {
     return;
 }
@@ -555,12 +557,522 @@ fn main() {
     return;
 }
 """)
+case("p18_if_else_both_return", "ok", """
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+fn main() {
+    return;
+}
+""")
+case("p18_if_else_both_return", "ok", """
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+fn main() {
+    return;
+}
+""")
+case("p16_if_else_both_return", "ok", """
+fn sign(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
+    } else {
+        return 1;
+    }
+}
+
+fn main() {
+    assert(sign(5) == 1);
+    assert(sign(-3) == -1);
+    return;
+}
+""")
 case("n26_unexpected_character", "reject:syntax:unexpected character", """
 fn main() {
     let x: i32 = 1 @ 2;
     return;
 }
 """)
+
+# ---------------------------------------------------------------- aggregates, text, u32, match
+case("a01_records_field_with", "ok", """
+record Pt {
+    x: i32,
+    y: i32,
+}
+
+fn shift(p: Pt, d: i32) -> Pt {
+    return p with { x: p.x + d };
+}
+
+fn main() {
+    let a: Pt = Pt { y: 2, x: 1 };
+    let b: Pt = shift(a, 10);
+    assert(b.x == 11 && b.y == 2);
+    assert(a.x == 1);
+    return;
+}
+""")
+case("a02_nested_records", "ok", """
+record Inner {
+    v: i32,
+    ok: bool,
+}
+
+record Outer {
+    name: text,
+    inner: Inner,
+}
+
+fn main() {
+    let o: Outer = Outer { name: "box", inner: Inner { v: 7, ok: true } };
+    let o2: Outer = o with { inner: o.inner with { v: 8 } };
+    assert(o.inner.v == 7 && o2.inner.v == 8 && o2.inner.ok && o2.name == "box");
+    return;
+}
+""")
+case("a03_tuples_and_destructuring", "ok", """
+fn divmod(a: i32, b: i32) -> (i32, i32) {
+    return (a / b, a % b);
+}
+
+fn main() {
+    let (q, r) = divmod(17, 5);
+    assert(q == 3 && r == 2);
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
+    (x, y) = divmod(9, 4);
+    assert(x == 2 && y == 1);
+    let t: (i32, bool, text) = (1, false, "z");
+    let (n, f, s) = t;
+    assert(n == 1 && !f && s == "z");
+    return;
+}
+""")
+case("a04_sequences_push_len_index_pop", "ok", """
+fn squares(n: i32) -> Sequence(i32) {
+    let mut out: Sequence(i32) = [];
+    let mut i: i32 = 1;
+    while i <= n {
+        out = push(out, i * i);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn main() {
+    let xs: Sequence(i32) = squares(5);
+    assert(len(xs) == 5 && xs[0] == 1 && xs[4] == 25);
+    let ys: Sequence(i32) = pop(xs);
+    assert(len(ys) == 4 && len(xs) == 5);
+    let lit: Sequence(bool) = [true, false, true];
+    assert(lit[1] == false && len(lit) == 3);
+    return;
+}
+""")
+case("a05_for_in_and_while_break_continue", "ok", """
+fn main() {
+    let xs: Sequence(i32) = [3, 8, 1, 9, 4, 7];
+    let mut sum: i32 = 0;
+    let mut seen: i32 = 0;
+    for x in xs {
+        seen = seen + 1;
+        if x % 2 == 1 {
+            sum = sum + x;
+        }
+    }
+    assert(sum == 20 && seen == 6);
+    let mut i: i32 = 0;
+    let mut odd: i32 = 0;
+    while i < len(xs) {
+        let x: i32 = xs[i];
+        i = i + 1;
+        if x % 2 == 0 {
+            continue;
+        }
+        if x == 9 {
+            break;
+        }
+        odd = odd + x;
+    }
+    assert(odd == 4);
+    return;
+}
+""")
+case("a06_text_ops", "ok", """
+fn greet(name: text) -> text {
+    return "hello, " + name;
+}
+
+fn main() {
+    let g: text = greet("sm");
+    assert(g == "hello, sm");
+    assert(g != "hello");
+    assert(text_len(g) == 9u32);
+    assert(to_text(42) == "42" && to_text(true) == "true");
+    return;
+}
+""")
+case("a07_u32_arithmetic_and_ordering", "ok", """
+fn sum_to(n: u32) -> u32 {
+    let mut s: u32 = 0u32;
+    let mut i: u32 = 1u32;
+    while i <= n {
+        s = s + i;
+        i = i + 1u32;
+    }
+    return s;
+}
+
+fn main() {
+    assert(sum_to(10u32) == 55u32);
+    assert(4294967295u32 > 2147483647u32);
+    assert(7u32 / 2u32 == 3u32 && 7u32 % 2u32 == 1u32);
+    return;
+}
+""")
+case("a08_match_i32_u32_value_and_statement", "ok", """
+fn name_of(n: i32) -> text {
+    return match n {
+        1 => { "one" }
+        2 => { "two" }
+        _ => { "many" }
+    };
+}
+
+fn main() {
+    assert(name_of(1) == "one" && name_of(2) == "two" && name_of(9) == "many");
+    let mut hits: i32 = 0;
+    let b: u32 = 65u32;
+    match b {
+        65u32 => { hits = hits + 1; }
+        _ => { hits = hits + 100; }
+    }
+    assert(hits == 1);
+    return;
+}
+""")
+case("a09_option_match_text_bytes", "ok", """
+fn count_byte(s: text, target: u32) -> i32 {
+    let mut i: u32 = 0u32;
+    let mut n: i32 = 0;
+    let len_s: u32 = text_len(s);
+    while i < len_s {
+        let b: u32 = match text_byte_at(s, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == target {
+            n = n + 1;
+        }
+        i = i + 1u32;
+    }
+    return n;
+}
+
+fn main() {
+    assert(count_byte("banana", 97u32) == 3);
+    let first: text = match text_slice("semantic", 0u32, 3u32) {
+        Option::Some(t) => { t }
+        Option::None => { "" }
+    };
+    assert(first == "sem");
+    let none: bool = match text_byte_at("ab", 5u32) {
+        Option::Some(x) => { false }
+        Option::None => { true }
+    };
+    assert(none);
+    return;
+}
+""")
+case("a10_value_if_expression", "ok", """
+fn abs(x: i32) -> i32 {
+    let r: i32 = if x < 0 { -x } else { x };
+    return r;
+}
+
+fn main() {
+    assert(abs(-5) == 5 && abs(3) == 3);
+    let label: text = if abs(-1) == 1 { "ok" } else { "bad" };
+    assert(label == "ok");
+    return;
+}
+""")
+case("a11_sequence_of_records", "ok", """
+record Tok {
+    kind: i32,
+    word: text,
+}
+
+fn tokens() -> Sequence(Tok) {
+    let mut out: Sequence(Tok) = [];
+    out = push(out, Tok { kind: 1, word: "let" });
+    out = push(out, Tok { kind: 2, word: "x" });
+    return out;
+}
+
+fn main() {
+    let ts: Sequence(Tok) = tokens();
+    let mut words: text = "";
+    for t in ts {
+        words = words + t.word + ";";
+    }
+    assert(words == "let;x;" && ts[1].kind == 2);
+    return;
+}
+""")
+case("a12_mini_lexer_workload", "ok", """
+record Tok {
+    kind: i32,
+    start: u32,
+    stop: u32,
+}
+
+fn lex(src: text) -> Sequence(Tok) {
+    let n: u32 = text_len(src);
+    let mut toks: Sequence(Tok) = [];
+    let mut i: u32 = 0u32;
+    while i < n {
+        let b: u32 = match text_byte_at(src, i) {
+            Option::Some(x) => { x }
+            Option::None => { 0u32 }
+        };
+        if b == 32u32 {
+            i = i + 1u32;
+        } else if b >= 48u32 && b <= 57u32 {
+            let start: u32 = i;
+            let mut c: u32 = b;
+            while c >= 48u32 && c <= 57u32 {
+                i = i + 1u32;
+                c = match text_byte_at(src, i) {
+                    Option::Some(x) => { x }
+                    Option::None => { 0u32 }
+                };
+            }
+            toks = push(toks, Tok { kind: 1, start: start, stop: i });
+        } else {
+            toks = push(toks, Tok { kind: 2, start: i, stop: i + 1u32 });
+            i = i + 1u32;
+        }
+    }
+    return toks;
+}
+
+fn main() {
+    let ts: Sequence(Tok) = lex("12 + 345 * 6");
+    assert(len(ts) == 5);
+    assert(ts[0].kind == 1 && ts[1].kind == 2 && ts[2].stop == 8u32);
+    let w: text = match text_slice("12 + 345 * 6", ts[2].start, ts[2].stop) {
+        Option::Some(t) => { t }
+        Option::None => { "?" }
+    };
+    assert(w == "345");
+    return;
+}
+""")
+case("t05_index_out_of_bounds", "trap:out of bounds", """
+fn main() {
+    let xs: Sequence(i32) = [1, 2];
+    let v: i32 = xs[5];
+    return;
+}
+""")
+case("t06_u32_underflow", "trap:ArithmeticOverflow", """
+fn main() {
+    let z: u32 = 0u32 - 1u32;
+    return;
+}
+""")
+case("n27_unknown_field", "reject:name:has no field 'z'", """
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: 1 };
+    let v: i32 = p.z;
+    return;
+}
+""")
+case("n28_missing_record_field", "reject:type:must give every field exactly once", """
+record Pt {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: 1 };
+    return;
+}
+""")
+case("n29_wrong_field_type", "reject:type:field 'x' expects i32, got bool", """
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: true };
+    return;
+}
+""")
+case("n30_non_exhaustive_match", "reject:type:match is not exhaustive", """
+fn main() {
+    let n: i32 = 3;
+    let v: i32 = match n {
+        1 => { 10 }
+    };
+    return;
+}
+""")
+case("n31_match_arm_types_differ", "reject:type:match arms have different types", """
+fn main() {
+    let n: i32 = 3;
+    let v: i32 = match n {
+        1 => { 10 }
+        _ => { true }
+    };
+    return;
+}
+""")
+case("n32_empty_sequence_without_type", "reject:type:element type of '[]' cannot be inferred", """
+fn main() {
+    let xs = [];
+    return;
+}
+""")
+case("n33_push_wrong_element", "reject:type:invalid arguments for builtin 'push'", """
+fn main() {
+    let xs: Sequence(i32) = [1];
+    let ys: Sequence(i32) = push(xs, true);
+    return;
+}
+""")
+case("n34_mixed_u32_i32", "reject:type:of one family", """
+fn main() {
+    let a: u32 = 1u32;
+    let b: i32 = 2;
+    let c: u32 = a + b;
+    return;
+}
+""")
+case("n35_tuple_arity_mismatch", "reject:type:destructuring expects a 3-tuple", """
+fn main() {
+    let (a, b, c) = (1, 2);
+    return;
+}
+""")
+case("n36_record_equality_unsupported", "reject:unsupported:equality on", """
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let a: Pt = Pt { x: 1 };
+    let b: Pt = Pt { x: 1 };
+    assert(a == b);
+    return;
+}
+""")
+case("n37_option_pattern_on_i32", "reject:type:match pattern does not fit", """
+fn main() {
+    let n: i32 = 1;
+    let v: i32 = match n {
+        Option::Some(x) => { x }
+        _ => { 0 }
+    };
+    return;
+}
+""")
+case("n38_u32_literal_out_of_range", "reject:syntax:out of u32 range", """
+fn main() {
+    let x: u32 = 4294967296u32;
+    return;
+}
+""")
+
+case("n39_continue_inside_for", "reject:context:'continue' is allowed only inside a while loop", """
+fn main() {
+    let xs: Sequence(i32) = [1, 2];
+    for x in xs {
+        continue;
+    }
+    return;
+}
+""")
+case("n40_builtin_wrong_arity", "reject:type:expects 1 argument(s), got 0", """
+fn main() {
+    let n: i32 = len();
+    return;
+}
+""")
+
+case("a13_u32_match_unsuffixed_arms", "ok", """
+fn digit(b: u32) -> i32 {
+    return match b {
+        48 => { 0 }
+        49 => { 1 }
+        57 => { 9 }
+        _ => { 0 - 1 }
+    };
+}
+
+fn main() {
+    assert(digit(48u32) == 0 && digit(57u32) == 9 && digit(65u32) == -1);
+    return;
+}
+""")
+
+# Recovery regressions: literal ranges, value tails and existing tuple contracts.
+case("r01_padded_u32_one", "ok", "fn main() { let n: u32 = 00000000001u32; assert(n == 1u32); return; }")
+case("r02_padded_u32_zero", "ok", "fn main() { let n: u32 = 00000000000000000000000000000000u32; assert(n == 0u32); return; }")
+case("r03_padded_u32_max", "ok", "fn main() { let n: u32 = 0000000004294967295u32; assert(n == 4294967295u32); return; }")
+case("r04_long_u32_overflow", "reject:syntax:out of u32 range", "fn main() { let n: u32 = 999999999999999999999999u32; return; }")
+case("r05_bad_u32_suffix", "reject:unsupported:malformed", "fn main() { let n: u32 = 1u32wrong; return; }")
+case("r06_i32_max", "ok", "fn main() { let n: i32 = 2147483647i32; assert(n > 0); return; }")
+case("r07_padded_i32", "ok", "fn main() { let n: i32 = 00000000000001i32; assert(n == 1); return; }")
+case("r08_i32_min", "reject:syntax:out of i32 range", "fn main() { let n: i32 = -2147483648i32; assert(n < 0); return; }")
+case("r09_if_tail", "ok", "fn main() { let n: i32 = match 1 { 1 => { if true { 10 } else { 20 } } _ => { 0 } }; assert(n == 10); return; }")
+case("r10_nested_if_tail", "ok", "fn main() { let n: i32 = { if false { 1 } else { if true { 2 } else { 3 } } }; assert(n == 2); return; }")
+case("r11_if_followed_by_statement", "ok", "fn main() { let n: i32 = { if true { 1 } else { 2 }; assert(true); 3 }; assert(n == 3); return; }")
+case("r12_if_tail_without_else", "reject:syntax:needs an 'else'", "fn main() { let n: i32 = { if true { 1 } }; return; }")
+case("r13_if_branch_types", "reject:type:branches have different types", "fn main() { let n: i32 = { if true { 1 } else { false } }; return; }")
+case("r14_nested_block_tail", "ok", "fn main() { let n: i32 = { { if true { 1 } else { 2 } } }; assert(n == 1); return; }")
+case("r15_tuple_statement", "ok", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (3, 4); assert(x == 3 && y == 4); return; }")
+case("r16_tuple_block_contract_limit", "reject:syntax:expected '}'", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; let n: i32 = { (x, y) = (3, 4); x }; return; }")
+case("r17_tuple_assignment_arity", "reject:type:destructuring expects", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (1, 2, 3); return; }")
+case("r18_tuple_assignment_type", "reject:type:cannot assign", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (1, false); return; }")
+case("r19_tuple_assignment_unknown", "reject:name:undefined variable", "fn main() { let mut x: i32 = 0; (x, missing) = (1, 2); return; }")
+case("r20_tuple_assignment_target", "reject:syntax:expected name", "fn main() { let mut x: i32 = 0; (x, 1) = (1, 2); return; }")
+case("r21_match_guard_subset_limit", "reject:unsupported:match guards", "fn main() { let n: i32 = match 1 { 1 if true => { 2 } _ => { 0 } }; assert(n == 2); return; }")
+case("r22_i32_min_value", "ok", "fn main() { let n: i32 = 0 - 2147483647 - 1; assert(n < 0); return; }")
+
+case("r23_record_source_order", "trap:DivisionByZero", "record R { a: i32, b: i32 } fn div(x: i32) -> i32 { return 1 / x; } fn fail() -> i32 { assert(false); return 0; } fn main() { let p: R = R { b: div(0), a: fail() }; return; }")
+case("r24_with_source_order", "trap:DivisionByZero", "record R { a: i32, b: i32 } fn div(x: i32) -> i32 { return 1 / x; } fn fail() -> i32 { assert(false); return 0; } fn main() { let p: R = R { a: 0, b: 0 }; let q: R = p with { b: div(0), a: fail() }; return; }")
+case("r25_tuple_annotation_type", "reject:type:tuple annotation", "fn main() { let (x, y): (i32, bool) = (1, 2); return; }")
+case("r26_tuple_annotation_arity", "reject:type:tuple annotation", "fn main() { let (x, y): (i32, i32, bool) = (1, 2); return; }")
+case("r27_assignment_in_value_block", "reject:unsupported:statement-only", "fn main() { let mut x: i32 = 0; let n: i32 = { x = 1; x }; assert(n == 1); return; }")
+case("r28_return_in_value_block", "reject:unsupported:statement-only", "fn main() { let n: i32 = { return; 0 }; return; }")
+case("r29_while_in_value_block", "reject:unsupported:statement-only", "fn main() { let n: i32 = { while false {} 0 }; return; }")
+case("r30_empty_with", "reject:type:at least one explicit override", "record R { a: i32 } fn main() { let p: R = R { a: 1 }; let q: R = p with {}; return; }")
+case("r31_tuple_binding_in_value_block", "ok", "fn main() { let n: i32 = { let (x, y) = (1, 2); assert(x == 1); x + y }; assert(n == 3); return; }")
+case("r32_statement_if_in_value_block", "reject:syntax:needs an 'else'", "fn main() { let n: i32 = { if true { assert(true); } 2 }; return; }")
+
+case("r33_tuple_expression_statement", "ok", "fn main() { let x: i32 = 1; let y: i32 = 2; (x, y); return; }")
+case("r34_tuple_expression_call", "trap:assertion failed", "fn fail() -> i32 { assert(false); return 0; } fn main() { let x: i32 = 1; (x, fail()); return; }")
+
+case("r35_statement_match_tuple_assignment", "ok", "fn main() { let mut x: i32 = 0; let mut y: i32 = 0; match 1 { 1 => { (x, y) = (3, 4); } _ => {} } assert(x == 3 && y == 4); return; }")
+case("r36_statement_match_return", "ok", "fn main() { match 1 { 1 => { return; } _ => { return; } } }")
 
 def main():
     d = HERE / "cases"

@@ -1,0 +1,9 @@
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let p: Pt = Pt { x: 1 };
+    let v: i32 = p.z;
+    return;
+}

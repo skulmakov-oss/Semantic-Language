@@ -1,0 +1,1 @@
+fn main() { let (x, y): (i32, i32, bool) = (1, 2); return; }

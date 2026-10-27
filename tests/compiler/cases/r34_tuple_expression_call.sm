@@ -1,0 +1,1 @@
+fn fail() -> i32 { assert(false); return 0; } fn main() { let x: i32 = 1; (x, fail()); return; }

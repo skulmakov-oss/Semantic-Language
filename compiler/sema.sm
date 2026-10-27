@@ -1,12 +1,23 @@
 // sema: name resolution and type checking.
 //
-// Produces side tables keyed by AST node id instead of rewriting the tree:
-//   types:   expression node -> type (0 unit, 1 i32, 2 bool)
-//   slots:   Var / Let / Assign node -> local slot of its function
-//   callees: Call node -> index of the called function in Prog.funcs
+// Types are interned in a table; a type is an i32 id into it:
+//   0 unit  1 i32  2 bool  3 u32  4 text  (fixed ids)
+//   kind 5 Sequence(a)  6 tuple(kids)  7 record(name, a = record index)  8 Option(a)
+// Results are side tables keyed by AST node id instead of a rewritten tree:
+//   exprty:  expression node -> type id
+//   slots:   Var / Let / Assign / Name / Arm binding / hidden-result node -> local slot
+//   callees: Call node -> function index, or -1 - builtin code
+//   fieldix: Field node -> record slot index
 // and, per function, the ordered list of local slot names.
-// Diagnostic categories: name, type, context.
+// Diagnostic categories: name, type, context, unsupported.
 Import "parser.sm"
+
+record TyInfo {
+    k: i32,
+    a: i32,
+    kids: Sequence(i32),
+    name: text,
+}
 
 record Sym {
     name: text,
@@ -16,11 +27,19 @@ record Sym {
 
 record Sem {
     prog: Prog,
+    tys: Sequence(TyInfo),
+    tykey: Map(text, i32),
     fnidx: Map(text, i32),
-    types: Map(i32, i32),
+    recidx: Map(text, i32),
+    fptypes: Sequence(Sequence(i32)),
+    frets: Sequence(i32),
+    rftypes: Sequence(Sequence(i32)),
+    exprty: Map(i32, i32),
     slots: Map(i32, i32),
     callees: Map(i32, i32),
+    fieldix: Map(i32, i32),
     locals: Sequence(Sequence(text)),
+    u32arith: bool,
     err: text,
     cat: text,
     errpos: u32,
@@ -35,13 +54,101 @@ record C {
     fret: i32,
 }
 
-fn cerr(c: C, cat: text, msg: text, pos: u32) -> C {
-    if c.sem.err != "" {
-        return c;
+fn serr(s: Sem, cat: text, msg: text, pos: u32) -> Sem {
+    if s.err != "" {
+        return s;
     }
-    return c with { sem: c.sem with { err: msg, cat: cat, errpos: pos } };
+    return s with { err: msg, cat: cat, errpos: pos };
 }
 
+fn cerr(c: C, cat: text, msg: text, pos: u32) -> C {
+    return c with { sem: serr(c.sem, cat, msg, pos) };
+}
+
+// ---------------------------------------------------------------- type table
+fn intern(s: Sem, key: text, info: TyInfo) -> (Sem, i32) {
+    if map_contains(s.tykey, key) {
+        return (s, map_get(s.tykey, key, 0));
+    }
+    let id: i32 = len(s.tys);
+    return (s with { tys: push(s.tys, info), tykey: map_set(s.tykey, key, id) }, id);
+}
+
+fn seq_of(s: Sem, elem: i32) -> (Sem, i32) {
+    return intern(s, "S" + to_text(elem), TyInfo { k: 5, a: elem, kids: [], name: "" });
+}
+
+fn option_of(s: Sem, elem: i32) -> (Sem, i32) {
+    return intern(s, "O" + to_text(elem), TyInfo { k: 8, a: elem, kids: [], name: "" });
+}
+
+fn tuple_of(s: Sem, elems: Sequence(i32)) -> (Sem, i32) {
+    let mut key: text = "T";
+    for e in elems {
+        key = key + to_text(e) + ",";
+    }
+    return intern(s, key, TyInfo { k: 6, a: 0, kids: elems, name: "" });
+}
+
+fn ty_text(s: Sem, t: i32) -> text {
+    if t < 0 { return "?"; }
+    let info: TyInfo = s.tys[t];
+    if info.k == 0 { return "unit"; }
+    if info.k == 1 { return "i32"; }
+    if info.k == 2 { return "bool"; }
+    if info.k == 3 { return "u32"; }
+    if info.k == 4 { return "text"; }
+    if info.k == 5 { return "Sequence(" + ty_text(s, info.a) + ")"; }
+    if info.k == 8 { return "Option(" + ty_text(s, info.a) + ")"; }
+    if info.k == 7 { return info.name; }
+    let mut out: text = "(";
+    let mut first: bool = true;
+    for e in info.kids {
+        if !first { out = out + ", "; }
+        out = out + ty_text(s, e);
+        first = false;
+    }
+    return out + ")";
+}
+
+// Resolves a type node to a type id (-1 on error).
+fn resolve_type(s0: Sem, id: i32) -> (Sem, i32) {
+    let nd: Node = s0.prog.nodes[id];
+    let mut s: Sem = s0;
+    if nd.k == 61 {
+        let mut elems: Sequence(i32) = [];
+        for kid in nd.kids {
+            let mut t: i32 = 0;
+            (s, t) = resolve_type(s, kid);
+            if t < 0 { return (s, 0 - 1); }
+            elems = push(elems, t);
+        }
+        return tuple_of(s, elems);
+    }
+    let n: text = nd.name;
+    if len(nd.kids) == 0 {
+        if n == "i32" { return (s, 1); }
+        if n == "bool" { return (s, 2); }
+        if n == "u32" { return (s, 3); }
+        if n == "text" { return (s, 4); }
+        if map_contains(s.recidx, n) {
+            let ri: i32 = map_get(s.recidx, n, 0);
+            return intern(s, "R" + n, TyInfo { k: 7, a: ri, kids: [], name: n });
+        }
+    } else if len(nd.kids) == 1 && (n == "Sequence" || n == "Option") {
+        let mut e: i32 = 0;
+        (s, e) = resolve_type(s, nd.kids[0]);
+        if e < 0 { return (s, 0 - 1); }
+        if n == "Sequence" { return seq_of(s, e); }
+        return option_of(s, e);
+    }
+    if n == "Map" || n == "Result" || n == "quad" || n == "f64" || n == "fx" || n == "Bytes" || n == "Sequence" || n == "Option" {
+        return (serr(s, "unsupported", "type '" + n + "' (as written) is outside the supported subset", nd.pos), 0 - 1);
+    }
+    return (serr(s, "name", "unknown type '" + n + "'", nd.pos), 0 - 1);
+}
+
+// ---------------------------------------------------------------- scopes
 fn lookup(syms: Sequence(Sym), name: text) -> i32 {
     let mut i: i32 = len(syms) - 1;
     while i >= 0 {
@@ -53,23 +160,136 @@ fn lookup(syms: Sequence(Sym), name: text) -> i32 {
     return 0 - 1;
 }
 
-fn set_type(c: C, id: i32, t: i32) -> (C, i32) {
-    return (c with { sem: c.sem with { types: map_set(c.sem.types, id, t) } }, t);
+fn typed(c: C, id: i32, t: i32) -> (C, i32) {
+    return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, t) } }, t);
 }
 
-// Declares a local (parameter or let) and records its slot for `id`.
-fn declare(c: C, id: i32, name: text, t: i32) -> C {
+// Declares a local (parameter, binding or hidden temporary) and records its
+// slot for node `id` (pass a negative id when nothing should be recorded).
+fn declare(c: C, id: i32, name: text, t: i32) -> (C, i32) {
     let slot: i32 = len(c.names);
-    let sem: Sem = c.sem with { slots: map_set(c.sem.slots, id, slot) };
-    return c with { sem: sem, syms: push(c.syms, Sym { name: name, ty: t, slot: slot }), names: push(c.names, name) };
+    let mut sem: Sem = c.sem;
+    if id >= 0 {
+        sem = sem with { slots: map_set(sem.slots, id, slot) };
+    }
+    return (c with { sem: sem, syms: push(c.syms, Sym { name: name, ty: t, slot: slot }), names: push(c.names, name) }, slot);
 }
 
-fn check_expr(c0: C, id: i32) -> (C, i32) {
+fn pop_scope(c: C, saved: i32) -> C {
+    let mut syms: Sequence(Sym) = c.syms;
+    while len(syms) > saved {
+        syms = pop(syms);
+    }
+    return c with { syms: syms };
+}
+
+// ---------------------------------------------------------------- expressions
+fn is_scalar_eq(t: i32) -> bool {
+    return t >= 1 && t <= 4;
+}
+
+// Builtin code of a call name, or 0.
+fn builtin_code(name: text) -> i32 {
+    if name == "len" { return 1; }
+    if name == "push" { return 2; }
+    if name == "pop" { return 3; }
+    if name == "to_text" { return 4; }
+    if name == "text_len" { return 5; }
+    if name == "text_byte_at" { return 6; }
+    if name == "text_slice" { return 7; }
+    return 0;
+}
+
+fn check_args(c0: C, nd: Node, wants: Sequence(i32)) -> (C, Sequence(i32)) {
+    let mut c: C = c0;
+    let mut tys: Sequence(i32) = [];
+    let mut i: i32 = 0;
+    while i < len(nd.kids) && c.sem.err == "" {
+        let w: i32 = if i < len(wants) { wants[i] } else { 0 - 1 };
+        let mut t: i32 = 0;
+        (c, t) = check_value(c, nd.kids[i], w, "argument");
+        tys = push(tys, t);
+        i = i + 1;
+    }
+    return (c, tys);
+}
+
+fn check_builtin(c0: C, id: i32, nd: Node, code: i32) -> (C, i32) {
+    let mut c: C = c0;
+    let mut tys: Sequence(i32) = [];
+    (c, tys) = check_args(c, nd, []);
+    if c.sem.err != "" { return (c, 0 - 1); }
+    let n: i32 = len(tys);
+    let bad: text = "invalid arguments for builtin '" + nd.name + "'";
+    c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, 0 - 1 - code) } };
+    // arity first: the checks below index tys, and `&&` is not short-circuit
+    let arity: i32 = match code {
+        1 => { 1 }
+        2 => { 2 }
+        3 => { 1 }
+        4 => { 1 }
+        5 => { 1 }
+        6 => { 2 }
+        _ => { 3 }
+    };
+    if n != arity {
+        return (cerr(c, "type", bad + ": expects " + to_text(arity) + " argument(s), got " + to_text(n), nd.pos), 0 - 1);
+    }
+    if code == 1 {
+        if n == 1 && c.sem.tys[tys[0]].k == 5 { return typed(c, id, 1); }
+    } else if code == 2 {
+        if n == 2 && c.sem.tys[tys[0]].k == 5 && c.sem.tys[tys[0]].a == tys[1] { return typed(c, id, tys[0]); }
+    } else if code == 3 {
+        if n == 1 && c.sem.tys[tys[0]].k == 5 { return typed(c, id, tys[0]); }
+    } else if code == 4 {
+        if n == 1 && tys[0] >= 1 && tys[0] <= 4 { return typed(c, id, 4); }
+    } else if code == 5 {
+        if n == 1 && tys[0] == 4 { return typed(c, id, 3); }
+    } else if code == 6 {
+        if n == 2 && tys[0] == 4 && tys[1] == 3 {
+            let mut o: i32 = 0;
+            let mut s: Sem = c.sem;
+            (s, o) = option_of(s, 3);
+            return typed(c with { sem: s }, id, o);
+        }
+    } else if code == 7 {
+        if n == 3 && tys[0] == 4 && tys[1] == 3 && tys[2] == 3 {
+            let mut o: i32 = 0;
+            let mut s: Sem = c.sem;
+            (s, o) = option_of(s, 4);
+            return typed(c with { sem: s }, id, o);
+        }
+    }
+    return (cerr(c, "type", bad, nd.pos), 0 - 1);
+}
+
+// A value expression must not be unit; `want` is the expected type or -1.
+fn check_value(c0: C, id: i32, want: i32, what: text) -> (C, i32) {
+    let mut c: C = c0;
+    let mut t: i32 = 0;
+    (c, t) = check_expr(c, id, want);
+    if t == 0 {
+        return (cerr(c, "type", what + " has unit type", c.sem.prog.nodes[id].pos), 0 - 1);
+    }
+    return (c, t);
+}
+
+fn expect_type(c: C, got: i32, want: i32, what: text, pos: u32) -> C {
+    if got >= 0 && want >= 0 && got != want {
+        return cerr(c, "type", what + " expects " + ty_text(c.sem, want) + ", got " + ty_text(c.sem, got), pos);
+    }
+    return c;
+}
+
+fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
     let nd: Node = c0.sem.prog.nodes[id];
     let mut c: C = c0;
-    if nd.k == 1 { return set_type(c, id, 1); }
-    if nd.k == 2 { return set_type(c, id, 2); }
-    if nd.k == 4 {
+    let k: i32 = nd.k;
+    if k == 1 { return typed(c, id, 1); }
+    if k == 2 { return typed(c, id, 2); }
+    if k == 8 { return typed(c, id, 3); }
+    if k == 3 { return typed(c, id, 4); }
+    if k == 4 {
         let at: i32 = lookup(c.syms, nd.name);
         if at < 0 {
             if map_contains(c.sem.fnidx, nd.name) {
@@ -79,92 +299,303 @@ fn check_expr(c0: C, id: i32) -> (C, i32) {
         }
         let sym: Sym = c.syms[at];
         c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
-        return set_type(c, id, sym.ty);
+        return typed(c, id, sym.ty);
     }
-    if nd.k == 7 {
+    if k == 7 {
         if !map_contains(c.sem.fnidx, nd.name) {
+            let code: i32 = builtin_code(nd.name);
+            if code > 0 {
+                return check_builtin(c, id, nd, code);
+            }
             return (cerr(c, "name", "unknown function '" + nd.name + "'", nd.pos), 0 - 1);
         }
         let fi: i32 = map_get(c.sem.fnidx, nd.name, 0);
-        let f: Func = c.sem.prog.funcs[fi];
-        if len(nd.kids) != len(f.ptypes) {
-            return (cerr(c, "type", "function '" + nd.name + "' expects " + to_text(len(f.ptypes)) + " argument(s), got " + to_text(len(nd.kids)), nd.pos), 0 - 1);
+        let ptys: Sequence(i32) = c.sem.fptypes[fi];
+        if len(nd.kids) != len(ptys) {
+            return (cerr(c, "type", "function '" + nd.name + "' expects " + to_text(len(ptys)) + " argument(s), got " + to_text(len(nd.kids)), nd.pos), 0 - 1);
         }
+        let mut tys: Sequence(i32) = [];
+        (c, tys) = check_args(c, nd, ptys);
         let mut i: i32 = 0;
-        while i < len(nd.kids) {
-            let mut at: i32 = 0;
-            (c, at) = check_expr(c, nd.kids[i]);
-            if at < 0 { return (c, 0 - 1); }
-            if at != f.ptypes[i] {
-                return (cerr(c, "type", "argument " + to_text(i + 1) + " of '" + nd.name + "' expects " + type_name(f.ptypes[i]) + ", got " + type_name(at), c.sem.prog.nodes[nd.kids[i]].pos), 0 - 1);
+        while i < len(tys) && c.sem.err == "" {
+            c = expect_type(c, tys[i], ptys[i], "argument " + to_text(i + 1) + " of '" + nd.name + "'", c.sem.prog.nodes[nd.kids[i]].pos);
+            i = i + 1;
+        }
+        if c.sem.err != "" { return (c, 0 - 1); }
+        c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, fi) } };
+        return typed(c, id, c.sem.frets[fi]);
+    }
+    let mut l: i32 = 0;
+    let mut r: i32 = 0;
+    if k == 5 {
+        (c, l) = check_value(c, nd.a, 0 - 1, "operand");
+        if l < 0 { return (c, 0 - 1); }
+        if nd.v == 31 && l != 1 { return (cerr(c, "type", "unary '-' expects i32, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
+        if nd.v == 43 && l != 2 { return (cerr(c, "type", "'!' expects bool, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
+        return typed(c, id, l);
+    }
+    if k == 6 {
+        (c, l) = check_value(c, nd.a, 0 - 1, "operand");
+        if l < 0 { return (c, 0 - 1); }
+        (c, r) = check_value(c, nd.b, 0 - 1, "operand");
+        if r < 0 { return (c, 0 - 1); }
+        let op: i32 = nd.v;
+        if op >= 30 && op <= 34 {
+            if op == 30 && l == 4 && r == 4 { return typed(c, id, 4); }
+            if l == 3 && r == 3 {
+                c = c with { sem: c.sem with { u32arith: true } };
+                return typed(c, id, 3);
+            }
+            if l != 1 || r != 1 {
+                return (cerr(c, "type", "arithmetic expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
+            }
+            return typed(c, id, 1);
+        }
+        if op >= 37 && op <= 40 {
+            if l == 3 && r == 3 {
+                c = c with { sem: c.sem with { u32arith: true } };
+                return typed(c, id, 2);
+            }
+            if l != 1 || r != 1 {
+                return (cerr(c, "type", "ordering expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
+            }
+            return typed(c, id, 2);
+        }
+        if op == 35 || op == 36 {
+            if l != r {
+                return (cerr(c, "type", "cannot compare " + ty_text(c.sem, l) + " with " + ty_text(c.sem, r), nd.pos), 0 - 1);
+            }
+            if !is_scalar_eq(l) {
+                return (cerr(c, "unsupported", "equality on " + ty_text(c.sem, l) + " is outside the supported subset", nd.pos), 0 - 1);
+            }
+            return typed(c, id, 2);
+        }
+        if l != 2 || r != 2 {
+            return (cerr(c, "type", "logical operator expects bool operands, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
+        }
+        return typed(c, id, 2);
+    }
+    if k == 20 {
+        (c, l) = check_value(c, nd.a, 0 - 1, "field base");
+        if l < 0 { return (c, 0 - 1); }
+        let info: TyInfo = c.sem.tys[l];
+        if info.k != 7 {
+            return (cerr(c, "type", "field access on non-record type " + ty_text(c.sem, l), nd.pos), 0 - 1);
+        }
+        let rec: Rec = c.sem.prog.recs[info.a];
+        let mut i: i32 = 0;
+        while i < len(rec.fnames) {
+            if rec.fnames[i] == nd.name {
+                c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, id, i) } };
+                return typed(c, id, c.sem.rftypes[info.a][i]);
             }
             i = i + 1;
         }
-        c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, fi) } };
-        return set_type(c, id, f.ret);
+        return (cerr(c, "name", "record '" + rec.name + "' has no field '" + nd.name + "'", nd.pos), 0 - 1);
     }
-    let mut l: i32 = 0;
-    if nd.k == 5 {
-        (c, l) = check_expr(c, nd.a);
+    if k == 29 || k == 21 {
+        if k == 21 && len(nd.kids) == 0 {
+            return (cerr(c, "type", "record copy-with requires at least one explicit override field", nd.pos), 0 - 1);
+        }
+        let mut ri: i32 = 0;
+        let mut rt: i32 = 0;
+        if k == 29 {
+            if !map_contains(c.sem.recidx, nd.name) {
+                return (cerr(c, "name", "unknown record '" + nd.name + "'", nd.pos), 0 - 1);
+            }
+            ri = map_get(c.sem.recidx, nd.name, 0);
+            let mut s: Sem = c.sem;
+            (s, rt) = intern(s, "R" + nd.name, TyInfo { k: 7, a: ri, kids: [], name: nd.name });
+            c = c with { sem: s };
+        } else {
+            (c, rt) = check_value(c, nd.a, 0 - 1, "record base");
+            if rt < 0 { return (c, 0 - 1); }
+            if c.sem.tys[rt].k != 7 {
+                return (cerr(c, "type", "'with' needs a record, got " + ty_text(c.sem, rt), nd.pos), 0 - 1);
+            }
+            ri = c.sem.tys[rt].a;
+        }
+        let rec: Rec = c.sem.prog.recs[ri];
+        let mut seen: Map(text, bool) = map_empty();
+        for fid in nd.kids {
+            let fi: Node = c.sem.prog.nodes[fid];
+            let mut slot: i32 = 0 - 1;
+            let mut j: i32 = 0;
+            while j < len(rec.fnames) {
+                if rec.fnames[j] == fi.name { slot = j; }
+                j = j + 1;
+            }
+            if slot < 0 {
+                return (cerr(c, "name", "record '" + rec.name + "' has no field '" + fi.name + "'", fi.pos), 0 - 1);
+            }
+            if map_contains(seen, fi.name) {
+                return (cerr(c, "type", "field '" + fi.name + "' given more than once", fi.pos), 0 - 1);
+            }
+            seen = map_set(seen, fi.name, true);
+            let ft: i32 = c.sem.rftypes[ri][slot];
+            let mut vt: i32 = 0;
+            (c, vt) = check_value(c, fi.a, ft, "field '" + fi.name + "'");
+            c = expect_type(c, vt, ft, "field '" + fi.name + "'", fi.pos);
+            c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, fid, slot) } };
+            if c.sem.err != "" { return (c, 0 - 1); }
+        }
+        if k == 29 && len(nd.kids) != len(rec.fnames) {
+            return (cerr(c, "type", "record literal '" + rec.name + "' must give every field exactly once", nd.pos), 0 - 1);
+        }
+        return typed(c, id, rt);
+    }
+    if k == 22 {
+        let mut elems: Sequence(i32) = [];
+        let mut wk: Sequence(i32) = [];
+        if want >= 0 {
+            wk = c.sem.tys[want].kids;
+        }
+        let mut i: i32 = 0;
+        while i < len(nd.kids) && c.sem.err == "" {
+            let w: i32 = if i < len(wk) { wk[i] } else { 0 - 1 };
+            let mut t: i32 = 0;
+            (c, t) = check_value(c, nd.kids[i], w, "tuple item");
+            elems = push(elems, t);
+            i = i + 1;
+        }
+        if c.sem.err != "" { return (c, 0 - 1); }
+        let mut s: Sem = c.sem;
+        let mut tt: i32 = 0;
+        (s, tt) = tuple_of(s, elems);
+        return typed(c with { sem: s }, id, tt);
+    }
+    if k == 23 {
+        let mut elem: i32 = 0 - 1;
+        if want >= 0 {
+            if c.sem.tys[want].k == 5 {
+                elem = c.sem.tys[want].a;
+            }
+        }
+        for kid in nd.kids {
+            let mut t: i32 = 0;
+            (c, t) = check_value(c, kid, elem, "sequence item");
+            if t < 0 { return (c, 0 - 1); }
+            if elem < 0 { elem = t; }
+            c = expect_type(c, t, elem, "sequence item", c.sem.prog.nodes[kid].pos);
+        }
+        if c.sem.err != "" { return (c, 0 - 1); }
+        if elem < 0 {
+            return (cerr(c, "type", "the element type of '[]' cannot be inferred here; add a type annotation", nd.pos), 0 - 1);
+        }
+        let mut s: Sem = c.sem;
+        let mut st: i32 = 0;
+        (s, st) = seq_of(s, elem);
+        return typed(c with { sem: s }, id, st);
+    }
+    if k == 24 {
+        (c, l) = check_value(c, nd.a, 0 - 1, "indexed value");
         if l < 0 { return (c, 0 - 1); }
-        if nd.v == 31 && l != 1 { return (cerr(c, "type", "unary '-' expects i32, got " + type_name(l), nd.pos), 0 - 1); }
-        if nd.v == 43 && l != 2 { return (cerr(c, "type", "'!' expects bool, got " + type_name(l), nd.pos), 0 - 1); }
-        return set_type(c, id, l);
-    }
-    let mut r: i32 = 0;
-    (c, l) = check_expr(c, nd.a);
-    if l < 0 { return (c, 0 - 1); }
-    (c, r) = check_expr(c, nd.b);
-    if r < 0 { return (c, 0 - 1); }
-    let op: i32 = nd.v;
-    if l == 0 || r == 0 {
-        return (cerr(c, "type", "a unit value cannot be an operand", nd.pos), 0 - 1);
-    }
-    if op >= 30 && op <= 34 {
-        if l != 1 || r != 1 {
-            return (cerr(c, "type", "arithmetic expects i32 operands, got " + type_name(l) + " and " + type_name(r), nd.pos), 0 - 1);
+        (c, r) = check_value(c, nd.b, 1, "index");
+        if r < 0 { return (c, 0 - 1); }
+        if c.sem.tys[l].k != 5 {
+            return (cerr(c, "type", "indexing expects a Sequence, got " + ty_text(c.sem, l), nd.pos), 0 - 1);
         }
-        return set_type(c, id, 1);
+        c = expect_type(c, r, 1, "index", nd.pos);
+        return typed(c, id, c.sem.tys[l].a);
     }
-    if op >= 37 && op <= 40 {
-        if l != 1 || r != 1 {
-            return (cerr(c, "type", "ordering expects i32 operands, got " + type_name(l) + " and " + type_name(r), nd.pos), 0 - 1);
+    if k == 27 {
+        let saved: i32 = len(c.syms);
+        for kid in nd.kids {
+            if c.sem.err == "" {
+                c = check_stmt(c, kid);
+            }
         }
-        return set_type(c, id, 2);
+        let mut t: i32 = 0;
+        if nd.a >= 0 && c.sem.err == "" {
+            (c, t) = check_expr(c, nd.a, want);
+        }
+        c = pop_scope(c, saved);
+        if c.sem.err != "" { return (c, 0 - 1); }
+        return typed(c, id, t);
     }
-    if op == 35 || op == 36 {
+    if k == 26 {
+        c = check_cond(c, nd.a, "if condition");
+        (c, l) = check_expr(c, nd.b, want);
+        (c, r) = check_expr(c, nd.c, if want >= 0 { want } else { l });
+        if c.sem.err != "" { return (c, 0 - 1); }
         if l != r {
-            return (cerr(c, "type", "cannot compare " + type_name(l) + " with " + type_name(r), nd.pos), 0 - 1);
+            return (cerr(c, "type", "'if' branches have different types: " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
         }
-        return set_type(c, id, 2);
+        if l > 0 {
+            let mut slot: i32 = 0;
+            (c, slot) = declare(c, id, "$if", l);
+        }
+        return typed(c, id, l);
     }
-    if l != 2 || r != 2 {
-        return (cerr(c, "type", "logical operator expects bool operands, got " + type_name(l) + " and " + type_name(r), nd.pos), 0 - 1);
+    if k == 25 {
+        return check_match(c, id, nd, want);
     }
-    return set_type(c, id, 2);
+    return (cerr(c, "unsupported", "expression form outside the supported subset", nd.pos), 0 - 1);
 }
 
-// A value expression must not be unit.
-fn check_value(c0: C, id: i32, what: text) -> (C, i32) {
+fn check_match(c0: C, id: i32, nd: Node, want: i32) -> (C, i32) {
     let mut c: C = c0;
-    let mut t: i32 = 0;
-    (c, t) = check_expr(c, id);
-    if t == 0 {
-        return (cerr(c, "type", what + " has unit type", c.sem.prog.nodes[id].pos), 0 - 1);
+    let mut st: i32 = 0;
+    (c, st) = check_value(c, nd.a, 0 - 1, "match scrutinee");
+    if st < 0 { return (c, 0 - 1); }
+    let sk: i32 = c.sem.tys[st].k;
+    let is_opt: bool = sk == 8;
+    if st != 1 && st != 3 && !is_opt {
+        return (cerr(c, "unsupported", "match on " + ty_text(c.sem, st) + " is outside the supported subset (i32, u32, Option)", nd.pos), 0 - 1);
     }
-    return (c, t);
+    let mut result: i32 = want;
+    let mut has_wild: bool = false;
+    let mut has_some: bool = false;
+    let mut has_none: bool = false;
+    for arm_id in nd.kids {
+        let arm: Node = c.sem.prog.nodes[arm_id];
+        let pk: i32 = arm.v;
+        if pk == 0 { has_wild = true; }
+        if (pk == 1 && st != 1 && st != 3) || (pk == 2 && st != 3) || ((pk == 3 || pk == 4) && !is_opt) {
+            return (cerr(c, "type", "match pattern does not fit scrutinee type " + ty_text(c.sem, st), arm.pos), 0 - 1);
+        }
+        if is_opt && pk == 1 {
+            return (cerr(c, "type", "match pattern does not fit scrutinee type " + ty_text(c.sem, st), arm.pos), 0 - 1);
+        }
+        let saved: i32 = len(c.syms);
+        if pk == 3 {
+            has_some = true;
+            let mut slot: i32 = 0;
+            (c, slot) = declare(c, arm_id, arm.name, c.sem.tys[st].a);
+        }
+        if pk == 4 { has_none = true; }
+        let mut bt: i32 = 0;
+        (c, bt) = check_expr(c, arm.a, result);
+        c = pop_scope(c, saved);
+        if c.sem.err != "" { return (c, 0 - 1); }
+        if result < 0 {
+            result = bt;
+        } else if bt != result {
+            return (cerr(c, "type", "match arms have different types: " + ty_text(c.sem, result) + " and " + ty_text(c.sem, bt), arm.pos), 0 - 1);
+        }
+    }
+    if !has_wild && !(is_opt && has_some && has_none) {
+        return (cerr(c, "type", "match is not exhaustive; add a '_' arm", nd.pos), 0 - 1);
+    }
+    if result < 0 { result = 0; }
+    if result > 0 {
+        let mut slot: i32 = 0;
+        (c, slot) = declare(c, id, "$match", result);
+    }
+    return typed(c, id, result);
 }
 
 fn check_cond(c0: C, id: i32, what: text) -> C {
     let mut c: C = c0;
     let mut t: i32 = 0;
-    (c, t) = check_value(c, id, what);
+    (c, t) = check_value(c, id, 2, what);
     if t > 0 && t != 2 {
-        return cerr(c, "type", what + " expects bool, got " + type_name(t), c.sem.prog.nodes[id].pos);
+        return cerr(c, "type", what + " expects bool, got " + ty_text(c.sem, t), c.sem.prog.nodes[id].pos);
     }
     return c;
 }
 
+// ---------------------------------------------------------------- statements
 fn check_block(c0: C, id: i32) -> C {
     let nd: Node = c0.sem.prog.nodes[id];
     let saved: i32 = len(c0.syms);
@@ -174,63 +605,107 @@ fn check_block(c0: C, id: i32) -> C {
             c = check_stmt(c, kid);
         }
     }
-    let mut syms: Sequence(Sym) = c.syms;
-    while len(syms) > saved {
-        syms = pop(syms);
-    }
-    return c with { syms: syms };
+    return pop_scope(c, saved);
 }
 
 fn check_stmt(c0: C, id: i32) -> C {
     let nd: Node = c0.sem.prog.nodes[id];
     let mut c: C = c0;
     let mut t: i32 = 0;
-    if nd.k == 10 {
-        (c, t) = check_value(c, nd.a, "initializer of '" + nd.name + "'");
-        if t < 0 { return c; }
-        if nd.v != 0 && nd.v != t {
-            return cerr(c, "type", "variable '" + nd.name + "' declared " + type_name(nd.v) + " but initialized with " + type_name(t), nd.pos);
+    let k: i32 = nd.k;
+    if k == 10 {
+        let mut want: i32 = 0 - 1;
+        if nd.v >= 0 {
+            let mut s: Sem = c.sem;
+            (s, want) = resolve_type(s, nd.v);
+            c = c with { sem: s };
+            if want < 0 { return c; }
         }
-        return declare(c, id, nd.name, t);
+        (c, t) = check_value(c, nd.a, want, "initializer of '" + nd.name + "'");
+        if t < 0 { return c; }
+        if want >= 0 && want != t {
+            return cerr(c, "type", "variable '" + nd.name + "' declared " + ty_text(c.sem, want) + " but initialized with " + ty_text(c.sem, t), nd.pos);
+        }
+        let mut slot: i32 = 0;
+        (c, slot) = declare(c, id, nd.name, t);
+        return c;
     }
-    if nd.k == 11 {
+    if k == 11 {
         let at: i32 = lookup(c.syms, nd.name);
         if at < 0 {
             return cerr(c, "name", "assignment to undefined variable '" + nd.name + "'", nd.pos);
         }
-        (c, t) = check_value(c, nd.a, "assigned value");
-        if t < 0 { return c; }
         let sym: Sym = c.syms[at];
+        (c, t) = check_value(c, nd.a, sym.ty, "assigned value");
+        if t < 0 { return c; }
         if t != sym.ty {
-            return cerr(c, "type", "cannot assign " + type_name(t) + " to '" + nd.name + "' of type " + type_name(sym.ty), nd.pos);
+            return cerr(c, "type", "cannot assign " + ty_text(c.sem, t) + " to '" + nd.name + "' of type " + ty_text(c.sem, sym.ty), nd.pos);
         }
         return c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
     }
-    if nd.k == 17 {
-        return check_cond(c, nd.a, "assert");
-    }
-    if nd.k == 16 {
-        (c, t) = check_expr(c, nd.a);
+    if k == 40 || k == 41 {
+        let mut want: i32 = 0 - 1;
+        if k == 40 && nd.v >= 0 {
+            let mut s: Sem = c.sem;
+            (s, want) = resolve_type(s, nd.v);
+            c = c with { sem: s };
+            if want < 0 { return c; }
+        }
+        (c, t) = check_value(c, nd.a, want, "destructured value");
+        if t < 0 { return c; }
+        if want >= 0 && t != want {
+            return cerr(c, "type", "tuple annotation expects " + ty_text(c.sem, want) + ", got " + ty_text(c.sem, t), nd.pos);
+        }
+        let info: TyInfo = c.sem.tys[t];
+        if info.k != 6 || len(info.kids) != len(nd.kids) {
+            return cerr(c, "type", "destructuring expects a " + to_text(len(nd.kids)) + "-tuple, got " + ty_text(c.sem, t), nd.pos);
+        }
+        let mut i: i32 = 0;
+        while i < len(nd.kids) && c.sem.err == "" {
+            let nm: Node = c.sem.prog.nodes[nd.kids[i]];
+            if k == 40 {
+                let mut slot: i32 = 0;
+                (c, slot) = declare(c, nd.kids[i], nm.name, info.kids[i]);
+            } else {
+                let at: i32 = lookup(c.syms, nm.name);
+                if at < 0 {
+                    return cerr(c, "name", "assignment to undefined variable '" + nm.name + "'", nm.pos);
+                }
+                let sym: Sym = c.syms[at];
+                if sym.ty != info.kids[i] {
+                    return cerr(c, "type", "cannot assign " + ty_text(c.sem, info.kids[i]) + " to '" + nm.name + "' of type " + ty_text(c.sem, sym.ty), nm.pos);
+                }
+                c = c with { sem: c.sem with { slots: map_set(c.sem.slots, nd.kids[i], sym.slot) } };
+            }
+            i = i + 1;
+        }
         return c;
     }
-    if nd.k == 14 {
+    if k == 17 {
+        return check_cond(c, nd.a, "assert");
+    }
+    if k == 16 {
+        (c, t) = check_expr(c, nd.a, 0 - 1);
+        return c;
+    }
+    if k == 14 {
         if nd.a < 0 {
             if c.fret != 0 {
-                return cerr(c, "type", "'return;' in a function returning " + type_name(c.fret), nd.pos);
+                return cerr(c, "type", "'return;' in a function returning " + ty_text(c.sem, c.fret), nd.pos);
             }
             return c;
         }
-        (c, t) = check_value(c, nd.a, "returned value");
+        (c, t) = check_value(c, nd.a, c.fret, "returned value");
         if t < 0 { return c; }
         if c.fret == 0 {
             return cerr(c, "type", "a function returning unit cannot return a value", nd.pos);
         }
         if t != c.fret {
-            return cerr(c, "type", "function returns " + type_name(c.fret) + " but this returns " + type_name(t), nd.pos);
+            return cerr(c, "type", "function returns " + ty_text(c.sem, c.fret) + " but this returns " + ty_text(c.sem, t), nd.pos);
         }
         return c;
     }
-    if nd.k == 12 {
+    if k == 12 {
         c = check_cond(c, nd.a, "if condition");
         if c.sem.err != "" { return c; }
         c = check_block(c, nd.b);
@@ -243,23 +718,54 @@ fn check_stmt(c0: C, id: i32) -> C {
         }
         return c;
     }
-    if nd.k == 13 {
+    if k == 13 {
         c = check_cond(c, nd.a, "while condition");
         if c.sem.err != "" { return c; }
         c = check_block(c with { loops: c.loops + 1 }, nd.b);
         return c with { loops: c.loops - 1 };
     }
-    if nd.k == 18 || nd.k == 19 {
+    if k == 42 {
+        (c, t) = check_value(c, nd.a, 0 - 1, "loop sequence");
+        if t < 0 { return c; }
+        if c.sem.tys[t].k != 5 {
+            return cerr(c, "type", "'for' iterates a Sequence, got " + ty_text(c.sem, t), nd.pos);
+        }
+        let saved: i32 = len(c.syms);
+        // hidden slots: the iterated sequence and the index, then the loop variable
+        let mut s0: i32 = 0;
+        (c, s0) = declare(c, id, "$seq", t);
+        let mut s1: i32 = 0;
+        (c, s1) = declare(c, 0 - 1, "$idx", 1);
+        let mut s2: i32 = 0;
+        (c, s2) = declare(c, 0 - 1, nd.name, c.sem.tys[t].a);
+        // a `for` body does not admit break/continue (only while/loop do)
+        let outer: i32 = c.loops;
+        c = check_block(c with { loops: 0 }, nd.b);
+        return pop_scope(c with { loops: outer }, saved);
+    }
+    if k == 18 || k == 19 {
         if c.loops == 0 {
-            let w: text = if nd.k == 18 { "break" } else { "continue" };
-            return cerr(c, "context", "'" + w + "' outside of a loop", nd.pos);
+            let w: text = if k == 18 { "break" } else { "continue" };
+            return cerr(c, "context", "'" + w + "' is allowed only inside a while loop", nd.pos);
         }
         return c;
     }
     return check_block(c, id);
 }
 
-// True when every path through statement `id` ends in a return.
+// Semantic's return-path rule (as enforced by the reference compiler): a
+// function with a non-unit return type must end with a top-level `return`.
+fn ends_with_return(nodes: Sequence(Node), body: i32) -> bool {
+    let kids: Sequence(i32) = nodes[body].kids;
+    let n: i32 = len(kids);
+    if n == 0 {
+        return false;
+    }
+    return nodes[kids[n - 1]].k == 14;
+}
+
+// True when every path through statement `id` ends in a return (used by
+// lowering to skip unreachable jumps; not a language rule).
 fn always_returns(nodes: Sequence(Node), id: i32) -> bool {
     let nd: Node = nodes[id];
     if nd.k == 14 { return true; }
@@ -281,54 +787,90 @@ fn always_returns(nodes: Sequence(Node), id: i32) -> bool {
     return false;
 }
 
-// Semantic's return-path rule (as enforced by the reference compiler at C0):
-// a function with a non-unit return type must end with a top-level `return`
-// statement. Branches that all return (if/else) do not satisfy it.
-fn ends_with_return(nodes: Sequence(Node), body: i32) -> bool {
-    let kids: Sequence(i32) = nodes[body].kids;
-    let n: i32 = len(kids);
-    if n == 0 {
-        return false;
-    }
-    return nodes[kids[n - 1]].k == 14;
+fn base_types() -> Sequence(TyInfo) {
+    return [
+        TyInfo { k: 0, a: 0, kids: [], name: "unit" },
+        TyInfo { k: 1, a: 0, kids: [], name: "i32" },
+        TyInfo { k: 2, a: 0, kids: [], name: "bool" },
+        TyInfo { k: 3, a: 0, kids: [], name: "u32" },
+        TyInfo { k: 4, a: 0, kids: [], name: "text" }
+    ];
 }
 
 fn analyze(prog: Prog) -> Sem {
-    let mut sem: Sem = Sem { prog: prog, fnidx: map_empty(), types: map_empty(), slots: map_empty(), callees: map_empty(),
-                             locals: [], err: "", cat: "", errpos: 0u32 };
+    let mut sem: Sem = Sem { prog: prog, tys: base_types(), tykey: map_empty(), fnidx: map_empty(), recidx: map_empty(),
+                             fptypes: [], frets: [], rftypes: [], exprty: map_empty(), slots: map_empty(),
+                             callees: map_empty(), fieldix: map_empty(), locals: [], u32arith: false,
+                             err: "", cat: "", errpos: 0u32 };
+    // record names, then record field types (records may refer to each other)
     let mut i: i32 = 0;
+    while i < len(prog.recs) && sem.err == "" {
+        let r: Rec = prog.recs[i];
+        if map_contains(sem.recidx, r.name) {
+            sem = serr(sem, "name", "record '" + r.name + "' is defined more than once", r.pos);
+        }
+        sem = sem with { recidx: map_set(sem.recidx, r.name, i) };
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(prog.recs) && sem.err == "" {
+        let mut fts: Sequence(i32) = [];
+        for tn in prog.recs[i].ftypes {
+            let mut t: i32 = 0;
+            (sem, t) = resolve_type(sem, tn);
+            fts = push(fts, t);
+        }
+        sem = sem with { rftypes: push(sem.rftypes, fts) };
+        i = i + 1;
+    }
+    // function table and signatures
+    i = 0;
     while i < len(prog.funcs) && sem.err == "" {
         let f: Func = prog.funcs[i];
         if map_contains(sem.fnidx, f.name) {
-            sem = sem with { err: "function '" + f.name + "' is defined more than once", cat: "name", errpos: f.pos };
+            sem = serr(sem, "name", "function '" + f.name + "' is defined more than once", f.pos);
+        }
+        if builtin_code(f.name) > 0 {
+            sem = serr(sem, "name", "'" + f.name + "' is a reserved builtin name", f.pos);
         }
         sem = sem with { fnidx: map_set(sem.fnidx, f.name, i) };
+        let mut pts: Sequence(i32) = [];
+        for tn in f.ptypes {
+            let mut t: i32 = 0;
+            (sem, t) = resolve_type(sem, tn);
+            pts = push(pts, t);
+        }
+        let mut rt: i32 = 0;
+        if f.ret >= 0 {
+            (sem, rt) = resolve_type(sem, f.ret);
+        }
+        sem = sem with { fptypes: push(sem.fptypes, pts), frets: push(sem.frets, rt) };
         i = i + 1;
     }
     if sem.err == "" {
         if !map_contains(sem.fnidx, "main") {
-            sem = sem with { err: "missing entry function 'fn main()'", cat: "name", errpos: 0u32 };
+            sem = serr(sem, "name", "missing entry function 'fn main()'", 0u32);
         } else {
-            let m: Func = prog.funcs[map_get(sem.fnidx, "main", 0)];
-            if len(m.ptypes) != 0 || m.ret != 0 {
-                sem = sem with { err: "'main' must take no parameters and return unit", cat: "type", errpos: m.pos };
+            let mi: i32 = map_get(sem.fnidx, "main", 0);
+            if len(prog.funcs[mi].ptypes) != 0 || sem.frets[mi] != 0 {
+                sem = serr(sem, "type", "'main' must take no parameters and return unit", prog.funcs[mi].pos);
             }
         }
     }
     i = 0;
     while i < len(prog.funcs) && sem.err == "" {
         let f: Func = prog.funcs[i];
-        let mut c: C = C { sem: sem, syms: [], names: [], loops: 0, fret: f.ret };
+        let mut c: C = C { sem: sem, syms: [], names: [], loops: 0, fret: sem.frets[i] };
         let mut k: i32 = 0;
         while k < len(f.pnames) {
-            // parameters occupy the first slots; keyed by a negative pseudo-id
-            c = declare(c, 0 - 1 - k, f.pnames[k], f.ptypes[k]);
+            let mut slot: i32 = 0;
+            (c, slot) = declare(c, 0 - 1, f.pnames[k], sem.fptypes[i][k]);
             k = k + 1;
         }
         c = check_block(c, f.body);
         sem = c.sem;
-        if sem.err == "" && f.ret != 0 && !always_returns(prog.nodes, f.body) {
-            sem = sem with { err: "function '" + f.name + "' may exit without returning " + type_name(f.ret), cat: "type", errpos: f.pos };
+        if sem.err == "" && sem.frets[i] != 0 && !always_returns(prog.nodes, f.body) {
+            sem = serr(sem, "type", "function '" + f.name + "' may exit without returning " + ty_text(sem, sem.frets[i]), f.pos);
         }
         sem = sem with { locals: push(sem.locals, c.names) };
         i = i + 1;

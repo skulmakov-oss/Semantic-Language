@@ -1,0 +1,10 @@
+record Pt {
+    x: i32,
+}
+
+fn main() {
+    let a: Pt = Pt { x: 1 };
+    let b: Pt = Pt { x: 1 };
+    assert(a == b);
+    return;
+}

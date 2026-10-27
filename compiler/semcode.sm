@@ -1,12 +1,13 @@
 // semcode: canonical SemCode encoder for the emitted subset.
 //
-// Header SEMCOD22 (revision 23): the revision C0 itself emits. Its framing is
+// Header: SEMCOD22 (revision 23), or SEMCOD23 (revision 24) when the program
+// uses u32 arithmetic/ordering (those opcodes' minimum revision). Framing is
 //   magic[8] | ADT0 descriptor section | function envelopes
 // and every function envelope is
 //   u16 name_len, name, u32 code_len, code
 // with code = u16 string count, strings (u16 len + UTF-8), "OWN0" u16 0 (no
-// ownership events: the subset has no borrows or aggregate writes), "SIG0"
-// u16 parameter count + one family byte per parameter, then instructions.
+// ownership events are emitted yet; see docs/COMPILER.md), "SIG0" u16
+// parameter count + one family byte per parameter, then instructions.
 // SIG0 makes the verifier run its definite-register-assignment proof.
 // All integers are little-endian. Jump targets are byte offsets from the first
 // instruction of the function.
@@ -18,27 +19,30 @@ fn ins_size(i: Ins) -> i32 {
     if i.op < 0 {
         return 0;
     }
+    let n: i32 = len(i.args);
     return match i.op {
         2 => { 4 }
         3 => { 7 }
+        6 => { 7 }
         4 => { 5 }
         5 => { 5 }
         22 => { 5 }
+        90 => { 5 }
+        95 => { 5 }
+        107 => { 5 }
         48 => { 5 }
         49 => { 7 }
-        64 => { 8 + 2 * len(i.args) }
+        64 => { 8 + 2 * n }
         65 => { if i.a == 1 { 4 } else { 2 } }
         66 => { 3 }
+        67 => { 5 + 2 * n }
+        91 => { 5 + 2 * n }
+        69 => { 7 + 2 * n }
+        68 => { 7 }
+        70 => { 9 }
+        73 => { 9 }
+        72 => { 7 }
         _ => { 7 }
-    };
-}
-
-// SIG0 callable value family byte (sm-format CallableValueFamily).
-fn family_byte(t: i32) -> i32 {
-    return match t {
-        1 => { 7 }
-        2 => { 2 }
-        _ => { 14 }
     };
 }
 
@@ -61,9 +65,9 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
     let (own, n_own) = put_text(hx, [], "OWN0");
     code = put_u16(hx, append(code, own), 0);
     let (sig, n_sig) = put_text(hx, [], "SIG0");
-    code = put_u16(hx, append(code, sig), len(f.ptypes));
-    for t in f.ptypes {
-        code = put_u8(hx, code, family_byte(t));
+    code = put_u16(hx, append(code, sig), len(f.families));
+    for fam in f.families {
+        code = put_u8(hx, code, fam);
     }
     // Operand bytes are pushed inline (no helper call per field): the encoder
     // runs once per emitted instruction and user-function calls are metered.
@@ -74,9 +78,9 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
         }
         if op == 2 {
             code = push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.imm]);
-        } else if op == 3 || op == 48 || op == 49 {
+        } else if op == 3 || op == 6 || op == 48 || op == 49 {
             let mut v: i32 = i.imm;
-            if op != 3 {
+            if op == 48 || op == 49 {
                 v = map_get(offsets, i.imm, 0);
             }
             if op != 48 {
@@ -90,7 +94,7 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
             let v3: i32 = (v2 - b2) / 256;
             let b3: i32 = ((v3 % 256) + 256) % 256;
             code = push(push(push(push(code, hx[b0]), hx[b1]), hx[b2]), hx[b3]);
-        } else if op == 4 || op == 5 || op == 22 {
+        } else if op == 4 || op == 5 || op == 22 || op == 90 || op == 95 || op == 107 {
             code = push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]);
         } else if op == 64 {
             code = push(code, hx[i.a]);
@@ -107,6 +111,21 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
             }
         } else if op == 66 {
             code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
+        } else if op == 67 || op == 91 || op == 69 {
+            code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
+            if op == 69 {
+                code = push(push(code, hx[i.b % 256]), hx[i.b / 256]);
+            }
+            let cnt: i32 = len(i.args);
+            code = push(push(code, hx[cnt % 256]), hx[cnt / 256]);
+            for r in i.args {
+                code = push(push(code, hx[r % 256]), hx[r / 256]);
+            }
+        } else if op == 68 {
+            code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.imm % 256]), hx[i.imm / 256]);
+        } else if op == 70 || op == 73 {
+            code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
+            code = push(push(code, hx[i.imm % 256]), hx[i.imm / 256]);
         } else if op >= 0 {
             code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
         }
@@ -128,7 +147,7 @@ fn adt_section(hx: Sequence(text)) -> Sequence(text) {
     return b;
 }
 
-fn encode_program(fns: Sequence(FnIr)) -> (Sequence(text), text) {
+fn encode_program(fns: Sequence(FnIr), u32arith: bool) -> (Sequence(text), text) {
     // C0 sm-format caps str16 at 1024 bytes and tables at 256 entries, below u16.
     // Check every dynamic input before constructing any artifact bytes.
     for f in fns {
@@ -145,7 +164,8 @@ fn encode_program(fns: Sequence(FnIr)) -> (Sequence(text), text) {
         }
     }
     let hx: Sequence(text) = hex_table();
-    let (magic, n) = put_text(hx, [], "SEMCOD22");
+    let header: text = if u32arith { "SEMCOD23" } else { "SEMCOD22" };
+    let (magic, n) = put_text(hx, [], header);
     let mut art: Sequence(text) = append(magic, adt_section(hx));
     for f in fns {
         art = encode_function(hx, art, f);

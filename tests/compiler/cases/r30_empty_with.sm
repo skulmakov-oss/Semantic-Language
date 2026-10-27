@@ -1,0 +1,1 @@
+record R { a: i32 } fn main() { let p: R = R { a: 1 }; let q: R = p with {}; return; }

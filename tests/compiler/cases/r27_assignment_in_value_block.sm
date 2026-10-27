@@ -1,0 +1,1 @@
+fn main() { let mut x: i32 = 0; let n: i32 = { x = 1; x }; assert(n == 1); return; }

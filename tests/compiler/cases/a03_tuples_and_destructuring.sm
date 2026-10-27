@@ -1,0 +1,16 @@
+fn divmod(a: i32, b: i32) -> (i32, i32) {
+    return (a / b, a % b);
+}
+
+fn main() {
+    let (q, r) = divmod(17, 5);
+    assert(q == 3 && r == 2);
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
+    (x, y) = divmod(9, 4);
+    assert(x == 2 && y == 1);
+    let t: (i32, bool, text) = (1, false, "z");
+    let (n, f, s) = t;
+    assert(n == 1 && !f && s == "z");
+    return;
+}

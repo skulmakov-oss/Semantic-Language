@@ -1,0 +1,5 @@
+fn main() {
+    let xs: Sequence(i32) = [1, 2];
+    let v: i32 = xs[5];
+    return;
+}
