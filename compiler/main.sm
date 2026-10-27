@@ -1,10 +1,159 @@
-// Compiler entry point (application profile cli-read-only):
-// argument 0 names the source file under the granted root; the result line
-// from compile_source is written to stdout.
+// Compiler entry point (application profile cli-read-only).
+// R1 supports only direct local bare imports: Import "helper.sm".
 Import "driver.sm"
+
+record Load {
+    text: text,
+    seen: Sequence(text),
+    err: text
+}
+
+fn byte_at(src: text, i: u32) -> u32 {
+    return match text_byte_at(src, i) {
+        Option::Some(b) => { b }
+        Option::None => { 0u32 }
+    };
+}
+
+fn line_end(src: text, start: u32) -> u32 {
+    let n: u32 = text_len(src);
+    let mut i: u32 = start;
+    while i < n {
+        if byte_at(src, i) == 10u32 { return i; }
+        i = i + 1u32;
+    }
+    return n;
+}
+
+fn skip_spaces(src: text, start: u32, end: u32) -> u32 {
+    let mut i: u32 = start;
+    while i < end {
+        let b: u32 = byte_at(src, i);
+        if b != 32u32 && b != 9u32 { return i; }
+        i = i + 1u32;
+    }
+    return i;
+}
+
+fn has_dotdot(src: text) -> bool {
+    let n: u32 = text_len(src);
+    let mut i: u32 = 0u32;
+    while i + 1u32 < n {
+        if byte_at(src, i) == 46u32 && byte_at(src, i + 1u32) == 46u32 { return true; }
+        i = i + 1u32;
+    }
+    return false;
+}
+
+fn dirname(path: text) -> text {
+    let n: u32 = text_len(path);
+    let mut i: u32 = n;
+    while i > 0u32 {
+        i = i - 1u32;
+        let b: u32 = byte_at(path, i);
+        if b == 47u32 || b == 92u32 {
+            return match text_slice(path, 0u32, i + 1u32) {
+                Option::Some(d) => { d }
+                Option::None => { "" }
+            };
+        }
+    }
+    return "";
+}
+
+fn contains_path(paths: Sequence(text), path: text) -> bool {
+    let mut i: i32 = 0;
+    while i < len(paths) {
+        if paths[i] == path { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn append_line(dst: text, src: text, start: u32, end: u32) -> text {
+    return dst + match text_slice(src, start, end) {
+        Option::Some(line) => {
+            if end < text_len(src) {
+                match text_slice(src, start, end + 1u32) {
+                    Option::Some(with_eol) => { with_eol }
+                    Option::None => { line }
+                }
+            } else { line }
+        }
+        Option::None => { "" }
+    };
+}
+
+fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
+    if contains_path(stack, path) {
+        return Load { text: "", seen: seen0, err: "cyclic executable helper import detected: " + path };
+    }
+    if contains_path(seen0, path) {
+        return Load { text: "", seen: seen0, err: "duplicate executable helper import: " + path };
+    }
+
+    let seen: Sequence(text) = push(seen0, path);
+    let src: text = fs_read_text(path);
+    let import_prefix: text = match text_slice(src, 0u32, 7u32) {
+        Option::Some(x) => { x }
+        Option::None => { "" }
+    };
+    if import_prefix != "Import " {
+        return Load { text: src, seen: seen, err: "" };
+    }
+    let n: u32 = text_len(src);
+    let mut out: text = "";
+    let mut imported: bool = false;
+    let mut pos: u32 = 0u32;
+    while pos < n {
+        let end: u32 = line_end(src, pos);
+        let k: u32 = skip_spaces(src, pos, end);
+        let prefix: text = match text_slice(src, k, k + 7u32) {
+            Option::Some(x) => { x }
+            Option::None => { "" }
+        };
+        if prefix == "Import " {
+            imported = true;
+            if k + 8u32 >= end || byte_at(src, k + 7u32) != 34u32 {
+                return Load { text: "", seen: seen, err: "unsupported import form" };
+            }
+            let mut q: u32 = k + 8u32;
+            while q < end && byte_at(src, q) != 34u32 { q = q + 1u32; }
+            if q >= end {
+                return Load { text: "", seen: seen, err: "malformed import path" };
+            }
+            let rel: text = match text_slice(src, k + 8u32, q) {
+                Option::Some(x) => { x }
+                Option::None => { "" }
+            };
+            let tail: u32 = skip_spaces(src, q + 1u32, end);
+            if tail < end || text_len(rel) == 0u32 {
+                return Load { text: "", seen: seen, err: "unsupported import form" };
+            }
+            if byte_at(rel, 0u32) == 47u32 || byte_at(rel, 0u32) == 92u32 || has_dotdot(rel) || (text_len(rel) > 1u32 && byte_at(rel, 1u32) == 58u32) {
+                return Load { text: "", seen: seen, err: "import path escapes the declared source root" };
+            }
+            let child: text = dirname(path) + rel;
+            let child_load: Load = expand(child, push(stack, path), seen);
+            if child_load.err != "" { return child_load; }
+            out = out + child_load.text;
+            seen = child_load.seen;
+        } else {
+            out = append_line(out, src, pos, end);
+        }
+        if end < n { pos = end + 1u32; } else { pos = n; }
+    }
+    if !imported { return Load { text: src, seen: seen, err: "" }; }
+    return Load { text: out, seen: seen, err: "" };
+}
 
 fn main() {
     let path: text = args_read(0u32);
-    stdout_write(compile_source(fs_read_text(path)));
+    let loaded: Load = expand(path, [], []);
+    if loaded.err != "" {
+        stdout_write("error unsupported @0: " + loaded.err);
+        return;
+    }
+    stdout_write(compile_source(loaded.text));
     return;
 }
