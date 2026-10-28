@@ -68,12 +68,12 @@ fn has_path_separator(path: text) -> bool {
     return false;
 }
 
-fn append_module(dst: text, src: text) -> text {
+fn append_module(dst: text, src: text, separator: text) -> text {
     if text_len(dst) == 0u32 { return src; }
     if text_byte_at(dst, text_len(dst) - 1u32) == Option::Some(10u32) {
         return dst + src;
     }
-    return dst + "\n" + src;
+    return dst + separator + src;
 }
 
 fn has_dotdot(src: text) -> bool {
@@ -112,17 +112,38 @@ fn contains_path(paths: Sequence(text), path: text) -> bool {
 }
 
 fn append_line(dst: text, src: text, start: u32, end: u32) -> text {
-    return dst + match text_slice(src, start, end) {
-        Option::Some(line) => {
-            if end < text_len(src) {
-                match text_slice(src, start, end + 1u32) {
-                    Option::Some(with_eol) => { with_eol }
-                    Option::None => { line }
-                }
-            } else { line }
+    let line: text = if end > start && byte_at(src, end - 1u32) == 13u32 {
+        match text_slice(src, start, end - 1u32) {
+            Option::Some(body) => {
+                if end < text_len(src) {
+                    match text_slice(src, end, end + 1u32) {
+                        Option::Some(eol) => { body + eol }
+                        Option::None => { body }
+                    }
+                } else { body }
+            }
+            Option::None => { "" }
         }
-        Option::None => { "" }
+    } else {
+        match text_slice(src, start, end) {
+            Option::Some(body) => {
+                if end < text_len(src) {
+                    match text_slice(src, end, end + 1u32) {
+                        Option::Some(eol) => { body + eol }
+                        Option::None => { body }
+                    }
+                } else { body }
+            }
+            Option::None => { "" }
+        }
     };
+    let separator: text = if end < text_len(src) {
+        match text_slice(src, end, end + 1u32) {
+            Option::Some(eol) => { eol }
+            Option::None => { "" }
+        }
+    } else { "" };
+    return append_module(dst, line, separator);
 }
 
 fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
@@ -171,7 +192,13 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
             let child: text = dirname(path) + rel;
             let child_load: Load = expand(child, push(stack, path), seen);
             if child_load.err != "" { return child_load; }
-            out = append_module(out, child_load.text);
+            let separator: text = if end < n {
+                match text_slice(src, end, end + 1u32) {
+                    Option::Some(eol) => { eol }
+                    Option::None => { "" }
+                }
+            } else { "" };
+            out = append_module(out, child_load.text, separator);
             seen = child_load.seen;
         } else {
             out = append_line(out, src, pos, end);

@@ -27,8 +27,8 @@ class DirectImportTests(unittest.TestCase):
                 b"fn add_one(value: i32) -> i32 {\n    return value + 1;\n}"
             )
             (root / "main.sm").write_bytes(
-                b"// leading comment\r\n  Import \"./helper.sm\"\r\n\r\n"
-                b"fn main() {\r\n    assert(add_one(1) == 2);\r\n    return;\r\n}\r\n"
+                b"// leading comment\r\n  Import \"./helper.sm\"\r\n\n"
+                b"fn main() {\n    assert(add_one(1) == 2);\n    return;\n}\n"
             )
             first = self.run_compiler(root)
             second = self.run_compiler(root)
@@ -43,36 +43,54 @@ class DirectImportTests(unittest.TestCase):
                 )
                 self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
 
+    def test_unterminated_helper_comment_cannot_swallow_parent_declaration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "helper.sm").write_bytes(b"// helper ends without a newline")
+            (root / "main.sm").write_bytes(
+                b'Import "helper.sm"\nfn main() { return; }\n'
+            )
+            result = self.run_compiler(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(result.stdout.startswith("hex "), result.stdout)
+
     def test_missing_cycle_and_duplicate_imports_fail_closed(self):
         cases = {
             "missing": {
                 "main.sm": b'Import "missing.sm"\nfn main() { return; }\n',
+                "marker": "ABI FsRead failure",
             },
             "cycle": {
                 "main.sm": b'Import "a.sm"\nfn main() { return; }\n',
                 "a.sm": b'Import "b.sm"\n',
                 "b.sm": b'Import "a.sm"\n',
+                "marker": "cyclic executable helper import detected",
             },
             "duplicate": {
                 "main.sm": b'Import "./helper.sm"\nImport "helper.sm"\nfn main() { return; }\n',
                 "helper.sm": b'fn value() { return; }\n',
+                "marker": "duplicate executable helper import",
             },
             "duplicate_symbols": {
                 "main.sm": b'Import "left.sm"\nImport "right.sm"\nfn main() { return; }\n',
                 "left.sm": b'fn value() { return; }\n',
                 "right.sm": b'fn value() { return; }\n',
+                "marker": "defined more than once",
             },
             "root_escape": {
                 "main.sm": b'Import "../helper.sm"\nfn main() { return; }\n',
+                "marker": "import path escapes the declared source root",
             },
             "unsupported": {
                 "main.sm": b'Import "helper.sm" { value }\nfn main() { return; }\n',
                 "helper.sm": b'fn value() { return; }\n',
+                "marker": "unsupported import form",
             },
         }
         for name, files in cases.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
+                marker = files.pop("marker")
                 for filename, source in files.items():
                     (root / filename).write_bytes(source)
                 first = self.run_compiler(root)
@@ -83,6 +101,8 @@ class DirectImportTests(unittest.TestCase):
                                 first_text)
                 self.assertEqual(first_text, second_text)
                 self.assertNotIn("hex ", first.stdout)
+                self.assertIn(marker, first_text)
+                self.assertEqual(list(root.glob("*.smc")), [])
 
 
 if __name__ == "__main__":
