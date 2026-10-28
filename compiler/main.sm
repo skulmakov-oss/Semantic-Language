@@ -104,6 +104,24 @@ fn contains_path(paths: Sequence(text), path: text) -> bool {
     return false;
 }
 
+fn has_import_marker(src: text) -> bool {
+    let n: u32 = text_len(src);
+    let mut i: u32 = 0u32;
+    while i + 7u32 <= n {
+        if text_byte_at(src, i) == Option::Some(73u32)
+            && text_byte_at(src, i + 1u32) == Option::Some(109u32)
+            && text_byte_at(src, i + 2u32) == Option::Some(112u32)
+            && text_byte_at(src, i + 3u32) == Option::Some(111u32)
+            && text_byte_at(src, i + 4u32) == Option::Some(114u32)
+            && text_byte_at(src, i + 5u32) == Option::Some(116u32)
+            && text_byte_at(src, i + 6u32) == Option::Some(32u32) {
+            return true;
+        }
+        i = i + 1u32;
+    }
+    return false;
+}
+
 fn append_line(dst: text, src: text, start: u32, end: u32) -> text {
     let line: text = if end > start && text_byte_at(src, end - 1u32) == Option::Some(13u32) {
         match text_slice(src, start, end - 1u32) {
@@ -196,7 +214,7 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
                 out = out + separator;
             }
             seen = child_load.seen;
-        } else {
+        } else if k != end {
             out = append_line(out, src, pos, end);
         }
         if end < n { pos = end + 1u32; } else { pos = n; }
@@ -207,6 +225,11 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
 
 fn main() {
     let path: text = args_read(0u32);
+    let source: text = fs_read_text(path);
+    if !has_import_marker(source) {
+        stdout_write(compile_source(source));
+        return;
+    }
     let loaded: Load = expand(path, [], []);
     if loaded.err != "" {
         stdout_write("error unsupported @0: " + loaded.err);
