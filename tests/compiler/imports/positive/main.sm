@@ -1,0 +1,6 @@
+Import "helper.sm"
+
+fn main() {
+    assert(add_one(1) == 2);
+    return;
+}
