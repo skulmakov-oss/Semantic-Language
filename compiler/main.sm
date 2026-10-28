@@ -29,10 +29,51 @@ fn skip_spaces(src: text, start: u32, end: u32) -> u32 {
     let mut i: u32 = start;
     while i < end {
         let b: u32 = byte_at(src, i);
-        if b != 32u32 && b != 9u32 { return i; }
+        if b != 32u32 && b != 9u32 && b != 13u32 { return i; }
         i = i + 1u32;
     }
     return i;
+}
+
+fn normalize_import_path(path: text) -> text {
+    let mut value: text = path;
+    let mut changed: bool = true;
+    while changed {
+        changed = false;
+        if text_len(value) >= 2u32 {
+            let prefix: text = match text_slice(value, 0u32, 2u32) {
+                Option::Some(x) => { x }
+                Option::None => { "" }
+            };
+            if prefix == "./" {
+                value = match text_slice(value, 2u32, text_len(value)) {
+                    Option::Some(x) => { x }
+                    Option::None => { "" }
+                };
+                changed = true;
+            }
+        }
+    }
+    return value;
+}
+
+fn has_path_separator(path: text) -> bool {
+    let n: u32 = text_len(path);
+    let mut i: u32 = 0u32;
+    while i < n {
+        let b: u32 = byte_at(path, i);
+        if b == 47u32 || b == 92u32 { return true; }
+        i = i + 1u32;
+    }
+    return false;
+}
+
+fn append_module(dst: text, src: text) -> text {
+    if text_len(dst) == 0u32 { return src; }
+    if text_byte_at(dst, text_len(dst) - 1u32) == Option::Some(10u32) {
+        return dst + src;
+    }
+    return dst + "\n" + src;
 }
 
 fn has_dotdot(src: text) -> bool {
@@ -94,13 +135,6 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
 
     let seen: Sequence(text) = push(seen0, path);
     let src: text = fs_read_text(path);
-    let import_prefix: text = match text_slice(src, 0u32, 7u32) {
-        Option::Some(x) => { x }
-        Option::None => { "" }
-    };
-    if import_prefix != "Import " {
-        return Load { text: src, seen: seen, err: "" };
-    }
     let n: u32 = text_len(src);
     let mut out: text = "";
     let mut imported: bool = false;
@@ -122,21 +156,22 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
             if q >= end {
                 return Load { text: "", seen: seen, err: "malformed import path" };
             }
-            let rel: text = match text_slice(src, k + 8u32, q) {
+            let raw_rel: text = match text_slice(src, k + 8u32, q) {
                 Option::Some(x) => { x }
                 Option::None => { "" }
             };
+            let rel: text = normalize_import_path(raw_rel);
             let tail: u32 = skip_spaces(src, q + 1u32, end);
             if tail < end || text_len(rel) == 0u32 {
                 return Load { text: "", seen: seen, err: "unsupported import form" };
             }
-            if byte_at(rel, 0u32) == 47u32 || byte_at(rel, 0u32) == 92u32 || has_dotdot(rel) || (text_len(rel) > 1u32 && byte_at(rel, 1u32) == 58u32) {
+            if has_path_separator(rel) || has_dotdot(rel) || (text_len(rel) > 1u32 && byte_at(rel, 1u32) == 58u32) {
                 return Load { text: "", seen: seen, err: "import path escapes the declared source root" };
             }
             let child: text = dirname(path) + rel;
             let child_load: Load = expand(child, push(stack, path), seen);
             if child_load.err != "" { return child_load; }
-            out = out + child_load.text;
+            out = append_module(out, child_load.text);
             seen = child_load.seen;
         } else {
             out = append_line(out, src, pos, end);
