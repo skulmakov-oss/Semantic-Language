@@ -19,7 +19,7 @@ fn line_end(src: text, start: u32) -> u32 {
     let n: u32 = text_len(src);
     let mut i: u32 = start;
     while i < n {
-        if byte_at(src, i) == 10u32 { return i; }
+        if text_byte_at(src, i) == Option::Some(10u32) { return i; }
         i = i + 1u32;
     }
     return n;
@@ -199,6 +199,9 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
                 }
             } else { "" };
             out = append_module(out, child_load.text, separator);
+            if end < n && text_len(out) > 0u32 && text_byte_at(out, text_len(out) - 1u32) != Option::Some(10u32) {
+                out = out + separator;
+            }
             seen = child_load.seen;
         } else {
             out = append_line(out, src, pos, end);

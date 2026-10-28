@@ -54,6 +54,34 @@ class DirectImportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(result.stdout.startswith("hex "), result.stdout)
 
+    def test_module_boundaries_cover_lf_and_eof_variants(self):
+        cases = {
+            "helper_no_lf_parent_lf": (b"fn add_one(value: i32) -> i32 {\n    return value + 1;\n}",
+                                       b'Import "helper.sm"\nfn main() { assert(add_one(1) == 2); return; }\n'),
+            "helper_no_lf_parent_no_lf": (b"fn add_one(value: i32) -> i32 {\n    return value + 1;\n}",
+                                           b'Import "helper.sm"\nfn main() { assert(add_one(1) == 2); return; }'),
+            "comment_no_lf_parent_no_lf": (b"// helper comment", b'Import "helper.sm"\nfn main() { return; }'),
+            "nested_mixed": (b'Import "leaf.sm"\r\nfn add_one(value: i32) -> i32 {\r\n    return value + 1;\r\n}',
+                              b'Import "helper.sm"\r\nfn main() { assert(add_one(1) == 2); return; }'),
+        }
+        for name, (helper, main) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / "helper.sm").write_bytes(helper)
+                if name == "nested_mixed":
+                    (root / "leaf.sm").write_bytes(b"fn leaf() { return; }\n")
+                (root / "main.sm").write_bytes(main)
+                result = self.run_compiler(root)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(result.stdout.startswith("hex "), result.stdout)
+                artifact = root / "boundary.smc"
+                artifact.write_bytes(bytes.fromhex(result.stdout[4:].strip()))
+                for action in ("verify", "run-smc"):
+                    checked = subprocess.run(
+                        [self.smc, action, artifact], capture_output=True, text=True, timeout=30
+                    )
+                    self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+
     def test_missing_cycle_and_duplicate_imports_fail_closed(self):
         cases = {
             "missing": {
