@@ -8,13 +8,6 @@ record Load {
     err: text
 }
 
-fn byte_at(src: text, i: u32) -> u32 {
-    return match text_byte_at(src, i) {
-        Option::Some(b) => { b }
-        Option::None => { 0u32 }
-    };
-}
-
 fn line_end(src: text, start: u32) -> u32 {
     let n: u32 = text_len(src);
     let mut i: u32 = start;
@@ -28,8 +21,8 @@ fn line_end(src: text, start: u32) -> u32 {
 fn skip_spaces(src: text, start: u32, end: u32) -> u32 {
     let mut i: u32 = start;
     while i < end {
-        let b: u32 = byte_at(src, i);
-        if b != 32u32 && b != 9u32 && b != 13u32 { return i; }
+        let b: Option(u32) = text_byte_at(src, i);
+        if b != Option::Some(32u32) && b != Option::Some(9u32) && b != Option::Some(13u32) { return i; }
         i = i + 1u32;
     }
     return i;
@@ -61,8 +54,8 @@ fn has_path_separator(path: text) -> bool {
     let n: u32 = text_len(path);
     let mut i: u32 = 0u32;
     while i < n {
-        let b: u32 = byte_at(path, i);
-        if b == 47u32 || b == 92u32 { return true; }
+        let b: Option(u32) = text_byte_at(path, i);
+        if b == Option::Some(47u32) || b == Option::Some(92u32) { return true; }
         i = i + 1u32;
     }
     return false;
@@ -80,7 +73,7 @@ fn has_dotdot(src: text) -> bool {
     let n: u32 = text_len(src);
     let mut i: u32 = 0u32;
     while i + 1u32 < n {
-        if byte_at(src, i) == 46u32 && byte_at(src, i + 1u32) == 46u32 { return true; }
+        if text_byte_at(src, i) == Option::Some(46u32) && text_byte_at(src, i + 1u32) == Option::Some(46u32) { return true; }
         i = i + 1u32;
     }
     return false;
@@ -91,8 +84,8 @@ fn dirname(path: text) -> text {
     let mut i: u32 = n;
     while i > 0u32 {
         i = i - 1u32;
-        let b: u32 = byte_at(path, i);
-        if b == 47u32 || b == 92u32 {
+        let b: Option(u32) = text_byte_at(path, i);
+        if b == Option::Some(47u32) || b == Option::Some(92u32) {
             return match text_slice(path, 0u32, i + 1u32) {
                 Option::Some(d) => { d }
                 Option::None => { "" }
@@ -112,7 +105,7 @@ fn contains_path(paths: Sequence(text), path: text) -> bool {
 }
 
 fn append_line(dst: text, src: text, start: u32, end: u32) -> text {
-    let line: text = if end > start && byte_at(src, end - 1u32) == 13u32 {
+    let line: text = if end > start && text_byte_at(src, end - 1u32) == Option::Some(13u32) {
         match text_slice(src, start, end - 1u32) {
             Option::Some(body) => {
                 if end < text_len(src) {
@@ -169,11 +162,11 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
         };
         if prefix == "Import " {
             imported = true;
-            if k + 8u32 >= end || byte_at(src, k + 7u32) != 34u32 {
+            if k + 8u32 >= end || text_byte_at(src, k + 7u32) != Option::Some(34u32) {
                 return Load { text: "", seen: seen, err: "unsupported import form" };
             }
             let mut q: u32 = k + 8u32;
-            while q < end && byte_at(src, q) != 34u32 { q = q + 1u32; }
+            while q < end && text_byte_at(src, q) != Option::Some(34u32) { q = q + 1u32; }
             if q >= end {
                 return Load { text: "", seen: seen, err: "malformed import path" };
             }
@@ -186,7 +179,7 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
             if tail < end || text_len(rel) == 0u32 {
                 return Load { text: "", seen: seen, err: "unsupported import form" };
             }
-            if has_path_separator(rel) || has_dotdot(rel) || (text_len(rel) > 1u32 && byte_at(rel, 1u32) == 58u32) {
+            if has_path_separator(rel) || has_dotdot(rel) || (text_len(rel) > 1u32 && text_byte_at(rel, 1u32) == Option::Some(58u32)) {
                 return Load { text: "", seen: seen, err: "import path escapes the declared source root" };
             }
             let child: text = dirname(path) + rel;
