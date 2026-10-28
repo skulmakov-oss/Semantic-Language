@@ -100,6 +100,8 @@ class DirectImportTests(unittest.TestCase):
             "blank_20000": ((b"\n" * 20000) + b"fn main() { return; }\n", None),
             "spaces_50000": ((b" " * 50000) + b"fn main() { return; }\n", None),
             "comment_50000": (b"//" + (b"x" * 50000) + b"\nfn main() { return; }\n", None),
+            "comment_import_30000": ((b"\n" * 30000) + b'// Import "example.sm"\nfn main() { return; }\n', None),
+            "literal_import_30000": ((b"\n" * 30000) + b'fn main() { let x: text = "Import example.sm"; return; }\n', None),
             "import_blank_13000": ((b"\n" * 13000) + b'Import "helper.sm"\n'
                                    + b"fn main() { return; }\n", b"fn helper() { return; }\n"),
         }
