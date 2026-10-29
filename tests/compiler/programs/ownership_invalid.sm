@@ -1,0 +1,28 @@
+Import "semcode.sm"
+
+fn main() {
+    let mode: text = "missing";
+    let store: Ins = Ins { op: 5, a: 0, b: 0, c: 0, imm: 0, args: [] };
+    let make_record: Ins = Ins { op: 69, a: 0, b: 0, c: 0, imm: 0, args: [] };
+    let mut ins: Sequence(Ins) = [store];
+    let mut anchor: i32 = 1;
+    let mut own_mode: i32 = 0;
+    let mut expected: text = "ownership event references a missing instruction anchor";
+    if mode == "wrong_store" { ins = [make_record]; anchor = 0; }
+    if mode == "wrong_store" { expected = "ownership StoreVarSite anchor does not target StoreVar"; }
+    if mode == "wrong_record" { anchor = 0; own_mode = 1; expected = "ownership MakeRecordSite anchor does not target MakeRecord"; }
+    let f: FnIr = FnIr {
+        name: "main",
+        families: [],
+        strings: ["field"],
+        ins: ins,
+        owns: [OwnPath { kind: 1, mode: own_mode, root: 0, anchor: anchor, comp_kind: if own_mode == 1 { 1 } else { -1 }, comp_a: 0, comp_b: 0 }],
+    };
+    let (artifact, error) = encode_program([f], false);
+    if error != "" {
+        assert(error == expected);
+    } else {
+        assert(false);
+    }
+    return;
+}
