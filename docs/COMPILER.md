@@ -43,6 +43,29 @@ block-expr= "{" { stmt } [ expr ] "}"
 
 `//` comments are accepted.
 
+### R1 direct imports: entrypoint textual expansion
+
+The `compiler/main.sm` entrypoint supports direct local bare `Import "helper.sm"`
+directives as a bounded source-loading step **before** `compile_source` runs.
+It recursively expands the imported helper text at each directive, then compiles
+the resulting flattened source as a single executable unit. `Import` is not an
+item in the `compile_source` grammar above, and R1 does not independently parse
+or typecheck each helper as a module.
+
+In the merged R1 behavior, a syntactically incomplete helper can become valid
+when text from the importing source completes its construct. Syntax checking
+applies to the combined source; missing helpers, repeated imports, cycles,
+unsupported import forms and disallowed import paths remain rejection cases.
+This is a description of the bounded R1 implementation, **not** a general
+Semantic language module contract, proof of equivalence to C0 import semantics,
+or a claim that independently valid helper modules are required.
+
+`BSF-010` remains **ADMITTED** for direct imports; `BSF-106` (module exports and
+project resolution) remains **CANDIDATE**. Full SHF-7 module-boundary semantics,
+source-origin diagnostics and independent module parsing require a separate
+upstream contract and authorization. No canonical `S` source set, C1/C2 proof
+or Bootstrap Seal follows from R1 import expansion.
+
 Value-position blocks support nested blocks and value-producing conditional tails.
 Tuple assignment remains statement-level: it is not admitted inside a value-producing
 block by the frozen C0 or its v0 block-body contract. Recovery does not widen that contract.
@@ -108,7 +131,6 @@ All runtime behaviour belongs to the VM:
 These forms are rejected with category `unsupported`:
 - enums;
 - Map traversal and non-scalar Map keys; `Result`, `quad`, `f64`, `fx` and `Bytes`;
-- `Import`;
 - closures and function values;
 - method calls;
 - ranges and `loop`;
@@ -136,7 +158,7 @@ Each diagnostic has the form `error <syntax|name|type|context|unsupported> @<byt
 | `semcode.sm` | IR to SemCode. A first pass maps labels to byte offsets; a second pass encodes instructions inline, including aggregate and Map signatures. |
 | `bytes.sm` | Byte encoding through a 256-entry literal table, `i32` little-endian without bit operations, and UTF-8 text bytes. |
 | `driver.sm` | `compile_source(text) -> "hex …" \| "error …"`. |
-| `main.sm` | Entry point: `args_read(0)` then `fs_read_text`, then `stdout_write`. |
+| `main.sm` | R1 entrypoint: read source, expand bounded direct local bare imports, invoke `compile_source` on the flattened source, then write its result. |
 
 ### Output format
 
@@ -259,7 +281,8 @@ with Frames 256. Actual per-case counters and effective quotas belong to each ev
 
 The current compiler slice emits empty OWN0 and does not claim general borrow support;
 canonical Borrow/Write metadata is required before such support can be enabled.
-Verifier-first execution remains mandatory. Import and cross-module nominal linking remain
-compiler self-coverage gaps. Map empty/get/set/contains cover the scalar-key lookup contour;
+Verifier-first execution remains mandatory. Full module/export/project resolution and
+cross-module nominal linking remain compiler self-coverage gaps; the R1 entrypoint only
+provides bounded pre-compile textual import expansion. Map empty/get/set/contains cover the scalar-key lookup contour;
 traversal remains excluded. No canonical source set, C1/C2 fixed point, self-hosting or Seal
 is established.
