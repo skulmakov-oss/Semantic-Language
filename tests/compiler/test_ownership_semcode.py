@@ -144,10 +144,11 @@ class OwnershipSemcodeTests(unittest.TestCase):
 
 fn main() {
     let x: i32 = 1;
-    x = 2;
+    if true { x = 2; } else { x = 4; }
     let r: R = R { x: 1, y: 2 };
-    let s: R = r with { x: 3 };
+    let s: R = r with { x: 3, y: 4 };
     assert(s.x == 3);
+    assert(s.y == 4);
     return;
 }
 """
@@ -169,15 +170,20 @@ fn main() {
             functions = decode_own0(artifact)
             self.assertEqual(len(functions), 1)
             events = functions[0]["events"]
-            self.assertEqual([event["kind"] for event in events], [1, 1])
-            self.assertEqual([event["mode"] for event in events], [0, 1])
+            self.assertEqual([event["kind"] for event in events], [1, 1, 1, 1], events)
+            self.assertEqual([event["mode"] for event in events], [0, 0, 1, 1], events)
             starts = instruction_starts(functions[0]["code"])
             self.assertTrue(all(event["anchor"] in starts for event in events))
             self.assertEqual(starts[events[0]["anchor"]], 5)
-            self.assertEqual(starts[events[1]["anchor"]], 69)
-            self.assertEqual(events[1]["components"], [(1, 4)])
+            self.assertEqual(starts[events[2]["anchor"]], 69)
+            self.assertEqual(starts[events[3]["anchor"]], 69)
+            self.assertEqual(events[2]["anchor"], events[3]["anchor"])
+            self.assertEqual([event["components"][0][0] for event in events[2:]], [1, 1])
+            self.assertNotEqual(events[2]["components"], events[3]["components"])
             self.assertEqual(events[0]["root"], 0)
-            self.assertEqual(events[1]["root"], 1)
+            self.assertEqual(events[1]["root"], 0)
+            self.assertEqual(events[2]["root"], 1)
+            self.assertEqual(events[3]["root"], 1)
 
             out = root / "ownership.smc"
             out.write_bytes(artifact)
