@@ -272,16 +272,18 @@ with Frames 256. Actual per-case counters and effective quotas belong to each ev
 
 - **No C1/C2 fixed-point qualification or Bootstrap Seal.** Supported-subset differential
   evidence and successful compilation of the implementation by C0 do not prove self-hosting.
-- **No self-compilation.** The compiler source (≈ 55 KB) uses records, tuples, `Sequence`, `Map`, `Option` match, text and `u32`. The subset doesn't cover these, and they need `MAKE_RECORD`, `TUPLE_*`, `SEQUENCE_*`, `ADT_*`, text and `u32` opcodes, plus non-empty `OWN0` ownership events (the reference emits about 3.8k of them for a compiler of this kind).
+- **No self-compilation.** The compiler source (≈ 55 KB) uses records, tuples, `Sequence`, `Map`, `Option` match, text and `u32`. The subset doesn't cover all of these, and it needs the corresponding aggregate/text/u32 opcodes plus the remaining ownership paths used by the full compiler.
 - **Self-compilation budgets are not established.** The old per-byte extrapolation is not a
   measurement under v2; no larger quota than the approved trusted-compiler envelope is admitted.
 - **The equivalence evidence is behavioural**, on a hand-written corpus: assertion outcomes and traps. Byte identity with C0 is not a goal; register numbering and branch layout differ.
 - **Platform:** historical tests were WSL2 experiments; current v2 qualification is explicitly
   platform-bound. C0's qualified platform is `x86_64-pc-windows-msvc`.
 
-The current compiler slice emits empty OWN0 and does not claim general borrow support;
-canonical Borrow/Write metadata is required before such support can be enabled.
-Verifier-first execution remains mandatory. Full module/export/project resolution and
+The current compiler slice emits canonical OWN0 Write metadata for supported root
+assignments, tuple assignments and record copy-with field updates. It does not claim
+general borrow support: capture paths and other ownership forms outside this subset
+remain explicitly unavailable. Verifier-first execution remains mandatory.
+Full module/export/project resolution and
 cross-module nominal linking remain compiler self-coverage gaps; the R1 entrypoint only
 provides bounded pre-compile textual import expansion. Map empty/get/set/contains cover the scalar-key lookup contour;
 traversal remains excluded. No canonical source set, C1/C2 fixed point, self-hosting or Seal

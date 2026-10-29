@@ -5,8 +5,8 @@
 //   magic[8] | ADT0 descriptor section | function envelopes
 // and every function envelope is
 //   u16 name_len, name, u32 code_len, code
-// with code = u16 string count, strings (u16 len + UTF-8), "OWN0" u16 0 (no
-// ownership events are emitted yet; see docs/COMPILER.md), "SIG0" u16
+// with code = u16 string count, strings (u16 len + UTF-8), "OWN0" u16 count
+// plus frozen-C0 ownership paths, "SIG0" u16
 // parameter count + one family byte per parameter, then instructions.
 // SIG0 makes the verifier run its definite-register-assignment proof.
 // All integers are little-endian. Jump targets are byte offsets from the first
@@ -53,12 +53,17 @@ fn ins_size(i: Ins) -> i32 {
 fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence(text) {
     // pass 1: label id -> byte offset
     let mut offsets: Map(i32, i32) = map_empty();
+    let mut anchor_pcs: Map(i32, i32) = map_empty();
     let mut pc: i32 = 0;
+    let mut ins_index: i32 = 0;
     for i in f.ins {
         if i.op == 0 - 1 {
             offsets = map_set(offsets, i.imm, pc);
+        } else {
+            anchor_pcs = map_set(anchor_pcs, ins_index, pc);
+            pc = pc + ins_size(i);
         }
-        pc = pc + ins_size(i);
+        ins_index = ins_index + 1;
     }
     // pass 2: instruction bytes
     let mut code: Sequence(text) = put_u16(hx, [], len(f.strings));
@@ -66,7 +71,27 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
         code = put_str16(hx, code, s);
     }
     let (own, n_own) = put_text(hx, [], "OWN0");
-    code = put_u16(hx, append(code, own), 0);
+    code = put_u16(hx, append(code, own), len(f.owns));
+    for ev in f.owns {
+        code = put_u8(hx, code, ev.kind);
+        code = put_u8(hx, code, ev.mode);
+        code = put_i32(hx, code, map_get(anchor_pcs, ev.anchor, 0));
+        code = put_i32(hx, code, ev.root);
+        code = put_u16(hx, code, if ev.comp_kind < 0 { 0 } else { 1 });
+        if ev.comp_kind >= 0 {
+            code = put_u8(hx, code, ev.comp_kind);
+            if ev.comp_kind == 0 {
+                code = put_u16(hx, code, ev.comp_a);
+            } else if ev.comp_kind == 1 {
+                code = put_i32(hx, code, ev.comp_a);
+            } else if ev.comp_kind == 2 {
+                code = put_i32(hx, code, ev.comp_a);
+                code = put_u16(hx, code, ev.comp_b);
+            } else {
+                code = put_i32(hx, code, ev.comp_a);
+            }
+        }
+    }
     let (sig, n_sig) = put_text(hx, [], "SIG0");
     code = put_u16(hx, append(code, sig), len(f.families));
     for fam in f.families {

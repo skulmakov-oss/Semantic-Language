@@ -21,11 +21,22 @@ record Ins {
     args: Sequence(i32),
 }
 
+record OwnPath {
+    kind: i32,
+    mode: i32,
+    root: i32,
+    anchor: i32,
+    comp_kind: i32,
+    comp_a: i32,
+    comp_b: i32,
+}
+
 record FnIr {
     name: text,
     families: Sequence(i32),
     strings: Sequence(text),
     ins: Sequence(Ins),
+    owns: Sequence(OwnPath),
 }
 
 record L {
@@ -37,6 +48,15 @@ record L {
     strmap: Map(text, i32),
     breaks: Sequence(i32),
     conts: Sequence(i32),
+    owns: Sequence(OwnPath),
+}
+
+fn own_root(l: L, kind: i32, root: i32, anchor: i32) -> L {
+    return l with { owns: push(l.owns, OwnPath { kind: kind, mode: 0, root: root, anchor: anchor, comp_kind: -1, comp_a: 0, comp_b: 0 }) };
+}
+
+fn own_field(l: L, kind: i32, root: i32, field: i32, anchor: i32) -> L {
+    return l with { owns: push(l.owns, OwnPath { kind: kind, mode: 1, root: root, anchor: anchor, comp_kind: 1, comp_a: field, comp_b: 0 }) };
 }
 
 fn emit(l: L, op: i32, a: i32, b: i32, c: i32, imm: i32) -> L {
@@ -207,6 +227,7 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         let rti: TyInfo = l.sem.tys[type_of(l, id)];
         let rec: Rec = l.sem.prog.recs[rti.a];
         let mut base: i32 = 0;
+        let base_node: Node = if k == 21 { l0.sem.prog.nodes[nd.a] } else { Node { k: 0, a: 0, b: 0, c: 0, v: 0, name: "", pos: 0u32, kids: [] } };
         if k == 21 {
             (l, base) = lower_expr(l, nd.a);
         }
@@ -214,10 +235,16 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         (l, sid) = symbol(l, rec.name);
         // Evaluate supplied expressions once in source order, then arrange slots.
         let mut given: Map(i32, i32) = map_empty();
+        let mut pending_fields: Sequence(i32) = [];
         for fid in nd.kids {
             let mut r: i32 = 0;
             (l, r) = lower_expr(l, l.sem.prog.nodes[fid].a);
             given = map_set(given, map_get(l.sem.fieldix, fid, 0), r);
+            if k == 21 && base_node.k == 4 {
+                let mut field: i32 = 0;
+                (l, field) = symbol(l, l.sem.prog.nodes[fid].name);
+                pending_fields = push(pending_fields, field);
+            }
         }
         let mut regs: Sequence(i32) = [];
         let mut slot: i32 = 0;
@@ -233,7 +260,12 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
             slot = slot + 1;
         }
         (l, d) = fresh(l);
-        return (emit_args(l, 69, d, sid, regs), d);
+        let anchor: i32 = len(l.ins);
+        l = emit_args(l, 69, d, sid, regs);
+        for field in pending_fields {
+            l = own_field(l, 1, slot_of(l, nd.a), field, anchor);
+        }
+        return (l, d);
     }
     if k == 22 || k == 23 {
         let mut regs: Sequence(i32) = [];
@@ -374,6 +406,9 @@ fn lower_stmt(l0: L, id: i32) -> L {
     let k: i32 = nd.k;
     if k == 10 || k == 11 {
         (l, r) = lower_expr(l, nd.a);
+        if k == 11 {
+            l = own_root(l, 1, slot_of(l, id), len(l.ins));
+        }
         return emit(l, 5, slot_of(l, id), r, 0, 0);
     }
     if k == 40 || k == 41 {
@@ -383,7 +418,11 @@ fn lower_stmt(l0: L, id: i32) -> L {
             let mut e: i32 = 0;
             (l, e) = fresh(l);
             l = emit(l, 68, e, r, 0, i);
+            let anchor: i32 = len(l.ins);
             l = emit(l, 5, slot_of(l, name_id), e, 0, 0);
+            if k == 41 {
+                l = own_root(l, 1, slot_of(l, name_id), anchor);
+            }
             i = i + 1;
         }
         return l;
@@ -541,7 +580,7 @@ fn lower_function(sem: Sem, fi: i32) -> FnIr {
         k = k + 1;
     }
     let ptys: Sequence(i32) = sem.fptypes[fi];
-    let mut l: L = L { sem: sem, ins: [], reg: len(ptys), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [] };
+    let mut l: L = L { sem: sem, ins: [], reg: len(ptys), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [], owns: [] };
     // prologue: parameters arrive in r0..; store them into their slots
     let mut p: i32 = 0;
     while p < len(ptys) {
@@ -556,5 +595,5 @@ fn lower_function(sem: Sem, fi: i32) -> FnIr {
     for t in ptys {
         fams = push(fams, family_byte(sem, t));
     }
-    return FnIr { name: f.name, families: fams, strings: l.strings, ins: l.ins };
+    return FnIr { name: f.name, families: fams, strings: l.strings, ins: l.ins, owns: l.owns };
 }
