@@ -50,10 +50,12 @@ fn ins_size(i: Ins) -> i32 {
 }
 
 // Appends the envelope of `f` to `art`.
-fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence(text) {
+fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> (Sequence(text), text) {
     // pass 1: label id -> byte offset
     let mut offsets: Map(i32, i32) = map_empty();
     let mut anchor_pcs: Map(i32, i32) = map_empty();
+    let mut store_var_anchors: Map(i32, bool) = map_empty();
+    let mut make_record_anchors: Map(i32, bool) = map_empty();
     let mut pc: i32 = 0;
     let mut ins_index: i32 = 0;
     for i in f.ins {
@@ -61,6 +63,12 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
             offsets = map_set(offsets, i.imm, pc);
         } else {
             anchor_pcs = map_set(anchor_pcs, ins_index, pc);
+            if i.op == 5 {
+                store_var_anchors = map_set(store_var_anchors, ins_index, true);
+            }
+            if i.op == 69 {
+                make_record_anchors = map_set(make_record_anchors, ins_index, true);
+            }
             pc = pc + ins_size(i);
         }
         ins_index = ins_index + 1;
@@ -73,6 +81,15 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
     let (own, n_own) = put_text(hx, [], "OWN0");
     code = put_u16(hx, append(code, own), len(f.owns));
     for ev in f.owns {
+        if !map_contains(anchor_pcs, ev.anchor) {
+            return ([], "ownership event references a missing instruction anchor");
+        }
+        if ev.mode == 0 && !map_contains(store_var_anchors, ev.anchor) {
+            return ([], "ownership StoreVarSite anchor does not target StoreVar");
+        }
+        if ev.mode == 1 && !map_contains(make_record_anchors, ev.anchor) {
+            return ([], "ownership MakeRecordSite anchor does not target MakeRecord");
+        }
         code = put_u8(hx, code, ev.kind);
         code = put_u8(hx, code, ev.mode);
         code = put_i32(hx, code, map_get(anchor_pcs, ev.anchor, 0));
@@ -158,7 +175,7 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> Sequence
             code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
         }
     }
-    return append(put_i32(hx, put_str16(hx, art, f.name), len(code)), code);
+    return (append(put_i32(hx, put_str16(hx, art, f.name), len(code)), code), "");
 }
 
 // ADT0: the standard prelude descriptors Option { None, Some(1) } and
@@ -196,7 +213,11 @@ fn encode_program(fns: Sequence(FnIr), u32arith: bool) -> (Sequence(text), text)
     let (magic, n) = put_text(hx, [], header);
     let mut art: Sequence(text) = append(magic, adt_section(hx));
     for f in fns {
-        art = encode_function(hx, art, f);
+        let (encoded, encoding_error) = encode_function(hx, art, f);
+        if encoding_error != "" {
+            return ([], encoding_error);
+        }
+        art = encoded;
     }
     return (art, "");
 }
