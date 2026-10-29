@@ -18,10 +18,14 @@ INVALID_FIXTURE = HERE / "programs" / "ownership_invalid.sm"
 
 
 def u16(data, offset):
+    if offset < 0 or offset + 2 > len(data):
+        raise ValueError("truncated u16")
     return int.from_bytes(data[offset:offset + 2], "little"), offset + 2
 
 
 def u32(data, offset):
+    if offset < 0 or offset + 4 > len(data):
+        raise ValueError("truncated u32")
     return int.from_bytes(data[offset:offset + 4], "little"), offset + 4
 
 
@@ -62,14 +66,14 @@ def decode_own0(data):
         for _ in range(string_count):
             value, cursor = str16(code, cursor)
             strings.append(value)
-        if code[cursor:cursor + 4] != b"OWN0":
+        if cursor + 4 > len(code) or code[cursor:cursor + 4] != b"OWN0":
             raise ValueError("missing OWN0")
         cursor += 4
         own_count, cursor = u16(code, cursor)
         events = []
         for _ in range(own_count):
-            if cursor + 10 > len(code):
-                raise ValueError("truncated OWN0 event")
+            if cursor + 2 > len(code):
+                raise ValueError("truncated OWN0 event header")
             kind = code[cursor]
             mode = code[cursor + 1]
             cursor += 2
@@ -79,7 +83,7 @@ def decode_own0(data):
             components = []
             for _ in range(component_count):
                 if cursor >= len(code):
-                    raise ValueError("truncated OWN0 component")
+                    raise ValueError("truncated OWN0 component kind")
                 component_kind = code[cursor]
                 cursor += 1
                 if component_kind == 1:
@@ -92,7 +96,7 @@ def decode_own0(data):
                     raise ValueError("unsupported OWN0 component")
             events.append(dict(kind=kind, mode=mode, anchor=anchor, root=root,
                                components=components))
-        if code[cursor:cursor + 4] != b"SIG0":
+        if cursor + 4 > len(code) or code[cursor:cursor + 4] != b"SIG0":
             raise ValueError("missing SIG0")
         cursor += 4
         sig_count, cursor = u16(code, cursor)
@@ -124,10 +128,19 @@ def instruction_starts(code):
             size = 9
         elif op == 68:
             size = 7
-        elif op in (64, 67, 91, 69):
-            argc = int.from_bytes(code[offset + (6 if op == 64 else 5):offset + (8 if op == 64 else 7)], "little")
-            size = (8 if op == 64 else 5) + 2 * argc
+        elif op == 64:
+            if offset + 8 > len(code):
+                raise ValueError("truncated CALL")
+            argc = int.from_bytes(code[offset + 6:offset + 8], "little")
+            size = 8 + 2 * argc
+        elif op in (67, 91, 69):
+            if offset + 7 > len(code):
+                raise ValueError("truncated aggregate instruction")
+            argc = int.from_bytes(code[offset + 5:offset + 7], "little")
+            size = 7 + 2 * argc if op == 69 else 5 + 2 * argc
         elif op == 65:
+            if offset + 2 > len(code):
+                raise ValueError("truncated RET")
             size = 4 if code[offset + 1] == 1 else 2
         else:
             size = 7
@@ -180,10 +193,29 @@ fn main() {
             self.assertEqual(events[2]["anchor"], events[3]["anchor"])
             self.assertEqual([event["components"][0][0] for event in events[2:]], [1, 1])
             self.assertNotEqual(events[2]["components"], events[3]["components"])
+            field_names = {
+                functions[0]["strings"][event["components"][0][1]]
+                for event in events[2:]
+            }
+            self.assertEqual(field_names, {"x", "y"})
             self.assertEqual(events[0]["root"], 0)
             self.assertEqual(events[1]["root"], 0)
             self.assertEqual(events[2]["root"], 1)
             self.assertEqual(events[3]["root"], 1)
+            self.assertEqual(functions[0]["strings"][events[0]["root"]], "x#0")
+            self.assertEqual(functions[0]["strings"][events[2]["root"]], "r#1")
+
+    def test_instruction_boundary_vectors_are_exact(self):
+        self.assertEqual(instruction_starts(bytes([64, 0, 0, 0, 0, 0, 1, 0, 1, 0, 65, 0])), {0: 64, 10: 65})
+        self.assertEqual(instruction_starts(bytes([67, 0, 0, 1, 0, 1, 0, 65, 0])), {0: 67, 7: 65})
+        self.assertEqual(instruction_starts(bytes([69, 0, 0, 0, 0, 1, 0, 0, 0, 65, 0])), {0: 69, 9: 65})
+        self.assertEqual(instruction_starts(bytes([91, 0, 0, 1, 0, 1, 0, 65, 0])), {0: 91, 7: 65})
+        with self.assertRaises(ValueError):
+            instruction_starts(bytes([69, 0, 0, 0, 0, 1, 0, 0]))
+
+    def test_truncated_own0_fields_fail_closed(self):
+        with self.assertRaises(ValueError):
+            decode_own0(b"SEMCOD22")
 
             out = root / "ownership.smc"
             out.write_bytes(artifact)

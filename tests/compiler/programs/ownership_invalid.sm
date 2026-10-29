@@ -20,6 +20,7 @@ fn main() {
     };
     let (artifact, error) = encode_program([f], false);
     if error != "" {
+        assert(len(artifact) == 0);
         assert(error == expected);
     } else {
         assert(false);
