@@ -134,9 +134,11 @@ def instruction_starts(code):
             argc = int.from_bytes(code[offset + 6:offset + 8], "little")
             size = 8 + 2 * argc
         elif op in (67, 91, 69):
-            if offset + 7 > len(code):
+            header_size = 7 if op == 69 else 5
+            if offset + header_size > len(code):
                 raise ValueError("truncated aggregate instruction")
-            argc = int.from_bytes(code[offset + 5:offset + 7], "little")
+            argc_offset = 5 if op == 69 else 3
+            argc = int.from_bytes(code[offset + argc_offset:offset + argc_offset + 2], "little")
             size = 7 + 2 * argc if op == 69 else 5 + 2 * argc
         elif op == 65:
             if offset + 2 > len(code):
@@ -204,19 +206,6 @@ fn main() {
             self.assertEqual(events[3]["root"], 1)
             self.assertEqual(functions[0]["strings"][events[0]["root"]], "x#0")
             self.assertEqual(functions[0]["strings"][events[2]["root"]], "r#1")
-
-    def test_instruction_boundary_vectors_are_exact(self):
-        self.assertEqual(instruction_starts(bytes([64, 0, 0, 0, 0, 0, 1, 0, 1, 0, 65, 0])), {0: 64, 10: 65})
-        self.assertEqual(instruction_starts(bytes([67, 0, 0, 1, 0, 1, 0, 65, 0])), {0: 67, 7: 65})
-        self.assertEqual(instruction_starts(bytes([69, 0, 0, 0, 0, 1, 0, 0, 0, 65, 0])), {0: 69, 9: 65})
-        self.assertEqual(instruction_starts(bytes([91, 0, 0, 1, 0, 1, 0, 65, 0])), {0: 91, 7: 65})
-        with self.assertRaises(ValueError):
-            instruction_starts(bytes([69, 0, 0, 0, 0, 1, 0, 0]))
-
-    def test_truncated_own0_fields_fail_closed(self):
-        with self.assertRaises(ValueError):
-            decode_own0(b"SEMCOD22")
-
             out = root / "ownership.smc"
             out.write_bytes(artifact)
             verified = subprocess.run([SMC, "verify", out], capture_output=True,
@@ -225,6 +214,29 @@ fn main() {
             executed = subprocess.run([SMC, "run-smc", out], capture_output=True,
                                        text=True, encoding="utf-8", timeout=1800)
             self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
+
+    def test_instruction_boundary_vectors_are_exact(self):
+        vectors = [
+            (bytes([64, 0, 0, 0, 0, 0, 1, 0, 1, 0, 65, 0]), {0: 64, 10: 65}),
+            (bytes([67, 0, 0, 0, 0, 65, 0]), {0: 67, 5: 65}),
+            (bytes([67, 0, 0, 1, 0, 1, 0, 65, 0]), {0: 67, 7: 65}),
+            (bytes([67, 0, 0, 2, 0, 1, 0, 2, 0, 65, 0]), {0: 67, 9: 65}),
+            (bytes([69, 0, 0, 0, 0, 1, 0, 0, 0, 65, 0]), {0: 69, 9: 65}),
+            (bytes([91, 0, 0, 0, 0, 65, 0]), {0: 91, 5: 65}),
+            (bytes([91, 0, 0, 1, 0, 1, 0, 65, 0]), {0: 91, 7: 65}),
+            (bytes([91, 0, 0, 2, 0, 1, 0, 2, 0, 65, 0]), {0: 91, 9: 65}),
+        ]
+        for code, expected in vectors:
+            starts = instruction_starts(code)
+            self.assertEqual(starts, expected)
+            self.assertEqual(max(starts), len(code) - 2)
+        with self.assertRaises(ValueError):
+            instruction_starts(bytes([69, 0, 0, 0, 0, 1, 0, 0]))
+
+    def test_truncated_own0_fields_fail_closed(self):
+        with self.assertRaises(ValueError):
+            decode_own0(b"SEMCOD22")
+
 
     def test_invalid_ownership_anchors_fail_before_artifact(self):
         for mode in ("missing", "wrong_store", "wrong_record"):
