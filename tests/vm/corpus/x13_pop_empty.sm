@@ -1,0 +1,6 @@
+fn main() {
+    let xs: Sequence(i32) = [];
+    let ys: Sequence(i32) = pop(xs);
+    print(to_text(len(ys)));
+    return;
+}

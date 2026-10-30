@@ -1,0 +1,7 @@
+fn main() {
+    let t: bool = true;
+    let f: bool = false;
+    print(to_text(t && f) + " " + to_text(t || f) + " " + to_text(!t) + " " + to_text(f == f) + " " + to_text(t != f));
+    print(to_text(3 < 4) + " " + to_text(4 <= 4) + " " + to_text(5 > 4) + " " + to_text(4 >= 5) + " " + to_text(0 - 1 < 0));
+    return;
+}

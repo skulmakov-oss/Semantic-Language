@@ -1,0 +1,19 @@
+fn main() {
+    print("and");
+    print("N: " + to_text(N && N) + to_text(N && F) + to_text(N && T) + to_text(N && S));
+    print("F: " + to_text(F && N) + to_text(F && F) + to_text(F && T) + to_text(F && S));
+    print("T: " + to_text(T && N) + to_text(T && F) + to_text(T && T) + to_text(T && S));
+    print("S: " + to_text(S && N) + to_text(S && F) + to_text(S && T) + to_text(S && S));
+    print("or");
+    print("N: " + to_text(N || N) + to_text(N || F) + to_text(N || T) + to_text(N || S));
+    print("F: " + to_text(F || N) + to_text(F || F) + to_text(F || T) + to_text(F || S));
+    print("T: " + to_text(T || N) + to_text(T || F) + to_text(T || T) + to_text(T || S));
+    print("S: " + to_text(S || N) + to_text(S || F) + to_text(S || T) + to_text(S || S));
+    print("impl");
+    print("N: " + to_text(N -> N) + to_text(N -> F) + to_text(N -> T) + to_text(N -> S));
+    print("F: " + to_text(F -> N) + to_text(F -> F) + to_text(F -> T) + to_text(F -> S));
+    print("T: " + to_text(T -> N) + to_text(T -> F) + to_text(T -> T) + to_text(T -> S));
+    print("S: " + to_text(S -> N) + to_text(S -> F) + to_text(S -> T) + to_text(S -> S));
+    print(to_text(!N) + to_text(!F) + to_text(!T) + to_text(!S));
+    return;
+}

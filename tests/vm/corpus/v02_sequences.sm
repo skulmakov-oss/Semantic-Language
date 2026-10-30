@@ -1,0 +1,23 @@
+fn main() {
+    let mut xs: Sequence(i32) = [5, 3, 8];
+    let mut i: i32 = 0;
+    while i < 5 {
+        xs = push(xs, i * i);
+        i = i + 1;
+    }
+    let mut total: i32 = 0;
+    for x in xs {
+        total = total + x;
+    }
+    xs = prepend(xs, 100);
+    let ys: Sequence(i32) = pop(xs);
+    print(to_text(len(xs)) + " " + to_text(xs[0]) + " " + to_text(xs[8]) + " " + to_text(total) + " " + to_text(len(ys)));
+    print(to_text(contains(xs, 8)) + " " + to_text(contains(xs, 7)) + " " + to_text(is_empty(ys)) + " " + to_text(ys == [100, 5, 3, 8, 0, 1, 4, 9]));
+    let words: Sequence(text) = ["a", "bb", "ccc"];
+    let mut joined: text = "";
+    for w in words {
+        joined = joined + w + ",";
+    }
+    print(joined);
+    return;
+}

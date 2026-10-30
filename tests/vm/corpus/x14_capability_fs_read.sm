@@ -1,0 +1,4 @@
+fn main() {
+    print(fs_read_text("secret.txt"));
+    return;
+}

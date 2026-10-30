@@ -1,0 +1,5 @@
+fn main() {
+    let z: i32 = 0;
+    print(to_text(10 / z));
+    return;
+}
