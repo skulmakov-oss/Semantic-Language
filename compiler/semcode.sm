@@ -2,6 +2,20 @@
 Import "bytes.sm"
 Import "lower.sm"
 
+// Caches only low values; all other valid u16 operands serialize as
+// full little-endian 16-bit numbers without indexing beyond the cache.
+fn encode_u16_le(hx: Sequence(text), cache: Sequence(text), value: i32) -> text {
+    if value >= 0 && value < len(cache) { return cache[value]; }
+    return hx[value % 256] + hx[(value / 256) % 256];
+}
+
+// Jumps and OWN0 anchors are 32-bit little-endian addresses.
+// Using the same conversion at each site prevents accidental truncation.
+fn encode_u32_le(hx: Sequence(text), cache: Sequence(text), value: i32) -> text {
+    return encode_u16_le(hx, cache, value % 65536) +
+           encode_u16_le(hx, cache, value / 65536);
+}
+
 fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text), f: FnIr, art0: Sequence(text)) -> (Sequence(text), text) {
     let fnn: u32 = text_len(f.name);
     if fnn > 1024u32 {
@@ -41,7 +55,7 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
         else if op == 66 || op == 112 { pc = pc + 3; }
         else { pc = pc + 7; }
     }
-    let mut hdr: text = u16[ns];
+    let mut hdr: text = encode_u16_le(hx, u16, ns);
     let mut hdr_len: i32 = 2;
     let mut hdr_chunks: Sequence(text) = [];
     for s in f.strings {
@@ -62,7 +76,7 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
             si = si + 1u32;
             slen = slen + 1;
         }
-        hdr = hdr + u16[slen] + sh;
+        hdr = hdr + encode_u16_le(hx, u16, slen) + sh;
         hdr_len = hdr_len + 2 + slen;
         if text_len(hdr) >= 512u32 {
             hdr_chunks = push(hdr_chunks, hdr);
@@ -70,7 +84,7 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
         }
     }
     let n_owns: i32 = len(f.owns);
-    hdr = hdr + "4f574e30" + u16[n_owns];
+    hdr = hdr + "4f574e30" + encode_u16_le(hx, u16, n_owns);
     hdr_len = hdr_len + 6;
     let n_ins: i32 = len(f.ins);
     for ev in f.owns {
@@ -89,26 +103,26 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
         }
         let ck: i32 = if ev.comp_kind < 0 { 0 } else { 1 };
         let apc: i32 = anchor_pcs[ev.anchor];
-        hdr = hdr + hx[ev.kind] + hx[ev.mode] + hx[apc % 256] + hx[(apc / 256) % 256] + "0000" + u16[ev.root] + "0000" + u16[ck];
+        hdr = hdr + hx[ev.kind] + hx[ev.mode] + encode_u32_le(hx, u16, apc) + encode_u16_le(hx, u16, ev.root) + "0000" + encode_u16_le(hx, u16, ck);
         hdr_len = hdr_len + 12;
         if ev.comp_kind >= 0 {
             hdr = hdr + hx[ev.comp_kind];
             hdr_len = hdr_len + 1;
             let ca: i32 = ev.comp_a;
             if ev.comp_kind == 0 {
-                hdr = hdr + u16[ca];
+                hdr = hdr + encode_u16_le(hx, u16, ca);
                 hdr_len = hdr_len + 2;
             } else if ev.comp_kind == 2 {
-                hdr = hdr + u16[ca] + "0000" + u16[ev.comp_b];
+                hdr = hdr + encode_u16_le(hx, u16, ca) + "0000" + encode_u16_le(hx, u16, ev.comp_b);
                 hdr_len = hdr_len + 6;
             } else {
-                hdr = hdr + u16[ca] + "0000";
+                hdr = hdr + encode_u16_le(hx, u16, ca) + "0000";
                 hdr_len = hdr_len + 4;
             }
         }
     }
     let n_fam: i32 = len(f.families);
-    hdr = hdr + "53494730" + u16[n_fam];
+    hdr = hdr + "53494730" + encode_u16_le(hx, u16, n_fam);
     hdr_len = hdr_len + 6 + n_fam;
     for fam in f.families {
         hdr = hdr + hx[fam];
@@ -129,7 +143,7 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
         fn_len = fn_len + 1;
     }
     let code_len: i32 = hdr_len + pc;
-    let mut art: Sequence(text) = push(art0, u16[fn_len] + fn_hex + hx[code_len % 256] + hx[(code_len / 256) % 256] + hx[(code_len / 65536) % 256] + "00");
+    let mut art: Sequence(text) = push(art0, encode_u16_le(hx, u16, fn_len) + fn_hex + encode_u32_le(hx, u16, code_len));
     for hc in hdr_chunks {
         art = push(art, hc);
     }
@@ -142,29 +156,16 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
             if op < 48 {
                 if op <= 6 {
                     if op == 4 || op == 5 {
-                        chunk = chunk + hx[op] + u16[i.a] + u16[i.b];
+                        chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b);
                     } else if op == 1 {
-                        chunk = chunk + "01" + u16[i.a] + hx[i.imm];
+                        chunk = chunk + "01" + encode_u16_le(hx, u16, i.a) + hx[i.imm];
                     } else if op == 2 {
-                        chunk = chunk + "02" + u16[i.a] + hx[i.imm];
+                        chunk = chunk + "02" + encode_u16_le(hx, u16, i.a) + hx[i.imm];
                     } else {
                         let v: i32 = i.imm;
                         let mut vhex: text = "ffffffff";
                         if v >= 0 {
-                            if v < 3328 {
-                                vhex = u16[v] + "0000";
-                            } else if v < 65536 {
-                                vhex = hx[v % 256] + hx[v / 256] + "0000";
-                            } else {
-                                let b0: i32 = ((v % 256) + 256) % 256;
-                                let v1: i32 = (v - b0) / 256;
-                                let b1: i32 = ((v1 % 256) + 256) % 256;
-                                let v2: i32 = (v1 - b1) / 256;
-                                let b2: i32 = ((v2 % 256) + 256) % 256;
-                                let v3: i32 = (v2 - b2) / 256;
-                                let b3: i32 = ((v3 % 256) + 256) % 256;
-                                vhex = hx[b0] + hx[b1] + hx[b2] + hx[b3];
-                            }
+                            vhex = encode_u32_le(hx, u16, v);
                         } else if v != 0 - 1 {
                             let b0: i32 = ((v % 256) + 256) % 256;
                             let v1: i32 = (v - b0) / 256;
@@ -175,57 +176,49 @@ fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text
                             let b3: i32 = ((v3 % 256) + 256) % 256;
                             vhex = hx[b0] + hx[b1] + hx[b2] + hx[b3];
                         }
-                        chunk = chunk + hx[op] + u16[i.a] + vhex;
+                        chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + vhex;
                     }
                 } else if op == 22 || op == 18 {
-                    chunk = chunk + hx[op] + u16[i.a] + u16[i.b];
+                    chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b);
                 } else {
-                    chunk = chunk + hx[op] + u16[i.a] + u16[i.b] + u16[i.c];
+                    chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c);
                 }
             } else if op == 70 || op == 73 || op == 114 || op == 115 {
-                chunk = chunk + hx[op] + u16[i.a] + u16[i.b] + u16[i.c] + u16[i.imm];
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c) + encode_u16_le(hx, u16, i.imm);
             } else if op == 64 {
                 let argc: i32 = len(i.args);
-                chunk = chunk + "40" + hx[i.a] + u16[i.b] + u16[i.c] + u16[argc];
+                chunk = chunk + "40" + hx[i.a] + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c) + encode_u16_le(hx, u16, argc);
                 for r in i.args {
-                    chunk = chunk + u16[r];
+                    chunk = chunk + encode_u16_le(hx, u16, r);
                 }
             } else if op == 48 {
                 let v: i32 = map_get(offsets, i.imm, 0);
-                if v < 3328 {
-                    chunk = chunk + "30" + u16[v] + "0000";
-                } else {
-                    chunk = chunk + "30" + hx[v % 256] + hx[v / 256] + "0000";
-                }
+                chunk = chunk + "30" + encode_u32_le(hx, u16, v);
             } else if op == 49 {
                 let v: i32 = map_get(offsets, i.imm, 0);
-                if v < 3328 {
-                    chunk = chunk + "31" + u16[i.a] + u16[v] + "0000";
-                } else {
-                    chunk = chunk + "31" + u16[i.a] + hx[v % 256] + hx[v / 256] + "0000";
-                }
+                chunk = chunk + "31" + encode_u16_le(hx, u16, i.a) + encode_u32_le(hx, u16, v);
             } else if op == 90 || op == 95 || op == 107 {
-                chunk = chunk + hx[op] + u16[i.a] + u16[i.b];
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b);
             } else if op == 69 {
                 let cnt: i32 = len(i.args);
-                chunk = chunk + "45" + u16[i.a] + u16[i.b] + u16[cnt];
-                for r in i.args { chunk = chunk + u16[r]; }
+                chunk = chunk + "45" + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, cnt);
+                for r in i.args { chunk = chunk + encode_u16_le(hx, u16, r); }
             } else if op == 65 {
                 if i.a == 1 {
-                    chunk = chunk + "4101" + u16[i.b];
+                    chunk = chunk + "4101" + encode_u16_le(hx, u16, i.b);
                 } else {
                     chunk = chunk + "4100";
                 }
             } else if op == 67 || op == 91 {
                 let cnt: i32 = len(i.args);
-                chunk = chunk + hx[op] + u16[i.a] + u16[cnt];
-                for r in i.args { chunk = chunk + u16[r]; }
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, cnt);
+                for r in i.args { chunk = chunk + encode_u16_le(hx, u16, r); }
             } else if op == 68 {
-                chunk = chunk + "44" + u16[i.a] + u16[i.b] + u16[i.imm];
+                chunk = chunk + "44" + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.imm);
             } else if op == 66 || op == 112 {
-                chunk = chunk + hx[op] + u16[i.a];
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a);
             } else {
-                chunk = chunk + hx[op] + u16[i.a] + u16[i.b] + u16[i.c];
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c);
             }
             c_count = c_count + 1;
             if c_count == 24 {

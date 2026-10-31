@@ -522,6 +522,34 @@ class QuadNativeTests(unittest.TestCase):
                         check = command([C0, command_name, artifact])
                         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
 
+    def test_codex_review_parser_eof_lookahead(self):
+        # Codex PR #46: a truncated RHS must yield a syntax diagnostic,
+        # not read past the single EOF token or trap the compiler VM.
+        sources = (
+            "fn main() { let x =",
+            "fn main() { let x: i32 =",
+            "fn main() { let mut x = 1; x =",
+            "fn main() { let x = 1 +",
+            "fn main() { let x = true &&",
+            "fn main() { assert(1 +",
+            "fn main() { let x = 1; x = 2 +",
+            "fn main() { let x = [1,",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for source in sources:
+                with self.subTest(source=source):
+                    (root / "main.sm").write_text(source, encoding="utf-8", newline="\n")
+                    output, metrics = self.run_native(root, "main.sm")
+                    self.assertTrue(output.startswith("error syntax "), output[:500])
+                    self.assertEqual(metrics["outcome"], "ok")
+
+    def test_codex_review_semcode_16_32bit_boundaries(self):
+        # The real Semantic encoder must preserve u16 3328/65535 and u32
+        # jump/OWN0 offsets >= 65536, including function total length.
+        self._run_real_semantic_fixture("quad_codex_review_internal.sm",
+                                        max_steps="20000000")
+
     def test_terminal_unit_match_has_valid_jump_target(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

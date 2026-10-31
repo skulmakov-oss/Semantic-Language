@@ -12,6 +12,20 @@ record P {
     errpos: u32,
 }
 
+// A lexer result ends in one EOF token. A fast-path peek past it is
+// NOT an expression: report the ordinary syntax error, never trap the VM.
+fn safe_lookahead_kind(p: P, ahead: i32) -> i32 {
+    let index: i32 = p.i + ahead;
+    if index < 0 || index >= len(p.toks) { return 0; }
+    return p.toks[index].kind;
+}
+
+fn safe_lookahead_token(p: P, ahead: i32) -> Tok {
+    let index: i32 = p.i + ahead;
+    if index < 0 || index >= len(p.toks) { return p.toks[len(p.toks) - 1]; }
+    return p.toks[index];
+}
+
 fn fail_cat(p: P, cat: text, msg: text) -> P {
     if p.err != "" {
         return p;
@@ -96,7 +110,7 @@ fn parse_field_inits(p0: P) -> (P, Sequence(i32)) {
     while p.toks[p.i].kind != 23 {
         let f: Tok = p.toks[p.i];
         if f.kind != 2 { return (fail_cat(p, "syntax", "expected field name"), kids); }
-        if p.toks[p.i + 1].kind != 25 {
+        if safe_lookahead_kind(p, 1) != 25 {
             return (fail_cat(p with { i: p.i + 1 }, "unsupported", "field punning is outside the supported subset"), kids);
         }
         let mut e: i32 = 0 - 1;
@@ -137,7 +151,7 @@ fn parse_block_expr(p0: P) -> (P, i32) {
             if k == 7 || k == 14 || k == 16 || k == 17 || k == 19 || k == 18 {
                 is_stmt_only = true;
             } else if k == 2 {
-                if p.toks[p.i + 1].kind == 26 {
+                if safe_lookahead_kind(p, 1) == 26 {
                     is_stmt_only = true;
                 }
             }
@@ -219,7 +233,7 @@ fn parse_match(p0: P, statement: bool) -> (P, i32) {
                 lit = if pt.word == "N" { 0 } else if pt.word == "F" { 1 } else if pt.word == "T" { 2 } else { 3 };
                 p = p with { i: p.i + 1 };
             } else if pt.word == "Option" {
-                if p.toks[p.i + 1].kind == 49 {
+                if safe_lookahead_kind(p, 1) == 49 {
                     p = p with { i: p.i + 2 };
                     let vt: Tok = p.toks[p.i];
                     p = expect(p, 2, "expected variant name");
@@ -303,7 +317,7 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
         lhs = uid;
     } else {
         if t0.kind == 2 {
-            let k1: i32 = p.toks[p.i + 1].kind;
+            let k1: i32 = safe_lookahead_kind(p, 1);
             if t0.word == "N" || t0.word == "F" || t0.word == "T" || t0.word == "S" {
                 let qv: i32 = if t0.word == "N" { 0 } else if t0.word == "F" { 1 } else if t0.word == "T" { 2 } else { 3 };
                 lhs = len(p.nodes);
@@ -315,7 +329,7 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
                     while p.err == "" {
                         let mut ae: i32 = 0 - 1;
                         let at: Tok = p.toks[p.i];
-                        let ntk: i32 = p.toks[p.i + 1].kind;
+                        let ntk: i32 = safe_lookahead_kind(p, 1);
                         let mut ak: i32 = 0;
                         if ntk == 27 || ntk == 21 {
                             if at.kind == 2 {
@@ -347,7 +361,7 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
             } else if k1 == 22 {
                 let mut is_rec_lit: bool = false;
                 if p.i + 3 < len(p.toks) {
-                    if p.toks[p.i + 2].kind == 2 {
+                    if safe_lookahead_kind(p, 2) == 2 {
                         if p.toks[p.i + 3].kind == 25 {
                             is_rec_lit = true;
                         }
@@ -439,7 +453,7 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
         while p.err == "" {
             let pt: Tok = p.toks[p.i];
             if pt.kind == 46 {
-                if p.toks[p.i + 1].kind == 46 {
+                if safe_lookahead_kind(p, 1) == 46 {
                     p = fail_cat(p, "unsupported", "ranges are outside the supported subset");
                 } else {
                     p = p with { i: p.i + 1 };
@@ -447,7 +461,7 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
                     if f.kind == 1 {
                         p = fail_cat(p, "unsupported", "tuple field access is outside the supported subset");
                     } else if f.kind == 2 {
-                        if p.toks[p.i + 1].kind == 20 {
+                        if safe_lookahead_kind(p, 1) == 20 {
                             p = fail_cat(p with { i: p.i + 1 }, "unsupported", "method calls are outside the supported subset");
                         } else {
                             let fid: i32 = len(p.nodes);
@@ -459,9 +473,9 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
                     }
                 }
             } else if pt.kind == 47 {
-                let it: Tok = p.toks[p.i + 1];
+                let it: Tok = safe_lookahead_token(p, 1);
                 let mut ik: i32 = 0;
-                if p.toks[p.i + 2].kind == 48 {
+                if safe_lookahead_kind(p, 2) == 48 {
                     if it.kind == 2 { ik = 4; }
                     else if it.kind == 1 { ik = 1; }
                 }
@@ -523,7 +537,7 @@ fn parse_expr(p0: P, minp: i32) -> (P, i32) {
         p = p with { i: p.i + 1 };
         let mut rhs: i32 = 0 - 1;
         let rt: Tok = p.toks[p.i];
-        let ntk: i32 = p.toks[p.i + 1].kind;
+        let ntk: i32 = safe_lookahead_kind(p, 1);
         let mut rk: i32 = 0;
         if ntk <= 27 {
             if ntk >= 21 {
@@ -636,7 +650,7 @@ fn parse_stmt(p0: P) -> (P, i32) {
         p = p with { i: p.i + 1 };
         let vt: Tok = p.toks[p.i];
         let mut vk: i32 = 0;
-        if p.toks[p.i + 1].kind == 24 {
+        if safe_lookahead_kind(p, 1) == 24 {
             if vt.kind == 1 { vk = 1; }
             else if vt.kind == 2 { if vt.word != "N" && vt.word != "F" && vt.word != "T" && vt.word != "S" { vk = 4; } }
             else if vt.kind == 44 { vk = 3; }
@@ -657,12 +671,12 @@ fn parse_stmt(p0: P) -> (P, i32) {
         return (p with { nodes: push(p.nodes, Node { k: 10, a: e, b: 0 - 1, c: is_mut, v: ty, name: id.word, pos: id.pos, kids: [] }) }, id_node);
     }
     if t.kind == 2 {
-        let k1: i32 = p.toks[p.i + 1].kind;
+        let k1: i32 = safe_lookahead_kind(p, 1);
         if k1 == 26 {
             p = p with { i: p.i + 2 };
             let vt: Tok = p.toks[p.i];
             let mut vk: i32 = 0;
-            if p.toks[p.i + 1].kind == 24 {
+            if safe_lookahead_kind(p, 1) == 24 {
                 if vt.kind == 1 { vk = 1; }
                 else if vt.kind == 2 { if vt.word != "N" && vt.word != "F" && vt.word != "T" && vt.word != "S" { vk = 4; } }
                 else if vt.kind == 44 { vk = 3; }
@@ -685,7 +699,7 @@ fn parse_stmt(p0: P) -> (P, i32) {
         if k1 >= 30 {
             if k1 <= 34 {
                 if p.i + 2 < len(p.toks) {
-                    if p.toks[p.i + 2].kind == 26 {
+                    if safe_lookahead_kind(p, 2) == 26 {
                         return (fail_cat(p with { i: p.i + 1 }, "unsupported", "compound assignment is outside the supported subset"), 0 - 1);
                     }
                 }
@@ -756,8 +770,8 @@ fn parse_stmt(p0: P) -> (P, i32) {
     if t.kind == 20 {
         let mut is_tup_assign: bool = false;
         if p.i + 2 < len(p.toks) {
-            if p.toks[p.i + 1].kind == 2 {
-                if p.toks[p.i + 2].kind == 27 {
+            if safe_lookahead_kind(p, 1) == 2 {
+                if safe_lookahead_kind(p, 2) == 27 {
                     let mut depth: i32 = 1;
                     let mut ti: i32 = p.i + 1;
                     let tlen: i32 = len(p.toks);
@@ -801,7 +815,7 @@ fn parse_stmt(p0: P) -> (P, i32) {
         return (p with { nodes: push(p.nodes, Node { k: 17, a: e, b: 0 - 1, c: 0 - 1, v: 0, name: "", pos: t.pos, kids: [] }) }, id_node);
     }
     if t.kind == 16 || t.kind == 17 {
-        if p.toks[p.i + 1].kind != 24 { return (fail_cat(p with { i: p.i + 1 }, "syntax", "expected ';'"), 0 - 1); }
+        if safe_lookahead_kind(p, 1) != 24 { return (fail_cat(p with { i: p.i + 1 }, "syntax", "expected ';'"), 0 - 1); }
         let k: i32 = if t.kind == 16 { 18 } else { 19 };
         let id_node: i32 = len(p.nodes);
         return (p with { i: p.i + 2, nodes: push(p.nodes, Node { k: k, a: 0 - 1, b: 0 - 1, c: 0 - 1, v: 0, name: "", pos: t.pos, kids: [] }) }, id_node);
