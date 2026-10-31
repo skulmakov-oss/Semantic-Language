@@ -1,0 +1,156 @@
+// Q2.7: independent tuple shape, assignment and non-proof inference origins.
+Import "lower.sm"
+
+fn analyze_text(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let parsed: P = parse_program(lx.toks);
+    assert(parsed.err == "");
+    return analyze(Prog { nodes: parsed.nodes, funcs: parsed.funcs, recs: parsed.recs });
+}
+
+fn find_kind(s: Sem, kind: i32) -> i32 {
+    let mut i: i32 = 0;
+    while i < len(s.prog.nodes) {
+        if s.prog.nodes[i].k == kind { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn main() {
+    let source: text = "fn main() { let (a, b) = (1, true); let mut x: i32 = 0; let mut y: bool = false; (x, y) = (a, b); assert(x == 1 && y); return; }";
+    let s: Sem = analyze_text(source);
+    assert(s.err == "");
+    assert(q3_lowering_error(s) == "");
+    let binding: i32 = find_kind(s, 40);
+    let assignment: i32 = find_kind(s, 41);
+    assert(binding >= 0 && assignment >= 0);
+    let bind_nd: Node = s.prog.nodes[binding];
+    let assign_nd: Node = s.prog.nodes[assignment];
+    let shape_bind: Evidence = map_get(s.tuple_shape_evidence, binding, evidence_empty("invalid", 0, 0));
+    let shape_assign: Evidence = map_get(s.tuple_shape_evidence, assignment, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(shape_bind) && evidence_valid(shape_assign));
+    assert(shape_bind.state == T && shape_assign.state == T);
+    assert(shape_bind.positive[0] == s.prog.nodes[bind_nd.a].pos);
+    assert(shape_assign.positive[0] == s.prog.nodes[assign_nd.a].pos);
+    assert(!map_contains(s.type_evidence, binding));
+    let assignment_e: Evidence = map_get(s.type_evidence, assignment, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(assignment_e));
+    assert(assignment_e.proposition_kind == "tuple-assignment-items");
+    assert(assignment_e.state == T);
+    assert(len(assignment_e.positive) == 2);
+    assert(assignment_e.positive[0] == s.prog.nodes[assign_nd.kids[0]].pos);
+    assert(assignment_e.positive[1] == s.prog.nodes[assign_nd.kids[1]].pos);
+    assert(!map_contains(s.tuple_inferred_components, assign_nd.kids[0]));
+    assert(map_contains(s.tuple_inferred_components, bind_nd.kids[0]));
+    assert(map_contains(s.tuple_inferred_components, bind_nd.kids[1]));
+    assert(map_get(s.tuple_inferred_components, bind_nd.kids[0], 0 - 1) == 1);
+    assert(map_get(s.tuple_inferred_components, bind_nd.kids[1], 0 - 1) == 2);
+
+    let fi: i32 = map_get(s.fnidx, "main", 0 - 1);
+    let f: FnIr = lower_function(s, fi);
+    assert(len(f.tuple_inferences) == 2);
+    let mut idx: i32 = 0;
+    while idx < 2 {
+        let link: TupleInferenceLink = f.tuple_inferences[idx];
+        assert(link.owner == binding);
+        assert(link.source == bind_nd.a);
+        assert(link.binding == bind_nd.kids[idx]);
+        assert(link.component == idx);
+        assert(link.resolved_type == map_get(s.tuple_inferred_components, link.binding, 0 - 1));
+        assert(link.source_offset == s.prog.nodes[link.source].pos);
+        assert(link.binding_offset == s.prog.nodes[link.binding].pos);
+        idx = idx + 1;
+    }
+    let mut shape_count: i32 = 0;
+    let mut compat_count: i32 = 0;
+    for proof in f.proofs {
+        if proof.evidence.proposition_kind == "tuple-destructure-shape" {
+            shape_count = shape_count + 1;
+            assert(proof.evidence.state == T);
+            assert(len(proof.source_nodes) == 1);
+        }
+        if proof.evidence.proposition_kind == "tuple-assignment-items" {
+            compat_count = compat_count + 1;
+            assert(proof.evidence.state == T);
+            assert(len(proof.source_nodes) == 2);
+        }
+    }
+    assert(shape_count == 2 && compat_count == 1);
+
+    // Delete only shape proof: passing scalar and tuple assignment evidence
+    // cannot authorize structurally unchecked destructuring.
+    let mut shapes: Map(i32, Evidence) = map_empty();
+    idx = 0;
+    while idx < len(s.prog.nodes) {
+        if idx != binding && map_contains(s.tuple_shape_evidence, idx) {
+            shapes = map_set(shapes, idx, map_get(s.tuple_shape_evidence, idx, evidence_empty("invalid", 0, 0)));
+        }
+        idx = idx + 1;
+    }
+    assert(q3_lowering_error(s with { tuple_shape_evidence: shapes }) != "");
+    let forged_shape: Evidence = shape_bind with { positive: [999999u32] };
+    assert(evidence_valid(forged_shape));
+    assert(q3_lowering_error(s with { tuple_shape_evidence: map_set(s.tuple_shape_evidence, binding, forged_shape) }) != "");
+    // Type inference link is not optional metadata at this checked boundary.
+    let mut links: Map(i32, i32) = map_empty();
+    idx = 0;
+    while idx < len(s.prog.nodes) {
+        if idx != bind_nd.kids[1] && map_contains(s.tuple_inferred_components, idx) {
+            links = map_set(links, idx, map_get(s.tuple_inferred_components, idx, 0 - 1));
+        }
+        idx = idx + 1;
+    }
+    assert(q3_lowering_error(s with { tuple_inferred_components: links }) != "");
+    let bad_link: Sem = s with { tuple_inferred_components: map_set(s.tuple_inferred_components, bind_nd.kids[1], 1) };
+    assert(q3_lowering_error(bad_link) != "");
+    let empty_all: Sem = s with { type_evidence: map_empty() };
+    assert(q3_lowering_error(empty_all) != "");
+
+    let annotated: Sem = analyze_text("fn main() { let (i, flag): (i32, bool) = (1, true); assert(i == 1 && flag); return; }");
+    assert(annotated.err == "");
+    assert(q3_lowering_error(annotated) == "");
+    let annotated_id: i32 = find_kind(annotated, 40);
+    let annotated_e: Evidence = map_get(annotated.type_evidence, annotated_id, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(annotated_e));
+    assert(annotated_e.proposition_kind == "tuple-annotation-type");
+    assert(annotated_e.state == T);
+    assert(len(annotated_e.positive) == 1);
+    assert(annotated_e.positive[0] == annotated.prog.nodes[annotated.prog.nodes[annotated_id].a].pos);
+    let no_annotation: Sem = annotated with { type_evidence: map_empty() };
+    assert(q3_lowering_error(no_annotation) != "");
+
+    let negative: Sem = analyze_text("fn main() { let mut x: i32 = 0; let mut y: i32 = 0; (x, y) = (1, false); return; }");
+    assert(negative.err != "");
+    assert(negative.cat == "type");
+    let negative_id: i32 = find_kind(negative, 41);
+    let negative_shape: Evidence = map_get(negative.tuple_shape_evidence, negative_id, evidence_empty("invalid", 0, 0));
+    let negative_proof: Evidence = map_get(negative.type_evidence, negative_id, evidence_empty("invalid", 0, 0));
+    assert(negative_shape.state == T);
+    assert(evidence_valid(negative_proof));
+    assert(negative_proof.state == S);
+    assert(len(negative_proof.positive) == 1);
+    assert(len(negative_proof.negative) == 1);
+    assert(negative_proof.negative[0] == negative.prog.nodes[negative.prog.nodes[negative_id].kids[1]].pos);
+    assert(q3_lowering_error(negative) != "");
+
+    let bad_shape: Sem = analyze_text("fn main() { let (a, b) = (1, 2, 3); return; }");
+    assert(bad_shape.err != "");
+    let bad_id: i32 = find_kind(bad_shape, 40);
+    let bad_e: Evidence = map_get(bad_shape.tuple_shape_evidence, bad_id, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(bad_e));
+    assert(bad_e.state == F);
+    let replay: Sem = analyze_text(source);
+    assert(replay.err == "");
+    let again: FnIr = lower_function(replay, map_get(replay.fnidx, "main", 0 - 1));
+    assert(len(f.tuple_inferences) == len(again.tuple_inferences));
+    assert(len(f.proofs) == len(again.proofs));
+    idx = 0;
+    while idx < len(f.tuple_inferences) {
+        assert(f.tuple_inferences[idx].binding == again.tuple_inferences[idx].binding);
+        assert(f.tuple_inferences[idx].resolved_type == again.tuple_inferences[idx].resolved_type);
+        idx = idx + 1;
+    }
+    return;
+}

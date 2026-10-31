@@ -1,0 +1,191 @@
+// Q2.8 / Q3.7 / Q4.7: control type obligations, inferred binding ancestry.
+Import "lower.sm"
+
+fn analyze_text(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let p: P = parse_program(lx.toks);
+    assert(p.err == "");
+    return analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
+}
+
+fn inspect_control(source: text, node_kind: i32, proof_kind: text, expected: quad, accepted: bool) {
+    let sem: Sem = analyze_text(source);
+    if accepted {
+        assert(sem.err == "");
+        assert(q3_lowering_error(sem) == "");
+    } else {
+        assert(sem.err != "");
+        assert(sem.cat == "type");
+    }
+    let mut seen: i32 = 0;
+    let mut id: i32 = 0;
+    while id < len(sem.prog.nodes) {
+        let nd: Node = sem.prog.nodes[id];
+        if nd.k == node_kind {
+            assert(map_contains(sem.type_evidence, id));
+            let e: Evidence = map_get(sem.type_evidence, id, evidence_empty("invalid", 0, 0));
+            assert(evidence_valid(e));
+            assert(e.proposition_kind == proof_kind);
+            assert(e.subject == id && e.scope == 0);
+            assert(e.state == expected);
+            assert(len(e.positive) + len(e.negative) == 1);
+            let observed: u32 = if expected == T { e.positive[0] } else { e.negative[0] };
+            assert(observed == sem.prog.nodes[nd.a].pos);
+            if accepted { assert(q3_proof_error(sem, id) == ""); }
+            else { assert(q3_proof_error(sem, id) != ""); }
+            seen = seen + 1;
+        }
+        id = id + 1;
+    }
+    assert(seen == 1);
+    return;
+}
+
+fn main() {
+    inspect_control("fn main() { if true { return; } return; }", 12, "if-condition-type", T, true);
+    inspect_control("fn main() { if 1 { return; } return; }", 12, "if-condition-type", F, false);
+    inspect_control("fn main() { while false { break; } return; }", 13, "while-condition-type", T, true);
+    inspect_control("fn main() { while 1 { break; } return; }", 13, "while-condition-type", F, false);
+    inspect_control("fn main() { assert(true); return; }", 17, "assert-condition-type", T, true);
+    // False is a valid boolean expression; it is not type evidence F.
+    inspect_control("fn main() { assert(false); return; }", 17, "assert-condition-type", T, true);
+    inspect_control("fn main() { assert(1); return; }", 17, "assert-condition-type", F, false);
+    inspect_control("fn main() { for x in [1, 2] { assert(x > 0); } return; }", 42, "for-sequence-type", T, true);
+    inspect_control("fn main() { for x in 1 { assert(true); } return; }", 42, "for-sequence-type", F, false);
+
+    // If expressions have two distinct propositions under one owner:
+    // branch-result agreement and condition-type admissibility.
+    let ifexpr: Sem = analyze_text("fn main() { let x: i32 = if true { 1 } else { 2 }; assert(x == 1); return; }");
+    assert(ifexpr.err == "");
+    assert(q3_lowering_error(ifexpr) == "");
+    let mut ifexpr_id: i32 = 0 - 1;
+    let mut ex: i32 = 0;
+    while ex < len(ifexpr.prog.nodes) {
+        if ifexpr.prog.nodes[ex].k == 26 { ifexpr_id = ex; }
+        ex = ex + 1;
+    }
+    assert(ifexpr_id >= 0);
+    let if_cond: Evidence = map_get(ifexpr.if_expr_condition_evidence, ifexpr_id, evidence_empty("missing", 0, 0));
+    let if_branch: Evidence = map_get(ifexpr.type_evidence, ifexpr_id, evidence_empty("missing", 0, 0));
+    assert(evidence_valid(if_cond) && evidence_valid(if_branch));
+    assert(if_cond.proposition_kind == "if-expression-condition-type");
+    assert(if_branch.proposition_kind == "if-branch-type");
+    assert(if_cond.state == T && if_branch.state == T);
+    assert(len(if_cond.positive) == 1 && len(if_branch.positive) == 2);
+    assert(!evidence_try_join(if_cond, if_branch).ok);
+    assert(q3_lowering_error(ifexpr with { if_expr_condition_evidence: map_empty() }) != "");
+    let if_wrong: Evidence = if_cond with { positive: [999999u32] };
+    assert(evidence_valid(if_wrong));
+    assert(q3_lowering_error(ifexpr with { if_expr_condition_evidence: map_set(ifexpr.if_expr_condition_evidence, ifexpr_id, if_wrong) }) != "");
+    let if_lowered: FnIr = lower_function(ifexpr, map_get(ifexpr.fnidx, "main", 0 - 1));
+    let mut if_audits: i32 = 0;
+    for check in if_lowered.control_type_checks {
+        if check.owner == ifexpr_id {
+            assert(check.evidence.proposition_kind == "if-expression-condition-type");
+            assert(check.observed_family == 2 && check.required_family == 2);
+            assert(check.source_offset == ifexpr.prog.nodes[check.source].pos);
+            if_audits = if_audits + 1;
+        }
+    }
+    assert(if_audits == 1);
+
+    let source: text = "fn main() { let count = 2; let ready = true; let nums = [1, 2]; if ready { assert(count == 2); } while false { break; } for x in nums { assert(x > 0); } return; }";
+    let sem: Sem = analyze_text(source);
+    assert(sem.err == "");
+    assert(q3_lowering_error(sem) == "");
+    let main_idx: i32 = map_get(sem.fnidx, "main", 0 - 1);
+    let lowered: FnIr = lower_function(sem, main_idx);
+    let mut inferred: i32 = 0;
+    let mut conditions: i32 = 0;
+    let mut sequence: i32 = 0;
+    for link in lowered.binding_inferences {
+        assert(sem.prog.nodes[link.owner].k == 10);
+        assert(sem.prog.nodes[link.owner].v < 0);
+        assert(link.source == sem.prog.nodes[link.owner].a);
+        assert(link.source_offset == sem.prog.nodes[link.source].pos);
+        assert(link.binding_offset == sem.prog.nodes[link.owner].pos);
+        assert(link.resolved_type == map_get(sem.inferred_binding_types, link.owner, 0 - 1));
+        assert(link.resolved_type == q3_inferred_rhs_type(sem, link.source));
+        inferred = inferred + 1;
+    }
+    for proof in lowered.proofs {
+        let k: text = proof.evidence.proposition_kind;
+        if k == "if-condition-type" || k == "while-condition-type" || k == "assert-condition-type" {
+            assert(proof.evidence.state == T);
+            assert(proof.evidence.positive[0] == proof.source_offsets[0]);
+            conditions = conditions + 1;
+        }
+        if k == "for-sequence-type" {
+            assert(proof.evidence.state == T);
+            assert(proof.evidence.positive[0] == proof.source_offsets[0]);
+            sequence = sequence + 1;
+        }
+    }
+    assert(inferred == 3);
+    assert(conditions == 4);
+    assert(sequence == 1);
+    let mut checks: i32 = 0;
+    for check in lowered.control_type_checks {
+        assert(check.observed_family == check.required_family);
+        assert(check.evidence.state == T && evidence_valid(check.evidence));
+        assert(check.source_offset == sem.prog.nodes[check.source].pos);
+        assert(check.owner_kind == sem.prog.nodes[check.owner].k);
+        checks = checks + 1;
+    }
+    assert(checks == 5);
+    let mut target: i32 = 0 - 1;
+    let mut control: i32 = 0 - 1;
+    let mut i: i32 = 0;
+    while i < len(sem.prog.nodes) {
+        let nd: Node = sem.prog.nodes[i];
+        if nd.k == 10 && nd.name == "count" { target = i; }
+        if nd.k == 42 { control = i; }
+        i = i + 1;
+    }
+    assert(target >= 0 && control >= 0);
+
+    let mut retained: Map(i32, i32) = map_empty();
+    i = 0;
+    while i < len(sem.prog.nodes) {
+        if i != target && map_contains(sem.inferred_binding_types, i) {
+            retained = map_set(retained, i, map_get(sem.inferred_binding_types, i, 0 - 1));
+        }
+        i = i + 1;
+    }
+    assert(q3_lowering_error(sem with { inferred_binding_types: retained }) != "");
+    assert(q3_lowering_error(sem with { inferred_binding_types: map_set(sem.inferred_binding_types, target, 2) }) != "");
+    let control_e: Evidence = map_get(sem.type_evidence, control, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(control_e));
+    let spoof: Evidence = control_e with { positive: [999999u32] };
+    assert(evidence_valid(spoof));
+    assert(q3_lowering_error(sem with { type_evidence: map_set(sem.type_evidence, control, spoof) }) != "");
+    let mut proofs: Map(i32, Evidence) = map_empty();
+    i = 0;
+    while i < len(sem.prog.nodes) {
+        if i != control && map_contains(sem.type_evidence, i) {
+            proofs = map_set(proofs, i, map_get(sem.type_evidence, i, evidence_empty("invalid", 0, 0)));
+        }
+        i = i + 1;
+    }
+    assert(q3_lowering_error(sem with { type_evidence: proofs }) != "");
+    // A valid, source-position-correct T claim is insufficient if the
+    // independently stored actual typed expression changes.
+    let control_rhs: i32 = sem.prog.nodes[control].a;
+    let wrong_semantics: Sem = sem with { exprty: map_set(sem.exprty, control_rhs, 2) };
+    assert(q3_control_type_error(wrong_semantics, control) != "");
+    assert(q3_lowering_error(wrong_semantics) != "");
+    let second: Sem = analyze_text(source);
+    assert(second.err == "");
+    assert(q3_lowering_error(second) == "");
+    let again: FnIr = lower_function(second, map_get(second.fnidx, "main", 0 - 1));
+    assert(len(again.binding_inferences) == len(lowered.binding_inferences));
+    assert(len(again.proofs) == len(lowered.proofs));
+    i = 0;
+    while i < len(again.binding_inferences) {
+        assert(again.binding_inferences[i].resolved_type == lowered.binding_inferences[i].resolved_type);
+        assert(again.binding_inferences[i].source_offset == lowered.binding_inferences[i].source_offset);
+        i = i + 1;
+    }
+    return;
+}

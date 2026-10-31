@@ -1,15 +1,4 @@
 // sema: name resolution and type checking.
-//
-// Types are interned in a table; a type is an i32 id into it:
-//   0 unit  1 i32  2 bool  3 u32  4 text  (fixed ids)
-//   kind 5 Sequence(a)  6 tuple(kids)  7 record(name, a = record index)  8 Option(a)
-// Results are side tables keyed by AST node id instead of a rewritten tree:
-//   exprty:  expression node -> type id
-//   slots:   Var / Let / Assign / Name / Arm binding / hidden-result node -> local slot
-//   callees: Call node -> function index, or -1 - builtin code
-//   fieldix: Field node -> record slot index
-// and, per function, the ordered list of local slot names.
-// Diagnostic categories: name, type, context, unsupported.
 Import "parser.sm"
 
 record TyInfo {
@@ -23,6 +12,7 @@ record Sym {
     name: text,
     ty: i32,
     slot: i32,
+    prev: i32,
 }
 
 record Sem {
@@ -34,7 +24,29 @@ record Sem {
     fptypes: Sequence(Sequence(i32)),
     frets: Sequence(i32),
     rftypes: Sequence(Sequence(i32)),
+    rfidx: Sequence(Map(text, i32)),
     exprty: Map(i32, i32),
+    type_evidence: Map(i32, Evidence),
+    // Q2.6: distinct proof identities for map container/context, key, value.
+    // Never join evidence about these different propositions.
+    map_container_evidence: Map(i32, Evidence),
+    map_key_evidence: Map(i32, Evidence),
+    map_value_evidence: Map(i32, Evidence),
+    // Q2.7: a tuple's structural obligation is separate from assignment
+    // compatibility. Inferred components record type derivation, not T proof.
+    tuple_shape_evidence: Map(i32, Evidence),
+    tuple_inferred_components: Map(i32, i32),
+    // Inferred unannotated scalar/record/container binding types are
+    // derivation facts, not fabricated positive compatibility Evidence.
+    inferred_binding_types: Map(i32, i32),
+    // Value-producing if has an independent condition proposition,
+    // separate from if-branch-type under the same AST owner.
+    if_expr_condition_evidence: Map(i32, Evidence),
+    // Contextual tuple obligations are recorded separately: inferred tuple
+    // item types do not themselves imply an equality constraint.
+    tuple_expected: Map(i32, i32),
+    // Decouples match-result obligation registration from Evidence contents.
+    match_result_checked: Map(i32, bool),
     slots: Map(i32, i32),
     callees: Map(i32, i32),
     fieldix: Map(i32, i32),
@@ -45,13 +57,182 @@ record Sem {
     errpos: u32,
 }
 
-// Per-function checking state.
 record C {
     sem: Sem,
     syms: Sequence(Sym),
+    symmap: Map(text, i32),
     names: Sequence(text),
     loops: i32,
     fret: i32,
+}
+
+// Evidence is a reusable carrier for one proposition. The witness sequences
+// preserve provenance; callers must only join equal proposition identities.
+record Evidence {
+    proposition_kind: text,
+    subject: i32,
+    scope: i32,
+    state: quad,
+    positive: Sequence(u32),
+    negative: Sequence(u32),
+}
+
+record EvidenceResult {
+    ok: bool,
+    value: Evidence,
+    error: text,
+}
+
+fn evidence_empty(kind: text, subject: i32, scope: i32) -> Evidence {
+    return Evidence { proposition_kind: kind, subject: subject, scope: scope, state: N, positive: [], negative: [] };
+}
+
+fn evidence_state(positive: Sequence(u32), negative: Sequence(u32)) -> quad {
+    let has_positive: bool = len(positive) > 0;
+    let has_negative: bool = len(negative) > 0;
+    if has_positive && has_negative { return S; }
+    if has_positive { return T; }
+    if has_negative { return F; }
+    return N;
+}
+
+fn evidence_has_duplicate(values: Sequence(u32)) -> bool {
+    let mut i: i32 = 0;
+    while i < len(values) {
+        let mut j: i32 = i + 1;
+        while j < len(values) {
+            if values[i] == values[j] { return true; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn evidence_valid(a: Evidence) -> bool {
+    if a.proposition_kind == "" || a.subject < 0 || a.scope < 0 { return false; }
+    if evidence_has_duplicate(a.positive) || evidence_has_duplicate(a.negative) { return false; }
+    return a.state == evidence_state(a.positive, a.negative);
+}
+
+fn evidence_can_join(a: Evidence, b: Evidence) -> bool {
+    return evidence_valid(a) && evidence_valid(b) &&
+           a.proposition_kind == b.proposition_kind &&
+           a.subject == b.subject && a.scope == b.scope;
+}
+
+fn evidence_reject(message: text) -> EvidenceResult {
+    return EvidenceResult { ok: false, value: evidence_empty("invalid", 0, 0), error: message };
+}
+
+fn evidence_try_join(a: Evidence, b: Evidence) -> EvidenceResult {
+    if !evidence_valid(a) || !evidence_valid(b) {
+        return evidence_reject("invalid evidence carrier");
+    }
+    if !evidence_can_join(a, b) {
+        return evidence_reject("incompatible proposition identity");
+    }
+    let mut positive: Sequence(u32) = a.positive;
+    for witness in b.positive { positive = push(positive, witness); }
+    let mut negative: Sequence(u32) = a.negative;
+    for witness in b.negative { negative = push(negative, witness); }
+    if evidence_has_duplicate(positive) || evidence_has_duplicate(negative) {
+        return evidence_reject("duplicate evidence witness");
+    }
+    let merged: Evidence = a with { state: evidence_state(positive, negative), positive: positive, negative: negative };
+    return EvidenceResult { ok: true, value: merged, error: "" };
+}
+
+fn evidence_positive(a: Evidence, witness: u32) -> Evidence {
+    let positive: Sequence(u32) = push(a.positive, witness);
+    return a with { state: evidence_state(positive, a.negative), positive: positive };
+}
+
+fn evidence_negative(a: Evidence, witness: u32) -> Evidence {
+    let negative: Sequence(u32) = push(a.negative, witness);
+    return a with { state: evidence_state(a.positive, negative), negative: negative };
+}
+
+// Q2: one proposition per if-expression: "this branch's result type agrees
+// with the first branch's result type." Witnesses are the separate branch
+// source locations. A negative witness means the *same* constraint is false,
+// not that some unrelated fact should be encoded as a contradiction.
+fn type_branch_witness(base: Evidence, actual: i32, required: i32, pos: u32) -> Evidence {
+    if actual == required {
+        return evidence_positive(base, pos);
+    }
+    return evidence_negative(base, pos);
+}
+
+// Q2: each argument/field independently witnesses the same owner-specific
+// compatibility proposition. The owner is the call/record AST node.
+fn accumulate_type_constraint(c: C, owner: i32, kind: text, actual: i32, required: i32, witness: u32) -> C {
+    let empty: Evidence = evidence_empty(kind, owner, 0);
+    let prior: Evidence = map_get(c.sem.type_evidence, owner, empty);
+    if !evidence_valid(prior) {
+        return cerr(c, "type", "invalid accumulated type evidence", witness);
+    }
+    if prior.proposition_kind != kind || prior.subject != owner || prior.scope != 0 {
+        return cerr(c, "type", "type evidence identity mismatch", witness);
+    }
+    let next: Evidence = type_branch_witness(empty, actual, required, witness);
+    let joined: EvidenceResult = evidence_try_join(prior, next);
+    if !joined.ok {
+        return cerr(c, "type", "invalid accumulated type evidence: " + joined.error, witness);
+    }
+    return c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, owner, joined.value) } };
+}
+
+// Q2.5: evidence answers whether an operand is admissible for this
+// particular operator, not simply whether the two operand types match.
+// Single map obligation: a checked observed compatibility result
+// with a source position. Missing context remains N, never fabricated T.
+fn map_type_witness(kind: text, id: i32, accepted: bool, pos: u32) -> Evidence {
+    let empty: Evidence = evidence_empty(kind, id, 0);
+    if accepted { return evidence_positive(empty, pos); }
+    return evidence_negative(empty, pos);
+}
+
+fn unary_type_admitted(op: i32, ty: i32) -> bool {
+    if op == 31 { return ty == 1; }
+    if op == 43 { return ty == 2 || ty == 5; }
+    return false;
+}
+
+fn binary_type_admitted(op: i32, actual: i32, first: i32, first_operand: bool) -> bool {
+    let family: i32 = if first_operand { actual } else { first };
+    let allowed: bool = if op <= 34 {
+        family == 1 || family == 3 || (op == 30 && family == 4)
+    } else if op == 35 || op == 36 {
+        family >= 1 && family <= 5
+    } else if op <= 40 {
+        family == 1 || family == 3
+    } else {
+        family == 2 || (family == 5 && (op == 41 || op == 42))
+    };
+    return allowed && actual == family;
+}
+
+// For non-map builtins only. The map family requires a separate key/value
+// policy; do not imply that their dependent contracts have been checked here.
+fn builtin_type_admitted(code: i32, tys: Sequence(i32), at: i32, s: Sem) -> bool {
+    let t: i32 = tys[at];
+    if code == 1 || code == 3 {
+        return s.tys[t].k == 5;
+    }
+    if code == 2 {
+        if at == 0 { return s.tys[t].k == 5; }
+        if s.tys[tys[0]].k != 5 { return false; }
+        return t == s.tys[tys[0]].a;
+    }
+    if code == 4 { return t >= 1 && t <= 4; }
+    if code == 5 || code == 13 || code == 14 { return t == 4; }
+    if code == 6 || code == 7 {
+        if at == 0 { return t == 4; }
+        return t == 3;
+    }
+    if code == 12 { return t == 3; }
+    return false;
 }
 
 fn serr(s: Sem, cat: text, msg: text, pos: u32) -> Sem {
@@ -65,33 +246,24 @@ fn cerr(c: C, cat: text, msg: text, pos: u32) -> C {
     return c with { sem: serr(c.sem, cat, msg, pos) };
 }
 
-// ---------------------------------------------------------------- type table
+fn pop_scope(c: C, saved: i32) -> C {
+    let mut syms: Sequence(Sym) = c.syms;
+    let mut sm: Map(text, i32) = c.symmap;
+    while len(syms) > saved {
+        let top: Sym = syms[len(syms) - 1];
+        sm = map_set(sm, top.name, top.prev);
+        syms = pop(syms);
+    }
+    return c with { syms: syms, symmap: sm };
+}
+
 fn intern(s: Sem, key: text, info: TyInfo) -> (Sem, i32) {
-    if map_contains(s.tykey, key) {
-        return (s, map_get(s.tykey, key, 0));
+    let cur: i32 = map_get(s.tykey, key, 0 - 1);
+    if cur >= 0 {
+        return (s, cur);
     }
     let id: i32 = len(s.tys);
     return (s with { tys: push(s.tys, info), tykey: map_set(s.tykey, key, id) }, id);
-}
-
-fn seq_of(s: Sem, elem: i32) -> (Sem, i32) {
-    return intern(s, "S" + to_text(elem), TyInfo { k: 5, a: elem, kids: [], name: "" });
-}
-
-fn option_of(s: Sem, elem: i32) -> (Sem, i32) {
-    return intern(s, "O" + to_text(elem), TyInfo { k: 8, a: elem, kids: [], name: "" });
-}
-
-fn tuple_of(s: Sem, elems: Sequence(i32)) -> (Sem, i32) {
-    let mut key: text = "T";
-    for e in elems {
-        key = key + to_text(e) + ",";
-    }
-    return intern(s, key, TyInfo { k: 6, a: 0, kids: elems, name: "" });
-}
-
-fn map_of(s: Sem, key: i32, value: i32) -> (Sem, i32) {
-    return intern(s, "M" + to_text(key) + "," + to_text(value), TyInfo { k: 9, a: key, kids: [value], name: "" });
 }
 
 fn ty_text(s: Sem, t: i32) -> text {
@@ -102,6 +274,7 @@ fn ty_text(s: Sem, t: i32) -> text {
     if info.k == 2 { return "bool"; }
     if info.k == 3 { return "u32"; }
     if info.k == 4 { return "text"; }
+    if info.k == 10 { return "quad"; }
     if info.k == 5 { return "Sequence(" + ty_text(s, info.a) + ")"; }
     if info.k == 8 { return "Option(" + ty_text(s, info.a) + ")"; }
     if info.k == 9 { return "Map(" + ty_text(s, info.a) + ", " + ty_text(s, info.kids[0]) + ")"; }
@@ -116,234 +289,240 @@ fn ty_text(s: Sem, t: i32) -> text {
     return out + ")";
 }
 
-// Resolves a type node to a type id (-1 on error).
 fn resolve_type(s0: Sem, id: i32) -> (Sem, i32) {
     let nd: Node = s0.prog.nodes[id];
     let mut s: Sem = s0;
     if nd.k == 61 {
         let mut elems: Sequence(i32) = [];
+        let mut key: text = "T";
         for kid in nd.kids {
             let mut t: i32 = 0;
             (s, t) = resolve_type(s, kid);
             if t < 0 { return (s, 0 - 1); }
             elems = push(elems, t);
+            key = key + to_text(t) + ",";
         }
-        return tuple_of(s, elems);
+        return intern(s, key, TyInfo { k: 6, a: 0, kids: elems, name: "" });
     }
     let n: text = nd.name;
-    if len(nd.kids) == 0 {
+    let nkids: i32 = len(nd.kids);
+    if nkids == 0 {
         if n == "i32" { return (s, 1); }
         if n == "bool" { return (s, 2); }
         if n == "u32" { return (s, 3); }
         if n == "text" { return (s, 4); }
-        if map_contains(s.recidx, n) {
-            let ri: i32 = map_get(s.recidx, n, 0);
+        if n == "quad" { return (s, 5); }
+        let ri: i32 = map_get(s.recidx, n, 0 - 1);
+        if ri >= 0 {
             return intern(s, "R" + n, TyInfo { k: 7, a: ri, kids: [], name: n });
         }
-    } else if len(nd.kids) == 1 && (n == "Sequence" || n == "Option") {
-        let mut e: i32 = 0;
-        (s, e) = resolve_type(s, nd.kids[0]);
-        if e < 0 { return (s, 0 - 1); }
-        if n == "Sequence" { return seq_of(s, e); }
-        return option_of(s, e);
-    }
-    if n == "Map" && len(nd.kids) == 2 {
-        let mut key: i32 = 0;
-        let mut value: i32 = 0;
-        (s, key) = resolve_type(s, nd.kids[0]);
-        if key < 0 { return (s, 0 - 1); }
-        (s, value) = resolve_type(s, nd.kids[1]);
-        if value < 0 { return (s, 0 - 1); }
-        if key < 1 || key > 4 {
-            return (serr(s, "unsupported", "Map key requires i32, bool, u32 or text", nd.pos), 0 - 1);
+    } else if nkids == 1 {
+        if n == "Sequence" || n == "Option" {
+            let mut e: i32 = 0;
+            (s, e) = resolve_type(s, nd.kids[0]);
+            if e < 0 { return (s, 0 - 1); }
+            if n == "Sequence" {
+                return intern(s, "S" + to_text(e), TyInfo { k: 5, a: e, kids: [], name: "" });
+            }
+            return intern(s, "O" + to_text(e), TyInfo { k: 8, a: e, kids: [], name: "" });
         }
-        return map_of(s, key, value);
+    } else if nkids == 2 {
+        if n == "Map" {
+            let mut key: i32 = 0;
+            let mut value: i32 = 0;
+            (s, key) = resolve_type(s, nd.kids[0]);
+            if key < 0 { return (s, 0 - 1); }
+            (s, value) = resolve_type(s, nd.kids[1]);
+            if value < 0 { return (s, 0 - 1); }
+            if key < 1 || key > 4 {
+                return (serr(s, "unsupported", "Map key requires i32, bool, u32 or text", nd.pos), 0 - 1);
+            }
+            return intern(s, "M" + to_text(key) + "," + to_text(value), TyInfo { k: 9, a: key, kids: [value], name: "" });
+        }
     }
-    if n == "Map" || n == "Result" || n == "quad" || n == "f64" || n == "fx" || n == "Bytes" || n == "Sequence" || n == "Option" {
+    if n == "Map" || n == "Result" || n == "f64" || n == "fx" || n == "Bytes" || n == "Sequence" || n == "Option" {
         return (serr(s, "unsupported", "type '" + n + "' (as written) is outside the supported subset", nd.pos), 0 - 1);
     }
     return (serr(s, "name", "unknown type '" + n + "'", nd.pos), 0 - 1);
 }
 
-// ---------------------------------------------------------------- scopes
-fn lookup(syms: Sequence(Sym), name: text) -> i32 {
-    let mut i: i32 = len(syms) - 1;
-    while i >= 0 {
-        if syms[i].name == name {
-            return i;
-        }
-        i = i - 1;
-    }
-    return 0 - 1;
-}
-
-fn typed(c: C, id: i32, t: i32) -> (C, i32) {
-    return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, t) } }, t);
-}
-
-// Declares a local (parameter, binding or hidden temporary) and records its
-// slot for node `id` (pass a negative id when nothing should be recorded).
-fn declare(c: C, id: i32, name: text, t: i32) -> (C, i32) {
-    let slot: i32 = len(c.names);
-    let mut sem: Sem = c.sem;
-    if id >= 0 {
-        sem = sem with { slots: map_set(sem.slots, id, slot) };
-    }
-    return (c with { sem: sem, syms: push(c.syms, Sym { name: name, ty: t, slot: slot }), names: push(c.names, name) }, slot);
-}
-
-fn pop_scope(c: C, saved: i32) -> C {
-    let mut syms: Sequence(Sym) = c.syms;
-    while len(syms) > saved {
-        syms = pop(syms);
-    }
-    return c with { syms: syms };
-}
-
-// ---------------------------------------------------------------- expressions
-fn is_scalar_eq(t: i32) -> bool {
-    return t >= 1 && t <= 4;
-}
-
-// Builtin code of a call name, or 0.
-fn builtin_code(name: text) -> i32 {
-    if name == "len" { return 1; }
-    if name == "push" { return 2; }
-    if name == "pop" { return 3; }
-    if name == "to_text" { return 4; }
-    if name == "text_len" { return 5; }
-    if name == "text_byte_at" { return 6; }
-    if name == "text_slice" { return 7; }
-    if name == "map_empty" { return 8; }
-    if name == "map_contains" { return 9; }
-    if name == "map_get" { return 10; }
-    if name == "map_set" { return 11; }
-    return 0;
-}
-
-fn check_args(c0: C, nd: Node, wants: Sequence(i32)) -> (C, Sequence(i32)) {
+fn check_builtin(c0: C, id: i32, nd: Node, code: i32, want: i32) -> (C, i32) {
     let mut c: C = c0;
+    if code >= 8 {
+        if code <= 11 {
+            let arity: i32 = if code == 8 { 0 } else if code == 9 { 2 } else { 3 };
+            if len(nd.kids) != arity {
+                return (cerr(c, "type", "invalid arguments for builtin '" + nd.name + "'", nd.pos), 0 - 1);
+            }
+            // Independent operation identity survives a later type failure.
+            c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, 0 - 1 - code) } };
+            let mut mt: i32 = want;
+            if code != 8 {
+                (c, mt) = check_expr(c, nd.kids[0], 0 - 1);
+                if mt == 0 {
+                    return (cerr(c, "type", "map operand has unit type", c.sem.prog.nodes[nd.kids[0]].pos), 0 - 1);
+                }
+                if c.sem.err != "" { return (c, 0 - 1); }
+            }
+            if mt < 0 {
+                if code == 8 {
+                    c = c with { sem: c.sem with { map_container_evidence: map_set(c.sem.map_container_evidence, id, evidence_empty("map-context-type", id, 0)) } };
+                }
+                return (cerr(c, "type", "map_empty requires a Map type context", nd.pos), 0 - 1);
+            }
+            let info: TyInfo = c.sem.tys[mt];
+            let container_pos: u32 = if code == 8 { nd.pos } else { c.sem.prog.nodes[nd.kids[0]].pos };
+            let container_kind: text = if code == 8 { "map-context-type" } else { "map-container-type" };
+            let container_proof: Evidence = map_type_witness(container_kind, id, info.k == 9, container_pos);
+            c = c with { sem: c.sem with { map_container_evidence: map_set(c.sem.map_container_evidence, id, container_proof) } };
+            if info.k != 9 { return (cerr(c, "type", "map builtin requires Map", nd.pos), 0 - 1); }
+            if code != 8 {
+                let mut key: i32 = 0;
+                (c, key) = check_expr(c, nd.kids[1], info.a);
+                if key == 0 {
+                    return (cerr(c, "type", "map key has unit type", c.sem.prog.nodes[nd.kids[1]].pos), 0 - 1);
+                }
+                if key >= 0 {
+                    let key_proof: Evidence = map_type_witness("map-key-type", id, key == info.a, c.sem.prog.nodes[nd.kids[1]].pos);
+                    c = c with { sem: c.sem with { map_key_evidence: map_set(c.sem.map_key_evidence, id, key_proof) } };
+                }
+                if key != info.a {
+                    if key >= 0 {
+                        c = cerr(c, "type", "map key expects " + ty_text(c.sem, info.a) + ", got " + ty_text(c.sem, key), nd.pos);
+                    }
+                }
+                if code >= 10 {
+                    let mut value: i32 = 0;
+                    (c, value) = check_expr(c, nd.kids[2], info.kids[0]);
+                    if value == 0 {
+                        return (cerr(c, "type", "map value has unit type", c.sem.prog.nodes[nd.kids[2]].pos), 0 - 1);
+                    }
+                    if value >= 0 {
+                        let value_proof: Evidence = map_type_witness("map-value-type", id, value == info.kids[0], c.sem.prog.nodes[nd.kids[2]].pos);
+                        c = c with { sem: c.sem with { map_value_evidence: map_set(c.sem.map_value_evidence, id, value_proof) } };
+                    }
+                    if value != info.kids[0] {
+                        if value >= 0 {
+                            c = cerr(c, "type", "map value expects " + ty_text(c.sem, info.kids[0]) + ", got " + ty_text(c.sem, value), nd.pos);
+                        }
+                    }
+                }
+            }
+            if c.sem.err != "" { return (c, 0 - 1); }
+            let ret_ty: i32 = if code == 9 { 2 } else if code == 10 { info.kids[0] } else { mt };
+            return (c with { sem: c.sem with { callees: map_set(c.sem.callees, id, 0 - 1 - code), exprty: map_set(c.sem.exprty, id, ret_ty) } }, ret_ty);
+        }
+    }
     let mut tys: Sequence(i32) = [];
     let mut i: i32 = 0;
-    while i < len(nd.kids) && c.sem.err == "" {
-        let w: i32 = if i < len(wants) { wants[i] } else { 0 - 1 };
+    while i < len(nd.kids) {
+        if c.sem.err != "" { break; }
         let mut t: i32 = 0;
-        (c, t) = check_value(c, nd.kids[i], w, "argument");
+        let kn: Node = c.sem.prog.nodes[nd.kids[i]];
+        if kn.k <= 3 { t = if kn.k == 3 { 4 } else { kn.k }; }
+        else if kn.k == 8 { t = 3; }
+        else { (c, t) = check_expr(c, nd.kids[i], 0 - 1); }
+        if t == 0 {
+            c = cerr(c, "type", "argument has unit type", kn.pos);
+            t = 0 - 1;
+        }
         tys = push(tys, t);
         i = i + 1;
     }
-    return (c, tys);
-}
-
-fn check_map_builtin(c0: C, id: i32, nd: Node, code: i32, want: i32) -> (C, i32) {
-    let mut c: C = c0;
-    let arity: i32 = if code == 8 { 0 } else { if code == 9 { 2 } else { 3 } };
-    if len(nd.kids) != arity {
-        return (cerr(c, "type", "invalid arguments for builtin '" + nd.name + "'", nd.pos), 0 - 1);
-    }
-    let mut mt: i32 = want;
-    if code != 8 {
-        (c, mt) = check_value(c, nd.kids[0], 0 - 1, "map operand");
-        if c.sem.err != "" { return (c, 0 - 1); }
-    }
-    if mt < 0 { return (cerr(c, "type", "map_empty requires a Map type context", nd.pos), 0 - 1); }
-    let info: TyInfo = c.sem.tys[mt];
-    if info.k != 9 { return (cerr(c, "type", "map builtin requires Map", nd.pos), 0 - 1); }
-    if code != 8 {
-        let mut key: i32 = 0;
-        (c, key) = check_value(c, nd.kids[1], info.a, "map key");
-        c = expect_type(c, key, info.a, "map key", nd.pos);
-        if code == 10 || code == 11 {
-            let mut value: i32 = 0;
-            (c, value) = check_value(c, nd.kids[2], info.kids[0], "map value");
-            c = expect_type(c, value, info.kids[0], "map value", nd.pos);
-        }
-    }
-    if c.sem.err != "" { return (c, 0 - 1); }
-    c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, 0 - 1 - code) } };
-    if code == 9 { return typed(c, id, 2); }
-    if code == 10 { return typed(c, id, info.kids[0]); }
-    return typed(c, id, mt);
-}
-
-fn check_builtin(c0: C, id: i32, nd: Node, code: i32, want: i32) -> (C, i32) {
-    if code >= 8 { return check_map_builtin(c0, id, nd, code, want); }
-    let mut c: C = c0;
-    let mut tys: Sequence(i32) = [];
-    (c, tys) = check_args(c, nd, []);
     if c.sem.err != "" { return (c, 0 - 1); }
     let n: i32 = len(tys);
     let bad: text = "invalid arguments for builtin '" + nd.name + "'";
     c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, 0 - 1 - code) } };
-    // arity first: the checks below index tys, and `&&` is not short-circuit
-    let arity: i32 = match code {
-        1 => { 1 }
-        2 => { 2 }
-        3 => { 1 }
-        4 => { 1 }
-        5 => { 1 }
-        6 => { 2 }
-        _ => { 3 }
-    };
+    let arity: i32 = if code == 2 || code == 6 { 2 } else if code == 7 { 3 } else { 1 };
     if n != arity {
         return (cerr(c, "type", bad + ": expects " + to_text(arity) + " argument(s), got " + to_text(n), nd.pos), 0 - 1);
     }
+    // Exact arity and non-unit argument types are already established.
+    // Each contributing argument has its own source-position witness.
+    let mut witness_index: i32 = 0;
+    while witness_index < n {
+        let witness_node: i32 = nd.kids[witness_index];
+        let source_pos: u32 = c.sem.prog.nodes[witness_node].pos;
+        let admitted: bool = builtin_type_admitted(code, tys, witness_index, c.sem);
+        let seed: Evidence = evidence_empty("builtin-argument-types", id, 0);
+        let step: Evidence = if admitted { evidence_positive(seed, source_pos) } else { evidence_negative(seed, source_pos) };
+        let previous: Evidence = map_get(c.sem.type_evidence, id, seed);
+        let joined: EvidenceResult = evidence_try_join(previous, step);
+        if !joined.ok {
+            return (cerr(c, "type", "invalid builtin type evidence: " + joined.error, source_pos), 0 - 1);
+        }
+        c = c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, id, joined.value) } };
+        witness_index = witness_index + 1;
+    }
     if code == 1 {
-        if n == 1 && c.sem.tys[tys[0]].k == 5 { return typed(c, id, 1); }
+        if c.sem.tys[tys[0]].k == 5 {
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 1) } }, 1);
+        }
     } else if code == 2 {
-        if n == 2 && c.sem.tys[tys[0]].k == 5 && c.sem.tys[tys[0]].a == tys[1] { return typed(c, id, tys[0]); }
+        if c.sem.tys[tys[0]].k == 5 {
+            if c.sem.tys[tys[0]].a == tys[1] {
+                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, tys[0]) } }, tys[0]);
+            }
+        }
     } else if code == 3 {
-        if n == 1 && c.sem.tys[tys[0]].k == 5 { return typed(c, id, tys[0]); }
+        if c.sem.tys[tys[0]].k == 5 {
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, tys[0]) } }, tys[0]);
+        }
     } else if code == 4 {
-        if n == 1 && tys[0] >= 1 && tys[0] <= 4 { return typed(c, id, 4); }
+        if tys[0] >= 1 {
+            if tys[0] <= 4 {
+                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4);
+            }
+        }
     } else if code == 5 {
-        if n == 1 && tys[0] == 4 { return typed(c, id, 3); }
+        if tys[0] == 4 {
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 3) } }, 3);
+        }
     } else if code == 6 {
-        if n == 2 && tys[0] == 4 && tys[1] == 3 {
-            let mut o: i32 = 0;
-            let mut s: Sem = c.sem;
-            (s, o) = option_of(s, 3);
-            return typed(c with { sem: s }, id, o);
+        if tys[0] == 4 {
+            if tys[1] == 3 {
+                let mut o: i32 = 0;
+                let mut s: Sem = c.sem;
+                (s, o) = intern(s, "O3", TyInfo { k: 8, a: 3, kids: [], name: "" });
+                return (c with { sem: s with { exprty: map_set(s.exprty, id, o) } }, o);
+            }
         }
     } else if code == 7 {
-        if n == 3 && tys[0] == 4 && tys[1] == 3 && tys[2] == 3 {
-            let mut o: i32 = 0;
-            let mut s: Sem = c.sem;
-            (s, o) = option_of(s, 4);
-            return typed(c with { sem: s }, id, o);
+        if tys[0] == 4 {
+            if tys[1] == 3 {
+                if tys[2] == 3 {
+                    let mut o: i32 = 0;
+                    let mut s: Sem = c.sem;
+                    (s, o) = intern(s, "O4", TyInfo { k: 8, a: 4, kids: [], name: "" });
+                    return (c with { sem: s with { exprty: map_set(s.exprty, id, o) } }, o);
+                }
+            }
+        }
+    } else if code == 12 {
+        if tys[0] == 3 {
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4);
+        }
+    } else if code == 13 {
+        if tys[0] == 4 {
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4);
+        }
+    } else if code == 14 {
+        if tys[0] == 4 {
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 0) } }, 0);
         }
     }
     return (cerr(c, "type", bad, nd.pos), 0 - 1);
-}
-
-// A value expression must not be unit; `want` is the expected type or -1.
-fn check_value(c0: C, id: i32, want: i32, what: text) -> (C, i32) {
-    let mut c: C = c0;
-    let mut t: i32 = 0;
-    (c, t) = check_expr(c, id, want);
-    if t == 0 {
-        return (cerr(c, "type", what + " has unit type", c.sem.prog.nodes[id].pos), 0 - 1);
-    }
-    return (c, t);
-}
-
-fn expect_type(c: C, got: i32, want: i32, what: text, pos: u32) -> C {
-    if got >= 0 && want >= 0 && got != want {
-        return cerr(c, "type", what + " expects " + ty_text(c.sem, want) + ", got " + ty_text(c.sem, got), pos);
-    }
-    return c;
 }
 
 fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
     let nd: Node = c0.sem.prog.nodes[id];
     let mut c: C = c0;
     let k: i32 = nd.k;
-    if k == 1 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 1) } }, 1); }
-    if k == 2 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2); }
-    if k == 8 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 3) } }, 3); }
-    if k == 3 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4); }
+    if k <= 3 { return (c, if k == 3 { 4 } else { k }); }
+    if k == 8 { return (c, 3); }
+    if k == 9 { return (c, 5); }
     if k == 4 {
-        let at: i32 = lookup(c.syms, nd.name);
+        let at: i32 = map_get(c.symmap, nd.name, 0 - 1);
         if at < 0 {
             if map_contains(c.sem.fnidx, nd.name) {
                 return (cerr(c, "unsupported", "function values are outside the supported subset ('" + nd.name + "')", nd.pos), 0 - 1);
@@ -351,117 +530,241 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
             return (cerr(c, "name", "undefined variable '" + nd.name + "'", nd.pos), 0 - 1);
         }
         let sym: Sym = c.syms[at];
-        c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
-        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, sym.ty) } }, sym.ty);
+        return (c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot), exprty: map_set(c.sem.exprty, id, sym.ty) } }, sym.ty);
     }
     if k == 7 {
-        if !map_contains(c.sem.fnidx, nd.name) {
-            let code: i32 = builtin_code(nd.name);
+        let fi: i32 = map_get(c.sem.fnidx, nd.name, 0 - 1);
+        if fi < 0 {
+            let nm: text = nd.name;
+            let mut code: i32 = 0;
+            if nm == "len" { code = 1; }
+            else if nm == "push" { code = 2; }
+            else if nm == "pop" { code = 3; }
+            else if nm == "to_text" { code = 4; }
+            else if nm == "text_len" { code = 5; }
+            else if nm == "text_byte_at" { code = 6; }
+            else if nm == "text_slice" { code = 7; }
+            else if nm == "map_empty" { code = 8; }
+            else if nm == "map_contains" { code = 9; }
+            else if nm == "map_get" { code = 10; }
+            else if nm == "map_set" { code = 11; }
+            else if nm == "args_read" { code = 12; }
+            else if nm == "fs_read_text" { code = 13; }
+            else if nm == "stdout_write" { code = 14; }
             if code > 0 {
                 return check_builtin(c, id, nd, code, want);
             }
             return (cerr(c, "name", "unknown function '" + nd.name + "'", nd.pos), 0 - 1);
         }
-        let fi: i32 = map_get(c.sem.fnidx, nd.name, 0);
         let ptys: Sequence(i32) = c.sem.fptypes[fi];
         if len(nd.kids) != len(ptys) {
             return (cerr(c, "type", "function '" + nd.name + "' expects " + to_text(len(ptys)) + " argument(s), got " + to_text(len(nd.kids)), nd.pos), 0 - 1);
         }
-        let mut tys: Sequence(i32) = [];
-        (c, tys) = check_args(c, nd, ptys);
         let mut i: i32 = 0;
-        while i < len(tys) && c.sem.err == "" {
-            c = expect_type(c, tys[i], ptys[i], "argument " + to_text(i + 1) + " of '" + nd.name + "'", c.sem.prog.nodes[nd.kids[i]].pos);
+        while i < len(nd.kids) {
+            if c.sem.err != "" { break; }
+            let kid: i32 = nd.kids[i];
+            let want_arg: i32 = ptys[i];
+            let mut t: i32 = 0;
+            let kn: Node = c.sem.prog.nodes[kid];
+            if kn.k <= 3 { t = if kn.k == 3 { 4 } else { kn.k }; }
+            else if kn.k == 8 { t = 3; }
+            else { (c, t) = check_expr(c, kid, want_arg); }
+            if t == 0 {
+                c = cerr(c, "type", "argument has unit type", kn.pos);
+                t = 0 - 1;
+            }
+            if t >= 0 {
+                c = accumulate_type_constraint(c, id, "call-arguments", t, want_arg, kn.pos);
+                if c.sem.err != "" { return (c, 0 - 1); }
+            }
+            if t != want_arg {
+                if t >= 0 {
+                    c = cerr(c, "type", "argument " + to_text(i + 1) + " of '" + nd.name + "' expects " + ty_text(c.sem, want_arg) + ", got " + ty_text(c.sem, t), kn.pos);
+                }
+            }
             i = i + 1;
         }
         if c.sem.err != "" { return (c, 0 - 1); }
-        c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, fi) } };
-        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, c.sem.frets[fi]) } }, c.sem.frets[fi]);
+        let ret_ty: i32 = c.sem.frets[fi];
+        return (c with { sem: c.sem with { callees: map_set(c.sem.callees, id, fi), exprty: map_set(c.sem.exprty, id, ret_ty) } }, ret_ty);
     }
     let mut l: i32 = 0;
     let mut r: i32 = 0;
     if k == 5 {
-        (c, l) = check_value(c, nd.a, 0 - 1, "operand");
+        (c, l) = check_expr(c, nd.a, 0 - 1);
+        if l == 0 {
+            return (cerr(c, "type", "operand has unit type", c.sem.prog.nodes[nd.a].pos), 0 - 1);
+        }
         if l < 0 { return (c, 0 - 1); }
-        if nd.v == 31 && l != 1 { return (cerr(c, "type", "unary '-' expects i32, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
-        if nd.v == 43 && l != 2 { return (cerr(c, "type", "'!' expects bool, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
+        let unary_ok: bool = unary_type_admitted(nd.v, l);
+        let unary_seed: Evidence = evidence_empty("unary-operator-type", id, 0);
+        let unary_proof: Evidence = if unary_ok {
+            evidence_positive(unary_seed, c.sem.prog.nodes[nd.a].pos)
+        } else {
+            evidence_negative(unary_seed, c.sem.prog.nodes[nd.a].pos)
+        };
+        c = c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, id, unary_proof) } };
+        if nd.v == 31 {
+            if l != 1 { return (cerr(c, "type", "unary '-' expects i32, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
+        }
+        if nd.v == 43 {
+            if l != 2 && l != 5 { return (cerr(c, "type", "'!' expects bool or quad, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
+        }
         return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, l) } }, l);
     }
     if k == 6 {
-        (c, l) = check_value(c, nd.a, 0 - 1, "operand");
+        let na: Node = c.sem.prog.nodes[nd.a];
+        if na.k == 4 {
+            let at: i32 = map_get(c.symmap, na.name, 0 - 1);
+            if at >= 0 {
+                let sym: Sym = c.syms[at];
+                l = sym.ty;
+                c = c with { sem: c.sem with { slots: map_set(c.sem.slots, nd.a, sym.slot), exprty: map_set(c.sem.exprty, nd.a, l) } };
+            } else {
+                (c, l) = check_expr(c, nd.a, 0 - 1);
+            }
+        } else if na.k <= 3 { l = if na.k == 3 { 4 } else { na.k }; }
+        else if na.k == 8 { l = 3; }
+        else { (c, l) = check_expr(c, nd.a, 0 - 1); }
+        if l == 0 {
+            return (cerr(c, "type", "operand has unit type", na.pos), 0 - 1);
+        }
         if l < 0 { return (c, 0 - 1); }
-        (c, r) = check_value(c, nd.b, 0 - 1, "operand");
+        let nb: Node = c.sem.prog.nodes[nd.b];
+        if nb.k == 4 {
+            let atb: i32 = map_get(c.symmap, nb.name, 0 - 1);
+            if atb >= 0 {
+                let symb: Sym = c.syms[atb];
+                r = symb.ty;
+                c = c with { sem: c.sem with { slots: map_set(c.sem.slots, nd.b, symb.slot), exprty: map_set(c.sem.exprty, nd.b, r) } };
+            } else {
+                (c, r) = check_expr(c, nd.b, 0 - 1);
+            }
+        } else if nb.k <= 3 { r = if nb.k == 3 { 4 } else { nb.k }; }
+        else if nb.k == 8 { r = 3; }
+        else { (c, r) = check_expr(c, nd.b, 0 - 1); }
+        if r == 0 {
+            return (cerr(c, "type", "operand has unit type", nb.pos), 0 - 1);
+        }
         if r < 0 { return (c, 0 - 1); }
         let op: i32 = nd.v;
-        if op >= 30 && op <= 34 {
-            if op == 30 && l == 4 && r == 4 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4); }
-            if l == 3 && r == 3 {
-                c = c with { sem: c.sem with { u32arith: true } };
-                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 3) } }, 3);
-            }
-            if l != 1 || r != 1 {
-                return (cerr(c, "type", "arithmetic expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
-            }
-            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 1) } }, 1);
+        let binary_seed: Evidence = evidence_empty("binary-operator-types", id, 0);
+        let left_ok: bool = binary_type_admitted(op, l, l, true);
+        let right_ok: bool = binary_type_admitted(op, r, l, false);
+        let left_proof: Evidence = if left_ok { evidence_positive(binary_seed, na.pos) } else { evidence_negative(binary_seed, na.pos) };
+        let right_proof: Evidence = if right_ok { evidence_positive(binary_seed, nb.pos) } else { evidence_negative(binary_seed, nb.pos) };
+        let merged: EvidenceResult = evidence_try_join(left_proof, right_proof);
+        if !merged.ok {
+            return (cerr(c, "type", "invalid operator type evidence: " + merged.error, nd.pos), 0 - 1);
         }
-        if op >= 37 && op <= 40 {
-            if l == 3 && r == 3 {
-                c = c with { sem: c.sem with { u32arith: true } };
-                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
+        c = c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, id, merged.value) } };
+        if op <= 34 {
+            if l == 1 {
+                if r == 1 {
+                    return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 1) } }, 1);
+                }
             }
-            if l != 1 || r != 1 {
-                return (cerr(c, "type", "ordering expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
+            if l == 4 {
+                if r == 4 {
+                    if op == 30 {
+                        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4);
+                    }
+                }
             }
-            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
+            if l == 3 {
+                if r == 3 {
+                    return (c with { sem: c.sem with { u32arith: true, exprty: map_set(c.sem.exprty, id, 3) } }, 3);
+                }
+            }
+            return (cerr(c, "type", "arithmetic expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
         }
         if op == 35 || op == 36 {
             if l != r {
                 return (cerr(c, "type", "cannot compare " + ty_text(c.sem, l) + " with " + ty_text(c.sem, r), nd.pos), 0 - 1);
             }
-            if !is_scalar_eq(l) {
+            if l < 1 || l > 5 {
                 return (cerr(c, "unsupported", "equality on " + ty_text(c.sem, l) + " is outside the supported subset", nd.pos), 0 - 1);
             }
             return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
         }
-        if l != 2 || r != 2 {
-            return (cerr(c, "type", "logical operator expects bool operands, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
+        if op <= 40 {
+            if l == 1 {
+                if r == 1 {
+                    return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
+                }
+            }
+            if l == 3 {
+                if r == 3 {
+                    return (c with { sem: c.sem with { u32arith: true, exprty: map_set(c.sem.exprty, id, 2) } }, 2);
+                }
+            }
+            return (cerr(c, "type", "ordering expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
         }
-        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
+        if l == 2 {
+            if r == 2 {
+                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
+            }
+        }
+        if l == 5 {
+            if r == 5 {
+                if op == 41 || op == 42 {
+                    return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 5) } }, 5);
+                }
+            }
+        }
+        return (cerr(c, "type", "logical operator expects bool or quad operands, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
     }
     if k == 20 {
-        (c, l) = check_value(c, nd.a, 0 - 1, "field base");
+        let na: Node = c.sem.prog.nodes[nd.a];
+        if na.k == 4 {
+            let at: i32 = map_get(c.symmap, na.name, 0 - 1);
+            if at >= 0 {
+                let sym: Sym = c.syms[at];
+                l = sym.ty;
+                c = c with { sem: c.sem with { slots: map_set(c.sem.slots, nd.a, sym.slot), exprty: map_set(c.sem.exprty, nd.a, l) } };
+            } else {
+                (c, l) = check_expr(c, nd.a, 0 - 1);
+            }
+        } else {
+            (c, l) = check_expr(c, nd.a, 0 - 1);
+        }
+        if l == 0 {
+            return (cerr(c, "type", "field base has unit type", na.pos), 0 - 1);
+        }
         if l < 0 { return (c, 0 - 1); }
         let info: TyInfo = c.sem.tys[l];
         if info.k != 7 {
             return (cerr(c, "type", "field access on non-record type " + ty_text(c.sem, l), nd.pos), 0 - 1);
         }
-        let rec: Rec = c.sem.prog.recs[info.a];
-        let mut i: i32 = 0;
-        while i < len(rec.fnames) {
-            if rec.fnames[i] == nd.name {
-                c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, id, i) } };
-                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, c.sem.rftypes[info.a][i]) } }, c.sem.rftypes[info.a][i]);
-            }
-            i = i + 1;
+        let slot: i32 = map_get(c.sem.rfidx[info.a], nd.name, 0 - 1);
+        if slot >= 0 {
+            let ft: i32 = c.sem.rftypes[info.a][slot];
+            return (c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, id, slot), exprty: map_set(c.sem.exprty, id, ft) } }, ft);
         }
-        return (cerr(c, "name", "record '" + rec.name + "' has no field '" + nd.name + "'", nd.pos), 0 - 1);
+        return (cerr(c, "name", "record '" + c.sem.prog.recs[info.a].name + "' has no field '" + nd.name + "'", nd.pos), 0 - 1);
     }
     if k == 29 || k == 21 {
-        if k == 21 && len(nd.kids) == 0 {
-            return (cerr(c, "type", "record copy-with requires at least one explicit override field", nd.pos), 0 - 1);
+        if k == 21 {
+            if len(nd.kids) == 0 {
+                return (cerr(c, "type", "record copy-with requires at least one explicit override field", nd.pos), 0 - 1);
+            }
         }
         let mut ri: i32 = 0;
         let mut rt: i32 = 0;
         if k == 29 {
-            if !map_contains(c.sem.recidx, nd.name) {
+            ri = map_get(c.sem.recidx, nd.name, 0 - 1);
+            if ri < 0 {
                 return (cerr(c, "name", "unknown record '" + nd.name + "'", nd.pos), 0 - 1);
             }
-            ri = map_get(c.sem.recidx, nd.name, 0);
             let mut s: Sem = c.sem;
             (s, rt) = intern(s, "R" + nd.name, TyInfo { k: 7, a: ri, kids: [], name: nd.name });
             c = c with { sem: s };
         } else {
-            (c, rt) = check_value(c, nd.a, 0 - 1, "record base");
+            (c, rt) = check_expr(c, nd.a, 0 - 1);
+            if rt == 0 {
+                return (cerr(c, "type", "record base has unit type", c.sem.prog.nodes[nd.a].pos), 0 - 1);
+            }
             if rt < 0 { return (c, 0 - 1); }
             if c.sem.tys[rt].k != 7 {
                 return (cerr(c, "type", "'with' needs a record, got " + ty_text(c.sem, rt), nd.pos), 0 - 1);
@@ -469,15 +772,11 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
             ri = c.sem.tys[rt].a;
         }
         let rec: Rec = c.sem.prog.recs[ri];
+        let fmap: Map(text, i32) = c.sem.rfidx[ri];
         let mut seen: Map(text, bool) = map_empty();
         for fid in nd.kids {
             let fi: Node = c.sem.prog.nodes[fid];
-            let mut slot: i32 = 0 - 1;
-            let mut j: i32 = 0;
-            while j < len(rec.fnames) {
-                if rec.fnames[j] == fi.name { slot = j; }
-                j = j + 1;
-            }
+            let slot: i32 = map_get(fmap, fi.name, 0 - 1);
             if slot < 0 {
                 return (cerr(c, "name", "record '" + rec.name + "' has no field '" + fi.name + "'", fi.pos), 0 - 1);
             }
@@ -487,35 +786,67 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
             seen = map_set(seen, fi.name, true);
             let ft: i32 = c.sem.rftypes[ri][slot];
             let mut vt: i32 = 0;
-            (c, vt) = check_value(c, fi.a, ft, "field '" + fi.name + "'");
-            c = expect_type(c, vt, ft, "field '" + fi.name + "'", fi.pos);
+            let fia: Node = c.sem.prog.nodes[fi.a];
+            if fia.k <= 3 { vt = if fia.k == 3 { 4 } else { fia.k }; }
+            else if fia.k == 8 { vt = 3; }
+            else { (c, vt) = check_expr(c, fi.a, ft); }
+            if vt == 0 {
+                c = cerr(c, "type", "field '" + fi.name + "' has unit type", fia.pos);
+                vt = 0 - 1;
+            }
+            if vt >= 0 {
+                c = accumulate_type_constraint(c, id, "record-fields", vt, ft, fi.pos);
+                if c.sem.err != "" { return (c, 0 - 1); }
+            }
+            if vt != ft {
+                if vt >= 0 {
+                    c = cerr(c, "type", "field '" + fi.name + "' expects " + ty_text(c.sem, ft) + ", got " + ty_text(c.sem, vt), fi.pos);
+                }
+            }
             c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, fid, slot) } };
             if c.sem.err != "" { return (c, 0 - 1); }
         }
-        if k == 29 && len(nd.kids) != len(rec.fnames) {
-            return (cerr(c, "type", "record literal '" + rec.name + "' must give every field exactly once", nd.pos), 0 - 1);
+        if k == 29 {
+            if len(nd.kids) != len(rec.fnames) {
+                return (cerr(c, "type", "record literal '" + rec.name + "' must give every field exactly once", nd.pos), 0 - 1);
+            }
         }
-        return typed(c, id, rt);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, rt) } }, rt);
     }
     if k == 22 {
         let mut elems: Sequence(i32) = [];
         let mut wk: Sequence(i32) = [];
+        let mut constrained: bool = false;
         if want >= 0 {
-            wk = c.sem.tys[want].kids;
+            if c.sem.tys[want].k == 6 {
+                constrained = true;
+                wk = c.sem.tys[want].kids;
+                c = c with { sem: c.sem with { tuple_expected: map_set(c.sem.tuple_expected, id, want) } };
+            }
         }
+        let mut key: text = "T";
         let mut i: i32 = 0;
-        while i < len(nd.kids) && c.sem.err == "" {
+        while i < len(nd.kids) {
+            if c.sem.err != "" { break; }
             let w: i32 = if i < len(wk) { wk[i] } else { 0 - 1 };
             let mut t: i32 = 0;
-            (c, t) = check_value(c, nd.kids[i], w, "tuple item");
+            (c, t) = check_expr(c, nd.kids[i], w);
+            if t == 0 {
+                c = cerr(c, "type", "tuple item has unit type", c.sem.prog.nodes[nd.kids[i]].pos);
+                t = 0 - 1;
+            }
+            if constrained && t >= 0 && i < len(wk) {
+                c = accumulate_type_constraint(c, id, "tuple-target-items", t, wk[i], c.sem.prog.nodes[nd.kids[i]].pos);
+            }
             elems = push(elems, t);
+            key = key + to_text(t) + ",";
             i = i + 1;
         }
         if c.sem.err != "" { return (c, 0 - 1); }
         let mut s: Sem = c.sem;
         let mut tt: i32 = 0;
-        (s, tt) = tuple_of(s, elems);
-        return typed(c with { sem: s }, id, tt);
+        (s, tt) = intern(s, key, TyInfo { k: 6, a: 0, kids: elems, name: "" });
+        return (c with { sem: s with { exprty: map_set(s.exprty, id, tt) } }, tt);
     }
     if k == 23 {
         let mut elem: i32 = 0 - 1;
@@ -526,10 +857,20 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         }
         for kid in nd.kids {
             let mut t: i32 = 0;
-            (c, t) = check_value(c, kid, elem, "sequence item");
+            let kn: Node = c.sem.prog.nodes[kid];
+            if kn.k <= 3 { t = if kn.k == 3 { 4 } else { kn.k }; }
+            else if kn.k == 8 { t = 3; }
+            else { (c, t) = check_expr(c, kid, elem); }
+            if t == 0 {
+                return (cerr(c, "type", "sequence item has unit type", kn.pos), 0 - 1);
+            }
             if t < 0 { return (c, 0 - 1); }
             if elem < 0 { elem = t; }
-            c = expect_type(c, t, elem, "sequence item", c.sem.prog.nodes[kid].pos);
+            c = accumulate_type_constraint(c, id, "sequence-elements", t, elem, kn.pos);
+            if c.sem.err != "" { return (c, 0 - 1); }
+            if t != elem {
+                c = cerr(c, "type", "sequence item expects " + ty_text(c.sem, elem) + ", got " + ty_text(c.sem, t), kn.pos);
+            }
         }
         if c.sem.err != "" { return (c, 0 - 1); }
         if elem < 0 {
@@ -537,19 +878,32 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         }
         let mut s: Sem = c.sem;
         let mut st: i32 = 0;
-        (s, st) = seq_of(s, elem);
-        return typed(c with { sem: s }, id, st);
+        (s, st) = intern(s, "S" + to_text(elem), TyInfo { k: 5, a: elem, kids: [], name: "" });
+        return (c with { sem: s with { exprty: map_set(s.exprty, id, st) } }, st);
     }
     if k == 24 {
-        (c, l) = check_value(c, nd.a, 0 - 1, "indexed value");
+        (c, l) = check_expr(c, nd.a, 0 - 1);
+        if l == 0 {
+            return (cerr(c, "type", "indexed value has unit type", c.sem.prog.nodes[nd.a].pos), 0 - 1);
+        }
         if l < 0 { return (c, 0 - 1); }
-        (c, r) = check_value(c, nd.b, 1, "index");
+        if c.sem.prog.nodes[nd.b].k == 1 {
+            r = 1;
+        } else {
+            (c, r) = check_expr(c, nd.b, 1);
+        }
+        if r == 0 {
+            return (cerr(c, "type", "index has unit type", c.sem.prog.nodes[nd.b].pos), 0 - 1);
+        }
         if r < 0 { return (c, 0 - 1); }
         if c.sem.tys[l].k != 5 {
             return (cerr(c, "type", "indexing expects a Sequence, got " + ty_text(c.sem, l), nd.pos), 0 - 1);
         }
-        c = expect_type(c, r, 1, "index", nd.pos);
-        return typed(c, id, c.sem.tys[l].a);
+        if r != 1 {
+            c = cerr(c, "type", "index expects i32, got " + ty_text(c.sem, r), nd.pos);
+        }
+        let et: i32 = c.sem.tys[l].a;
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, et) } }, et);
     }
     if k == 27 {
         let saved: i32 = len(c.syms);
@@ -559,106 +913,153 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
             }
         }
         let mut t: i32 = 0;
-        if nd.a >= 0 && c.sem.err == "" {
-            (c, t) = check_expr(c, nd.a, want);
+        if nd.a >= 0 {
+            if c.sem.err == "" {
+                (c, t) = check_expr(c, nd.a, want);
+            }
         }
-        c = pop_scope(c, saved);
+        if len(c.syms) > saved { c = pop_scope(c, saved); }
         if c.sem.err != "" { return (c, 0 - 1); }
-        return typed(c, id, t);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, t) } }, t);
     }
     if k == 26 {
-        c = check_cond(c, nd.a, "if condition");
+        let mut ct: i32 = 0;
+        (c, ct) = check_expr(c, nd.a, 2);
+        if ct > 0 {
+            let witnessed: Evidence = map_type_witness("if-expression-condition-type", id, ct == 2, c.sem.prog.nodes[nd.a].pos);
+            c = c with { sem: c.sem with { if_expr_condition_evidence: map_set(c.sem.if_expr_condition_evidence, id, witnessed) } };
+        }
+        if ct == 0 {
+            c = cerr(c, "type", "if condition has unit type", c.sem.prog.nodes[nd.a].pos);
+        } else if ct != 2 {
+            if ct > 0 {
+                c = cerr(c, "type", "if condition expects bool, got " + ty_text(c.sem, ct), c.sem.prog.nodes[nd.a].pos);
+            }
+        }
         (c, l) = check_expr(c, nd.b, want);
         (c, r) = check_expr(c, nd.c, if want >= 0 { want } else { l });
         if c.sem.err != "" { return (c, 0 - 1); }
-        if l != r {
+        // The two branches independently witness the *same* type constraint.
+        // The first branch defines the inferred type family, so its witness
+        // confirms this family; the second branch may support or oppose it.
+        // Source positions identify each contributing AST branch.
+        let base: Evidence = evidence_empty("if-branch-type", id, 0);
+        let first: Evidence = type_branch_witness(base, l, l, c.sem.prog.nodes[nd.b].pos);
+        let second: Evidence = type_branch_witness(base, r, l, c.sem.prog.nodes[nd.c].pos);
+        let joined: EvidenceResult = evidence_try_join(first, second);
+        if !joined.ok {
+            return (cerr(c, "type", "invalid if-branch type evidence: " + joined.error, nd.pos), 0 - 1);
+        }
+        let proof: Evidence = joined.value;
+        // Persist both witness families in Sema, not only a transient quad
+        // summary, so later phases can inspect exactly which branches spoke.
+        c = c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, id, proof) } };
+        if proof.state != T {
             return (cerr(c, "type", "'if' branches have different types: " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
         }
         if l > 0 {
-            let mut slot: i32 = 0;
-            (c, slot) = declare(c, id, "$if", l);
+            let slot: i32 = len(c.names);
+            c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, slot) }, names: push(c.names, "$if") };
         }
-        return typed(c, id, l);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, l) } }, l);
     }
     if k == 25 {
-        return check_match(c, id, nd, want);
+        // Register the obligation before examining arms: rejected match
+        // expressions must retain their negative/conflicting evidence, and
+        // deleting Evidence alone must not erase the Q3 requirement.
+        c = c with { sem: c.sem with { match_result_checked: map_set(c.sem.match_result_checked, id, true) } };
+        let mut st: i32 = 0;
+        (c, st) = check_expr(c, nd.a, 0 - 1);
+        if st == 0 {
+            return (cerr(c, "type", "match scrutinee has unit type", c.sem.prog.nodes[nd.a].pos), 0 - 1);
+        }
+        if st < 0 { return (c, 0 - 1); }
+        let sk: i32 = c.sem.tys[st].k;
+        let is_opt: bool = sk == 8;
+        let is_quad: bool = st == 5;
+        if st != 1 {
+            if st != 3 {
+                if !is_opt && !is_quad {
+                    return (cerr(c, "unsupported", "match on " + ty_text(c.sem, st) + " is outside the supported subset (i32, u32, Option, quad)", nd.pos), 0 - 1);
+                }
+            }
+        }
+        let mut result: i32 = want;
+        let mut has_wild: bool = false;
+        let mut has_some: bool = false;
+        let mut has_none: bool = false;
+        let mut seen_quad: Map(i32, bool) = map_empty();
+        for arm_id in nd.kids {
+            let arm: Node = c.sem.prog.nodes[arm_id];
+            let pk: i32 = arm.v;
+            if pk == 0 { has_wild = true; }
+            let mut bad_pat: bool = false;
+            if pk == 1 {
+                if st != 1 {
+                    if st != 3 { bad_pat = true; }
+                }
+                if is_opt { bad_pat = true; }
+            } else if pk == 2 {
+                if st != 3 { bad_pat = true; }
+            } else if pk == 3 || pk == 4 {
+                if !is_opt { bad_pat = true; }
+            } else if pk == 5 {
+                if !is_quad { bad_pat = true; }
+                else if map_contains(seen_quad, arm.b) {
+                    return (cerr(c, "type", "duplicate quad match arm", arm.pos), 0 - 1);
+                } else {
+                    seen_quad = map_set(seen_quad, arm.b, true);
+                }
+            }
+            if bad_pat {
+                return (cerr(c, "type", "match pattern does not fit scrutinee type " + ty_text(c.sem, st), arm.pos), 0 - 1);
+            }
+            let saved: i32 = len(c.syms);
+            if pk == 3 {
+                has_some = true;
+                let slot: i32 = len(c.names);
+                let idx: i32 = len(c.syms);
+                let prev: i32 = map_get(c.symmap, arm.name, 0 - 1);
+                c = c with {
+                    sem: c.sem with { slots: map_set(c.sem.slots, arm_id, slot) },
+                    syms: push(c.syms, Sym { name: arm.name, ty: c.sem.tys[st].a, slot: slot, prev: prev }),
+                    symmap: map_set(c.symmap, arm.name, idx),
+                    names: push(c.names, arm.name)
+                };
+            }
+            if pk == 4 { has_none = true; }
+            let mut bt: i32 = 0;
+            (c, bt) = check_expr(c, arm.a, result);
+            if len(c.syms) > saved { c = pop_scope(c, saved); }
+            if c.sem.err != "" { return (c, 0 - 1); }
+            if result < 0 { result = bt; }
+            if bt >= 0 {
+                c = accumulate_type_constraint(c, id, "match-arm-types", bt, result, c.sem.prog.nodes[arm.a].pos);
+                if c.sem.err != "" { return (c, 0 - 1); }
+            }
+            if bt != result {
+                return (cerr(c, "type", "match arms have different types: " + ty_text(c.sem, result) + " and " + ty_text(c.sem, bt), arm.pos), 0 - 1);
+            }
+        }
+        if !has_wild {
+            if is_quad {
+                // C0 requires an explicit default arm even when N/F/T/S are all present.
+                return (cerr(c, "type", "match requires default arm '_'", nd.pos), 0 - 1);
+            } else if !is_opt || !has_some || !has_none {
+                return (cerr(c, "type", "match is not exhaustive; add a '_' arm", nd.pos), 0 - 1);
+            }
+        }
+        if result < 0 { result = 0; }
+        if result > 0 {
+            let slot: i32 = len(c.names);
+            c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, slot) }, names: push(c.names, "$match") };
+        }
+        return (c with { sem: c.sem with {
+            exprty: map_set(c.sem.exprty, id, result),
+            match_result_checked: map_set(c.sem.match_result_checked, id, true)
+        } }, result);
     }
     return (cerr(c, "unsupported", "expression form outside the supported subset", nd.pos), 0 - 1);
-}
-
-fn check_match(c0: C, id: i32, nd: Node, want: i32) -> (C, i32) {
-    let mut c: C = c0;
-    let mut st: i32 = 0;
-    (c, st) = check_value(c, nd.a, 0 - 1, "match scrutinee");
-    if st < 0 { return (c, 0 - 1); }
-    let sk: i32 = c.sem.tys[st].k;
-    let is_opt: bool = sk == 8;
-    if st != 1 && st != 3 && !is_opt {
-        return (cerr(c, "unsupported", "match on " + ty_text(c.sem, st) + " is outside the supported subset (i32, u32, Option)", nd.pos), 0 - 1);
-    }
-    let mut result: i32 = want;
-    let mut has_wild: bool = false;
-    let mut has_some: bool = false;
-    let mut has_none: bool = false;
-    for arm_id in nd.kids {
-        let arm: Node = c.sem.prog.nodes[arm_id];
-        let pk: i32 = arm.v;
-        if pk == 0 { has_wild = true; }
-        if (pk == 1 && st != 1 && st != 3) || (pk == 2 && st != 3) || ((pk == 3 || pk == 4) && !is_opt) {
-            return (cerr(c, "type", "match pattern does not fit scrutinee type " + ty_text(c.sem, st), arm.pos), 0 - 1);
-        }
-        if is_opt && pk == 1 {
-            return (cerr(c, "type", "match pattern does not fit scrutinee type " + ty_text(c.sem, st), arm.pos), 0 - 1);
-        }
-        let saved: i32 = len(c.syms);
-        if pk == 3 {
-            has_some = true;
-            let mut slot: i32 = 0;
-            (c, slot) = declare(c, arm_id, arm.name, c.sem.tys[st].a);
-        }
-        if pk == 4 { has_none = true; }
-        let mut bt: i32 = 0;
-        (c, bt) = check_expr(c, arm.a, result);
-        c = pop_scope(c, saved);
-        if c.sem.err != "" { return (c, 0 - 1); }
-        if result < 0 {
-            result = bt;
-        } else if bt != result {
-            return (cerr(c, "type", "match arms have different types: " + ty_text(c.sem, result) + " and " + ty_text(c.sem, bt), arm.pos), 0 - 1);
-        }
-    }
-    if !has_wild && !(is_opt && has_some && has_none) {
-        return (cerr(c, "type", "match is not exhaustive; add a '_' arm", nd.pos), 0 - 1);
-    }
-    if result < 0 { result = 0; }
-    if result > 0 {
-        let mut slot: i32 = 0;
-        (c, slot) = declare(c, id, "$match", result);
-    }
-    return typed(c, id, result);
-}
-
-fn check_cond(c0: C, id: i32, what: text) -> C {
-    let mut c: C = c0;
-    let mut t: i32 = 0;
-    (c, t) = check_value(c, id, 2, what);
-    if t > 0 && t != 2 {
-        return cerr(c, "type", what + " expects bool, got " + ty_text(c.sem, t), c.sem.prog.nodes[id].pos);
-    }
-    return c;
-}
-
-// ---------------------------------------------------------------- statements
-fn check_block(c0: C, id: i32) -> C {
-    let nd: Node = c0.sem.prog.nodes[id];
-    let saved: i32 = len(c0.syms);
-    let mut c: C = c0;
-    for kid in nd.kids {
-        if c.sem.err == "" {
-            c = check_stmt(c, kid);
-        }
-    }
-    return pop_scope(c, saved);
 }
 
 fn check_stmt(c0: C, id: i32) -> C {
@@ -674,23 +1075,56 @@ fn check_stmt(c0: C, id: i32) -> C {
             c = c with { sem: s };
             if want < 0 { return c; }
         }
-        (c, t) = check_value(c, nd.a, want, "initializer of '" + nd.name + "'");
-        if t < 0 { return c; }
-        if want >= 0 && want != t {
-            return cerr(c, "type", "variable '" + nd.name + "' declared " + ty_text(c.sem, want) + " but initialized with " + ty_text(c.sem, t), nd.pos);
+        let na: Node = c.sem.prog.nodes[nd.a];
+        if na.k <= 3 { t = if na.k == 3 { 4 } else { na.k }; }
+        else if na.k == 8 { t = 3; }
+        else { (c, t) = check_expr(c, nd.a, want); }
+        if t == 0 {
+            return cerr(c, "type", "initializer of '" + nd.name + "' has unit type", na.pos);
         }
-        let mut slot: i32 = 0;
-        (c, slot) = declare(c, id, nd.name, t);
-        return c;
+        if t < 0 { return c; }
+        // An unannotated declaration infers its type and imposes no
+        // independent equality obligation. Only explicit annotations do.
+        if want >= 0 {
+            c = accumulate_type_constraint(c, id, "annotated-binding", t, want, na.pos);
+            if c.sem.err != "" { return c; }
+        }
+        if want != t {
+            if want >= 0 {
+                return cerr(c, "type", "variable '" + nd.name + "' declared " + ty_text(c.sem, want) + " but initialized with " + ty_text(c.sem, t), nd.pos);
+            }
+        }
+        let slot: i32 = len(c.names);
+        let idx: i32 = len(c.syms);
+        let prev: i32 = map_get(c.symmap, nd.name, 0 - 1);
+        let inferred: Map(i32, i32) = if want < 0 {
+            map_set(c.sem.inferred_binding_types, id, t)
+        } else {
+            c.sem.inferred_binding_types
+        };
+        return c with {
+            sem: c.sem with { slots: map_set(c.sem.slots, id, slot), inferred_binding_types: inferred },
+            syms: push(c.syms, Sym { name: nd.name, ty: t, slot: slot, prev: prev }),
+            symmap: map_set(c.symmap, nd.name, idx),
+            names: push(c.names, nd.name)
+        };
     }
     if k == 11 {
-        let at: i32 = lookup(c.syms, nd.name);
+        let at: i32 = map_get(c.symmap, nd.name, 0 - 1);
         if at < 0 {
             return cerr(c, "name", "assignment to undefined variable '" + nd.name + "'", nd.pos);
         }
         let sym: Sym = c.syms[at];
-        (c, t) = check_value(c, nd.a, sym.ty, "assigned value");
+        let na: Node = c.sem.prog.nodes[nd.a];
+        if na.k <= 3 { t = if na.k == 3 { 4 } else { na.k }; }
+        else if na.k == 8 { t = 3; }
+        else { (c, t) = check_expr(c, nd.a, sym.ty); }
+        if t == 0 {
+            return cerr(c, "type", "assigned value has unit type", na.pos);
+        }
         if t < 0 { return c; }
+        c = accumulate_type_constraint(c, id, "assignment-type", t, sym.ty, na.pos);
+        if c.sem.err != "" { return c; }
         if t != sym.ty {
             return cerr(c, "type", "cannot assign " + ty_text(c.sem, t) + " to '" + nd.name + "' of type " + ty_text(c.sem, sym.ty), nd.pos);
         }
@@ -698,44 +1132,87 @@ fn check_stmt(c0: C, id: i32) -> C {
     }
     if k == 40 || k == 41 {
         let mut want: i32 = 0 - 1;
-        if k == 40 && nd.v >= 0 {
-            let mut s: Sem = c.sem;
-            (s, want) = resolve_type(s, nd.v);
-            c = c with { sem: s };
-            if want < 0 { return c; }
+        if k == 40 {
+            if nd.v >= 0 {
+                let mut s: Sem = c.sem;
+                (s, want) = resolve_type(s, nd.v);
+                c = c with { sem: s };
+                if want < 0 { return c; }
+            }
         }
-        (c, t) = check_value(c, nd.a, want, "destructured value");
+        (c, t) = check_expr(c, nd.a, want);
+        if t == 0 {
+            return cerr(c, "type", "destructured value has unit type", c.sem.prog.nodes[nd.a].pos);
+        }
         if t < 0 { return c; }
-        if want >= 0 && t != want {
-            return cerr(c, "type", "tuple annotation expects " + ty_text(c.sem, want) + ", got " + ty_text(c.sem, t), nd.pos);
-        }
         let info: TyInfo = c.sem.tys[t];
+        // This is an actual statement-level shape/arity obligation; its
+        // single witness is the source tuple expression, not any bound name.
+        let shape: Evidence = map_type_witness("tuple-destructure-shape", id,
+            info.k == 6 && len(info.kids) == len(nd.kids), c.sem.prog.nodes[nd.a].pos);
+        c = c with { sem: c.sem with { tuple_shape_evidence: map_set(c.sem.tuple_shape_evidence, id, shape) } };
+        if k == 40 && want >= 0 {
+            c = accumulate_type_constraint(c, id, "tuple-annotation-type", t, want, c.sem.prog.nodes[nd.a].pos);
+            if c.sem.err != "" { return c; }
+        }
+        if want != t {
+            if want >= 0 {
+                return cerr(c, "type", "tuple annotation expects " + ty_text(c.sem, want) + ", got " + ty_text(c.sem, t), nd.pos);
+            }
+        }
         if info.k != 6 || len(info.kids) != len(nd.kids) {
             return cerr(c, "type", "destructuring expects a " + to_text(len(nd.kids)) + "-tuple, got " + ty_text(c.sem, t), nd.pos);
         }
         let mut i: i32 = 0;
-        while i < len(nd.kids) && c.sem.err == "" {
-            let nm: Node = c.sem.prog.nodes[nd.kids[i]];
+        while i < len(nd.kids) {
+            if c.sem.err != "" { break; }
+            let kid: i32 = nd.kids[i];
+            let nm: Node = c.sem.prog.nodes[kid];
             if k == 40 {
-                let mut slot: i32 = 0;
-                (c, slot) = declare(c, nd.kids[i], nm.name, info.kids[i]);
+                let slot: i32 = len(c.names);
+                let idx: i32 = len(c.syms);
+                let prev: i32 = map_get(c.symmap, nm.name, 0 - 1);
+                c = c with {
+                    sem: c.sem with {
+                        slots: map_set(c.sem.slots, kid, slot),
+                        tuple_inferred_components: map_set(c.sem.tuple_inferred_components, kid, info.kids[i])
+                    },
+                    syms: push(c.syms, Sym { name: nm.name, ty: info.kids[i], slot: slot, prev: prev }),
+                    symmap: map_set(c.symmap, nm.name, idx),
+                    names: push(c.names, nm.name)
+                };
             } else {
-                let at: i32 = lookup(c.syms, nm.name);
+                let at: i32 = map_get(c.symmap, nm.name, 0 - 1);
                 if at < 0 {
                     return cerr(c, "name", "assignment to undefined variable '" + nm.name + "'", nm.pos);
                 }
                 let sym: Sym = c.syms[at];
+                c = accumulate_type_constraint(c, id, "tuple-assignment-items", info.kids[i], sym.ty, nm.pos);
+                if c.sem.err != "" { return c; }
                 if sym.ty != info.kids[i] {
                     return cerr(c, "type", "cannot assign " + ty_text(c.sem, info.kids[i]) + " to '" + nm.name + "' of type " + ty_text(c.sem, sym.ty), nm.pos);
                 }
-                c = c with { sem: c.sem with { slots: map_set(c.sem.slots, nd.kids[i], sym.slot) } };
+                c = c with { sem: c.sem with { slots: map_set(c.sem.slots, kid, sym.slot) } };
             }
             i = i + 1;
         }
         return c;
     }
     if k == 17 {
-        return check_cond(c, nd.a, "assert");
+        (c, t) = check_expr(c, nd.a, 2);
+        if t > 0 {
+            c = accumulate_type_constraint(c, id, "assert-condition-type", t, 2, c.sem.prog.nodes[nd.a].pos);
+            if c.sem.err != "" { return c; }
+        }
+        if t == 0 {
+            return cerr(c, "type", "assert has unit type", c.sem.prog.nodes[nd.a].pos);
+        }
+        if t != 2 {
+            if t > 0 {
+                return cerr(c, "type", "assert expects bool, got " + ty_text(c.sem, t), c.sem.prog.nodes[nd.a].pos);
+            }
+        }
+        return c;
     }
     if k == 16 {
         (c, t) = check_expr(c, nd.a, 0 - 1);
@@ -748,53 +1225,114 @@ fn check_stmt(c0: C, id: i32) -> C {
             }
             return c;
         }
-        (c, t) = check_value(c, nd.a, c.fret, "returned value");
+        let na: Node = c.sem.prog.nodes[nd.a];
+        if na.k <= 3 { t = if na.k == 3 { 4 } else { na.k }; }
+        else if na.k == 8 { t = 3; }
+        else { (c, t) = check_expr(c, nd.a, c.fret); }
+        if t == 0 {
+            return cerr(c, "type", "returned value has unit type", na.pos);
+        }
         if t < 0 { return c; }
         if c.fret == 0 {
             return cerr(c, "type", "a function returning unit cannot return a value", nd.pos);
         }
+        c = accumulate_type_constraint(c, id, "return-value-type", t, c.fret, na.pos);
+        if c.sem.err != "" { return c; }
         if t != c.fret {
             return cerr(c, "type", "function returns " + ty_text(c.sem, c.fret) + " but this returns " + ty_text(c.sem, t), nd.pos);
         }
         return c;
     }
     if k == 12 {
-        c = check_cond(c, nd.a, "if condition");
+        (c, t) = check_expr(c, nd.a, 2);
+        if t > 0 {
+            c = accumulate_type_constraint(c, id, "if-condition-type", t, 2, c.sem.prog.nodes[nd.a].pos);
+            if c.sem.err != "" { return c; }
+        }
+        if t == 0 {
+            c = cerr(c, "type", "if condition has unit type", c.sem.prog.nodes[nd.a].pos);
+        } else if t != 2 {
+            if t > 0 {
+                c = cerr(c, "type", "if condition expects bool, got " + ty_text(c.sem, t), c.sem.prog.nodes[nd.a].pos);
+            }
+        }
         if c.sem.err != "" { return c; }
-        c = check_block(c, nd.b);
-        if c.sem.err == "" && nd.c >= 0 {
-            if c.sem.prog.nodes[nd.c].k == 12 {
-                c = check_stmt(c, nd.c);
-            } else {
-                c = check_block(c, nd.c);
+        let saved: i32 = len(c.syms);
+        for kid in c.sem.prog.nodes[nd.b].kids {
+            if c.sem.err == "" { c = check_stmt(c, kid); }
+        }
+        if len(c.syms) > saved { c = pop_scope(c, saved); }
+        if nd.c >= 0 {
+            if c.sem.err == "" {
+                let nc: Node = c.sem.prog.nodes[nd.c];
+                if nc.k == 15 {
+                    let saved2: i32 = len(c.syms);
+                    for kid in nc.kids {
+                        if c.sem.err == "" { c = check_stmt(c, kid); }
+                    }
+                    if len(c.syms) > saved2 { c = pop_scope(c, saved2); }
+                } else {
+                    c = check_stmt(c, nd.c);
+                }
             }
         }
         return c;
     }
     if k == 13 {
-        c = check_cond(c, nd.a, "while condition");
+        (c, t) = check_expr(c, nd.a, 2);
+        if t > 0 {
+            c = accumulate_type_constraint(c, id, "while-condition-type", t, 2, c.sem.prog.nodes[nd.a].pos);
+            if c.sem.err != "" { return c; }
+        }
+        if t == 0 {
+            c = cerr(c, "type", "while condition has unit type", c.sem.prog.nodes[nd.a].pos);
+        } else if t != 2 {
+            if t > 0 {
+                c = cerr(c, "type", "while condition expects bool, got " + ty_text(c.sem, t), c.sem.prog.nodes[nd.a].pos);
+            }
+        }
         if c.sem.err != "" { return c; }
-        c = check_block(c with { loops: c.loops + 1 }, nd.b);
+        let saved: i32 = len(c.syms);
+        c = c with { loops: c.loops + 1 };
+        for kid in c.sem.prog.nodes[nd.b].kids {
+            if c.sem.err == "" { c = check_stmt(c, kid); }
+        }
+        if len(c.syms) > saved { c = pop_scope(c, saved); }
         return c with { loops: c.loops - 1 };
     }
     if k == 42 {
-        (c, t) = check_value(c, nd.a, 0 - 1, "loop sequence");
+        (c, t) = check_expr(c, nd.a, 0 - 1);
+        if t > 0 {
+            let accepted: bool = c.sem.tys[t].k == 5;
+            let proof: Evidence = map_type_witness("for-sequence-type", id, accepted, c.sem.prog.nodes[nd.a].pos);
+            c = c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, id, proof) } };
+        }
+        if t == 0 {
+            return cerr(c, "type", "loop sequence has unit type", c.sem.prog.nodes[nd.a].pos);
+        }
         if t < 0 { return c; }
         if c.sem.tys[t].k != 5 {
             return cerr(c, "type", "'for' iterates a Sequence, got " + ty_text(c.sem, t), nd.pos);
         }
         let saved: i32 = len(c.syms);
-        // hidden slots: the iterated sequence and the index, then the loop variable
-        let mut s0: i32 = 0;
-        (c, s0) = declare(c, id, "$seq", t);
-        let mut s1: i32 = 0;
-        (c, s1) = declare(c, 0 - 1, "$idx", 1);
-        let mut s2: i32 = 0;
-        (c, s2) = declare(c, 0 - 1, nd.name, c.sem.tys[t].a);
-        // a `for` body does not admit break/continue (only while/loop do)
+        let s0: i32 = len(c.names);
+        let s2: i32 = s0 + 2;
+        let elem_ty: i32 = c.sem.tys[t].a;
         let outer: i32 = c.loops;
-        c = check_block(c with { loops: 0 }, nd.b);
-        return pop_scope(c with { loops: outer }, saved);
+        let idx: i32 = len(c.syms);
+        let prev: i32 = map_get(c.symmap, nd.name, 0 - 1);
+        c = c with {
+            sem: c.sem with { slots: map_set(c.sem.slots, id, s0) },
+            syms: push(c.syms, Sym { name: nd.name, ty: elem_ty, slot: s2, prev: prev }),
+            symmap: map_set(c.symmap, nd.name, idx),
+            names: push(push(push(c.names, "$seq"), "$idx"), nd.name),
+            loops: 0
+        };
+        for kid in c.sem.prog.nodes[nd.b].kids {
+            if c.sem.err == "" { c = check_stmt(c, kid); }
+        }
+        c = pop_scope(c, saved);
+        return c with { loops: outer };
     }
     if k == 18 || k == 19 {
         if c.loops == 0 {
@@ -803,61 +1341,107 @@ fn check_stmt(c0: C, id: i32) -> C {
         }
         return c;
     }
-    return check_block(c, id);
-}
-
-// Semantic's return-path rule (as enforced by the reference compiler): a
-// function with a non-unit return type must end with a top-level `return`.
-fn ends_with_return(nodes: Sequence(Node), body: i32) -> bool {
-    let kids: Sequence(i32) = nodes[body].kids;
-    let n: i32 = len(kids);
-    if n == 0 {
-        return false;
+    let saved: i32 = len(c.syms);
+    for kid in nd.kids {
+        if c.sem.err == "" {
+            c = check_stmt(c, kid);
+        }
     }
-    return nodes[kids[n - 1]].k == 14;
+    if len(c.syms) > saved { return pop_scope(c, saved); }
+    return c;
 }
 
-// True when every path through statement `id` ends in a return (used by
-// lowering to skip unreachable jumps; not a language rule).
-fn always_returns(nodes: Sequence(Node), id: i32) -> bool {
+// Return-path evidence for the proposition "this path returns from the function".
+// N = no path evidence (empty alternative set), T = returning paths only,
+// F = fallthrough paths only, S = both returning and fallthrough paths.
+// T and F represent witnesses for *opposite outcomes of the same property*,
+// never unrelated metadata flags. Knowledge join preserves both witnesses.
+fn return_path_evidence(nodes: Sequence(Node), id: i32) -> quad {
     let nd: Node = nodes[id];
-    if nd.k == 14 { return true; }
-    if nd.k == 15 {
+    let k: i32 = nd.k;
+    if k == 14 { return T; }
+    if k == 15 || k == 27 {
+        // Empty block falls through. Sequential composition propagates the
+        // already-returned paths, and continues only the still-live paths.
+        let mut state: quad = F;
         for kid in nd.kids {
-            if always_returns(nodes, kid) {
-                return true;
+            if state == T { return T; }
+            let next: quad = return_path_evidence(nodes, kid);
+            if state == F { state = next; }
+            else if state == S { state = T || next; }
+            else { state = N; }
+        }
+        if k == 27 {
+            if nd.a >= 0 {
+                if state == T { return T; }
+                let tail: quad = return_path_evidence(nodes, nd.a);
+                if state == F { return tail; }
+                if state == S { return T || tail; }
+                return N;
             }
         }
-        return false;
+        return state;
     }
-    if nd.k == 12 {
-        if nd.c < 0 { return false; }
-        if always_returns(nodes, nd.b) {
-            return always_returns(nodes, nd.c);
+    if k == 16 { return return_path_evidence(nodes, nd.a); }
+    if k == 12 || k == 26 {
+        let yes: quad = return_path_evidence(nodes, nd.b);
+        let no: quad = if nd.c >= 0 { return_path_evidence(nodes, nd.c) } else { F };
+        return yes || no;
+    }
+    if k == 25 {
+        // Each match arm is an alternative execution outcome. A non-exhaustive
+        // match would retain a fallthrough witness, never certify T.
+        let mut state: quad = N;
+        let mut has_default: bool = false;
+        for aid in nd.kids {
+            // Match is first-fit: arms following '_' cannot execute.
+            if !has_default {
+                let arm: Node = nodes[aid];
+                state = state || return_path_evidence(nodes, arm.a);
+                if arm.v == 0 { has_default = true; }
+            }
         }
-        return false;
+        if !has_default { return state || F; }
+        return state;
     }
-    return false;
+    // While/for are conservatively fallthrough-capable; the language
+    // does not permit this proof to assume a loop executes even once.
+    return F;
 }
 
-fn base_types() -> Sequence(TyInfo) {
-    return [
+fn always_returns(nodes: Sequence(Node), id: i32) -> bool {
+    // A return obligation is proved only by valid evidence in state T.
+    let raw: quad = return_path_evidence(nodes, id);
+    let empty: Evidence = evidence_empty("return-path", id, 0);
+    let witness: u32 = nodes[id].pos;
+    let checked: Evidence = if raw == T {
+        evidence_positive(empty, witness)
+    } else if raw == F {
+        evidence_negative(empty, witness)
+    } else if raw == S {
+        evidence_negative(evidence_positive(empty, witness), witness)
+    } else {
+        empty
+    };
+    return evidence_valid(checked) && checked.state == T;
+}
+
+fn analyze(prog: Prog) -> Sem {
+    let base: Sequence(TyInfo) = [
         TyInfo { k: 0, a: 0, kids: [], name: "unit" },
         TyInfo { k: 1, a: 0, kids: [], name: "i32" },
         TyInfo { k: 2, a: 0, kids: [], name: "bool" },
         TyInfo { k: 3, a: 0, kids: [], name: "u32" },
-        TyInfo { k: 4, a: 0, kids: [], name: "text" }
+        TyInfo { k: 4, a: 0, kids: [], name: "text" },
+        TyInfo { k: 10, a: 0, kids: [], name: "quad" }
     ];
-}
-
-fn analyze(prog: Prog) -> Sem {
-    let mut sem: Sem = Sem { prog: prog, tys: base_types(), tykey: map_empty(), fnidx: map_empty(), recidx: map_empty(),
-                             fptypes: [], frets: [], rftypes: [], exprty: map_empty(), slots: map_empty(),
-                             callees: map_empty(), fieldix: map_empty(), locals: [], u32arith: false,
+    let mut sem: Sem = Sem { prog: prog, tys: base, tykey: map_empty(), fnidx: map_empty(), recidx: map_empty(),
+                             fptypes: [], frets: [], rftypes: [], rfidx: [], exprty: map_empty(), slots: map_empty(),
+                             callees: map_empty(), fieldix: map_empty(), type_evidence: map_empty(), map_container_evidence: map_empty(), map_key_evidence: map_empty(), map_value_evidence: map_empty(), tuple_shape_evidence: map_empty(), tuple_inferred_components: map_empty(), inferred_binding_types: map_empty(), if_expr_condition_evidence: map_empty(), tuple_expected: map_empty(), match_result_checked: map_empty(), locals: [], u32arith: false,
                              err: "", cat: "", errpos: 0u32 };
-    // record names, then record field types (records may refer to each other)
     let mut i: i32 = 0;
-    while i < len(prog.recs) && sem.err == "" {
+    while i < len(prog.recs) {
+        if sem.err != "" { break; }
         let r: Rec = prog.recs[i];
         if map_contains(sem.recidx, r.name) {
             sem = serr(sem, "name", "record '" + r.name + "' is defined more than once", r.pos);
@@ -866,25 +1450,32 @@ fn analyze(prog: Prog) -> Sem {
         i = i + 1;
     }
     i = 0;
-    while i < len(prog.recs) && sem.err == "" {
+    while i < len(prog.recs) {
+        if sem.err != "" { break; }
+        let r: Rec = prog.recs[i];
         let mut fts: Sequence(i32) = [];
-        for tn in prog.recs[i].ftypes {
+        let mut fmap: Map(text, i32) = map_empty();
+        let mut j: i32 = 0;
+        while j < len(r.ftypes) {
             let mut t: i32 = 0;
-            (sem, t) = resolve_type(sem, tn);
+            (sem, t) = resolve_type(sem, r.ftypes[j]);
             fts = push(fts, t);
+            fmap = map_set(fmap, r.fnames[j], j);
+            j = j + 1;
         }
-        sem = sem with { rftypes: push(sem.rftypes, fts) };
+        sem = sem with { rftypes: push(sem.rftypes, fts), rfidx: push(sem.rfidx, fmap) };
         i = i + 1;
     }
-    // function table and signatures
     i = 0;
-    while i < len(prog.funcs) && sem.err == "" {
+    while i < len(prog.funcs) {
+        if sem.err != "" { break; }
         let f: Func = prog.funcs[i];
         if map_contains(sem.fnidx, f.name) {
             sem = serr(sem, "name", "function '" + f.name + "' is defined more than once", f.pos);
         }
-        if builtin_code(f.name) > 0 {
-            sem = serr(sem, "name", "'" + f.name + "' is a reserved builtin name", f.pos);
+        let fnm: text = f.name;
+        if fnm == "len" || fnm == "push" || fnm == "pop" || fnm == "to_text" || fnm == "text_len" || fnm == "text_byte_at" || fnm == "text_slice" || fnm == "map_empty" || fnm == "map_contains" || fnm == "map_get" || fnm == "map_set" {
+            sem = serr(sem, "name", "'" + fnm + "' is a reserved builtin name", f.pos);
         }
         sem = sem with { fnidx: map_set(sem.fnidx, f.name, i) };
         let mut pts: Sequence(i32) = [];
@@ -901,29 +1492,42 @@ fn analyze(prog: Prog) -> Sem {
         i = i + 1;
     }
     if sem.err == "" {
-        if !map_contains(sem.fnidx, "main") {
+        let mi: i32 = map_get(sem.fnidx, "main", 0 - 1);
+        if mi < 0 {
             sem = serr(sem, "name", "missing entry function 'fn main()'", 0u32);
         } else {
-            let mi: i32 = map_get(sem.fnidx, "main", 0);
             if len(prog.funcs[mi].ptypes) != 0 || sem.frets[mi] != 0 {
                 sem = serr(sem, "type", "'main' must take no parameters and return unit", prog.funcs[mi].pos);
             }
         }
     }
     i = 0;
-    while i < len(prog.funcs) && sem.err == "" {
+    while i < len(prog.funcs) {
+        if sem.err != "" { break; }
         let f: Func = prog.funcs[i];
-        let mut c: C = C { sem: sem, syms: [], names: [], loops: 0, fret: sem.frets[i] };
+        let mut syms: Sequence(Sym) = [];
+        let mut symmap: Map(text, i32) = map_empty();
+        let mut names: Sequence(text) = [];
         let mut k: i32 = 0;
         while k < len(f.pnames) {
-            let mut slot: i32 = 0;
-            (c, slot) = declare(c, 0 - 1, f.pnames[k], sem.fptypes[i][k]);
+            let pnm: text = f.pnames[k];
+            let prev: i32 = map_get(symmap, pnm, 0 - 1);
+            syms = push(syms, Sym { name: pnm, ty: sem.fptypes[i][k], slot: k, prev: prev });
+            symmap = map_set(symmap, pnm, k);
+            names = push(names, pnm);
             k = k + 1;
         }
-        c = check_block(c, f.body);
+        let mut c: C = C { sem: sem, syms: syms, symmap: symmap, names: names, loops: 0, fret: sem.frets[i] };
+        for kid in prog.nodes[f.body].kids {
+            if c.sem.err == "" { c = check_stmt(c, kid); }
+        }
         sem = c.sem;
-        if sem.err == "" && sem.frets[i] != 0 && !always_returns(prog.nodes, f.body) {
-            sem = serr(sem, "type", "function '" + f.name + "' may exit without returning " + ty_text(sem, sem.frets[i]), f.pos);
+        if sem.err == "" {
+            if sem.frets[i] != 0 {
+                if !always_returns(prog.nodes, f.body) {
+                    sem = serr(sem, "type", "function '" + f.name + "' may exit without returning " + ty_text(sem, sem.frets[i]), f.pos);
+                }
+            }
         }
         sem = sem with { locals: push(sem.locals, c.names) };
         i = i + 1;
