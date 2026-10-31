@@ -1,0 +1,195 @@
+// Q2.6: Map<K,V> dependent type provenance, real Sema -> Lower.
+Import "lower.sm"
+
+fn analyze_text(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let p: P = parse_program(lx.toks);
+    assert(p.err == "");
+    return analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
+}
+
+fn inspect(source: text, name: text, container: quad, key: quad, value: quad, has_key: bool, has_value: bool, pass: bool) {
+    let s: Sem = analyze_text(source);
+    if pass { assert(s.err == ""); assert(q3_lowering_error(s) == ""); }
+    else { assert(s.err != ""); assert(s.cat == "type"); }
+    let mut found: i32 = 0;
+    let mut id: i32 = 0;
+    while id < len(s.prog.nodes) {
+        let nd: Node = s.prog.nodes[id];
+        if nd.k == 7 && nd.name == name {
+            let container_kind: text = if name == "map_empty" { "map-context-type" } else { "map-container-type" };
+            assert(map_contains(s.map_container_evidence, id));
+            let cp: Evidence = map_get(s.map_container_evidence, id, evidence_empty("none", 0, 0));
+            assert(evidence_valid(cp));
+            assert(cp.proposition_kind == container_kind);
+            assert(cp.subject == id);
+            assert(cp.scope == 0);
+            assert(cp.state == container);
+            if container == N {
+                assert(len(cp.positive) == 0);
+                assert(len(cp.negative) == 0);
+            } else {
+                assert(len(cp.positive) + len(cp.negative) == 1);
+                let witness: u32 = if container == T { cp.positive[0] } else { cp.negative[0] };
+                let origin: i32 = if name == "map_empty" { id } else { nd.kids[0] };
+                assert(witness == s.prog.nodes[origin].pos);
+            }
+            assert(map_contains(s.map_key_evidence, id) == has_key);
+            assert(map_contains(s.map_value_evidence, id) == has_value);
+            if has_key {
+                let kp: Evidence = map_get(s.map_key_evidence, id, evidence_empty("missing", 0, 0));
+                assert(evidence_valid(kp));
+                assert(kp.proposition_kind == "map-key-type");
+                assert(kp.subject == id);
+                assert(kp.state == key);
+                let origin: u32 = s.prog.nodes[nd.kids[1]].pos;
+                if key == T {
+                    assert(len(kp.positive) == 1);
+                    assert(len(kp.negative) == 0);
+                    assert(kp.positive[0] == origin);
+                } else {
+                    assert(key == F);
+                    assert(len(kp.positive) == 0);
+                    assert(len(kp.negative) == 1);
+                    assert(kp.negative[0] == origin);
+                }
+            }
+            if has_value {
+                let vp: Evidence = map_get(s.map_value_evidence, id, evidence_empty("missing", 0, 0));
+                assert(evidence_valid(vp));
+                assert(vp.proposition_kind == "map-value-type");
+                assert(vp.subject == id);
+                assert(vp.state == value);
+                let origin: u32 = s.prog.nodes[nd.kids[2]].pos;
+                if value == T {
+                    assert(len(vp.positive) == 1);
+                    assert(len(vp.negative) == 0);
+                    assert(vp.positive[0] == origin);
+                } else {
+                    assert(value == F);
+                    assert(len(vp.positive) == 0);
+                    assert(len(vp.negative) == 1);
+                    assert(vp.negative[0] == origin);
+                }
+            }
+            if pass { assert(q3_map_proof_error(s, id) == ""); }
+            else { assert(q3_map_proof_error(s, id) != ""); }
+            found = found + 1;
+        }
+        id = id + 1;
+    }
+    assert(found == 1);
+    return;
+}
+
+fn main() {
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); return; }", "map_empty", T, N, N, false, false, true);
+    inspect("fn main() { let m = map_empty(); return; }", "map_empty", N, N, N, false, false, false);
+    inspect("fn main() { let m: i32 = map_empty(); return; }", "map_empty", F, N, N, false, false, false);
+    inspect("fn main() { let b: bool = map_contains(1, 1); return; }", "map_contains", F, N, N, false, false, false);
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); let b: bool = map_contains(m, 1); return; }", "map_contains", T, T, N, true, false, true);
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); let b: bool = map_contains(m, true); return; }", "map_contains", T, F, N, true, false, false);
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); let x: i32 = map_get(m, 1, 0); return; }", "map_get", T, T, T, true, true, true);
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); let x: i32 = map_get(m, 1, true); return; }", "map_get", T, T, F, true, true, false);
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, 7); return; }", "map_set", T, T, T, true, true, true);
+    inspect("fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, true); return; }", "map_set", T, T, F, true, true, false);
+
+    let source: text = "fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, 7); assert(map_contains(n, 1)); assert(map_get(n, 1, 0) == 7); return; }";
+    let s: Sem = analyze_text(source);
+    assert(s.err == "");
+    assert(q3_lowering_error(s) == "");
+    let main_idx: i32 = map_get(s.fnidx, "main", 0 - 1);
+    let lowered: FnIr = lower_function(s, main_idx);
+    let mut ctx: i32 = 0;
+    let mut containers: i32 = 0;
+    let mut keys: i32 = 0;
+    let mut values: i32 = 0;
+    let mut map_set_id: i32 = 0 - 1;
+    for proof in lowered.proofs {
+        assert(evidence_valid(proof.evidence));
+        assert(proof.evidence.state == T);
+        let k: text = proof.evidence.proposition_kind;
+        if k == "map-context-type" || k == "map-container-type" || k == "map-key-type" || k == "map-value-type" {
+            assert(len(proof.source_nodes) == 1);
+            assert(len(proof.source_offsets) == 1);
+            assert(proof.evidence.positive[0] == proof.source_offsets[0]);
+            assert(proof.source_offsets[0] == s.prog.nodes[proof.source_nodes[0]].pos);
+            if k == "map-context-type" { ctx = ctx + 1; }
+            if k == "map-container-type" { containers = containers + 1; }
+            if k == "map-key-type" { keys = keys + 1; }
+            if k == "map-value-type" { values = values + 1; }
+            if k == "map-value-type" && s.prog.nodes[proof.evidence.subject].name == "map_set" { map_set_id = proof.evidence.subject; }
+        }
+    }
+    assert(ctx == 1);
+    assert(containers == 3);
+    assert(keys == 3);
+    assert(values == 2);
+    assert(map_set_id >= 0);
+
+    // A map operation must fail admission if one dependent proof is erased,
+    // even when every other proposition remains independently T.
+    let value_map: Map(i32, Evidence) = s.map_value_evidence;
+    let mut remaining_values: Map(i32, Evidence) = map_empty();
+    let mut id: i32 = 0;
+    while id < len(s.prog.nodes) {
+        if id != map_set_id && map_contains(value_map, id) {
+            remaining_values = map_set(remaining_values, id, map_get(value_map, id, evidence_empty("invalid", 0, 0)));
+        }
+        id = id + 1;
+    }
+    let missing_value: Sem = s with { map_value_evidence: remaining_values };
+    assert(missing_value.err == "");
+    assert(q3_map_proof_error(missing_value, map_set_id) != "");
+    assert(q3_lowering_error(missing_value) != "");
+
+    let mut remaining_keys: Map(i32, Evidence) = map_empty();
+    id = 0;
+    while id < len(s.prog.nodes) {
+        if id != map_set_id && map_contains(s.map_key_evidence, id) {
+            remaining_keys = map_set(remaining_keys, id, map_get(s.map_key_evidence, id, evidence_empty("invalid", 0, 0)));
+        }
+        id = id + 1;
+    }
+    assert(q3_lowering_error(s with { map_key_evidence: remaining_keys }) != "");
+    // The source AST name is authoritative even if the callee map is
+    // independently erased: a missing dispatch identity is fail-closed.
+    let mut retained_callees: Map(i32, i32) = map_empty();
+    id = 0;
+    while id < len(s.prog.nodes) {
+        if id != map_set_id && map_contains(s.callees, id) {
+            retained_callees = map_set(retained_callees, id, map_get(s.callees, id, 0 - 999));
+        }
+        id = id + 1;
+    }
+    let missing_callee: Sem = s with { callees: retained_callees };
+    assert(q3_expected_map_callee(s.prog.nodes[map_set_id]) == 0 - 12);
+    assert(q3_map_proof_error(missing_callee, map_set_id) != "");
+    assert(q3_lowering_error(missing_callee) != "");
+    let wrong_callee: Sem = s with { callees: map_set(s.callees, map_set_id, 0 - 11) };
+    assert(q3_map_proof_error(wrong_callee, map_set_id) != "");
+    assert(q3_lowering_error(wrong_callee) != "");
+
+    let value_e: Evidence = map_get(s.map_value_evidence, map_set_id, evidence_empty("invalid", 0, 0));
+    let forged: Evidence = value_e with { positive: [999999u32] };
+    assert(evidence_valid(forged));
+    assert(q3_lowering_error(s with { map_value_evidence: map_set(s.map_value_evidence, map_set_id, forged) }) != "");
+    // Misusing a valid key proof as a value proof must not form a false JOIN/S.
+    let key_e: Evidence = map_get(s.map_key_evidence, map_set_id, evidence_empty("invalid", 0, 0));
+    let cross: EvidenceResult = evidence_try_join(key_e, value_e);
+    assert(!cross.ok);
+    assert(q3_lowering_error(s with { map_value_evidence: map_set(s.map_value_evidence, map_set_id, key_e) }) != "");
+    let second: Sem = analyze_text(source);
+    assert(second.err == "");
+    assert(q3_lowering_error(second) == "");
+    let next_ir: FnIr = lower_function(second, map_get(second.fnidx, "main", 0 - 1));
+    assert(len(next_ir.proofs) == len(lowered.proofs));
+    let mut i: i32 = 0;
+    while i < len(lowered.proofs) {
+        assert(lowered.proofs[i].evidence.proposition_kind == next_ir.proofs[i].evidence.proposition_kind);
+        assert(lowered.proofs[i].source_offsets[0] == next_ir.proofs[i].source_offsets[0]);
+        i = i + 1;
+    }
+    return;
+}

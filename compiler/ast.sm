@@ -5,7 +5,7 @@ Import "lexer.sm"
 //   expressions:
 //     1 Int(v)  2 Bool(v 0/1)  3 Text(name = literal slice with quotes)  4 Var(name)
 //     5 Unary(v = op token, a)  6 Binary(v = op token, a, b)  7 Call(name, kids = arguments)
-//     8 U32(v = 32-bit pattern)
+//     8 U32(v = 32-bit pattern)  9 Quad(v = N0/F1/T2/S3)
 //     20 Field(a, name)  21 With(a, kids = FieldInit)  22 Tuple(kids)  23 SeqLit(kids)
 //     24 Index(a, b)  25 Match(a = scrutinee, kids = Arm)  26 IfExpr(a = cond, b = then, c = else)
 //     27 BlockExpr(kids = statements, a = tail expression or -1)  29 RecordLit(name, kids = FieldInit)

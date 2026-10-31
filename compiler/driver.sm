@@ -3,7 +3,300 @@
 //   "error <syntax|name|type|context|unsupported> @<byte offset>: <message>"
 Import "semcode.sm"
 
-fn compile_source(src: text) -> text {
+// Q4.9 experimental file-qualified provenance. Exact source bytes and
+// normalized loader path, not a cryptographic content hash.
+record SourceFile {
+    path: text,
+    content: text,
+}
+
+record SourceSpan {
+    path: text,
+    local_start: u32,
+    flat_start: u32,
+    size: u32,
+}
+
+record SourceOrigin {
+    ok: bool,
+    path: text,
+    local_offset: u32,
+}
+
+record ProvenanceStep {
+    stage: text,
+    proposition: text,
+    owner: i32,
+    source_node: i32,
+    path: text,
+    file_offset: u32,
+    flat_offset: u32,
+}
+
+record ProvenanceResult {
+    ok: bool,
+    steps: Sequence(ProvenanceStep),
+    error: text,
+}
+
+fn q4_origin_at(spans: Sequence(SourceSpan), offset: u32) -> SourceOrigin {
+    for span in spans {
+        if offset >= span.flat_start && offset - span.flat_start < span.size {
+            if span.path == "" { return SourceOrigin { ok: false, path: "", local_offset: 0u32 }; }
+            return SourceOrigin { ok: true, path: span.path, local_offset: span.local_start + (offset - span.flat_start) };
+        }
+    }
+    return SourceOrigin { ok: false, path: "", local_offset: 0u32 };
+}
+
+fn q4_source_bundle_error(src: text, files: Sequence(SourceFile), spans: Sequence(SourceSpan), reread: bool) -> text {
+    let mut i: i32 = 0;
+    while i < len(files) {
+        let f: SourceFile = files[i];
+        if f.path == "" { return "empty source file identity"; }
+        let mut j: i32 = 0;
+        while j < i {
+            if files[j].path == f.path { return "duplicate source file identity"; }
+            j = j + 1;
+        }
+        if reread && f.path != "<memory>" {
+            if fs_read_text(f.path) != f.content { return "source file changed since import expansion"; }
+        }
+        i = i + 1;
+    }
+    let mut end: u32 = 0u32;
+    for span in spans {
+        if span.size == 0u32 || span.flat_start != end || end > text_len(src) ||
+           span.size > text_len(src) - end {
+            return "noncontiguous or out-of-bounds expanded source span";
+        }
+        let copied: text = match text_slice(src, end, end + span.size) {
+            Option::Some(x) => { x }
+            Option::None => { "" }
+        };
+        if span.path == "" {
+            let first: u32 = match text_byte_at(copied, 0u32) {
+                Option::Some(x) => { x }
+                Option::None => { 0u32 }
+            };
+            let last: u32 = match text_byte_at(copied, span.size - 1u32) {
+                Option::Some(x) => { x }
+                Option::None => { 0u32 }
+            };
+            let valid_join: bool = (span.size == 1u32 && first == 10u32) ||
+                (span.size == 2u32 && first == 13u32 && last == 10u32);
+            if span.local_start != 0u32 || !valid_join {
+                return "invalid generated source separator";
+            }
+        } else {
+            let mut matched: bool = false;
+            for f in files {
+                if f.path == span.path {
+                    if span.local_start > text_len(f.content) || span.size > text_len(f.content) - span.local_start {
+                        return "file-qualified offset outside source bytes";
+                    }
+                    let original: text = match text_slice(f.content, span.local_start, span.local_start + span.size) {
+                        Option::Some(x) => { x }
+                        Option::None => { "" }
+                    };
+                    if original != copied { return "source-to-expanded-text byte mismatch"; }
+                    matched = true;
+                }
+            }
+            if !matched { return "unknown source file in expanded span"; }
+        }
+        end = end + span.size;
+    }
+    if end != text_len(src) { return "source spans do not cover expanded text"; }
+    return "";
+}
+
+// This is the only proof we can make about AST identity at Q4.9:
+// re-lex/parse the immutable source snapshot and compare every arena element.
+// Full AST checking is separate from the Sema replay in Q3.9.
+fn q4_parsed_identity_error(src: text, original: Prog) -> text {
+    let lx: Lexed = lex(src);
+    if lx.err != "" { return "source cannot be lexed for provenance"; }
+    let parsed: P = parse_program(lx.toks);
+    if parsed.err != "" { return "source cannot be parsed for provenance"; }
+    if len(parsed.nodes) != len(original.nodes) ||
+       len(parsed.funcs) != len(original.funcs) || len(parsed.recs) != len(original.recs) {
+        return "AST shape differs from trusted source replay";
+    }
+    let mut i: i32 = 0;
+    while i < len(parsed.nodes) {
+        let a: Node = parsed.nodes[i];
+        let b: Node = original.nodes[i];
+        if a.k != b.k || a.a != b.a || a.b != b.b || a.c != b.c || a.v != b.v ||
+           a.name != b.name || a.pos != b.pos || len(a.kids) != len(b.kids) {
+            return "AST node differs from source replay";
+        }
+        let mut j: i32 = 0;
+        while j < len(a.kids) {
+            if a.kids[j] != b.kids[j] { return "AST child edge differs from source replay"; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(parsed.funcs) {
+        let a: Func = parsed.funcs[i];
+        let b: Func = original.funcs[i];
+        if a.name != b.name || a.ret != b.ret || a.body != b.body ||
+           a.pos != b.pos || len(a.pnames) != len(b.pnames) ||
+           len(a.ptypes) != len(b.ptypes) { return "function AST differs from source replay"; }
+        let mut j: i32 = 0;
+        while j < len(a.pnames) {
+            if a.pnames[j] != b.pnames[j] || a.ptypes[j] != b.ptypes[j] {
+                return "function parameter AST differs from source replay";
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(parsed.recs) {
+        let a: Rec = parsed.recs[i];
+        let b: Rec = original.recs[i];
+        if a.name != b.name || a.pos != b.pos ||
+           len(a.fnames) != len(b.fnames) || len(a.ftypes) != len(b.ftypes) {
+            return "record AST differs from source replay";
+        }
+        let mut j: i32 = 0;
+        while j < len(a.fnames) {
+            if a.fnames[j] != b.fnames[j] || a.ftypes[j] != b.ftypes[j] {
+                return "record field AST differs from source replay";
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Every traced origin has four explicit stages:
+// file bytes -> AST source -> Sema proposition/derivation -> non-emitted IR.
+fn q4_append_origin(steps: Sequence(ProvenanceStep), spans: Sequence(SourceSpan),
+                    stage: text, kind: text, owner: i32, source: i32, flat: u32) -> ProvenanceResult {
+    let origin: SourceOrigin = q4_origin_at(spans, flat);
+    let failure: ProvenanceResult = ProvenanceResult { ok: false, steps: steps, error: "proof source is not a file-backed byte" };
+    if !origin.ok { return failure; }
+    let added: ProvenanceStep = ProvenanceStep { stage: stage, proposition: kind, owner: owner, source_node: source, path: origin.path, file_offset: origin.local_offset, flat_offset: flat };
+    return ProvenanceResult { ok: true, steps: push(steps, added), error: "" };
+}
+
+fn q4_matches_canonical_proof(s: Sem, e: Evidence) -> bool {
+    let id: i32 = e.subject;
+    if id < 0 || id >= len(s.prog.nodes) { return false; }
+    let mut present: bool = false;
+    if map_contains(s.type_evidence, id) {
+        present = present || q3_same_evidence(e, map_get(s.type_evidence, id, evidence_empty("invalid", 0, 0)));
+    }
+    if map_contains(s.tuple_shape_evidence, id) {
+        present = present || q3_same_evidence(e, map_get(s.tuple_shape_evidence, id, evidence_empty("invalid", 0, 0)));
+    }
+    if map_contains(s.map_container_evidence, id) {
+        present = present || q3_same_evidence(e, map_get(s.map_container_evidence, id, evidence_empty("invalid", 0, 0)));
+    }
+    if map_contains(s.map_key_evidence, id) {
+        present = present || q3_same_evidence(e, map_get(s.map_key_evidence, id, evidence_empty("invalid", 0, 0)));
+    }
+    if map_contains(s.map_value_evidence, id) {
+        present = present || q3_same_evidence(e, map_get(s.map_value_evidence, id, evidence_empty("invalid", 0, 0)));
+    }
+    return present;
+}
+
+fn q4_trace_function(s: Sem, f: FnIr, spans: Sequence(SourceSpan)) -> ProvenanceResult {
+    let mut lines: Sequence(ProvenanceStep) = [];
+    for proof in f.proofs {
+        let e: Evidence = proof.evidence;
+        if !evidence_valid(e) || e.state != T || !q4_matches_canonical_proof(s, e) ||
+           len(proof.source_nodes) != len(proof.source_offsets) ||
+           len(proof.source_nodes) != len(e.positive) {
+            return ProvenanceResult { ok: false, steps: lines, error: "IR type proof does not match canonical Sema" };
+        }
+        let mut i: i32 = 0;
+        while i < len(proof.source_nodes) {
+            let node: i32 = proof.source_nodes[i];
+            if node < 0 || node >= len(s.prog.nodes) ||
+               s.prog.nodes[node].pos != proof.source_offsets[i] ||
+               proof.source_offsets[i] != e.positive[i] {
+                return ProvenanceResult { ok: false, steps: lines, error: "IR proof AST edge mismatch" };
+            }
+            let result: ProvenanceResult = q4_append_origin(lines, spans, "evidence-to-ir",
+                e.proposition_kind, e.subject, node, proof.source_offsets[i]);
+            if !result.ok { return result; }
+            lines = result.steps;
+            i = i + 1;
+        }
+    }
+    for link in f.binding_inferences {
+        if link.owner < 0 || link.owner >= len(s.prog.nodes) ||
+           link.source < 0 || link.source >= len(s.prog.nodes) ||
+           s.prog.nodes[link.owner].a != link.source ||
+           link.binding_offset != s.prog.nodes[link.owner].pos ||
+           link.source_offset != s.prog.nodes[link.source].pos ||
+           !map_contains(s.inferred_binding_types, link.owner) ||
+           link.resolved_type != map_get(s.inferred_binding_types, link.owner, 0 - 1) {
+            return ProvenanceResult { ok: false, steps: lines, error: "IR binding inference origin mismatch" };
+        }
+        let result: ProvenanceResult = q4_append_origin(lines, spans, "type-inference-to-ir",
+            "binding-inference", link.owner, link.source, link.source_offset);
+        if !result.ok { return result; }
+        lines = result.steps;
+    }
+    for link in f.tuple_inferences {
+        if link.owner < 0 || link.owner >= len(s.prog.nodes) ||
+           link.binding < 0 || link.binding >= len(s.prog.nodes) ||
+           link.source < 0 || link.source >= len(s.prog.nodes) ||
+           s.prog.nodes[link.owner].a != link.source ||
+           link.component < 0 || link.component >= len(s.prog.nodes[link.owner].kids) ||
+           s.prog.nodes[link.owner].kids[link.component] != link.binding ||
+           link.source_offset != s.prog.nodes[link.source].pos ||
+           link.binding_offset != s.prog.nodes[link.binding].pos ||
+           link.resolved_type != map_get(s.tuple_inferred_components, link.binding, 0 - 1) {
+            return ProvenanceResult { ok: false, steps: lines, error: "IR tuple inference origin mismatch" };
+        }
+        let result: ProvenanceResult = q4_append_origin(lines, spans, "type-inference-to-ir",
+            "tuple-inference", link.owner, link.source, link.source_offset);
+        if !result.ok { return result; }
+        lines = result.steps;
+    }
+    for check in f.control_type_checks {
+        if check.owner < 0 || check.owner >= len(s.prog.nodes) ||
+           check.source < 0 || check.source >= len(s.prog.nodes) ||
+           s.prog.nodes[check.owner].a != check.source ||
+           s.prog.nodes[check.owner].k != check.owner_kind ||
+           check.source_offset != s.prog.nodes[check.source].pos ||
+           check.observed_type != q3_inferred_rhs_type(s, check.source) ||
+           check.observed_type <= 0 || check.observed_type >= len(s.tys) ||
+           s.tys[check.observed_type].k != check.observed_family ||
+           check.observed_family != check.required_family ||
+           !evidence_valid(check.evidence) || check.evidence.state != T {
+            return ProvenanceResult { ok: false, steps: lines, error: "IR control type origin mismatch" };
+        }
+        let expected: Evidence = if check.owner_kind == 26 {
+            map_get(s.if_expr_condition_evidence, check.owner, evidence_empty("invalid", 0, 0))
+        } else {
+            map_get(s.type_evidence, check.owner, evidence_empty("invalid", 0, 0))
+        };
+        if !q3_same_evidence(expected, check.evidence) {
+            return ProvenanceResult { ok: false, steps: lines, error: "IR control Evidence differs from canonical Sema" };
+        }
+        let result: ProvenanceResult = q4_append_origin(lines, spans, "control-type-to-ir",
+            check.evidence.proposition_kind, check.owner, check.source, check.source_offset);
+        if !result.ok { return result; }
+        lines = result.steps;
+    }
+    return ProvenanceResult { ok: true, steps: lines, error: "" };
+}
+
+fn compile_source_with_origins(src: text, files: Sequence(SourceFile), spans: Sequence(SourceSpan)) -> text {
+    let source_error: text = q4_source_bundle_error(src, files, spans, true);
+    if source_error != "" {
+        return "error unsupported @0: source provenance: " + source_error;
+    }
     let lx: Lexed = lex(src);
     if lx.err != "" {
         return "error " + lx.cat + " @" + to_text(lx.errpos) + ": " + lx.err;
@@ -12,19 +305,45 @@ fn compile_source(src: text) -> text {
     if p.err != "" {
         return "error " + p.cat + " @" + to_text(p.errpos) + ": " + p.err;
     }
-    let sem: Sem = analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
+    let original: Prog = Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs };
+    let parse_error: text = q4_parsed_identity_error(src, original);
+    if parse_error != "" {
+        return "error unsupported @0: source provenance: " + parse_error;
+    }
+    let sem: Sem = analyze(original);
     if sem.err != "" {
         return "error " + sem.cat + " @" + to_text(sem.errpos) + ": " + sem.err;
     }
+    // Q3 admission is separate from the diagnostics produced by Sema.
+    // Do not emit an artifact if a required quad type proof is absent/forged.
+    let admission: TrustedSemAdmission = q3_trusted_admit(sem);
+    if !admission.ok {
+        return "error unsupported @0: lowering precondition: " + admission.error;
+    }
+    // Only the result of trusted Sema replay crosses into lowering.
+    let authorized: Sem = admission.canonical;
     let mut fns: Sequence(FnIr) = [];
     let mut i: i32 = 0;
-    while i < len(sem.prog.funcs) {
-        fns = push(fns, lower_function(sem, i));
+    while i < len(authorized.prog.funcs) {
+        let fn_ir: FnIr = lower_function(authorized, i);
+        let trace: ProvenanceResult = q4_trace_function(authorized, fn_ir, spans);
+        if !trace.ok { return "error unsupported @0: proof provenance: " + trace.error; }
+        fns = push(fns, fn_ir);
         i = i + 1;
     }
-    let (artifact, encoding_error) = encode_program(fns, sem.u32arith);
+    let (artifact, encoding_error) = encode_program(fns, authorized.u32arith);
     if encoding_error != "" {
         return "error unsupported @0: " + encoding_error;
     }
     return "hex " + join_hex(artifact);
+}
+
+
+// In-memory compatibility entrypoint used by embedded compiler tests.
+// Physical file mapping is supplied by main.expand through the other entry.
+fn compile_source(src: text) -> text {
+    return compile_source_with_origins(src,
+        [SourceFile { path: "<memory>", content: src }],
+        [SourceSpan { path: "<memory>", local_start: 0u32, flat_start: 0u32, size: text_len(src) }]
+    );
 }

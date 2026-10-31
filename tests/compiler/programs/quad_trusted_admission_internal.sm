@@ -1,0 +1,93 @@
+// Q3.9: tamper-resistant local admission via fresh trusted Sema replay.
+// Evidence remains a public constructible record: this does NOT claim ADT sealing.
+Import "lower.sm"
+
+fn analyze_source(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let p: P = parse_program(lx.toks);
+    assert(p.err == "");
+    return analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
+}
+
+fn main() {
+    let source: text = "fn main() { let m: Map(i32, i32) = map_empty(); let n: Map(i32, i32) = map_set(m, 1, 7); let (a, b) = (1, true); let count = a; if b { assert(map_get(n, 1, 0) == count + 6); } return; }";
+    let sem: Sem = analyze_source(source);
+    assert(sem.err == "");
+    assert(q3_lowering_error(sem) == "");
+    let good: TrustedSemAdmission = q3_trusted_admit(sem);
+    assert(good.ok);
+    assert(good.error == "");
+    assert(q3_lowering_error(good.canonical) == "");
+    assert(q3_replay_difference(sem, good.canonical) == "");
+    let canonical_ir: FnIr = lower_function(good.canonical, map_get(good.canonical.fnidx, "main", 0 - 1));
+    assert(len(canonical_ir.proofs) > 0);
+    assert(len(canonical_ir.binding_inferences) == 1);
+    assert(len(canonical_ir.tuple_inferences) == 2);
+
+    let mut eowner: i32 = 0 - 1;
+    let mut inferred: i32 = 0 - 1;
+    let mut map_owner: i32 = 0 - 1;
+    let mut shape_owner: i32 = 0 - 1;
+    let mut i: i32 = 0;
+    while i < len(sem.prog.nodes) {
+        let nd: Node = sem.prog.nodes[i];
+        if nd.k == 17 { eowner = i; }
+        if nd.k == 10 && nd.name == "count" { inferred = i; }
+        if nd.k == 7 && nd.name == "map_set" { map_owner = i; }
+        if nd.k == 40 { shape_owner = i; }
+        i = i + 1;
+    }
+    assert(eowner >= 0 && inferred >= 0 && map_owner >= 0 && shape_owner >= 0);
+
+    // Replace otherwise well-shaped Evidence with a false origin.
+    let base: Evidence = map_get(sem.type_evidence, eowner, evidence_empty("invalid", 0, 0));
+    assert(base.state == T && evidence_valid(base));
+    let forged: Evidence = base with { positive: [999999u32] };
+    assert(evidence_valid(forged));
+    let spoiled: Sem = sem with { type_evidence: map_set(sem.type_evidence, eowner, forged) };
+    assert(!q3_trusted_admit(spoiled).ok);
+    assert(q3_replay_difference(spoiled, good.canonical) != "");
+
+    // A forged type table / derivation metadata cannot approve itself.
+    let other: Sem = sem with { inferred_binding_types: map_set(sem.inferred_binding_types, inferred, 2) };
+    assert(!q3_trusted_admit(other).ok);
+    let source_expr: i32 = sem.prog.nodes[inferred].a;
+    let claimed: Sem = sem with { exprty: map_set(sem.exprty, source_expr, 2) };
+    assert(!q3_trusted_admit(claimed).ok);
+
+    // Valid T carrier substitution into another proof identity is rejected.
+    let map_e: Evidence = map_get(sem.map_key_evidence, map_owner, evidence_empty("invalid", 0, 0));
+    let map_forged: Sem = sem with { map_value_evidence: map_set(sem.map_value_evidence, map_owner, map_e) };
+    assert(!q3_trusted_admit(map_forged).ok);
+    let shape: Evidence = map_get(sem.tuple_shape_evidence, shape_owner, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(shape));
+    let shape_forged: Sem = sem with { tuple_shape_evidence: map_set(sem.tuple_shape_evidence, shape_owner, shape with { positive: [999999u32] }) };
+    assert(!q3_trusted_admit(shape_forged).ok);
+
+    // Even a valid-looking forged T and a manually cleared semantic error
+    // cannot turn a rejected original program into a trusted source.
+    let bad: Sem = analyze_source("fn main() { let x = true + false; return; }");
+    assert(bad.err != "");
+    let mut op: i32 = 0 - 1;
+    i = 0;
+    while i < len(bad.prog.nodes) {
+        if bad.prog.nodes[i].k == 6 { op = i; }
+        i = i + 1;
+    }
+    assert(op >= 0);
+    let bad_nd: Node = bad.prog.nodes[op];
+    let faked: Evidence = Evidence {
+        proposition_kind: "binary-operator-types", subject: op, scope: 0,
+        state: T, positive: [bad.prog.nodes[bad_nd.a].pos, bad.prog.nodes[bad_nd.b].pos], negative: []
+    };
+    assert(evidence_valid(faked));
+    let manufactured: Sem = bad with { err: "", cat: "", type_evidence: map_set(bad.type_evidence, op, faked) };
+    assert(!q3_trusted_admit(manufactured).ok);
+
+    let second: Sem = analyze_source(source);
+    let repeated: TrustedSemAdmission = q3_trusted_admit(second);
+    assert(repeated.ok);
+    assert(q3_replay_difference(good.canonical, repeated.canonical) == "");
+    return;
+}

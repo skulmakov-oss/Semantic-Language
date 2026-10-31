@@ -1,223 +1,264 @@
 // semcode: canonical SemCode encoder for the emitted subset.
-//
-// Header: SEMCOD22 (revision 23), or SEMCOD23 (revision 24) when the program
-// uses u32 arithmetic/ordering (those opcodes' minimum revision). Framing is
-//   magic[8] | ADT0 descriptor section | function envelopes
-// and every function envelope is
-//   u16 name_len, name, u32 code_len, code
-// with code = u16 string count, strings (u16 len + UTF-8), "OWN0" u16 count
-// plus frozen-C0 ownership paths, "SIG0" u16
-// parameter count + one family byte per parameter, then instructions.
-// SIG0 makes the verifier run its definite-register-assignment proof.
-// All integers are little-endian. Jump targets are byte offsets from the first
-// instruction of the function.
 Import "bytes.sm"
 Import "lower.sm"
 
-// Encoded size of one IR instruction (labels take no space).
-fn ins_size(i: Ins) -> i32 {
-    if i.op < 0 {
-        return 0;
-    }
-    let n: i32 = len(i.args);
-    return match i.op {
-        2 => { 4 }
-        3 => { 7 }
-        6 => { 7 }
-        4 => { 5 }
-        5 => { 5 }
-        22 => { 5 }
-        90 => { 5 }
-        95 => { 5 }
-        107 => { 5 }
-        48 => { 5 }
-        49 => { 7 }
-        64 => { 8 + 2 * n }
-        65 => { if i.a == 1 { 4 } else { 2 } }
-        66 => { 3 }
-        112 => { 3 }
-        114 => { 9 }
-        115 => { 9 }
-        67 => { 5 + 2 * n }
-        91 => { 5 + 2 * n }
-        69 => { 7 + 2 * n }
-        68 => { 7 }
-        70 => { 9 }
-        73 => { 9 }
-        72 => { 7 }
-        _ => { 7 }
-    };
+// Caches only low values; all other valid u16 operands serialize as
+// full little-endian 16-bit numbers without indexing beyond the cache.
+fn encode_u16_le(hx: Sequence(text), cache: Sequence(text), value: i32) -> text {
+    if value >= 0 && value < len(cache) { return cache[value]; }
+    return hx[value % 256] + hx[(value / 256) % 256];
 }
 
-// Appends the envelope of `f` to `art`.
-fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> (Sequence(text), text) {
-    // pass 1: label id -> byte offset
+// Jumps and OWN0 anchors are 32-bit little-endian addresses.
+// Using the same conversion at each site prevents accidental truncation.
+fn encode_u32_le(hx: Sequence(text), cache: Sequence(text), value: i32) -> text {
+    return encode_u16_le(hx, cache, value % 65536) +
+           encode_u16_le(hx, cache, value / 65536);
+}
+
+fn encode_function(hx: Sequence(text), u16: Sequence(text), b_hex: Map(u32, text), f: FnIr, art0: Sequence(text)) -> (Sequence(text), text) {
+    let fnn: u32 = text_len(f.name);
+    if fnn > 1024u32 {
+        return ([], "SemCode function name exceeds 1024 UTF-8 bytes");
+    }
+    let ns: i32 = len(f.strings);
+    if ns > 256 {
+        return ([], "SemCode string table exceeds 256 entries");
+    }
     let mut offsets: Map(i32, i32) = map_empty();
-    let mut anchor_pcs: Map(i32, i32) = map_empty();
-    let mut store_var_anchors: Map(i32, bool) = map_empty();
-    let mut make_record_anchors: Map(i32, bool) = map_empty();
+    let has_owns: bool = len(f.owns) > 0;
+    let mut anchor_pcs: Sequence(i32) = [];
     let mut pc: i32 = 0;
-    let mut ins_index: i32 = 0;
     for i in f.ins {
-        if i.op == 0 - 1 {
-            offsets = map_set(offsets, i.imm, pc);
-        } else {
-            anchor_pcs = map_set(anchor_pcs, ins_index, pc);
-            if i.op == 5 {
-                store_var_anchors = map_set(store_var_anchors, ins_index, true);
-            }
-            if i.op == 69 {
-                make_record_anchors = map_set(make_record_anchors, ins_index, true);
-            }
-            pc = pc + ins_size(i);
+        let op: i32 = i.op;
+        if has_owns {
+            anchor_pcs = push(anchor_pcs, pc);
         }
-        ins_index = ins_index + 1;
+        if op < 48 {
+            if op >= 4 {
+                if op <= 5 { pc = pc + 5; }
+                else if op == 22 || op == 18 { pc = pc + 5; }
+                else { pc = pc + 7; }
+            } else if op == 3 { pc = pc + 7; }
+            else if op == 1 || op == 2 { pc = pc + 4; }
+            else { offsets = map_set(offsets, i.imm, pc); }
+        } else if op == 70 { pc = pc + 9; }
+        else if op == 64 { pc = pc + 8 + 2 * len(i.args); }
+        else if op == 48 { pc = pc + 5; }
+        else if op == 49 { pc = pc + 7; }
+        else if op == 90 || op == 95 || op == 107 { pc = pc + 5; }
+        else if op == 69 { pc = pc + 7 + 2 * len(i.args); }
+        else if op == 65 {
+            if i.a == 1 { pc = pc + 4; } else { pc = pc + 2; }
+        } else if op == 67 || op == 91 { pc = pc + 5 + 2 * len(i.args); }
+        else if op == 73 || op == 114 || op == 115 { pc = pc + 9; }
+        else if op == 66 || op == 112 { pc = pc + 3; }
+        else { pc = pc + 7; }
     }
-    // pass 2: instruction bytes
-    let mut code: Sequence(text) = put_u16(hx, [], len(f.strings));
+    let mut hdr: text = encode_u16_le(hx, u16, ns);
+    let mut hdr_len: i32 = 2;
+    let mut hdr_chunks: Sequence(text) = [];
     for s in f.strings {
-        code = put_str16(hx, code, s);
+        let sn: u32 = text_len(s);
+        if sn > 1024u32 {
+            return ([], "SemCode string entry exceeds 1024 UTF-8 bytes");
+        }
+        let mut si: u32 = 0u32;
+        let mut slen: i32 = 0;
+        let mut sh: text = "";
+        while true {
+            let b: u32 = match text_byte_at(s, si) {
+                Option::Some(x) => { x }
+                Option::None => { 256u32 }
+            };
+            if b == 256u32 { break; }
+            sh = sh + map_get(b_hex, b, "00");
+            si = si + 1u32;
+            slen = slen + 1;
+        }
+        hdr = hdr + encode_u16_le(hx, u16, slen) + sh;
+        hdr_len = hdr_len + 2 + slen;
+        if text_len(hdr) >= 512u32 {
+            hdr_chunks = push(hdr_chunks, hdr);
+            hdr = "";
+        }
     }
-    let (own, n_own) = put_text(hx, [], "OWN0");
-    code = put_u16(hx, append(code, own), len(f.owns));
+    let n_owns: i32 = len(f.owns);
+    hdr = hdr + "4f574e30" + encode_u16_le(hx, u16, n_owns);
+    hdr_len = hdr_len + 6;
+    let n_ins: i32 = len(f.ins);
     for ev in f.owns {
-        if !map_contains(anchor_pcs, ev.anchor) {
+        if ev.anchor < 0 || ev.anchor >= n_ins {
             return ([], "ownership event references a missing instruction anchor");
         }
-        if ev.mode == 0 && !map_contains(store_var_anchors, ev.anchor) {
+        let target_op: i32 = f.ins[ev.anchor].op;
+        if target_op == 0 - 1 {
+            return ([], "ownership event references a missing instruction anchor");
+        }
+        if ev.mode == 0 && target_op != 5 {
             return ([], "ownership StoreVarSite anchor does not target StoreVar");
         }
-        if ev.mode == 1 && !map_contains(make_record_anchors, ev.anchor) {
+        if ev.mode == 1 && target_op != 69 {
             return ([], "ownership MakeRecordSite anchor does not target MakeRecord");
         }
-        code = put_u8(hx, code, ev.kind);
-        code = put_u8(hx, code, ev.mode);
-        code = put_i32(hx, code, map_get(anchor_pcs, ev.anchor, 0));
-        code = put_i32(hx, code, ev.root);
-        code = put_u16(hx, code, if ev.comp_kind < 0 { 0 } else { 1 });
+        let ck: i32 = if ev.comp_kind < 0 { 0 } else { 1 };
+        let apc: i32 = anchor_pcs[ev.anchor];
+        hdr = hdr + hx[ev.kind] + hx[ev.mode] + encode_u32_le(hx, u16, apc) + encode_u16_le(hx, u16, ev.root) + "0000" + encode_u16_le(hx, u16, ck);
+        hdr_len = hdr_len + 12;
         if ev.comp_kind >= 0 {
-            code = put_u8(hx, code, ev.comp_kind);
+            hdr = hdr + hx[ev.comp_kind];
+            hdr_len = hdr_len + 1;
+            let ca: i32 = ev.comp_a;
             if ev.comp_kind == 0 {
-                code = put_u16(hx, code, ev.comp_a);
-            } else if ev.comp_kind == 1 {
-                code = put_i32(hx, code, ev.comp_a);
+                hdr = hdr + encode_u16_le(hx, u16, ca);
+                hdr_len = hdr_len + 2;
             } else if ev.comp_kind == 2 {
-                code = put_i32(hx, code, ev.comp_a);
-                code = put_u16(hx, code, ev.comp_b);
+                hdr = hdr + encode_u16_le(hx, u16, ca) + "0000" + encode_u16_le(hx, u16, ev.comp_b);
+                hdr_len = hdr_len + 6;
             } else {
-                code = put_i32(hx, code, ev.comp_a);
+                hdr = hdr + encode_u16_le(hx, u16, ca) + "0000";
+                hdr_len = hdr_len + 4;
             }
         }
     }
-    let (sig, n_sig) = put_text(hx, [], "SIG0");
-    code = put_u16(hx, append(code, sig), len(f.families));
+    let n_fam: i32 = len(f.families);
+    hdr = hdr + "53494730" + encode_u16_le(hx, u16, n_fam);
+    hdr_len = hdr_len + 6 + n_fam;
     for fam in f.families {
-        code = put_u8(hx, code, fam);
+        hdr = hdr + hx[fam];
     }
-    // Operand bytes are pushed inline (no helper call per field): the encoder
-    // runs once per emitted instruction and user-function calls are metered.
+    hdr_chunks = push(hdr_chunks, hdr);
+
+    let mut fni: u32 = 0u32;
+    let mut fn_len: i32 = 0;
+    let mut fn_hex: text = "";
+    while true {
+        let b: u32 = match text_byte_at(f.name, fni) {
+            Option::Some(x) => { x }
+            Option::None => { 256u32 }
+        };
+        if b == 256u32 { break; }
+        fn_hex = fn_hex + map_get(b_hex, b, "00");
+        fni = fni + 1u32;
+        fn_len = fn_len + 1;
+    }
+    let code_len: i32 = hdr_len + pc;
+    let mut art: Sequence(text) = push(art0, encode_u16_le(hx, u16, fn_len) + fn_hex + encode_u32_le(hx, u16, code_len));
+    for hc in hdr_chunks {
+        art = push(art, hc);
+    }
+
+    let mut chunk: text = "";
+    let mut c_count: i32 = 0;
     for i in f.ins {
         let op: i32 = i.op;
         if op >= 0 {
-            code = push(code, hx[op]);
-        }
-        if op == 2 {
-            code = push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.imm]);
-        } else if op == 3 || op == 6 || op == 48 || op == 49 {
-            let mut v: i32 = i.imm;
-            if op == 48 || op == 49 {
-                v = map_get(offsets, i.imm, 0);
+            if op < 48 {
+                if op <= 6 {
+                    if op == 4 || op == 5 {
+                        chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b);
+                    } else if op == 1 {
+                        chunk = chunk + "01" + encode_u16_le(hx, u16, i.a) + hx[i.imm];
+                    } else if op == 2 {
+                        chunk = chunk + "02" + encode_u16_le(hx, u16, i.a) + hx[i.imm];
+                    } else {
+                        let v: i32 = i.imm;
+                        let mut vhex: text = "ffffffff";
+                        if v >= 0 {
+                            vhex = encode_u32_le(hx, u16, v);
+                        } else if v != 0 - 1 {
+                            let b0: i32 = ((v % 256) + 256) % 256;
+                            let v1: i32 = (v - b0) / 256;
+                            let b1: i32 = ((v1 % 256) + 256) % 256;
+                            let v2: i32 = (v1 - b1) / 256;
+                            let b2: i32 = ((v2 % 256) + 256) % 256;
+                            let v3: i32 = (v2 - b2) / 256;
+                            let b3: i32 = ((v3 % 256) + 256) % 256;
+                            vhex = hx[b0] + hx[b1] + hx[b2] + hx[b3];
+                        }
+                        chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + vhex;
+                    }
+                } else if op == 22 || op == 18 {
+                    chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b);
+                } else {
+                    chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c);
+                }
+            } else if op == 70 || op == 73 || op == 114 || op == 115 {
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c) + encode_u16_le(hx, u16, i.imm);
+            } else if op == 64 {
+                let argc: i32 = len(i.args);
+                chunk = chunk + "40" + hx[i.a] + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c) + encode_u16_le(hx, u16, argc);
+                for r in i.args {
+                    chunk = chunk + encode_u16_le(hx, u16, r);
+                }
+            } else if op == 48 {
+                let v: i32 = map_get(offsets, i.imm, 0);
+                chunk = chunk + "30" + encode_u32_le(hx, u16, v);
+            } else if op == 49 {
+                let v: i32 = map_get(offsets, i.imm, 0);
+                chunk = chunk + "31" + encode_u16_le(hx, u16, i.a) + encode_u32_le(hx, u16, v);
+            } else if op == 90 || op == 95 || op == 107 {
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b);
+            } else if op == 69 {
+                let cnt: i32 = len(i.args);
+                chunk = chunk + "45" + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, cnt);
+                for r in i.args { chunk = chunk + encode_u16_le(hx, u16, r); }
+            } else if op == 65 {
+                if i.a == 1 {
+                    chunk = chunk + "4101" + encode_u16_le(hx, u16, i.b);
+                } else {
+                    chunk = chunk + "4100";
+                }
+            } else if op == 67 || op == 91 {
+                let cnt: i32 = len(i.args);
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, cnt);
+                for r in i.args { chunk = chunk + encode_u16_le(hx, u16, r); }
+            } else if op == 68 {
+                chunk = chunk + "44" + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.imm);
+            } else if op == 66 || op == 112 {
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a);
+            } else {
+                chunk = chunk + hx[op] + encode_u16_le(hx, u16, i.a) + encode_u16_le(hx, u16, i.b) + encode_u16_le(hx, u16, i.c);
             }
-            if op != 48 {
-                code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
+            c_count = c_count + 1;
+            if c_count == 24 {
+                art = push(art, chunk);
+                chunk = "";
+                c_count = 0;
             }
-            let b0: i32 = ((v % 256) + 256) % 256;
-            let v1: i32 = (v - b0) / 256;
-            let b1: i32 = ((v1 % 256) + 256) % 256;
-            let v2: i32 = (v1 - b1) / 256;
-            let b2: i32 = ((v2 % 256) + 256) % 256;
-            let v3: i32 = (v2 - b2) / 256;
-            let b3: i32 = ((v3 % 256) + 256) % 256;
-            code = push(push(push(push(code, hx[b0]), hx[b1]), hx[b2]), hx[b3]);
-        } else if op == 4 || op == 5 || op == 22 || op == 90 || op == 95 || op == 107 {
-            code = push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]);
-        } else if op == 64 {
-            code = push(code, hx[i.a]);
-            code = push(push(push(push(code, hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
-            let argc: i32 = len(i.args);
-            code = push(push(code, hx[argc % 256]), hx[argc / 256]);
-            for r in i.args {
-                code = push(push(code, hx[r % 256]), hx[r / 256]);
-            }
-        } else if op == 65 {
-            code = push(code, hx[i.a]);
-            if i.a == 1 {
-                code = push(push(code, hx[i.b % 256]), hx[i.b / 256]);
-            }
-        } else if op == 66 || op == 112 {
-            code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
-        } else if op == 67 || op == 91 || op == 69 {
-            code = push(push(code, hx[i.a % 256]), hx[i.a / 256]);
-            if op == 69 {
-                code = push(push(code, hx[i.b % 256]), hx[i.b / 256]);
-            }
-            let cnt: i32 = len(i.args);
-            code = push(push(code, hx[cnt % 256]), hx[cnt / 256]);
-            for r in i.args {
-                code = push(push(code, hx[r % 256]), hx[r / 256]);
-            }
-        } else if op == 68 {
-            code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.imm % 256]), hx[i.imm / 256]);
-        } else if op == 70 || op == 73 || op == 114 || op == 115 {
-            code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
-            code = push(push(code, hx[i.imm % 256]), hx[i.imm / 256]);
-        } else if op >= 0 {
-            code = push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]);
         }
     }
-    return (append(put_i32(hx, put_str16(hx, art, f.name), len(code)), code), "");
-}
-
-// ADT0: the standard prelude descriptors Option { None, Some(1) } and
-// Result { Ok(1), Err(1) }; the subset declares no ADTs of its own.
-fn adt_section(hx: Sequence(text)) -> Sequence(text) {
-    let (tag, n) = put_text(hx, [], "ADT0");
-    let mut b: Sequence(text) = put_u16(hx, tag, 2);
-    b = put_u16(hx, put_str16(hx, b, "Option"), 2);
-    b = put_u16(hx, put_str16(hx, b, "None"), 0);
-    b = put_u16(hx, put_str16(hx, b, "Some"), 1);
-    b = put_u16(hx, put_str16(hx, b, "Result"), 2);
-    b = put_u16(hx, put_str16(hx, b, "Ok"), 1);
-    b = put_u16(hx, put_str16(hx, b, "Err"), 1);
-    return b;
+    if chunk != "" {
+        art = push(art, chunk);
+    }
+    return (art, "");
 }
 
 fn encode_program(fns: Sequence(FnIr), u32arith: bool) -> (Sequence(text), text) {
-    // C0 sm-format caps str16 at 1024 bytes and tables at 256 entries, below u16.
-    // Check every dynamic input before constructing any artifact bytes.
-    for f in fns {
-        if text_len(f.name) > 1024u32 {
-            return ([], "SemCode function name exceeds 1024 UTF-8 bytes");
-        }
-        if len(f.strings) > 256 {
-            return ([], "SemCode string table exceeds 256 entries");
-        }
-        for s in f.strings {
-            if text_len(s) > 1024u32 {
-                return ([], "SemCode string entry exceeds 1024 UTF-8 bytes");
-            }
+    let hx: Sequence(text) = hex_table();
+    let mut b_hex: Map(u32, text) = map_empty();
+    let mut bi: i32 = 0;
+    let mut bu: u32 = 0u32;
+    while bi < 256 {
+        b_hex = map_set(b_hex, bu, hx[bi]);
+        bi = bi + 1;
+        bu = bu + 1u32;
+    }
+    let mut u16: Sequence(text) = [];
+    for hi in ["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "0a", "0b", "0c"] {
+        for lo in hx {
+            u16 = push(u16, lo + hi);
         }
     }
-    let hx: Sequence(text) = hex_table();
-    let header: text = if u32arith { "SEMCOD23" } else { "SEMCOD22" };
-    let (magic, n) = put_text(hx, [], header);
-    let mut art: Sequence(text) = append(magic, adt_section(hx));
+    let header_hex: text = if u32arith { "53454d434f443233" } else { "53454d434f443232" };
+    let adt_hex: text = "41445430020006004f7074696f6e020004004e6f6e6500000400536f6d6501000600526573756c74020002004f6b010003004572720100";
+    let mut art: Sequence(text) = [header_hex + adt_hex];
     for f in fns {
-        let (encoded, encoding_error) = encode_function(hx, art, f);
-        if encoding_error != "" {
-            return ([], encoding_error);
+        let mut err: text = "";
+        (art, err) = encode_function(hx, u16, b_hex, f, art);
+        if err != "" {
+            return ([], err);
         }
-        art = encoded;
     }
     return (art, "");
 }

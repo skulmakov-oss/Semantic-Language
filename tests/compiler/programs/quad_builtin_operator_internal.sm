@@ -1,0 +1,118 @@
+// Q2.5 + Q3 + Q4: real unary/binary operators and non-map builtins.
+Import "lower.sm"
+
+fn analyze_source(src: text) -> Sem {
+    let lexed: Lexed = lex(src);
+    assert(lexed.err == "");
+    let parsed: P = parse_program(lexed.toks);
+    assert(parsed.err == "");
+    return analyze(Prog { nodes: parsed.nodes, funcs: parsed.funcs, recs: parsed.recs });
+}
+
+fn inspect(src: text, kind: text, state: quad, positive: i32, negative: i32, admitted: bool) {
+    let sem: Sem = analyze_source(src);
+    if admitted {
+        assert(sem.err == "");
+        assert(q3_lowering_error(sem) == "");
+    } else {
+        assert(sem.err != "");
+        assert(sem.cat == "type");
+    }
+    let mut seen: i32 = 0;
+    let mut id: i32 = 0;
+    while id < len(sem.prog.nodes) {
+        if map_contains(sem.type_evidence, id) {
+            let e: Evidence = map_get(sem.type_evidence, id, evidence_empty("invalid", 0, 0));
+            if e.proposition_kind == kind {
+                assert(evidence_valid(e));
+                assert(e.subject == id);
+                assert(e.scope == 0);
+                assert(e.state == state);
+                assert(len(e.positive) == positive);
+                assert(len(e.negative) == negative);
+                let sources: Sequence(i32) = q3_source_nodes(sem, id);
+                assert(len(sources) == positive + negative);
+                let mut j: i32 = 0;
+                while j < positive {
+                    assert(e.positive[j] == sem.prog.nodes[sources[j]].pos);
+                    j = j + 1;
+                }
+                j = 0;
+                while j < negative {
+                    assert(e.negative[j] == sem.prog.nodes[sources[positive + j]].pos);
+                    j = j + 1;
+                }
+                if admitted {
+                    assert(q3_proof_error(sem, id) == "");
+                } else {
+                    assert(q3_proof_error(sem, id) != "");
+                }
+                seen = seen + 1;
+            }
+        }
+        id = id + 1;
+    }
+    assert(seen == 1);
+    return;
+}
+
+fn main() {
+    inspect("fn main() { let a: i32 = -1; return; }", "unary-operator-type", T, 1, 0, true);
+    inspect("fn main() { let a = -true; return; }", "unary-operator-type", F, 0, 1, false);
+    inspect("fn main() { let a: bool = !true; return; }", "unary-operator-type", T, 1, 0, true);
+    inspect("fn main() { let a: i32 = 1 + 2; return; }", "binary-operator-types", T, 2, 0, true);
+    inspect("fn main() { let a = 1 + true; return; }", "binary-operator-types", S, 1, 1, false);
+    inspect("fn main() { let a = true + false; return; }", "binary-operator-types", F, 0, 2, false);
+    inspect("fn main() { let a: bool = 1 == 1; return; }", "binary-operator-types", T, 2, 0, true);
+    inspect("fn main() { let xs: Sequence(i32) = [1, 2]; let n: i32 = len(xs); return; }", "builtin-argument-types", T, 1, 0, true);
+    inspect("fn main() { let n = len(1); return; }", "builtin-argument-types", F, 0, 1, false);
+    inspect("fn main() { let xs: Sequence(i32) = [1]; let ys: Sequence(i32) = push(xs, true); return; }", "builtin-argument-types", S, 1, 1, false);
+    inspect("fn main() { let xs: Sequence(i32) = [1]; let ys: Sequence(i32) = push(xs, 2); return; }", "builtin-argument-types", T, 2, 0, true);
+    inspect("fn text_length(t: text) -> u32 { return text_len(t); } fn main() { return; }", "builtin-argument-types", T, 1, 0, true);
+    inspect("fn main() { let t: text = to_text(1); return; }", "builtin-argument-types", T, 1, 0, true);
+
+    let whole: text = "fn main() { let x: i32 = 1 + 2; let z: i32 = -x; let ys: Sequence(i32) = [x, z]; let n: i32 = len(ys); assert(n == 2); return; }";
+    let sem: Sem = analyze_source(whole);
+    assert(sem.err == "");
+    assert(q3_lowering_error(sem) == "");
+    let f: FnIr = lower_function(sem, map_get(sem.fnidx, "main", 0 - 1));
+    let mut unary_count: i32 = 0;
+    let mut binary_count: i32 = 0;
+    let mut builtin_count: i32 = 0;
+    for p in f.proofs {
+        assert(evidence_valid(p.evidence));
+        assert(p.evidence.state == T);
+        assert(len(p.evidence.positive) == len(p.source_nodes));
+        assert(len(p.source_nodes) == len(p.source_offsets));
+        let mut j: i32 = 0;
+        while j < len(p.source_nodes) {
+            assert(p.source_offsets[j] == sem.prog.nodes[p.source_nodes[j]].pos);
+            assert(p.source_offsets[j] == p.evidence.positive[j]);
+            j = j + 1;
+        }
+        if p.evidence.proposition_kind == "unary-operator-type" { unary_count = unary_count + 1; }
+        if p.evidence.proposition_kind == "binary-operator-types" { binary_count = binary_count + 1; }
+        if p.evidence.proposition_kind == "builtin-argument-types" { builtin_count = builtin_count + 1; }
+    }
+    assert(unary_count == 1);
+    assert(binary_count >= 1);
+    assert(builtin_count == 1);
+
+    let mut builtin_id: i32 = 0 - 1;
+    let mut x: i32 = 0;
+    while x < len(sem.prog.nodes) {
+        if map_contains(sem.type_evidence, x) {
+            let e: Evidence = map_get(sem.type_evidence, x, evidence_empty("invalid", 0, 0));
+            if e.proposition_kind == "builtin-argument-types" { builtin_id = x; }
+        }
+        x = x + 1;
+    }
+    assert(builtin_id >= 0);
+    let genuine: Evidence = map_get(sem.type_evidence, builtin_id, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(genuine));
+    let fake: Evidence = genuine with { positive: [987654u32] };
+    assert(evidence_valid(fake));
+    assert(q3_lowering_error(sem with { type_evidence: map_set(sem.type_evidence, builtin_id, fake) }) != "");
+    assert(q3_lowering_error(sem with { type_evidence: map_empty() }) != "");
+    return;
+}

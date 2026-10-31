@@ -1,17 +1,6 @@
 // lower: checked AST -> per-function linear IR with symbolic labels.
-//
-// Register allocation is function-local and linear: parameters arrive in
-// r0..r(n-1) (SemCode calling convention), every expression result gets the
-// next fresh register. Locals (including the hidden result/iteration slots
-// chosen by sema) live in the VM local store, one string-table symbol per slot.
-// Control flow uses label ids that the encoder resolves to byte offsets.
 Import "sema.sm"
 
-// IR instruction. `op` is the SemCode opcode byte, or -1 for a label.
-// Operand use by encoding class (see semcode.sm):
-//   a = destination (or symbol for STORE_VAR, condition for JMP_IF/ASSERT,
-//       has_dst/has_src for CALL/RET), b/c = sources, symbols or registers,
-//   imm = literal, slot/index or label id, args = register list.
 record Ins {
     op: i32,
     a: i32,
@@ -31,12 +20,59 @@ record OwnPath {
     comp_b: i32,
 }
 
+// Q4: source node identities and positions are preserved at the Sema->IR
+// boundary. These are non-emitted experimental proof snapshots, not SemCode.
+record PhaseProof {
+    evidence: Evidence,
+    source_nodes: Sequence(i32),
+    source_offsets: Sequence(u32),
+}
+
+// Q4.6: inferred-type origins are NOT fabricated equality proofs.
+// A separate non-emitted link identifies which tuple component was forwarded
+// to each new binder in a successful tuple destructuring.
+record TupleInferenceLink {
+    owner: i32,
+    source: i32,
+    binding: i32,
+    component: i32,
+    resolved_type: i32,
+    source_offset: u32,
+    binding_offset: u32,
+}
+
+// A derived binding type is NOT a proof of comparison with a required type.
+record BindingInferenceLink {
+    owner: i32,
+    source: i32,
+    resolved_type: i32,
+    source_offset: u32,
+    binding_offset: u32,
+}
+
+// Q3.8/Q4.8 consistency audit: observed type family is independently
+// read from the current typed AST, not inferred from Evidence.state.
+record ControlTypeCheck {
+    owner: i32,
+    source: i32,
+    owner_kind: i32,
+    observed_type: i32,
+    observed_family: i32,
+    required_family: i32,
+    source_offset: u32,
+    evidence: Evidence,
+}
+
 record FnIr {
     name: text,
     families: Sequence(i32),
     strings: Sequence(text),
     ins: Sequence(Ins),
     owns: Sequence(OwnPath),
+    proofs: Sequence(PhaseProof),
+    tuple_inferences: Sequence(TupleInferenceLink),
+    binding_inferences: Sequence(BindingInferenceLink),
+    control_type_checks: Sequence(ControlTypeCheck),
 }
 
 record L {
@@ -49,86 +85,502 @@ record L {
     breaks: Sequence(i32),
     conts: Sequence(i32),
     owns: Sequence(OwnPath),
+    proofs: Sequence(PhaseProof),
+    tuple_inferences: Sequence(TupleInferenceLink),
+    binding_inferences: Sequence(BindingInferenceLink),
+    control_type_checks: Sequence(ControlTypeCheck),
 }
 
-fn own_root(l: L, kind: i32, root: i32, anchor: i32) -> L {
-    return l with { owns: push(l.owns, OwnPath { kind: kind, mode: 0, root: root, anchor: anchor, comp_kind: -1, comp_a: 0, comp_b: 0 }) };
-}
-
-fn own_field(l: L, kind: i32, root: i32, field: i32, anchor: i32) -> L {
-    return l with { owns: push(l.owns, OwnPath { kind: kind, mode: 1, root: root, anchor: anchor, comp_kind: 1, comp_a: field, comp_b: 0 }) };
-}
-
-fn emit(l: L, op: i32, a: i32, b: i32, c: i32, imm: i32) -> L {
-    return l with { ins: push(l.ins, Ins { op: op, a: a, b: b, c: c, imm: imm, args: [] }) };
-}
-
-fn emit_args(l: L, op: i32, a: i32, b: i32, args: Sequence(i32)) -> L {
-    return l with { ins: push(l.ins, Ins { op: op, a: a, b: b, c: 0, imm: 0, args: args }) };
-}
-
-fn fresh(l: L) -> (L, i32) {
-    return (l with { reg: l.reg + 1 }, l.reg);
-}
-
-fn new_label(l: L) -> (L, i32) {
-    return (l with { labels: l.labels + 1 }, l.labels);
-}
-
-// String-table index of a callee/type name or text literal (locals occupy the
-// first entries). Text literals keep their quotes, as the reference stores them.
-fn symbol(l: L, name: text) -> (L, i32) {
-    if map_contains(l.strmap, name) {
-        return (l, map_get(l.strmap, name, 0));
+// Q3: reconstruct each type proposition from trusted AST metadata.
+// Refuse missing, inconsistent, conflicting, or source-mismatched proof data.
+fn q3_required_kind(s: Sem, id: i32) -> text {
+    let nd: Node = s.prog.nodes[id];
+    if nd.k == 26 { return "if-branch-type"; }
+    if nd.k == 5 { return "unary-operator-type"; }
+    if nd.k == 6 { return "binary-operator-types"; }
+    if nd.k == 22 && map_contains(s.tuple_expected, id) { return "tuple-target-items"; }
+    if nd.k == 23 && len(nd.kids) > 0 { return "sequence-elements"; }
+    if nd.k == 25 && map_contains(s.match_result_checked, id) {
+        return "match-arm-types";
     }
-    let sid: i32 = len(l.strings);
-    return (l with { strings: push(l.strings, name), strmap: map_set(l.strmap, name, sid) }, sid);
-}
-
-fn slot_of(l: L, id: i32) -> i32 {
-    return map_get(l.sem.slots, id, 0);
-}
-
-fn type_of(l: L, id: i32) -> i32 {
-    return map_get(l.sem.exprty, id, 0);
-}
-
-fn binop_byte(op: i32, u: bool) -> i32 {
-    if u {
-        return match op {
-            30 => { 38 }
-            31 => { 39 }
-            32 => { 40 }
-            33 => { 41 }
-            34 => { 42 }
-            37 => { 36 }
-            _ => { 37 }
-        };
+    if nd.k == 12 { return "if-condition-type"; }
+    if nd.k == 13 { return "while-condition-type"; }
+    if nd.k == 17 { return "assert-condition-type"; }
+    if nd.k == 42 { return "for-sequence-type"; }
+    if nd.k == 10 && nd.v >= 0 { return "annotated-binding"; }
+    if nd.k == 40 && nd.v >= 0 { return "tuple-annotation-type"; }
+    if nd.k == 41 && len(nd.kids) > 0 { return "tuple-assignment-items"; }
+    if nd.k == 11 { return "assignment-type"; }
+    if nd.k == 14 && nd.a >= 0 { return "return-value-type"; }
+    if nd.k == 7 {
+        let callee: i32 = map_get(s.callees, id, 0 - 999);
+        if callee >= 0 && len(nd.kids) > 0 {
+            return "call-arguments";
+        }
+        // Builtin codes 1..7,12..14 are non-map and have a complete
+        // checked type-constraint carrier for all their arguments.
+        if callee <= 0 - 2 && callee >= 0 - 8 { return "builtin-argument-types"; }
+        if callee <= 0 - 13 && callee >= 0 - 15 { return "builtin-argument-types"; }
     }
-    return match op {
-        30 => { 7 }
-        31 => { 8 }
-        32 => { 9 }
-        33 => { 10 }
-        34 => { 11 }
-        35 => { 32 }
-        36 => { 33 }
-        37 => { 34 }
-        38 => { 35 }
-        41 => { 20 }
-        _ => { 21 }
+    if nd.k == 29 || nd.k == 21 {
+        if len(nd.kids) > 0 { return "record-fields"; }
+    }
+    return "";
+}
+
+fn q3_source_nodes(s: Sem, id: i32) -> Sequence(i32) {
+    let nd: Node = s.prog.nodes[id];
+    if nd.k == 26 { return [nd.b, nd.c]; }
+    if nd.k == 5 { return [nd.a]; }
+    if nd.k == 6 { return [nd.a, nd.b]; }
+    if nd.k == 25 {
+        let mut sources: Sequence(i32) = [];
+        for arm_id in nd.kids {
+            sources = push(sources, s.prog.nodes[arm_id].a);
+        }
+        return sources;
+    }
+    if nd.k == 10 || nd.k == 11 || nd.k == 12 || nd.k == 13 || nd.k == 14 || nd.k == 17 || nd.k == 40 || nd.k == 42 { return [nd.a]; }
+    return nd.kids;
+}
+
+// Q3.5: enforce independent Map<K,V> obligations by trusted builtin
+// identity. Removing one proof does not remove either other obligation.
+fn q3_map_slot_error(s: Sem, id: i32, carrier: Map(i32, Evidence), kind: text, node_id: i32) -> text {
+    if !map_contains(carrier, id) {
+        return "missing " + kind + " for map AST node " + to_text(id);
+    }
+    let e: Evidence = map_get(carrier, id, evidence_empty("invalid", 0, 0));
+    if !evidence_valid(e) || e.subject != id || e.scope != 0 || e.proposition_kind != kind {
+        return "invalid " + kind + " identity for map AST node " + to_text(id);
+    }
+    if e.state != T || len(e.negative) != 0 || len(e.positive) != 1 {
+        return "unproven " + kind + " for map AST node " + to_text(id);
+    }
+    if node_id < 0 || node_id >= len(s.prog.nodes) {
+        return "invalid map witness source AST node";
+    }
+    if e.positive[0] != s.prog.nodes[node_id].pos {
+        return "map witness origin mismatch for " + kind;
+    }
+    return "";
+}
+
+// A map builtin name is reserved by Sema. The AST name is the independent
+// obligation authority; deleting the callee metadata cannot bypass Q3.
+fn q3_expected_map_callee(nd: Node) -> i32 {
+    if nd.k != 7 { return 0; }
+    if nd.name == "map_empty" { return 0 - 9; }
+    if nd.name == "map_contains" { return 0 - 10; }
+    if nd.name == "map_get" { return 0 - 11; }
+    if nd.name == "map_set" { return 0 - 12; }
+    return 0;
+}
+
+fn q3_map_proof_error(s: Sem, id: i32) -> text {
+    let nd: Node = s.prog.nodes[id];
+    let expected: i32 = q3_expected_map_callee(nd);
+    if expected == 0 { return ""; }
+    let callee: i32 = map_get(s.callees, id, 0 - 999);
+    if callee != expected { return "missing or invalid map builtin callee identity"; }
+    if callee == 0 - 9 {
+        return q3_map_slot_error(s, id, s.map_container_evidence, "map-context-type", id);
+    }
+    if len(nd.kids) < 2 { return "map builtin missing container/key operands"; }
+    let container_problem: text = q3_map_slot_error(s, id, s.map_container_evidence, "map-container-type", nd.kids[0]);
+    if container_problem != "" { return container_problem; }
+    let key_problem: text = q3_map_slot_error(s, id, s.map_key_evidence, "map-key-type", nd.kids[1]);
+    if key_problem != "" { return key_problem; }
+    if callee == 0 - 11 || callee == 0 - 12 {
+        if len(nd.kids) != 3 { return "map builtin missing value operand"; }
+        return q3_map_slot_error(s, id, s.map_value_evidence, "map-value-type", nd.kids[2]);
+    }
+    return "";
+}
+
+fn q3_proof_error(s: Sem, id: i32) -> text {
+    let kind: text = q3_required_kind(s, id);
+    if kind == "" { return ""; }
+    if !map_contains(s.type_evidence, id) {
+        return "missing checked type evidence for AST node " + to_text(id);
+    }
+    let e: Evidence = map_get(s.type_evidence, id, evidence_empty("missing", 0, 0));
+    if !evidence_valid(e) || e.proposition_kind != kind || e.subject != id || e.scope != 0 {
+        return "invalid type evidence identity or state for AST node " + to_text(id);
+    }
+    if e.state != T || len(e.negative) != 0 {
+        return "unproven or conflicting lowering precondition for AST node " + to_text(id);
+    }
+    let nodes: Sequence(i32) = q3_source_nodes(s, id);
+    if len(e.positive) != len(nodes) {
+        return "wrong type witness count for AST node " + to_text(id);
+    }
+    let mut i: i32 = 0;
+    while i < len(nodes) {
+        let source_id: i32 = nodes[i];
+        if source_id < 0 || source_id >= len(s.prog.nodes) {
+            return "type witness has an invalid source node";
+        }
+        if e.positive[i] != s.prog.nodes[source_id].pos {
+            return "type witness source position mismatch for AST node " + to_text(id);
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Q3.6: shape and inferred component origins are independent from the
+// optional tuple annotation and per-target assignment propositions.
+fn q3_tuple_proof_error(s: Sem, id: i32) -> text {
+    let nd: Node = s.prog.nodes[id];
+    if nd.k != 40 && nd.k != 41 { return ""; }
+    if !map_contains(s.tuple_shape_evidence, id) {
+        return "missing tuple destructuring shape proof";
+    }
+    let e: Evidence = map_get(s.tuple_shape_evidence, id, evidence_empty("invalid", 0, 0));
+    if !evidence_valid(e) || e.proposition_kind != "tuple-destructure-shape" || e.subject != id || e.scope != 0 {
+        return "invalid tuple shape proof identity";
+    }
+    if e.state != T || len(e.negative) != 0 || len(e.positive) != 1 {
+        return "unproven tuple shape or arity";
+    }
+    if nd.a < 0 || nd.a >= len(s.prog.nodes) || e.positive[0] != s.prog.nodes[nd.a].pos {
+        return "tuple shape witness source mismatch";
+    }
+    if nd.k == 40 {
+        if !map_contains(s.exprty, nd.a) { return "missing inferred tuple source type"; }
+        let ty: i32 = map_get(s.exprty, nd.a, 0 - 1);
+        if ty < 0 || ty >= len(s.tys) { return "invalid inferred tuple source type"; }
+        let info: TyInfo = s.tys[ty];
+        if info.k != 6 || len(info.kids) != len(nd.kids) {
+            return "inferred tuple component count mismatch";
+        }
+        let mut i: i32 = 0;
+        while i < len(nd.kids) {
+            let name_id: i32 = nd.kids[i];
+            if !map_contains(s.tuple_inferred_components, name_id) {
+                return "missing tuple component inference origin";
+            }
+            if map_get(s.tuple_inferred_components, name_id, 0 - 1) != info.kids[i] {
+                return "tuple component inferred type mismatch";
+            }
+            if !map_contains(s.slots, name_id) {
+                return "missing tuple component destination slot";
+            }
+            i = i + 1;
+        }
+    }
+    return "";
+}
+
+fn q3_inferred_rhs_type(s: Sem, id: i32) -> i32 {
+    if id < 0 || id >= len(s.prog.nodes) { return 0 - 1; }
+    let nd: Node = s.prog.nodes[id];
+    if nd.k == 1 { return 1; }
+    if nd.k == 2 { return 2; }
+    if nd.k == 3 { return 4; }
+    if nd.k == 8 { return 3; }
+    if nd.k == 9 { return 5; }
+    return map_get(s.exprty, id, 0 - 1);
+}
+
+fn q3_binding_inference_error(s: Sem, id: i32) -> text {
+    let nd: Node = s.prog.nodes[id];
+    if nd.k != 10 || nd.v >= 0 { return ""; }
+    if !map_contains(s.inferred_binding_types, id) { return "missing inferred binding type"; }
+    let inferred: i32 = map_get(s.inferred_binding_types, id, 0 - 1);
+    if inferred <= 0 || inferred >= len(s.tys) {
+        return "invalid inferred binding type";
+    }
+    let actual: i32 = q3_inferred_rhs_type(s, nd.a);
+    if actual != inferred { return "inferred binding does not match source expression type"; }
+    if !map_contains(s.slots, id) { return "missing inferred binding slot"; }
+    return "";
+}
+
+fn q3_control_type_error(s: Sem, id: i32) -> text {
+    let nd: Node = s.prog.nodes[id];
+    let kind: i32 = nd.k;
+    if kind != 12 && kind != 13 && kind != 17 && kind != 26 && kind != 42 { return ""; }
+    if nd.a < 0 || nd.a >= len(s.prog.nodes) { return "missing control condition source"; }
+    let actual: i32 = q3_inferred_rhs_type(s, nd.a);
+    if actual <= 0 || actual >= len(s.tys) {
+        return "missing or invalid control expression inferred type";
+    }
+    let family: i32 = s.tys[actual].k;
+    let required: i32 = if kind == 42 { 5 } else { 2 };
+    if family != required {
+        return "control expression type family does not satisfy AST precondition";
+    }
+    if kind == 26 {
+        if !map_contains(s.if_expr_condition_evidence, id) { return "missing if-expression condition evidence"; }
+        let proof: Evidence = map_get(s.if_expr_condition_evidence, id, evidence_empty("invalid", 0, 0));
+        if !evidence_valid(proof) || proof.proposition_kind != "if-expression-condition-type" ||
+           proof.subject != id || proof.scope != 0 || proof.state != T ||
+           len(proof.positive) != 1 || len(proof.negative) != 0 ||
+           proof.positive[0] != s.prog.nodes[nd.a].pos {
+            return "invalid if-expression condition proof";
+        }
+    }
+    return "";
+}
+
+// Q3.9 — trusted *admission*, not an opaque Evidence ADT.
+//
+// The admitted payload is re-created by the trusted Sema function, rather
+// than accepting carrier bytes from an arbitrary public Sem record. A replay
+// mismatch is rejected; Lower consumes only the replayed canonical Sem.
+// This is a deterministic in-process trust boundary, NOT an unforgeable
+// constructor or an independent authentication of the supplied AST.
+record TrustedSemAdmission {
+    ok: bool,
+    canonical: Sem,
+    error: text,
+}
+
+fn q3_same_evidence(a: Evidence, b: Evidence) -> bool {
+    if !evidence_valid(a) || !evidence_valid(b) { return false; }
+    if a.proposition_kind != b.proposition_kind || a.subject != b.subject ||
+       a.scope != b.scope || a.state != b.state ||
+       len(a.positive) != len(b.positive) || len(a.negative) != len(b.negative) {
+        return false;
+    }
+    let mut i: i32 = 0;
+    while i < len(a.positive) {
+        if a.positive[i] != b.positive[i] { return false; }
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(a.negative) {
+        if a.negative[i] != b.negative[i] { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn q3_evidence_map_equal(a: Map(i32, Evidence), b: Map(i32, Evidence), id: i32) -> bool {
+    let found: bool = map_contains(a, id);
+    if found != map_contains(b, id) { return false; }
+    if !found { return true; }
+    return q3_same_evidence(
+        map_get(a, id, evidence_empty("invalid", 0, 0)),
+        map_get(b, id, evidence_empty("invalid", 0, 0))
+    );
+}
+
+fn q3_int_map_equal(a: Map(i32, i32), b: Map(i32, i32), id: i32) -> bool {
+    let found: bool = map_contains(a, id);
+    return found == map_contains(b, id) &&
+        (!found || map_get(a, id, 0 - 999) == map_get(b, id, 0 - 999));
+}
+
+fn q3_bool_map_equal(a: Map(i32, bool), b: Map(i32, bool), id: i32) -> bool {
+    let found: bool = map_contains(a, id);
+    return found == map_contains(b, id) &&
+        (!found || map_get(a, id, false) == map_get(b, id, false));
+}
+
+fn q3_ty_table_equal(a: Sem, b: Sem) -> bool {
+    if len(a.tys) != len(b.tys) { return false; }
+    let mut i: i32 = 0;
+    while i < len(a.tys) {
+        let left: TyInfo = a.tys[i];
+        let right: TyInfo = b.tys[i];
+        if left.k != right.k || left.a != right.a || left.name != right.name ||
+            len(left.kids) != len(right.kids) { return false; }
+        let mut j: i32 = 0;
+        while j < len(left.kids) {
+            if left.kids[j] != right.kids[j] { return false; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Compare the complete AST-indexed evidence surface before returning a
+// canonical Sem. An unrelated manually injected field must not become a
+// permission to emit an artifact. Unknown map keys outside the AST domain
+// are not inspected; they cannot be accessed by canonical lowering.
+fn q3_replay_difference(s: Sem, replay: Sem) -> text {
+    if s.err != "" || replay.err != "" { return "source is not semantically admitted"; }
+    if !q3_ty_table_equal(s, replay) { return "type table differs from trusted replay"; }
+    if s.u32arith != replay.u32arith { return "arithmetic mode differs from trusted replay"; }
+    if len(s.frets) != len(replay.frets) || len(s.fptypes) != len(replay.fptypes) ||
+       len(s.locals) != len(replay.locals) { return "function metadata shape differs from trusted replay"; }
+    let mut fi: i32 = 0;
+    while fi < len(s.frets) {
+        if s.frets[fi] != replay.frets[fi] || len(s.fptypes[fi]) != len(replay.fptypes[fi]) ||
+           len(s.locals[fi]) != len(replay.locals[fi]) { return "function metadata differs from trusted replay"; }
+        let mut j: i32 = 0;
+        while j < len(s.fptypes[fi]) {
+            if s.fptypes[fi][j] != replay.fptypes[fi][j] { return "parameter type differs from trusted replay"; }
+            j = j + 1;
+        }
+        j = 0;
+        while j < len(s.locals[fi]) {
+            if s.locals[fi][j] != replay.locals[fi][j] { return "local symbol differs from trusted replay"; }
+            j = j + 1;
+        }
+        fi = fi + 1;
+    }
+    let mut id: i32 = 0;
+    while id < len(s.prog.nodes) {
+        if !q3_evidence_map_equal(s.type_evidence, replay.type_evidence, id) {
+            return "type evidence differs from trusted replay at AST node " + to_text(id);
+        }
+        if !q3_evidence_map_equal(s.map_container_evidence, replay.map_container_evidence, id) ||
+           !q3_evidence_map_equal(s.map_key_evidence, replay.map_key_evidence, id) ||
+           !q3_evidence_map_equal(s.map_value_evidence, replay.map_value_evidence, id) {
+            return "map evidence differs from trusted replay at AST node " + to_text(id);
+        }
+        if !q3_evidence_map_equal(s.tuple_shape_evidence, replay.tuple_shape_evidence, id) ||
+           !q3_evidence_map_equal(s.if_expr_condition_evidence, replay.if_expr_condition_evidence, id) {
+            return "structural evidence differs from trusted replay at AST node " + to_text(id);
+        }
+        if !q3_int_map_equal(s.exprty, replay.exprty, id) ||
+           !q3_int_map_equal(s.slots, replay.slots, id) ||
+           !q3_int_map_equal(s.callees, replay.callees, id) ||
+           !q3_int_map_equal(s.fieldix, replay.fieldix, id) ||
+           !q3_int_map_equal(s.tuple_expected, replay.tuple_expected, id) ||
+           !q3_int_map_equal(s.inferred_binding_types, replay.inferred_binding_types, id) ||
+           !q3_int_map_equal(s.tuple_inferred_components, replay.tuple_inferred_components, id) ||
+           !q3_bool_map_equal(s.match_result_checked, replay.match_result_checked, id) {
+            return "semantic metadata differs from trusted replay at AST node " + to_text(id);
+        }
+        id = id + 1;
+    }
+    return "";
+}
+
+// Canonical construction starts from the supplied parsed Prog, never from
+// user-constructed Evidence, positive status flags or altered typed tables.
+fn q3_trusted_admit(s: Sem) -> TrustedSemAdmission {
+    let replay: Sem = analyze(s.prog);
+    if replay.err != "" {
+        return TrustedSemAdmission { ok: false, canonical: replay, error: "trusted replay rejected source" };
+    }
+    let difference: text = q3_replay_difference(s, replay);
+    if difference != "" {
+        return TrustedSemAdmission { ok: false, canonical: replay, error: difference };
+    }
+    let boundary: text = q3_lowering_error(replay);
+    if boundary != "" {
+        return TrustedSemAdmission { ok: false, canonical: replay, error: boundary };
+    }
+    return TrustedSemAdmission { ok: true, canonical: replay, error: "" };
+}
+
+fn q3_lowering_error(s: Sem) -> text {
+    if s.err != "" { return "semantic analysis rejected the source"; }
+    let mut i: i32 = 0;
+    while i < len(s.prog.nodes) {
+        let problem: text = q3_proof_error(s, i);
+        if problem != "" { return problem; }
+        let map_problem: text = q3_map_proof_error(s, i);
+        if map_problem != "" { return map_problem; }
+        let tuple_problem: text = q3_tuple_proof_error(s, i);
+        if tuple_problem != "" { return tuple_problem; }
+        let inferred_problem: text = q3_binding_inference_error(s, i);
+        if inferred_problem != "" { return inferred_problem; }
+        let control_problem: text = q3_control_type_error(s, i);
+        if control_problem != "" { return control_problem; }
+        i = i + 1;
+    }
+    return "";
+}
+
+fn q4_phase_proof(s: Sem, id: i32) -> PhaseProof {
+    // Only successful checked evidence crosses the lowering boundary.
+    assert(q3_proof_error(s, id) == "");
+    let e: Evidence = map_get(s.type_evidence, id, evidence_empty("invalid", 0, 0));
+    let sources: Sequence(i32) = q3_source_nodes(s, id);
+    let mut positions: Sequence(u32) = [];
+    for source_id in sources {
+        positions = push(positions, s.prog.nodes[source_id].pos);
+    }
+    return PhaseProof { evidence: e, source_nodes: sources, source_offsets: positions };
+}
+
+// Q4.5: one source-qualified-by-AST snapshot for each distinct map
+// proposition. The context for map_empty is represented by the call node,
+// not by a fictitious zero-argument value witness.
+fn q4_map_slot(s: Sem, id: i32, carrier: Map(i32, Evidence), source_id: i32) -> PhaseProof {
+    let e: Evidence = map_get(carrier, id, evidence_empty("invalid", 0, 0));
+    return PhaseProof { evidence: e, source_nodes: [source_id], source_offsets: [s.prog.nodes[source_id].pos] };
+}
+
+fn q4_map_phase_proofs(s: Sem, id: i32) -> Sequence(PhaseProof) {
+    let nd: Node = s.prog.nodes[id];
+    let expected: i32 = q3_expected_map_callee(nd);
+    if expected == 0 { return []; }
+    assert(q3_map_proof_error(s, id) == "");
+    let callee: i32 = expected;
+    if callee == 0 - 9 {
+        return [q4_map_slot(s, id, s.map_container_evidence, id)];
+    }
+    let mut proofs: Sequence(PhaseProof) = [
+        q4_map_slot(s, id, s.map_container_evidence, nd.kids[0]),
+        q4_map_slot(s, id, s.map_key_evidence, nd.kids[1])
+    ];
+    if callee == 0 - 11 || callee == 0 - 12 {
+        proofs = push(proofs, q4_map_slot(s, id, s.map_value_evidence, nd.kids[2]));
+    }
+    return proofs;
+}
+
+fn q4_tuple_shape_proof(s: Sem, id: i32) -> PhaseProof {
+    assert(q3_tuple_proof_error(s, id) == "");
+    let nd: Node = s.prog.nodes[id];
+    let e: Evidence = map_get(s.tuple_shape_evidence, id, evidence_empty("invalid", 0, 0));
+    return PhaseProof { evidence: e, source_nodes: [nd.a], source_offsets: [s.prog.nodes[nd.a].pos] };
+}
+
+fn q4_tuple_inference_links(s: Sem, id: i32) -> Sequence(TupleInferenceLink) {
+    let nd: Node = s.prog.nodes[id];
+    if nd.k != 40 { return []; }
+    assert(q3_tuple_proof_error(s, id) == "");
+    let mut links: Sequence(TupleInferenceLink) = [];
+    let mut i: i32 = 0;
+    while i < len(nd.kids) {
+        let name_id: i32 = nd.kids[i];
+        let ty: i32 = map_get(s.tuple_inferred_components, name_id, 0 - 1);
+        links = push(links, TupleInferenceLink {
+            owner: id, source: nd.a, binding: name_id, component: i,
+            resolved_type: ty, source_offset: s.prog.nodes[nd.a].pos,
+            binding_offset: s.prog.nodes[name_id].pos
+        });
+        i = i + 1;
+    }
+    return links;
+}
+
+fn q4_binding_inference(s: Sem, id: i32) -> BindingInferenceLink {
+    assert(q3_binding_inference_error(s, id) == "");
+    let nd: Node = s.prog.nodes[id];
+    return BindingInferenceLink {
+        owner: id, source: nd.a, resolved_type: map_get(s.inferred_binding_types, id, 0 - 1),
+        source_offset: s.prog.nodes[nd.a].pos, binding_offset: nd.pos
     };
 }
 
-fn lower_args(l0: L, kids: Sequence(i32)) -> (L, Sequence(i32)) {
-    let mut l: L = l0;
-    let mut regs: Sequence(i32) = [];
-    for kid in kids {
-        let mut r: i32 = 0;
-        (l, r) = lower_expr(l, kid);
-        regs = push(regs, r);
-    }
-    return (l, regs);
+fn q4_control_type_check(s: Sem, id: i32) -> ControlTypeCheck {
+    assert(q3_control_type_error(s, id) == "");
+    let nd: Node = s.prog.nodes[id];
+    let actual: i32 = q3_inferred_rhs_type(s, nd.a);
+    let proof: Evidence = if nd.k == 26 {
+        map_get(s.if_expr_condition_evidence, id, evidence_empty("invalid", 0, 0))
+    } else {
+        map_get(s.type_evidence, id, evidence_empty("invalid", 0, 0))
+    };
+    assert(evidence_valid(proof) && proof.state == T);
+    return ControlTypeCheck {
+        owner: id, source: nd.a, owner_kind: nd.k,
+        observed_type: actual, observed_family: s.tys[actual].k,
+        required_family: if nd.k == 42 { 5 } else { 2 },
+        source_offset: s.prog.nodes[nd.a].pos,
+        evidence: proof
+    };
 }
 
 fn lower_expr(l0: L, id: i32) -> (L, i32) {
@@ -136,148 +588,295 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
     let mut l: L = l0;
     let mut d: i32 = 0;
     let k: i32 = nd.k;
+    if q3_required_kind(l.sem, id) != "" {
+        l = l with { proofs: push(l.proofs, q4_phase_proof(l.sem, id)) };
+    }
+    if k == 26 {
+        l = l with { control_type_checks: push(l.control_type_checks, q4_control_type_check(l.sem, id)) };
+    }
+    for map_proof in q4_map_phase_proofs(l.sem, id) {
+        l = l with { proofs: push(l.proofs, map_proof) };
+    }
     if k == 1 || k == 8 {
-        (l, d) = fresh(l);
-        return (emit(l, if k == 1 { 3 } else { 6 }, d, 0, 0, nd.v), d);
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: if k == 1 { 3 } else { 6 }, a: d, b: 0, c: 0, imm: nd.v, args: [] }) }, d);
+    }
+    if k == 9 {
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 1, a: d, b: 0, c: 0, imm: nd.v, args: [] }) }, d);
     }
     if k == 2 {
-        (l, d) = fresh(l);
-        return (emit(l, 2, d, 0, 0, nd.v), d);
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 2, a: d, b: 0, c: 0, imm: nd.v, args: [] }) }, d);
     }
     if k == 3 {
-        let mut sid: i32 = 0;
-        (l, sid) = symbol(l, nd.name);
-        (l, d) = fresh(l);
-        return (emit(l, 90, d, sid, 0, 0), d);
+        let mut sid: i32 = map_get(l.strmap, nd.name, 0 - 1);
+        if sid < 0 {
+            sid = len(l.strings);
+            l = l with { strings: push(l.strings, nd.name), strmap: map_set(l.strmap, nd.name, sid) };
+        }
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 90, a: d, b: sid, c: 0, imm: 0, args: [] }) }, d);
     }
     if k == 4 {
-        (l, d) = fresh(l);
-        return (emit(l, 4, d, slot_of(l, id), 0, 0), d);
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: map_get(l.sem.slots, id, 0), c: 0, imm: 0, args: [] }) }, d);
     }
     if k == 7 {
         let mut args: Sequence(i32) = [];
-        (l, args) = lower_args(l, nd.kids);
+        for kid in nd.kids {
+            let kn: Node = l.sem.prog.nodes[kid];
+            let kk: i32 = kn.k;
+            let mut r: i32 = 0;
+            if kk == 4 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 4, a: r, b: map_get(l.sem.slots, kid, 0), c: 0, imm: 0, args: [] }) };
+            } else if kk == 1 || kk == 8 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: if kk == 1 { 3 } else { 6 }, a: r, b: 0, c: 0, imm: kn.v, args: [] }) };
+            } else if kk == 9 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 1, a: r, b: 0, c: 0, imm: kn.v, args: [] }) };
+            } else if kk == 2 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 2, a: r, b: 0, c: 0, imm: kn.v, args: [] }) };
+            } else {
+                (l, r) = lower_expr(l, kid);
+            }
+            args = push(args, r);
+        }
         let callee: i32 = map_get(l.sem.callees, id, 0);
-        if callee <= 0 - 9 && callee >= 0 - 12 {
-            (l, d) = fresh(l);
-            if callee == 0 - 9 { return (emit(l, 112, d, 0, 0, 0), d); }
-            if callee == 0 - 10 { return (emit(l, 113, d, args[0], args[1], 0), d); }
-            let op: i32 = if callee == 0 - 11 { 114 } else { 115 };
-            return (emit(l, op, d, args[0], args[1], args[2]), d);
+        if callee <= 0 - 9 {
+            if callee >= 0 - 12 {
+                d = l.reg;
+                if callee == 0 - 9 { return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 112, a: d, b: 0, c: 0, imm: 0, args: [] }) }, d); }
+                if callee == 0 - 10 { return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 113, a: d, b: args[0], c: args[1], imm: 0, args: [] }) }, d); }
+                let mop: i32 = if callee == 0 - 11 { 114 } else { 115 };
+                return (l with { reg: d + 1, ins: push(l.ins, Ins { op: mop, a: d, b: args[0], c: args[1], imm: args[2], args: [] }) }, d);
+            }
         }
         if callee == 0 - 2 {
-            (l, d) = fresh(l);
-            return (emit(l, 95, d, args[0], 0, 0), d);
+            d = l.reg;
+            return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 95, a: d, b: args[0], c: 0, imm: 0, args: [] }) }, d);
         }
         if callee == 0 - 3 {
-            (l, d) = fresh(l);
-            return (emit(l, 105, d, args[0], args[1], 0), d);
+            d = l.reg;
+            return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 105, a: d, b: args[0], c: args[1], imm: 0, args: [] }) }, d);
         }
         if callee == 0 - 4 {
-            (l, d) = fresh(l);
-            return (emit(l, 107, d, args[0], 0, 0), d);
+            d = l.reg;
+            return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 107, a: d, b: args[0], c: 0, imm: 0, args: [] }) }, d);
         }
-        let mut sid: i32 = 0;
-        (l, sid) = symbol(l, nd.name);
-        let has_dst: i32 = if type_of(l, id) != 0 { 1 } else { 0 };
+        let mut sid: i32 = map_get(l.strmap, nd.name, 0 - 1);
+        if sid < 0 {
+            sid = len(l.strings);
+            l = l with { strings: push(l.strings, nd.name), strmap: map_set(l.strmap, nd.name, sid) };
+        }
+        let has_dst: i32 = if map_get(l.sem.exprty, id, 0) != 0 { 1 } else { 0 };
         if has_dst == 1 {
-            (l, d) = fresh(l);
+            d = l.reg;
+            l = l with { reg: d + 1 };
         }
-        let call: Ins = Ins { op: 64, a: has_dst, b: d, c: sid, imm: 0, args: args };
-        return (l with { ins: push(l.ins, call) }, d);
+        return (l with { ins: push(l.ins, Ins { op: 64, a: has_dst, b: d, c: sid, imm: 0, args: args }) }, d);
     }
     let mut a: i32 = 0;
     let mut b: i32 = 0;
     if k == 5 {
         (l, a) = lower_expr(l, nd.a);
         if nd.v == 31 {
-            // -x is 0 - x
-            let mut z: i32 = 0;
-            (l, z) = fresh(l);
-            l = emit(l, 3, z, 0, 0, 0);
-            (l, d) = fresh(l);
-            return (emit(l, 8, d, z, a, 0), d);
+            let z: i32 = l.reg;
+            d = z + 1;
+            l = l with { reg: d + 1, ins: push(push(l.ins, Ins { op: 3, a: z, b: 0, c: 0, imm: 0, args: [] }), Ins { op: 8, a: d, b: z, c: a, imm: 0, args: [] }) };
+            return (l, d);
         }
-        (l, d) = fresh(l);
-        return (emit(l, 22, d, a, 0, 0), d);
+        d = l.reg;
+        let op: i32 = if l.sem.prog.nodes[nd.a].k == 9 || map_get(l.sem.exprty, nd.a, 0) == 5 { 18 } else { 22 };
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: op, a: d, b: a, c: 0, imm: 0, args: [] }) }, d);
     }
     if k == 6 {
-        (l, a) = lower_expr(l, nd.a);
-        (l, b) = lower_expr(l, nd.b);
-        (l, d) = fresh(l);
-        let lt: i32 = type_of(l, nd.a);
-        if lt == 4 && nd.v == 30 {
-            return (emit(l, 12, d, a, b, 0), d);
+        let lna: Node = l.sem.prog.nodes[nd.a];
+        if lna.k == 4 {
+            a = l.reg;
+            l = l with { reg: a + 1, ins: push(l.ins, Ins { op: 4, a: a, b: map_get(l.sem.slots, nd.a, 0), c: 0, imm: 0, args: [] }) };
+        } else if lna.k == 1 || lna.k == 8 {
+            a = l.reg;
+            l = l with { reg: a + 1, ins: push(l.ins, Ins { op: if lna.k == 1 { 3 } else { 6 }, a: a, b: 0, c: 0, imm: lna.v, args: [] }) };
+        } else {
+            (l, a) = lower_expr(l, nd.a);
         }
-        let u: bool = lt == 3 && nd.v != 35 && nd.v != 36;
-        // a > b is b < a and a >= b is b <= a: only LT/LE opcodes exist
-        if nd.v == 39 { return (emit(l, binop_byte(37, u), d, b, a, 0), d); }
-        if nd.v == 40 { return (emit(l, binop_byte(38, u), d, b, a, 0), d); }
-        return (emit(l, binop_byte(nd.v, u), d, a, b, 0), d);
+        let lnb: Node = l.sem.prog.nodes[nd.b];
+        if lnb.k == 4 {
+            b = l.reg;
+            l = l with { reg: b + 1, ins: push(l.ins, Ins { op: 4, a: b, b: map_get(l.sem.slots, nd.b, 0), c: 0, imm: 0, args: [] }) };
+        } else if lnb.k == 1 || lnb.k == 8 {
+            b = l.reg;
+            l = l with { reg: b + 1, ins: push(l.ins, Ins { op: if lnb.k == 1 { 3 } else { 6 }, a: b, b: 0, c: 0, imm: lnb.v, args: [] }) };
+        } else {
+            (l, b) = lower_expr(l, nd.b);
+        }
+        d = l.reg;
+        let lt: i32 = if lna.k == 3 { 4 } else if lna.k == 8 { 3 } else if lna.k == 9 { 5 } else if lna.k == 1 { 1 } else if lna.k == 2 { 2 } else { map_get(l.sem.exprty, nd.a, 0) };
+        if lt == 4 {
+            if nd.v == 30 {
+                return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 12, a: d, b: a, c: b, imm: 0, args: [] }) }, d);
+            }
+        }
+        let mut u: bool = false;
+        if lt == 3 {
+            if nd.v != 35 {
+                if nd.v != 36 { u = true; }
+            }
+        }
+        let mut op_raw: i32 = nd.v;
+        let mut lhs: i32 = a;
+        let mut rhs: i32 = b;
+        if op_raw == 39 { op_raw = 37; lhs = b; rhs = a; }
+        else if op_raw == 40 { op_raw = 38; lhs = b; rhs = a; }
+        let bop: i32 = if lt == 5 {
+            if op_raw == 41 { 16 }
+            else if op_raw == 42 { 17 }
+            else if op_raw == 35 { 32 }
+            else { 33 }
+        } else if u {
+            if op_raw == 30 { 38 }
+            else if op_raw == 31 { 39 }
+            else if op_raw == 32 { 40 }
+            else if op_raw == 33 { 41 }
+            else if op_raw == 34 { 42 }
+            else if op_raw == 37 { 36 }
+            else { 37 }
+        } else {
+            if op_raw == 35 { 32 }
+            else if op_raw == 36 { 33 }
+            else if op_raw == 30 { 7 }
+            else if op_raw == 31 { 8 }
+            else if op_raw == 37 { 34 }
+            else if op_raw == 38 { 35 }
+            else if op_raw == 41 { 20 }
+            else if op_raw == 42 { 21 }
+            else if op_raw == 32 { 9 }
+            else if op_raw == 33 { 10 }
+            else { 11 }
+        };
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: bop, a: d, b: lhs, c: rhs, imm: 0, args: [] }) }, d);
     }
     if k == 20 {
-        (l, a) = lower_expr(l, nd.a);
-        let rt: TyInfo = l.sem.tys[type_of(l, nd.a)];
-        let mut sid: i32 = 0;
-        (l, sid) = symbol(l, rt.name);
-        (l, d) = fresh(l);
-        return (emit(l, 70, d, a, sid, map_get(l.sem.fieldix, id, 0)), d);
+        let lna: Node = l.sem.prog.nodes[nd.a];
+        if lna.k == 4 {
+            a = l.reg;
+            l = l with { reg: a + 1, ins: push(l.ins, Ins { op: 4, a: a, b: map_get(l.sem.slots, nd.a, 0), c: 0, imm: 0, args: [] }) };
+        } else {
+            (l, a) = lower_expr(l, nd.a);
+        }
+        let rt: TyInfo = l.sem.tys[map_get(l.sem.exprty, nd.a, 0)];
+        let mut sid: i32 = map_get(l.strmap, rt.name, 0 - 1);
+        if sid < 0 {
+            sid = len(l.strings);
+            l = l with { strings: push(l.strings, rt.name), strmap: map_set(l.strmap, rt.name, sid) };
+        }
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 70, a: d, b: a, c: sid, imm: map_get(l.sem.fieldix, id, 0), args: [] }) }, d);
     }
     if k == 29 || k == 21 {
-        let rti: TyInfo = l.sem.tys[type_of(l, id)];
+        let rti: TyInfo = l.sem.tys[map_get(l.sem.exprty, id, 0)];
         let rec: Rec = l.sem.prog.recs[rti.a];
         let mut base: i32 = 0;
-        let base_node: Node = if k == 21 { l0.sem.prog.nodes[nd.a] } else { Node { k: 0, a: 0, b: 0, c: 0, v: 0, name: "", pos: 0u32, kids: [] } };
+        let mut base_is_var: bool = false;
         if k == 21 {
-            (l, base) = lower_expr(l, nd.a);
+            let bnd: Node = l0.sem.prog.nodes[nd.a];
+            if bnd.k == 4 {
+                base_is_var = true;
+                base = l.reg;
+                l = l with { reg: base + 1, ins: push(l.ins, Ins { op: 4, a: base, b: map_get(l.sem.slots, nd.a, 0), c: 0, imm: 0, args: [] }) };
+            } else {
+                (l, base) = lower_expr(l, nd.a);
+            }
         }
-        let mut sid: i32 = 0;
-        (l, sid) = symbol(l, rec.name);
-        // Evaluate supplied expressions once in source order, then arrange slots.
+        let mut sid: i32 = map_get(l.strmap, rec.name, 0 - 1);
+        if sid < 0 {
+            sid = len(l.strings);
+            l = l with { strings: push(l.strings, rec.name), strmap: map_set(l.strmap, rec.name, sid) };
+        }
         let mut given: Map(i32, i32) = map_empty();
         let mut pending_fields: Sequence(i32) = [];
         for fid in nd.kids {
+            let fn_node: Node = l.sem.prog.nodes[fid];
+            let fia: i32 = fn_node.a;
+            let fna: Node = l.sem.prog.nodes[fia];
             let mut r: i32 = 0;
-            (l, r) = lower_expr(l, l.sem.prog.nodes[fid].a);
+            if fna.k == 1 || fna.k == 8 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: if fna.k == 1 { 3 } else { 6 }, a: r, b: 0, c: 0, imm: fna.v, args: [] }) };
+            } else if fna.k == 4 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 4, a: r, b: map_get(l.sem.slots, fia, 0), c: 0, imm: 0, args: [] }) };
+            } else if fna.k == 2 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 2, a: r, b: 0, c: 0, imm: fna.v, args: [] }) };
+            } else {
+                (l, r) = lower_expr(l, fia);
+            }
             given = map_set(given, map_get(l.sem.fieldix, fid, 0), r);
-            if k == 21 && base_node.k == 4 {
-                let mut field: i32 = 0;
-                (l, field) = symbol(l, l.sem.prog.nodes[fid].name);
+            if base_is_var {
+                let fnm: text = fn_node.name;
+                let mut field: i32 = map_get(l.strmap, fnm, 0 - 1);
+                if field < 0 {
+                    field = len(l.strings);
+                    l = l with { strings: push(l.strings, fnm), strmap: map_set(l.strmap, fnm, field) };
+                }
                 pending_fields = push(pending_fields, field);
             }
         }
         let mut regs: Sequence(i32) = [];
         let mut slot: i32 = 0;
         while slot < len(rec.fnames) {
-            let mut r: i32 = 0;
-            if map_contains(given, slot) {
-                r = map_get(given, slot, 0);
-            } else {
-                (l, r) = fresh(l);
-                l = emit(l, 70, r, base, sid, slot);
+            let mut r: i32 = map_get(given, slot, 0 - 1);
+            if r < 0 {
+                r = l.reg;
+                l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 70, a: r, b: base, c: sid, imm: slot, args: [] }) };
             }
             regs = push(regs, r);
             slot = slot + 1;
         }
-        (l, d) = fresh(l);
+        d = l.reg;
         let anchor: i32 = len(l.ins);
-        l = emit_args(l, 69, d, sid, regs);
+        l = l with { reg: d + 1, ins: push(l.ins, Ins { op: 69, a: d, b: sid, c: 0, imm: 0, args: regs }) };
+        let root_slot: i32 = if k == 21 { map_get(l.sem.slots, nd.a, 0) } else { 0 };
         for field in pending_fields {
-            l = own_field(l, 1, slot_of(l, nd.a), field, anchor);
+            l = l with { owns: push(l.owns, OwnPath { kind: 1, mode: 1, root: root_slot, anchor: anchor, comp_kind: 1, comp_a: field, comp_b: 0 }) };
         }
         return (l, d);
     }
     if k == 22 || k == 23 {
         let mut regs: Sequence(i32) = [];
-        (l, regs) = lower_args(l, nd.kids);
-        (l, d) = fresh(l);
-        return (emit_args(l, if k == 22 { 67 } else { 91 }, d, 0, regs), d);
+        for kid in nd.kids {
+            let mut r: i32 = 0;
+            (l, r) = lower_expr(l, kid);
+            regs = push(regs, r);
+        }
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: if k == 22 { 67 } else { 91 }, a: d, b: 0, c: 0, imm: 0, args: regs }) }, d);
     }
     if k == 24 {
-        (l, a) = lower_expr(l, nd.a);
-        (l, b) = lower_expr(l, nd.b);
-        (l, d) = fresh(l);
-        return (emit(l, 92, d, a, b, 0), d);
+        let lna: Node = l.sem.prog.nodes[nd.a];
+        if lna.k == 4 {
+            a = l.reg;
+            l = l with { reg: a + 1, ins: push(l.ins, Ins { op: 4, a: a, b: map_get(l.sem.slots, nd.a, 0), c: 0, imm: 0, args: [] }) };
+        } else {
+            (l, a) = lower_expr(l, nd.a);
+        }
+        let lnb: Node = l.sem.prog.nodes[nd.b];
+        if lnb.k == 4 {
+            b = l.reg;
+            l = l with { reg: b + 1, ins: push(l.ins, Ins { op: 4, a: b, b: map_get(l.sem.slots, nd.b, 0), c: 0, imm: 0, args: [] }) };
+        } else if lnb.k == 1 {
+            b = l.reg;
+            l = l with { reg: b + 1, ins: push(l.ins, Ins { op: 3, a: b, b: 0, c: 0, imm: lnb.v, args: [] }) };
+        } else {
+            (l, b) = lower_expr(l, nd.b);
+        }
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 92, a: d, b: a, c: b, imm: 0, args: [] }) }, d);
     }
     if k == 27 {
         for kid in nd.kids {
@@ -289,114 +888,106 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         return (l, 0);
     }
     if k == 26 {
-        // cond; n = !cond; if n goto else; then -> slot; goto end; else -> slot; end: load slot
-        let t: i32 = type_of(l, id);
-        let slot: i32 = if t != 0 { slot_of(l, id) } else { 0 };
+        let t: i32 = map_get(l.sem.exprty, id, 0);
+        let slot: i32 = if t != 0 { map_get(l.sem.slots, id, 0) } else { 0 };
         (l, a) = lower_expr(l, nd.a);
-        let mut n: i32 = 0;
-        (l, n) = fresh(l);
-        l = emit(l, 22, n, a, 0, 0);
-        let mut else_l: i32 = 0;
-        let mut end_l: i32 = 0;
-        (l, else_l) = new_label(l);
-        (l, end_l) = new_label(l);
-        l = emit(l, 49, n, 0, 0, else_l);
+        let n: i32 = l.reg;
+        let else_l: i32 = l.labels;
+        let end_l: i32 = else_l + 1;
+        l = l with {
+            reg: n + 1,
+            labels: end_l + 1,
+            ins: push(push(l.ins, Ins { op: 22, a: n, b: a, c: 0, imm: 0, args: [] }), Ins { op: 49, a: n, b: 0, c: 0, imm: else_l, args: [] })
+        };
         let mut r: i32 = 0;
         (l, r) = lower_expr(l, nd.b);
-        if t != 0 { l = emit(l, 5, slot, r, 0, 0); }
-        l = emit(l, 48, 0, 0, 0, end_l);
-        l = emit(l, 0 - 1, 0, 0, 0, else_l);
+        if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+        l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }), Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
         (l, r) = lower_expr(l, nd.c);
-        if t != 0 { l = emit(l, 5, slot, r, 0, 0); }
-        l = emit(l, 0 - 1, 0, 0, 0, end_l);
+        if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+        l = l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
         if t == 0 { return (l, 0); }
-        (l, d) = fresh(l);
-        return (emit(l, 4, d, slot, 0, 0), d);
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: slot, c: 0, imm: 0, args: [] }) }, d);
     }
     if k == 25 {
-        return lower_match(l, id, nd);
+        let t: i32 = map_get(l.sem.exprty, id, 0);
+        let slot: i32 = if t != 0 { map_get(l.sem.slots, id, 0) } else { 0 };
+        let lna: Node = l.sem.prog.nodes[nd.a];
+        let st: i32 = if lna.k == 1 { 1 } else if lna.k == 8 { 3 } else if lna.k == 9 { 5 } else { map_get(l.sem.exprty, nd.a, 0) };
+        let is_opt: bool = l.sem.tys[st].k == 8;
+        let mut rs: i32 = 0;
+        (l, rs) = lower_expr(l, nd.a);
+        let mut opt_sid: i32 = 0;
+        let mut tag: i32 = 0;
+        if is_opt {
+            opt_sid = map_get(l.strmap, "Option", 0 - 1);
+            if opt_sid < 0 {
+                opt_sid = len(l.strings);
+                l = l with { strings: push(l.strings, "Option"), strmap: map_set(l.strmap, "Option", opt_sid) };
+            }
+            tag = l.reg;
+            l = l with { reg: tag + 1, ins: push(l.ins, Ins { op: 72, a: tag, b: rs, c: opt_sid, imm: 0, args: [] }) };
+        }
+        let end_l: i32 = l.labels;
+        l = l with { labels: end_l + 1 };
+        for arm_id in nd.kids {
+            let arm: Node = l.sem.prog.nodes[arm_id];
+            let next_l: i32 = l.labels;
+            l = l with { labels: next_l + 1 };
+            if arm.v != 0 {
+                let lit: i32 = l.reg;
+                let mut subject: i32 = rs;
+                let mut lit_ins: Ins = Ins { op: 3, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
+                if arm.v == 1 {
+                    if st == 1 {
+                        lit_ins = Ins { op: 3, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
+                    } else {
+                        lit_ins = Ins { op: 6, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
+                    }
+                } else if arm.v == 2 {
+                    lit_ins = Ins { op: 6, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
+                } else if arm.v == 5 {
+                    lit_ins = Ins { op: 1, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
+                } else {
+                    subject = tag;
+                    lit_ins = Ins { op: 3, a: lit, b: 0, c: 0, imm: if arm.v == 3 { 1 } else { 0 }, args: [] };
+                }
+                let eq: i32 = lit + 1;
+                let ne: i32 = lit + 2;
+                l = l with {
+                    reg: lit + 3,
+                    ins: push(push(push(push(l.ins, lit_ins),
+                        Ins { op: 32, a: eq, b: subject, c: lit, imm: 0, args: [] }),
+                        Ins { op: 22, a: ne, b: eq, c: 0, imm: 0, args: [] }),
+                        Ins { op: 49, a: ne, b: 0, c: 0, imm: next_l, args: [] })
+                };
+            }
+            if arm.v == 3 {
+                let v: i32 = l.reg;
+                l = l with {
+                    reg: v + 1,
+                    ins: push(push(l.ins, Ins { op: 73, a: v, b: rs, c: opt_sid, imm: 0, args: [] }),
+                        Ins { op: 5, a: map_get(l.sem.slots, arm_id, 0), b: v, c: 0, imm: 0, args: [] })
+                };
+            }
+            let mut r: i32 = 0;
+            (l, r) = lower_expr(l, arm.a);
+            if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+            l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }), Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: next_l, args: [] }) };
+        }
+        let g: i32 = l.reg;
+        l = l with {
+            reg: g + 1,
+            ins: push(push(push(l.ins, Ins { op: 2, a: g, b: 0, c: 0, imm: 0, args: [] }),
+                Ins { op: 66, a: g, b: 0, c: 0, imm: 0, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] })
+        };
+        if t == 0 { return (l, 0); }
+        d = l.reg;
+        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: slot, c: 0, imm: 0, args: [] }) }, d);
     }
     return (l, 0);
-}
-
-// Each arm tests its pattern and falls through to the next arm on mismatch;
-// after the last arm a guard trap (LOAD_BOOL 0; ASSERT) marks the unreachable
-// fall-through, as the reference compiler does.
-fn lower_match(l0: L, id: i32, nd: Node) -> (L, i32) {
-    let mut l: L = l0;
-    let t: i32 = type_of(l, id);
-    let slot: i32 = if t != 0 { slot_of(l, id) } else { 0 };
-    let st: i32 = type_of(l, nd.a);
-    let is_opt: bool = l.sem.tys[st].k == 8;
-    let mut rs: i32 = 0;
-    (l, rs) = lower_expr(l, nd.a);
-    let mut opt_sid: i32 = 0;
-    let mut tag: i32 = 0;
-    if is_opt {
-        (l, opt_sid) = symbol(l, "Option");
-        (l, tag) = fresh(l);
-        l = emit(l, 72, tag, rs, opt_sid, 0);
-    }
-    let mut end_l: i32 = 0;
-    (l, end_l) = new_label(l);
-    for arm_id in nd.kids {
-        let arm: Node = l.sem.prog.nodes[arm_id];
-        let mut next_l: i32 = 0;
-        (l, next_l) = new_label(l);
-        if arm.v != 0 {
-            // literal or Option tag comparison
-            let mut lit: i32 = 0;
-            (l, lit) = fresh(l);
-            let mut subject: i32 = rs;
-            if arm.v == 1 && st == 1 {
-                l = emit(l, 3, lit, 0, 0, arm.b);
-            } else if arm.v == 1 || arm.v == 2 {
-                l = emit(l, 6, lit, 0, 0, arm.b);
-            } else {
-                subject = tag;
-                l = emit(l, 3, lit, 0, 0, if arm.v == 3 { 1 } else { 0 });
-            }
-            let mut eq: i32 = 0;
-            (l, eq) = fresh(l);
-            l = emit(l, 32, eq, subject, lit, 0);
-            let mut ne: i32 = 0;
-            (l, ne) = fresh(l);
-            l = emit(l, 22, ne, eq, 0, 0);
-            l = emit(l, 49, ne, 0, 0, next_l);
-        }
-        if arm.v == 3 {
-            let mut v: i32 = 0;
-            (l, v) = fresh(l);
-            l = emit(l, 73, v, rs, opt_sid, 0);
-            l = emit(l, 5, slot_of(l, arm_id), v, 0, 0);
-        }
-        let mut r: i32 = 0;
-        (l, r) = lower_expr(l, arm.a);
-        if t != 0 { l = emit(l, 5, slot, r, 0, 0); }
-        l = emit(l, 48, 0, 0, 0, end_l);
-        l = emit(l, 0 - 1, 0, 0, 0, next_l);
-    }
-    let mut g: i32 = 0;
-    (l, g) = fresh(l);
-    l = emit(l, 2, g, 0, 0, 0);
-    l = emit(l, 66, g, 0, 0, 0);
-    l = emit(l, 0 - 1, 0, 0, 0, end_l);
-    if t == 0 { return (l, 0); }
-    let mut d: i32 = 0;
-    (l, d) = fresh(l);
-    return (emit(l, 4, d, slot, 0, 0), d);
-}
-
-fn lower_block(l0: L, id: i32) -> L {
-    let nd: Node = l0.sem.prog.nodes[id];
-    let mut l: L = l0;
-    for kid in nd.kids {
-        l = lower_stmt(l, kid);
-        if always_returns(l.sem.prog.nodes, kid) {
-            return l;
-        }
-    }
-    return l;
 }
 
 fn lower_stmt(l0: L, id: i32) -> L {
@@ -404,24 +995,53 @@ fn lower_stmt(l0: L, id: i32) -> L {
     let mut l: L = l0;
     let mut r: i32 = 0;
     let k: i32 = nd.k;
+    if q3_required_kind(l.sem, id) != "" {
+        l = l with { proofs: push(l.proofs, q4_phase_proof(l.sem, id)) };
+    }
+    if k == 12 || k == 13 || k == 17 || k == 42 {
+        l = l with { control_type_checks: push(l.control_type_checks, q4_control_type_check(l.sem, id)) };
+    }
     if k == 10 || k == 11 {
-        (l, r) = lower_expr(l, nd.a);
-        if k == 11 {
-            l = own_root(l, 1, slot_of(l, id), len(l.ins));
+        if k == 10 && nd.v < 0 {
+            l = l with { binding_inferences: push(l.binding_inferences, q4_binding_inference(l.sem, id)) };
         }
-        return emit(l, 5, slot_of(l, id), r, 0, 0);
+        let lna: Node = l.sem.prog.nodes[nd.a];
+        if lna.k == 1 || lna.k == 8 {
+            r = l.reg;
+            l = l with { reg: r + 1, ins: push(l.ins, Ins { op: if lna.k == 1 { 3 } else { 6 }, a: r, b: 0, c: 0, imm: lna.v, args: [] }) };
+        } else if lna.k == 4 {
+            r = l.reg;
+            l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 4, a: r, b: map_get(l.sem.slots, nd.a, 0), c: 0, imm: 0, args: [] }) };
+        } else if lna.k == 2 {
+            r = l.reg;
+            l = l with { reg: r + 1, ins: push(l.ins, Ins { op: 2, a: r, b: 0, c: 0, imm: lna.v, args: [] }) };
+        } else {
+            (l, r) = lower_expr(l, nd.a);
+        }
+        let sl: i32 = map_get(l.sem.slots, id, 0);
+        if k == 11 {
+            l = l with { owns: push(l.owns, OwnPath { kind: 1, mode: 0, root: sl, anchor: len(l.ins), comp_kind: 0 - 1, comp_a: 0, comp_b: 0 }) };
+        }
+        return l with { ins: push(l.ins, Ins { op: 5, a: sl, b: r, c: 0, imm: 0, args: [] }) };
     }
     if k == 40 || k == 41 {
+        l = l with { proofs: push(l.proofs, q4_tuple_shape_proof(l.sem, id)) };
+        for link in q4_tuple_inference_links(l.sem, id) {
+            l = l with { tuple_inferences: push(l.tuple_inferences, link) };
+        }
         (l, r) = lower_expr(l, nd.a);
         let mut i: i32 = 0;
         for name_id in nd.kids {
-            let mut e: i32 = 0;
-            (l, e) = fresh(l);
-            l = emit(l, 68, e, r, 0, i);
-            let anchor: i32 = len(l.ins);
-            l = emit(l, 5, slot_of(l, name_id), e, 0, 0);
+            let e: i32 = l.reg;
+            let sl: i32 = map_get(l.sem.slots, name_id, 0);
+            let anchor: i32 = len(l.ins) + 1;
+            l = l with {
+                reg: e + 1,
+                ins: push(push(l.ins, Ins { op: 68, a: e, b: r, c: 0, imm: i, args: [] }),
+                    Ins { op: 5, a: sl, b: e, c: 0, imm: 0, args: [] })
+            };
             if k == 41 {
-                l = own_root(l, 1, slot_of(l, name_id), anchor);
+                l = l with { owns: push(l.owns, OwnPath { kind: 1, mode: 0, root: sl, anchor: anchor, comp_kind: 0 - 1, comp_a: 0, comp_b: 0 }) };
             }
             i = i + 1;
         }
@@ -429,7 +1049,7 @@ fn lower_stmt(l0: L, id: i32) -> L {
     }
     if k == 17 {
         (l, r) = lower_expr(l, nd.a);
-        return emit(l, 66, r, 0, 0, 0);
+        return l with { ins: push(l.ins, Ins { op: 66, a: r, b: 0, c: 0, imm: 0, args: [] }) };
     }
     if k == 16 {
         (l, r) = lower_expr(l, nd.a);
@@ -437,142 +1057,199 @@ fn lower_stmt(l0: L, id: i32) -> L {
     }
     if k == 14 {
         if nd.a < 0 {
-            return emit(l, 65, 0, 0, 0, 0);
+            return l with { ins: push(l.ins, Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }) };
         }
         (l, r) = lower_expr(l, nd.a);
-        return emit(l, 65, 1, r, 0, 0);
+        return l with { ins: push(l.ins, Ins { op: 65, a: 1, b: r, c: 0, imm: 0, args: [] }) };
     }
     if k == 12 {
-        // cond; n = !cond; if n goto else; then; [goto end]; else: ...; end:
         (l, r) = lower_expr(l, nd.a);
-        let mut n: i32 = 0;
-        (l, n) = fresh(l);
-        l = emit(l, 22, n, r, 0, 0);
-        let mut else_l: i32 = 0;
-        let mut end_l: i32 = 0;
-        (l, else_l) = new_label(l);
-        (l, end_l) = new_label(l);
-        l = emit(l, 49, n, 0, 0, else_l);
-        l = lower_block(l, nd.b);
-        if nd.c >= 0 {
-            // a then-branch that always returns needs no jump over the else-branch
-            if !always_returns(l.sem.prog.nodes, nd.b) {
-                l = emit(l, 48, 0, 0, 0, end_l);
+        let n: i32 = l.reg;
+        let else_l: i32 = l.labels;
+        let end_l: i32 = else_l + 1;
+        l = l with {
+            reg: n + 1,
+            labels: end_l + 1,
+            ins: push(push(l.ins, Ins { op: 22, a: n, b: r, c: 0, imm: 0, args: [] }),
+                Ins { op: 49, a: n, b: 0, c: 0, imm: else_l, args: [] })
+        };
+        let kids: Sequence(i32) = l.sem.prog.nodes[nd.b].kids;
+        let mut ki: i32 = 0;
+        while ki < len(kids) {
+            let kid: i32 = kids[ki];
+            l = lower_stmt(l, kid);
+            let kn: Node = l.sem.prog.nodes[kid];
+            if kn.k == 14 { break; }
+            if kn.k == 12 {
+                if kn.c >= 0 {
+                    if always_returns(l.sem.prog.nodes, kid) { break; }
+                }
+            } else if kn.k == 15 {
+                if always_returns(l.sem.prog.nodes, kid) { break; }
             }
-            l = emit(l, 0 - 1, 0, 0, 0, else_l);
-            if l.sem.prog.nodes[nd.c].k == 12 {
-                l = lower_stmt(l, nd.c);
-            } else {
-                l = lower_block(l, nd.c);
-            }
-            return emit(l, 0 - 1, 0, 0, 0, end_l);
+            ki = ki + 1;
         }
-        return emit(l, 0 - 1, 0, 0, 0, else_l);
+        if nd.c >= 0 {
+            if !always_returns(l.sem.prog.nodes, nd.b) {
+                l = l with { ins: push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+            }
+            l = l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
+            let nc: Node = l.sem.prog.nodes[nd.c];
+            if nc.k == 15 {
+                let kids2: Sequence(i32) = nc.kids;
+                let mut ki2: i32 = 0;
+                while ki2 < len(kids2) {
+                    let kid: i32 = kids2[ki2];
+                    l = lower_stmt(l, kid);
+                    let kn: Node = l.sem.prog.nodes[kid];
+                    if kn.k == 14 { break; }
+                    if kn.k == 12 {
+                        if kn.c >= 0 {
+                            if always_returns(l.sem.prog.nodes, kid) { break; }
+                        }
+                    } else if kn.k == 15 {
+                        if always_returns(l.sem.prog.nodes, kid) { break; }
+                    }
+                    ki2 = ki2 + 1;
+                }
+            } else {
+                l = lower_stmt(l, nd.c);
+            }
+            return l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+        }
+        return l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
     }
     if k == 13 {
-        // top: cond; n = !cond; if n goto end; body; goto top; end:
-        let mut top_l: i32 = 0;
-        let mut end_l: i32 = 0;
-        (l, top_l) = new_label(l);
-        (l, end_l) = new_label(l);
-        l = emit(l, 0 - 1, 0, 0, 0, top_l);
+        let top_l: i32 = l.labels;
+        let end_l: i32 = top_l + 1;
+        l = l with { labels: end_l + 1, ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: top_l, args: [] }) };
         (l, r) = lower_expr(l, nd.a);
-        let mut n: i32 = 0;
-        (l, n) = fresh(l);
-        l = emit(l, 22, n, r, 0, 0);
-        l = emit(l, 49, n, 0, 0, end_l);
+        let n: i32 = l.reg;
         let saved_b: Sequence(i32) = l.breaks;
         let saved_c: Sequence(i32) = l.conts;
-        l = lower_block(l with { breaks: push(l.breaks, end_l), conts: push(l.conts, top_l) }, nd.b);
-        l = emit(l with { breaks: saved_b, conts: saved_c }, 48, 0, 0, 0, top_l);
-        return emit(l, 0 - 1, 0, 0, 0, end_l);
+        l = l with {
+            reg: n + 1,
+            breaks: push(l.breaks, end_l),
+            conts: push(l.conts, top_l),
+            ins: push(push(l.ins, Ins { op: 22, a: n, b: r, c: 0, imm: 0, args: [] }),
+                Ins { op: 49, a: n, b: 0, c: 0, imm: end_l, args: [] })
+        };
+        let kids: Sequence(i32) = l.sem.prog.nodes[nd.b].kids;
+        let mut ki: i32 = 0;
+        while ki < len(kids) {
+            let kid: i32 = kids[ki];
+            l = lower_stmt(l, kid);
+            let kn: Node = l.sem.prog.nodes[kid];
+            if kn.k == 14 { break; }
+            if kn.k == 12 {
+                if kn.c >= 0 {
+                    if always_returns(l.sem.prog.nodes, kid) { break; }
+                }
+            } else if kn.k == 15 {
+                if always_returns(l.sem.prog.nodes, kid) { break; }
+            }
+            ki = ki + 1;
+        }
+        return l with {
+            breaks: saved_b,
+            conts: saved_c,
+            ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: top_l, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] })
+        };
     }
     if k == 42 {
-        // $seq = e; $idx = 0; top: if !($idx < len($seq)) goto end;
-        // x = $seq[$idx]; body; step: $idx = $idx + 1; goto top; end:
-        let s_seq: i32 = slot_of(l, id);
+        let s_seq: i32 = map_get(l.sem.slots, id, 0);
         let s_idx: i32 = s_seq + 1;
         let s_var: i32 = s_seq + 2;
         (l, r) = lower_expr(l, nd.a);
-        l = emit(l, 5, s_seq, r, 0, 0);
-        let mut z: i32 = 0;
-        (l, z) = fresh(l);
-        l = emit(l, 3, z, 0, 0, 0);
-        l = emit(l, 5, s_idx, z, 0, 0);
-        let mut top_l: i32 = 0;
-        let mut step_l: i32 = 0;
-        let mut end_l: i32 = 0;
-        (l, top_l) = new_label(l);
-        (l, step_l) = new_label(l);
-        (l, end_l) = new_label(l);
-        l = emit(l, 0 - 1, 0, 0, 0, top_l);
-        let mut ri: i32 = 0;
-        (l, ri) = fresh(l);
-        l = emit(l, 4, ri, s_idx, 0, 0);
-        let mut rq: i32 = 0;
-        (l, rq) = fresh(l);
-        l = emit(l, 4, rq, s_seq, 0, 0);
-        let mut rn: i32 = 0;
-        (l, rn) = fresh(l);
-        l = emit(l, 95, rn, rq, 0, 0);
-        let mut rc: i32 = 0;
-        (l, rc) = fresh(l);
-        l = emit(l, 34, rc, ri, rn, 0);
-        let mut nc: i32 = 0;
-        (l, nc) = fresh(l);
-        l = emit(l, 22, nc, rc, 0, 0);
-        l = emit(l, 49, nc, 0, 0, end_l);
-        let mut rv: i32 = 0;
-        (l, rv) = fresh(l);
-        l = emit(l, 92, rv, rq, ri, 0);
-        l = emit(l, 5, s_var, rv, 0, 0);
+        let z: i32 = l.reg;
+        let top_l: i32 = l.labels;
+        let step_l: i32 = top_l + 1;
+        let end_l: i32 = top_l + 2;
+        let ri: i32 = z + 1;
+        let rq: i32 = z + 2;
+        let rn: i32 = z + 3;
+        let rc: i32 = z + 4;
+        let nc: i32 = z + 5;
+        let rv: i32 = z + 6;
         let saved_b: Sequence(i32) = l.breaks;
         let saved_c: Sequence(i32) = l.conts;
-        l = lower_block(l with { breaks: push(l.breaks, end_l), conts: push(l.conts, step_l) }, nd.b);
-        l = emit(l with { breaks: saved_b, conts: saved_c }, 0 - 1, 0, 0, 0, step_l);
-        let mut ri2: i32 = 0;
-        (l, ri2) = fresh(l);
-        l = emit(l, 4, ri2, s_idx, 0, 0);
-        let mut one: i32 = 0;
-        (l, one) = fresh(l);
-        l = emit(l, 3, one, 0, 0, 1);
-        let mut nx: i32 = 0;
-        (l, nx) = fresh(l);
-        l = emit(l, 7, nx, ri2, one, 0);
-        l = emit(l, 5, s_idx, nx, 0, 0);
-        l = emit(l, 48, 0, 0, 0, top_l);
-        return emit(l, 0 - 1, 0, 0, 0, end_l);
+        l = l with {
+            reg: z + 7,
+            labels: top_l + 3,
+            breaks: push(l.breaks, end_l),
+            conts: push(l.conts, step_l),
+            ins: push(push(push(push(push(push(push(push(push(push(push(push(l.ins,
+                Ins { op: 5, a: s_seq, b: r, c: 0, imm: 0, args: [] }),
+                Ins { op: 3, a: z, b: 0, c: 0, imm: 0, args: [] }),
+                Ins { op: 5, a: s_idx, b: z, c: 0, imm: 0, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: top_l, args: [] }),
+                Ins { op: 4, a: ri, b: s_idx, c: 0, imm: 0, args: [] }),
+                Ins { op: 4, a: rq, b: s_seq, c: 0, imm: 0, args: [] }),
+                Ins { op: 95, a: rn, b: rq, c: 0, imm: 0, args: [] }),
+                Ins { op: 34, a: rc, b: ri, c: rn, imm: 0, args: [] }),
+                Ins { op: 22, a: nc, b: rc, c: 0, imm: 0, args: [] }),
+                Ins { op: 49, a: nc, b: 0, c: 0, imm: end_l, args: [] }),
+                Ins { op: 92, a: rv, b: rq, c: ri, imm: 0, args: [] }),
+                Ins { op: 5, a: s_var, b: rv, c: 0, imm: 0, args: [] })
+        };
+        let kids: Sequence(i32) = l.sem.prog.nodes[nd.b].kids;
+        let mut ki: i32 = 0;
+        while ki < len(kids) {
+            let kid: i32 = kids[ki];
+            l = lower_stmt(l, kid);
+            let kn: Node = l.sem.prog.nodes[kid];
+            if kn.k == 14 { break; }
+            if kn.k == 12 {
+                if kn.c >= 0 {
+                    if always_returns(l.sem.prog.nodes, kid) { break; }
+                }
+            } else if kn.k == 15 {
+                if always_returns(l.sem.prog.nodes, kid) { break; }
+            }
+            ki = ki + 1;
+        }
+        let ri2: i32 = l.reg;
+        let one: i32 = ri2 + 1;
+        let nx: i32 = ri2 + 2;
+        return l with {
+            reg: ri2 + 3,
+            breaks: saved_b,
+            conts: saved_c,
+            ins: push(push(push(push(push(push(push(l.ins,
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: step_l, args: [] }),
+                Ins { op: 4, a: ri2, b: s_idx, c: 0, imm: 0, args: [] }),
+                Ins { op: 3, a: one, b: 0, c: 0, imm: 1, args: [] }),
+                Ins { op: 7, a: nx, b: ri2, c: one, imm: 0, args: [] }),
+                Ins { op: 5, a: s_idx, b: nx, c: 0, imm: 0, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: top_l, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] })
+        };
     }
     if k == 18 {
-        return emit(l, 48, 0, 0, 0, l.breaks[len(l.breaks) - 1]);
+        return l with { ins: push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: l.breaks[len(l.breaks) - 1], args: [] }) };
     }
     if k == 19 {
-        return emit(l, 48, 0, 0, 0, l.conts[len(l.conts) - 1]);
+        return l with { ins: push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: l.conts[len(l.conts) - 1], args: [] }) };
     }
-    return lower_block(l, id);
-}
-
-// SIG0 callable value family byte (sm-format CallableValueFamily).
-fn family_byte(s: Sem, t: i32) -> i32 {
-    let k: i32 = s.tys[t].k;
-    return match k {
-        1 => { 7 }
-        2 => { 2 }
-        3 => { 8 }
-        4 => { 3 }
-        5 => { 4 }
-        6 => { 11 }
-        7 => { 12 }
-        8 => { 13 }
-        9 => { 5 }
-        _ => { 14 }
-    };
+    for kid in nd.kids {
+        l = lower_stmt(l, kid);
+        let kn: Node = l.sem.prog.nodes[kid];
+        if kn.k == 14 { return l; }
+        if kn.k == 12 {
+            if kn.c >= 0 {
+                if always_returns(l.sem.prog.nodes, kid) { return l; }
+            }
+        } else if kn.k == 15 {
+            if always_returns(l.sem.prog.nodes, kid) { return l; }
+        }
+    }
+    return l;
 }
 
 fn lower_function(sem: Sem, fi: i32) -> FnIr {
     let f: Func = sem.prog.funcs[fi];
     let names: Sequence(text) = sem.locals[fi];
-    // locals take the first string-table entries: slot k -> symbol k
     let mut strings: Sequence(text) = [];
     let mut k: i32 = 0;
     for nm in names {
@@ -580,20 +1257,65 @@ fn lower_function(sem: Sem, fi: i32) -> FnIr {
         k = k + 1;
     }
     let ptys: Sequence(i32) = sem.fptypes[fi];
-    let mut l: L = L { sem: sem, ins: [], reg: len(ptys), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [], owns: [] };
-    // prologue: parameters arrive in r0..; store them into their slots
+    let mut ins: Sequence(Ins) = [];
     let mut p: i32 = 0;
     while p < len(ptys) {
-        l = emit(l, 5, p, p, 0, 0);
+        ins = push(ins, Ins { op: 5, a: p, b: p, c: 0, imm: 0, args: [] });
         p = p + 1;
     }
-    l = lower_block(l, f.body);
-    if sem.frets[fi] == 0 && !always_returns(sem.prog.nodes, f.body) {
-        l = emit(l, 65, 0, 0, 0, 0);
+    let mut l: L = L { sem: sem, ins: ins, reg: len(ptys), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [], owns: [], proofs: [], tuple_inferences: [], binding_inferences: [], control_type_checks: [] };
+    let kids: Sequence(i32) = sem.prog.nodes[f.body].kids;
+    let mut ki: i32 = 0;
+    while ki < len(kids) {
+        let kid: i32 = kids[ki];
+        l = lower_stmt(l, kid);
+        let kn: Node = sem.prog.nodes[kid];
+        if kn.k == 14 { break; }
+        if kn.k == 12 {
+            if kn.c >= 0 {
+                if always_returns(sem.prog.nodes, kid) { break; }
+            }
+        } else if kn.k == 15 {
+            if always_returns(sem.prog.nodes, kid) { break; }
+        }
+        ki = ki + 1;
+    }
+    if sem.frets[fi] == 0 {
+        if !always_returns(sem.prog.nodes, f.body) {
+            l = l with { ins: push(l.ins, Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }) };
+        }
+    }
+    if len(l.ins) > 0 {
+        // A terminal exhaustive match may end with a jump label.
+        // Jumping to code EOF is invalid SemCode; materialize a valid successor.
+        if l.ins[len(l.ins) - 1].op == 0 - 1 {
+            if sem.frets[fi] == 0 {
+                l = l with { ins: push(l.ins, Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }) };
+            } else {
+                let g: i32 = l.reg;
+                l = l with { reg: g + 1,
+                    ins: push(push(l.ins, Ins { op: 2, a: g, b: 0, c: 0, imm: 0, args: [] }),
+                              Ins { op: 66, a: g, b: 0, c: 0, imm: 0, args: [] }) };
+            }
+        }
     }
     let mut fams: Sequence(i32) = [];
     for t in ptys {
-        fams = push(fams, family_byte(sem, t));
+        let tk: i32 = sem.tys[t].k;
+        let fam: i32 = match tk {
+            1 => { 7 }
+            2 => { 2 }
+            3 => { 8 }
+            4 => { 3 }
+            5 => { 4 }
+            6 => { 11 }
+            7 => { 12 }
+            8 => { 13 }
+            9 => { 5 }
+            10 => { 1 }
+            _ => { 14 }
+        };
+        fams = push(fams, fam);
     }
-    return FnIr { name: f.name, families: fams, strings: l.strings, ins: l.ins, owns: l.owns };
+    return FnIr { name: f.name, families: fams, strings: l.strings, ins: l.ins, owns: l.owns, proofs: l.proofs, tuple_inferences: l.tuple_inferences, binding_inferences: l.binding_inferences, control_type_checks: l.control_type_checks };
 }
