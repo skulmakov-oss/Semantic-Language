@@ -1,10 +1,10 @@
 # Q3.10-A — Opaque VerifiedEvidence Contract Candidate
 
-**Status:** DESIGN CANDIDATE / OWNER DECISION REQUIRED / NOT IMPLEMENTED  
-**Date:** 2026-10-31  
-**Issue:** #47  
-**Predecessor:** Draft PR #46 at 759ae2f5d327f2aac82f004cead552eb8be49229, stacked on Draft PR #45 at 972066b25d2201344747becff0a0d6abfeb0bf4d  
-**Canonical design starting point:** docs/architecture/EVIDENCE_ADT_DESIGN_Q3_10.md  
+**Status:** DESIGN CANDIDATE / OWNER DECISION REQUIRED / NOT IMPLEMENTED
+**Date:** 2026-10-31
+**Issue:** #47
+**Predecessor:** Draft PR #46 at 759ae2f5d327f2aac82f004cead552eb8be49229, stacked on Draft PR #45 at 972066b25d2201344747becff0a0d6abfeb0bf4d
+**Canonical design starting point:** docs/architecture/EVIDENCE_ADT_DESIGN_Q3_10.md
 **Authority:** Semantic-Language AGENTS.md, active Harness, upstream skulmakov-oss/Semantic#1910.
 
 This is a proposal for owner review, not an accepted language contract or proof of security. In particular, adding private-looking source declarations would **not** by itself deliver Q3.10.
