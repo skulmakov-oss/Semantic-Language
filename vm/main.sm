@@ -50,10 +50,10 @@ fn quad_branch4(q: Quad) -> i32 {
 // N and S are traps for ordinary control and never authorize an effect.
 fn quad_assert(q: Quad) -> i32 {
     if q.truth {
-        if q.falsity { return 4; }
+        if q.falsity { return 3; }
         return 0;
     }
-    if q.falsity { return 3; }
+    if q.falsity { return 1; }
     return 2;
 }
 
@@ -69,14 +69,14 @@ fn valid_target(program: Sequence(Instr), target: i32) -> bool {
 // the stored machine Quad; its immediate value is used only by LOAD.
 fn step(program: Sequence(Instr), m: Machine) -> Machine {
     if m.halted { return m; }
-    if m.pc < 0 || m.pc >= len(program) { return trap(m, 4); }
+    if m.pc < 0 || m.pc >= len(program) { return trap(m, 100); }
     let i: Instr = program[m.pc];
     if i.op == 0 { return m with { halted: true, phase: 1, pc: m.pc + 1 }; }
     if i.op == 1 { return m with { value: i.value, pc: m.pc + 1 }; }
     if i.op == 2 {
         let branch: i32 = quad_branch4(m.value);
         let target: i32 = if branch == 0 { i.n_target } else if branch == 1 { i.f_target } else if branch == 2 { i.t_target } else { i.s_target };
-        if !valid_target(program, target) { return trap(m, 4); }
+        if !valid_target(program, target) { return trap(m, 100); }
         return m with { pc: target };
     }
     if i.op == 3 {
@@ -84,7 +84,7 @@ fn step(program: Sequence(Instr), m: Machine) -> Machine {
         if result == 0 { return m with { pc: m.pc + 1 }; }
         return trap(m, result);
     }
-    return trap(m, 5);
+    return trap(m, 101);
 }
 
 fn run(program: Sequence(Instr), initial: Quad) -> Machine {
@@ -94,7 +94,7 @@ fn run(program: Sequence(Instr), initial: Quad) -> Machine {
         m = step(program, m);
         fuel = fuel + 1;
     }
-    if !m.halted { return trap(m, 6); }
+    if !m.halted { return trap(m, 102); }
     return m;
 }
 
@@ -104,9 +104,9 @@ fn main() {
     assert(quad_branch4(quad_t()) == 2);
     assert(quad_branch4(quad_s()) == 3);
     assert(quad_assert(quad_t()) == 0);
-    assert(quad_assert(quad_f()) == 3);
+    assert(quad_assert(quad_f()) == 1);
     assert(quad_assert(quad_n()) == 2);
-    assert(quad_assert(quad_s()) == 4);
+    assert(quad_assert(quad_s()) == 3);
     assert(quad_join(quad_t(), quad_f()).truth);
     assert(quad_join(quad_t(), quad_f()).falsity);
     assert(!quad_meet(quad_t(), quad_f()).truth);
@@ -162,6 +162,7 @@ fn main() {
     let stopped: Machine = run(assert_stop, quad_n());
     assert(stopped.phase == 2);
     assert(stopped.trap != 0);
+    assert(stopped.trap != bad.trap);
     assert(stopped.pc == 1);
 
     let unsupported: Sequence(Instr) = [
@@ -170,6 +171,7 @@ fn main() {
     let rejected: Machine = run(unsupported, quad_n());
     assert(rejected.phase == 2);
     assert(rejected.trap != 0);
+    assert(rejected.trap != bad.trap);
     assert(rejected.pc == 0);
 
     return;
