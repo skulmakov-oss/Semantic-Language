@@ -2,6 +2,39 @@
 
 This repository is a bootstrap and self-hosting project. Changes are evaluated first by contract preservation, not by amount of code ported.
 
+## Primary engineering rule — Semantic Capability-First
+
+**The implementation MUST exploit all applicable, admitted capabilities of Semantic.**
+Design compiler logic as native Semantic, not as a translation of conventional Boolean-only,
+Rust, Python or C architecture that discards Semantic's expressive model.
+
+Before significant design or implementation changes, identify the exact pinned-C0 source
+capabilities relevant to the task (types, quad operators, pattern matching, deterministic
+collections, records/ADTs, control flow, text/binary support, or other admitted facilities).
+Use them directly when they express the intended semantics. Do not replace supported
+language constructs with custom emulation, lossy `bool` flags, hidden host/compiler logic
+or redundant encodings merely because those patterns are familiar.
+
+- **Evidence is not a Boolean:** when a proposition can have positive, negative, missing or
+  conflicting witnesses, preserve N/F/T/S; distinguish knowledge and truth operations,
+  retain proposition/witness origins, and never treat N as F or S as unconditional T.
+  Evidence state does not itself establish provenance authenticity or authorization.
+- **Binary facts stay binary:** membership, lexical mode and structural validity may be
+  correctly represented with `bool`. Do not fabricate quad witnesses or replace every
+  `bool` for cosmetic consistency.
+- **No invented capability:** a Rust-only primitive, design proposal or experimental
+  feature is not automatically available to the pinned Semantic source path. If a
+  necessary capability is missing, record the gap and qualify it upstream under separate
+  owner authorization; do not patch it through private bootstrap host behavior.
+- **Prove the choice:** for meaningful changes, record the native features considered,
+  the semantic role they fill, any deliberate exception, and positive/negative/boundary
+  tests against the exact pinned C0 with verifier/VM admission as applicable.
+
+"Full use" means **no artificial restriction of Semantic's applicable expressiveness**,
+not forcing unrelated features into a function. It never overrides canonical specifications,
+bootstrap quotas, the frozen C0 pin, the active Harness, or separate owner decisions.
+See [the canonical architecture invariant](docs/ARCHITECTURE.md#31-semantic-capability-first-invariant).
+
 ## Before implementation
 
 For every non-trivial bootstrap change, identify:

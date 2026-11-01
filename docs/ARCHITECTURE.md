@@ -58,6 +58,49 @@ integer/bit completeness, deterministic collections, executable generics, module
 binary I/O), that capability is added upstream first and qualified there. It is never smuggled
 into bootstrap-only Rust glue. See [OWNERSHIP.md](./OWNERSHIP.md).
 
+## 3.1. Semantic capability-first invariant
+
+**Primary implementation invariant:** the compiler `S`, and other Semantic-written
+components of this repository, MUST fully use all semantically relevant capabilities
+that are actually available and admitted in the exact pinned Semantic source/runtime
+contract. Language design must drive implementation; familiar limitations of
+Boolean-only or host-language compiler patterns must not be imposed on Semantic.
+
+The engineering decision sequence is:
+
+1. Identify the semantic domain and the exact pinned-C0 source-level capabilities it
+   admits. Prefer native typed operations, four-state logic, deterministic collections,
+   records/ADTs, matching, text/binary operations and other relevant facilities when
+   they precisely express that domain. Never infer availability from a Rust API, an
+   unmerged experimental PR or a design-only specification.
+2. Where information about **one proposition** can be absent, negative, positive or
+   contradictory, preserve the four states N/F/T/S and the distinction between truth
+   operations and knowledge operations. Do not collapse N into F, S into T, or convert
+   evidence into a Boolean authorization decision without an explicit validated policy.
+   Evidence, witness identity, provenance authenticity and permission are distinct.
+3. Keep truly binary facts binary: token classification, name membership and concrete
+   structural checks can correctly use `bool`. Artificially manufacturing negative
+   witnesses or mandating `quad` for every predicate violates this rule.
+4. Reuse existing admitted Semantic semantics rather than building a second hidden
+   implementation in Rust, Python, host callbacks, ad hoc binary flags or private
+   format encodings. Missing language/runtime functionality belongs upstream under
+   an explicit contract and owner authorization.
+5. Preserve deterministic outputs, admission, canonical SemCode, diagnostics, source
+   provenance and bootstrap invariants. Improve performance *within* proven semantics,
+   not by deleting checks or increasing quotas to conceal an architectural mismatch.
+
+For substantive compiler changes, qualification must record which native capabilities
+were used, why they fit their semantic roles, which alternatives were rejected and
+what positive, negative, boundary and adversarial tests demonstrate the behavior.
+An intentional exception must be justified and reviewed; "the usual Boolean compiler
+pattern" is not sufficient justification.
+
+**Scope:** "fully use Semantic" means do not artificially restrict its **applicable**
+expressiveness. It does not require every language feature in every function and does
+not amend the upstream language specification, active Harness, C0 reference, frozen
+Bootstrap Contract, verifier/VM authority or the C1/C2 proof. Experimental quad-native
+compiler work and future opaque Evidence designs remain separately qualified.
+
 ## 4. Host / runtime boundary
 
 The host performs mechanics; Semantic performs compiler meaning. The host may move declared
