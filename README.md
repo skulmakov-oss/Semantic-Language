@@ -9,6 +9,16 @@ This repository has one purpose:
 > Produce and qualify a compiler written substantially in Semantic until it reaches the
 > **C0 → C1 → C2 self-hosting fixed point**.
 
+## Primary engineering rule — Semantic Capability-First
+
+**Use the full power of Semantic.** The compiler must use every *semantically relevant, actually
+admitted* native language capability rather than reproducing a Boolean-only or host-language
+architecture by habit. Preserve four-state evidence where the domain requires N/F/T/S;
+retain `bool` for genuinely binary facts. This is a design and qualification obligation,
+not a demand to use every feature in every function. See
+[the architecture invariant](docs/ARCHITECTURE.md#31-semantic-capability-first-invariant)
+and [the contribution rule](CONTRIBUTING.md#primary-engineering-rule--semantic-capability-first).
+
 ## What this repository is
 
 - The home of compiler source `S` written in Semantic (lexer, parser, semantic analysis, IR,
