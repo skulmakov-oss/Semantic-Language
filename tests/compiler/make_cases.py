@@ -521,7 +521,19 @@ fn main() {
     return;
 }
 """)
-case("n24_unsupported_type_annotation", "reject:unsupported:type 'quad'", """
+# The bootstrap subset does not admit f64 even though the pinned C0 compiler does.
+# Keep n24 a genuine subset rejection. Quad is tested separately as an admitted
+# experimental compiler surface; do not redefine the frozen Bootstrap Contract v2.
+case("n24_unsupported_type_annotation", "reject:unsupported:type 'f64'", """
+fn f(q: f64) {
+    return;
+}
+
+fn main() {
+    return;
+}
+""")
+case("p24_quad_type_annotation", "ok", """
 fn f(q: quad) {
     return;
 }
