@@ -1,0 +1,32 @@
+fn main() {
+    let mut sum: i32 = 0;
+    let mut i: i32 = 1;
+    while i <= 100 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    let mut odd: i32 = 0;
+    let mut j: i32 = 0;
+    while true {
+        j = j + 1;
+        if j > 20 {
+            break;
+        }
+        if j % 2 == 0 {
+            continue;
+        }
+        odd = odd + j;
+    }
+    let mut grid: i32 = 0;
+    let mut r: i32 = 0;
+    while r < 5 {
+        let mut c: i32 = 0;
+        while c < 5 {
+            grid = grid + r * c;
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    print(to_text(sum) + " " + to_text(odd) + " " + to_text(grid));
+    return;
+}

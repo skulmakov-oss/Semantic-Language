@@ -1,0 +1,18 @@
+fn fact(n: i32) -> i32 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * fact(n - 1);
+}
+
+fn sum_to(n: i32) -> i32 {
+    if n == 0 {
+        return 0;
+    }
+    return n + sum_to(n - 1);
+}
+
+fn main() {
+    print(to_text(fact(10)) + " " + to_text(sum_to(200)));
+    return;
+}

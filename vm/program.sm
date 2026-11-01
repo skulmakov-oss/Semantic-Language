@@ -1,0 +1,118 @@
+// program: the decoded, executable form of a SemCode artifact.
+//
+// The loader decodes the wire format once into this representation; the
+// engine never looks at artifact bytes. Differences from the wire format:
+//   - one global instruction array for all functions (Ins), with dense
+//     operation codes grouped by operand shape (table below), not opcode bytes;
+//   - branch targets are instruction indexes, not byte offsets;
+//   - call targets are function indexes (>= 0) or builtin codes (< 0);
+//   - LOAD_VAR / STORE_VAR name a frame slot (the first string-table entry
+//     with the same text), so locals need no string lookups;
+//   - variable-length operand lists live in one pool (ap), referenced by
+//     (d = start, e = count);
+//   - texts (literals already unquoted, type and variant names) live in tp,
+//     u32 immediates in up.
+//
+// Operation codes (a, b, c, d, e, f are Ins fields):
+//    1 LOAD_VAR    a dst, b slot          2 STORE_VAR  a slot, b src
+//    3 LOAD_I32    a dst, b value         4 JMP_IF     a cond, b target
+//    5 JMP         a target               6 LOAD_BOOL  a dst, b 0/1
+//    7 LOAD_U32    a dst, b up index      8 LOAD_TEXT  a dst, b tp index
+//    9 LOAD_Q      a dst, b 0..3
+//   10..16 ADD SUB MUL DIV MOD LT LE (i32)   a dst, b lhs, c rhs
+//   17 CMP_EQ  18 CMP_NE                      a dst, b lhs, c rhs
+//   20..26 ADD SUB MUL DIV MOD LT LE (u32)   a dst, b lhs, c rhs
+//   30 BOOL_AND  31 BOOL_OR  32 BOOL_NOT (a dst, b src)
+//   33 Q_AND 34 Q_OR 35 Q_NOT 36 Q_IMPL           (lattice family)
+//   37 QT_AND 38 QT_OR 39 QT_NOT 40 QT_IMPL       (QTruth family)
+//   50 CALL       a has_dst, b dst, c target, d/e args
+//   51 RET        a has_src, b src
+//   52 ASSERT     a cond                53 CONCAT  a dst, b lhs, c rhs
+//   60 MAKE_TUPLE a dst, d/e items      61 TUPLE_GET  a dst, b src, c index
+//   62 MAKE_RECORD a dst, b name, d/e   63 RECORD_GET a dst, b src, c name, d index
+//   64 MAKE_ADT   a dst, b type, c variant, f tag, d/e payload
+//   65 ADT_TAG    a dst, b src, c type  66 ADT_GET    a dst, b src, c type, d index
+//   67 MAKE_SEQUENCE a dst, d/e         68 SEQUENCE_GET a dst, b src, c index reg
+//   69 SEQUENCE_LEN 70 SEQUENCE_IS_EMPTY (a dst, b src)
+//   71 SEQUENCE_CONTAINS 72 SEQUENCE_PUSH 73 SEQUENCE_PREPEND (a dst, b seq, c val)
+//   74 SEQUENCE_POP a dst, b src
+//   99 UNSUPPORTED a opcode byte, b reason (1 family not implemented,
+//      2 text outside the transportable ASCII range)
+Import "value.sm"
+
+record Ins {
+    op: i32,
+    a: i32,
+    b: i32,
+    c: i32,
+    d: i32,
+    e: i32,
+    f: i32
+}
+
+// fam: SIG0 parameter families; borrows: OWN0 carries Borrow events, whose
+// runtime tracking this VM does not implement (calling such a function is
+// an explicit unsupported failure).
+record Fn {
+    name: text,
+    entry: i32,
+    nins: i32,
+    fam: Sequence(i32),
+    borrows: bool
+}
+
+record Prog {
+    ins: Sequence(Ins),
+    fns: Sequence(Fn),
+    tp: Sequence(text),
+    up: Sequence(u32),
+    ap: Sequence(i32),
+    main: i32,
+    rev: i32,
+    err: text
+}
+
+// Builtin call targets (negative; user functions shadow builtins by name).
+//   -1 print  -2 to_text  -3 text_len  -4 text_byte_at  -5 text_slice
+//   -6 text_is_empty  -7 text_starts_with  -8 text_ends_with
+//   -11..-17 application effects (args_read, stdin_read_text, stdout_write,
+//            stderr_write, path_inspect, fs_read_text, fs_write_text):
+//            the guest has no host authority, so they always fail
+//   -100 known builtin not implemented here   -999 unknown name
+fn builtin_code(name: text) -> i32 {
+    let names: Sequence(text) = ["print", "to_text", "text_len", "text_byte_at", "text_slice",
+        "text_is_empty", "text_starts_with", "text_ends_with"];
+    let effects: Sequence(text) = ["args_read", "stdin_read_text", "stdout_write", "stderr_write",
+        "path_inspect", "fs_read_text", "fs_write_text"];
+    let other: Sequence(text) = ["text_find", "sin", "cos", "tan", "sqrt", "abs", "pow",
+        "bytes_empty", "bytes_len", "bytes_push", "bytes_extend", "bytes_get", "bytes_slice",
+        "write_u16_le", "write_u32_le", "write_i32_le", "read_u16_le", "read_u32_le", "read_i32_le"];
+    let mut code: i32 = 0 - 999;
+    let mut k: i32 = 0;
+    for x in names {
+        k = k + 1;
+        if x == name {
+            code = 0 - k;
+        }
+    }
+    k = 10;
+    for x in effects {
+        k = k + 1;
+        if x == name {
+            code = 0 - k;
+        }
+    }
+    for x in other {
+        if x == name {
+            code = 0 - 100;
+        }
+    }
+    return code;
+}
+
+// Host call ids as the reference names them in ABI failures.
+fn effect_name(code: i32) -> text {
+    let names: Sequence(text) = ["ArgsRead", "StdinReadText", "StdoutWrite", "StderrWrite",
+        "PathInspect", "FsRead", "FsWrite"];
+    return names[0 - code - 11];
+}

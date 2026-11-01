@@ -1,0 +1,9 @@
+fn describe(n: i32, flag: bool, label: text, big: u32) -> text {
+    return label + ":" + to_text(n) + ":" + to_text(flag) + ":" + to_text(big);
+}
+
+fn main() {
+    print(describe(42, true, "x", 4000000000u32));
+    print(describe(0 - 1, false, "", 0u32));
+    return;
+}

@@ -1,0 +1,13 @@
+// Semantic VM entry point (application profile cli-read-only).
+//
+// Argument 0 names the guest artifact, transported as a lowercase hex text
+// file under the granted root. The single report line from execute() is
+// written to stdout. The guest receives none of this process's
+// capabilities: its effect builtins always fail (see engine.sm).
+Import "engine.sm"
+
+fn main() {
+    let path: text = args_read(0u32);
+    stdout_write(execute(fs_read_text(path)));
+    return;
+}

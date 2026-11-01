@@ -1,0 +1,18 @@
+fn classify(n: i32) -> text {
+    let mut r: text = "";
+    if n < 0 {
+        r = "negative";
+    } else if n == 0 {
+        r = "zero";
+    } else if n < 10 {
+        r = "small";
+    } else {
+        r = "large";
+    }
+    return r;
+}
+
+fn main() {
+    print(classify(0 - 3) + " " + classify(0) + " " + classify(7) + " " + classify(100));
+    return;
+}

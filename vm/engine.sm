@@ -1,0 +1,671 @@
+// engine: executes a decoded Prog.
+//
+// Architecture (see docs/VM.md for the measurements behind it):
+//   - one dispatch loop over pre-decoded instructions; operation codes are
+//     grouped by range (op < 10, < 30, < 50, < 60, < 99) so dispatch is a
+//     short range test followed by a small chain, not a 40-way chain;
+//   - guest call frames are data (Sequence(Fr)), never host recursion: a
+//     guest CALL costs no host call, guest depth is bounded only by the
+//     guest Frames quota;
+//   - the current frame's registers and locals share one Map(i32, V):
+//     register r -> key r, frame slot s -> key -1 - s. Semantic has no
+//     indexed sequence update, and MAP_SET/MAP_GET are single instructions;
+//   - quad operations are 16-entry tables per operation, derived once from
+//     the two-plane encoding (the lattice and QTruth families stay distinct).
+// Guest resource accounting follows the reference verified-local quotas:
+// Steps 100000 (one per executed instruction, charged before it runs),
+// Calls 16384 (each nested user-function call), Frames 256.
+Import "loader.sm"
+
+record Fr {
+    fi: i32,
+    pc: i32,
+    regs: Map(i32, V),
+    dst: i32,
+    hasdst: bool
+}
+
+fn field(x: text) -> text {
+    return to_text(text_len(x)) + ":" + x;
+}
+
+// One line, no newline needed: "SEMVM1 " then length-prefixed fields
+// status, metrics, print count, prints.
+fn report(status: text, metrics: text, outs: Sequence(text)) -> text {
+    let mut r: text = "SEMVM1 " + field(status) + field(metrics) + field(to_text(len(outs)));
+    for o in outs {
+        r = r + field(o);
+    }
+    return r;
+}
+
+// 8 operations x 16 (a * 4 + b). Quad q: truth plane t = q / 2, falsity
+// plane f = q % 2 (N 00, F 01, T 10, S 11).
+//   0 Q_AND   lattice meet  t = at & bt, f = af & bf
+//   1 Q_OR    lattice join  t = at | bt, f = af | bf
+//   2 Q_NOT   inverse       t = af,      f = at
+//   3 Q_IMPL  not(a) join b
+//   4 QT_AND  Belnap        t = at & bt, f = af | bf
+//   5 QT_OR   Belnap        t = at | bt, f = af & bf
+//   6 QT_NOT  t = af, f = at
+//   7 QT_IMPL not(a) join b
+fn quad_tables() -> Sequence(i32) {
+    let mut out: Sequence(i32) = [];
+    let mut op: i32 = 0;
+    while op < 8 {
+        let mut a: i32 = 0;
+        while a < 4 {
+            let mut b: i32 = 0;
+            while b < 4 {
+                let at: i32 = a / 2;
+                let af: i32 = a % 2;
+                let bt: i32 = b / 2;
+                let bf: i32 = b % 2;
+                let mut t: i32 = 0;
+                let mut f: i32 = 0;
+                if op == 0 {
+                    t = at * bt;
+                    f = af * bf;
+                } else if op == 1 {
+                    t = at + bt - at * bt;
+                    f = af + bf - af * bf;
+                } else if op == 2 || op == 6 {
+                    t = af;
+                    f = at;
+                } else if op == 3 || op == 7 {
+                    t = af + bt - af * bt;
+                    f = at + bf - at * bf;
+                } else if op == 4 {
+                    t = at * bt;
+                    f = af + bf - af * bf;
+                } else {
+                    t = at + bt - at * bt;
+                    f = af * bf;
+                }
+                out = push(out, t * 2 + f);
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        op = op + 1;
+    }
+    return out;
+}
+
+// Error text for a register that is undefined or of the wrong family.
+fn bad(v: V, reg: i32, want: text) -> text {
+    if v.k == 0 {
+        return "undefined register r" + to_text(reg);
+    }
+    return "runtime type mismatch: expected " + want + " in r" + to_text(reg) + ", got " + family_name(v.k);
+}
+
+fn execute(hx: text) -> text {
+    let bt: Raw = hex_decode(hx);
+    if bt.err != "" {
+        return report("reject " + bt.err, "", []);
+    }
+    let p: Prog = decode(bt);
+    if p.err != "" {
+        return report("reject " + p.err, "", []);
+    }
+    return run(p);
+}
+
+fn run(p: Prog) -> text {
+    let maxsteps: i32 = 100000;
+    let maxcalls: i32 = 16384;
+    let maxframes: i32 = 256;
+    let ins: Sequence(Ins) = p.ins;
+    let ap: Sequence(i32) = p.ap;
+    let tp: Sequence(text) = p.tp;
+    let up: Sequence(u32) = p.up;
+    let fns: Sequence(Fn) = p.fns;
+    let qt: Sequence(i32) = quad_tables();
+    let und: V = undef();
+    let unit: V = V { k: 14, i: 0, u: 0u32, t: "", h: 0 };
+    let mut heap: Sequence(Obj) = [];
+    let mut outs: Sequence(text) = [];
+    let mut frames: Sequence(Fr) = [];
+    let mut regs: Map(i32, V) = map_empty();
+    let mut fi: i32 = p.main;
+    let mut cur: Fn = fns[fi];
+    let mut pc: i32 = cur.entry;
+    let mut fend: i32 = cur.entry + cur.nins;
+    let mut steps: i32 = 0;
+    let mut calls: i32 = 0;
+    let mut depth: i32 = 1;
+    let mut peak: i32 = 1;
+    let mut err: text = "";
+    let mut done: bool = false;
+    if len(cur.fam) != 0 {
+        err = "runtime type mismatch: call to 'main' passed 0 argument(s), but its canonical signature declares "
+            + to_text(len(cur.fam)) + " parameter(s)";
+    } else if cur.borrows {
+        err = "unsupported: OWN0 borrow tracking (function 'main')";
+    }
+    while !done && err == "" {
+        if pc >= fend {
+            err = "bad SemCode format: pc out of range in '" + cur.name + "'";
+        } else {
+            steps = steps + 1;
+        }
+        if err == "" && steps > maxsteps {
+            err = "quota exceeded: Steps limit=" + to_text(maxsteps) + " used=" + to_text(steps);
+            steps = maxsteps;
+        }
+        if err == "" {
+            let it: Ins = ins[pc];
+            let op: i32 = it.op;
+            let mut next: i32 = pc + 1;
+            if op < 10 {
+                // ---- locals, literals, branches
+                if op == 1 {
+                    let v: V = map_get(regs, 0 - 1 - it.b, und);
+                    if v.k == 0 {
+                        err = "unknown variable '" + tp[it.c] + "'";
+                    } else {
+                        regs = map_set(regs, it.a, v);
+                    }
+                } else if op == 2 {
+                    let v: V = map_get(regs, it.b, und);
+                    if v.k == 0 {
+                        err = bad(v, it.b, "value");
+                    } else {
+                        regs = map_set(regs, 0 - 1 - it.a, v);
+                    }
+                } else if op == 3 {
+                    regs = map_set(regs, it.a, V { k: 7, i: it.b, u: 0u32, t: "", h: 0 });
+                } else if op == 4 {
+                    let c: V = map_get(regs, it.a, und);
+                    if c.k != 2 {
+                        err = bad(c, it.a, "bool");
+                    } else if c.i == 1 {
+                        next = it.b;
+                    }
+                } else if op == 5 {
+                    next = it.a;
+                } else if op == 6 {
+                    regs = map_set(regs, it.a, V { k: 2, i: it.b, u: 0u32, t: "", h: 0 });
+                } else if op == 7 {
+                    regs = map_set(regs, it.a, V { k: 8, i: 0, u: up[it.b], t: "", h: 0 });
+                } else if op == 8 {
+                    regs = map_set(regs, it.a, V { k: 3, i: 0, u: 0u32, t: tp[it.b], h: 0 });
+                } else {
+                    regs = map_set(regs, it.a, V { k: 1, i: it.b, u: 0u32, t: "", h: 0 });
+                }
+            } else if op < 30 {
+                // ---- i32 / u32 arithmetic and comparisons, equality
+                let x: V = map_get(regs, it.b, und);
+                let y: V = map_get(regs, it.c, und);
+                let mut rk: i32 = 2;
+                let mut ri: i32 = 0;
+                let mut ru: u32 = 0u32;
+                if op == 17 || op == 18 {
+                    if x.k == 0 || y.k == 0 {
+                        err = bad(if x.k == 0 { x } else { y }, if x.k == 0 { it.b } else { it.c }, "value");
+                    } else if x.k != y.k {
+                        err = "runtime type mismatch: cannot compare " + family_name(x.k) + " with " + family_name(y.k);
+                    } else {
+                        let mut eq: bool = false;
+                        if x.k == 3 {
+                            eq = x.t == y.t;
+                        } else if x.k == 8 {
+                            eq = x.u == y.u;
+                        } else if x.k == 4 || x.k == 11 || x.k == 12 || x.k == 13 {
+                            eq = veq(heap, x, y);
+                        } else {
+                            eq = x.i == y.i;
+                        }
+                        if eq == (op == 17) {
+                            ri = 1;
+                        }
+                    }
+                } else if op < 20 {
+                    if x.k != 7 {
+                        err = bad(x, it.b, "i32");
+                    } else if y.k != 7 {
+                        err = bad(y, it.c, "i32");
+                    } else {
+                        let l: i32 = x.i;
+                        let r: i32 = y.i;
+                        rk = 7;
+                        if op == 10 {
+                            ri = l + r;
+                        } else if op == 11 {
+                            ri = l - r;
+                        } else if op == 12 {
+                            ri = l * r;
+                        } else if op == 13 || op == 14 {
+                            if r == 0 {
+                                err = "runtime trap: DivisionByZero";
+                            } else if l == 0 - 2147483647 - 1 && r == 0 - 1 {
+                                err = "runtime trap: ArithmeticOverflow";
+                            } else if op == 13 {
+                                ri = l / r;
+                            } else {
+                                ri = l % r;
+                            }
+                        } else {
+                            rk = 2;
+                            if (op == 15 && l < r) || (op == 16 && l <= r) {
+                                ri = 1;
+                            }
+                        }
+                    }
+                } else {
+                    if x.k != 8 {
+                        err = bad(x, it.b, "u32");
+                    } else if y.k != 8 {
+                        err = bad(y, it.c, "u32");
+                    } else {
+                        let l: u32 = x.u;
+                        let r: u32 = y.u;
+                        rk = 8;
+                        if op == 20 {
+                            if l > 4294967295u32 - r {
+                                err = "runtime trap: ArithmeticOverflow";
+                            } else {
+                                ru = l + r;
+                            }
+                        } else if op == 21 {
+                            if r > l {
+                                err = "runtime trap: ArithmeticOverflow";
+                            } else {
+                                ru = l - r;
+                            }
+                        } else if op == 22 {
+                            if l != 0u32 {
+                                if r > 4294967295u32 / l {
+                                    err = "runtime trap: ArithmeticOverflow";
+                                } else {
+                                    ru = l * r;
+                                }
+                            }
+                        } else if op == 23 || op == 24 {
+                            if r == 0u32 {
+                                err = "runtime trap: DivisionByZero";
+                            } else if op == 23 {
+                                ru = l / r;
+                            } else {
+                                ru = l % r;
+                            }
+                        } else {
+                            rk = 2;
+                            if (op == 25 && l < r) || (op == 26 && l <= r) {
+                                ri = 1;
+                            }
+                        }
+                    }
+                }
+                if err == "" {
+                    regs = map_set(regs, it.a, V { k: rk, i: ri, u: ru, t: "", h: 0 });
+                }
+            } else if op < 50 {
+                // ---- bool and quad
+                let x: V = map_get(regs, it.b, und);
+                let unary: bool = op == 32 || op == 35 || op == 39;
+                let mut y: V = x;
+                if !unary {
+                    y = map_get(regs, it.c, und);
+                }
+                if op <= 32 {
+                    if x.k != 2 {
+                        err = bad(x, it.b, "bool");
+                    } else if y.k != 2 {
+                        err = bad(y, it.c, "bool");
+                    } else {
+                        let mut r: i32 = 0;
+                        if op == 30 {
+                            r = x.i * y.i;
+                        } else if op == 31 {
+                            r = x.i + y.i - x.i * y.i;
+                        } else {
+                            r = 1 - x.i;
+                        }
+                        regs = map_set(regs, it.a, V { k: 2, i: r, u: 0u32, t: "", h: 0 });
+                    }
+                } else {
+                    if x.k != 1 {
+                        err = bad(x, it.b, "quad");
+                    } else if y.k != 1 {
+                        err = bad(y, it.c, "quad");
+                    } else {
+                        let yi: i32 = if unary { 0 } else { y.i };
+                        regs = map_set(regs, it.a, V { k: 1, i: qt[(op - 33) * 16 + x.i * 4 + yi], u: 0u32, t: "", h: 0 });
+                    }
+                }
+            } else if op < 60 {
+                // ---- calls, return, assert, concat
+                if op == 50 {
+                    let mut args: Sequence(V) = [];
+                    let mut k: i32 = 0;
+                    while k < it.e && err == "" {
+                        let v: V = map_get(regs, ap[it.d + k], und);
+                        if v.k == 0 {
+                            err = bad(v, ap[it.d + k], "value");
+                        } else {
+                            args = push(args, v);
+                        }
+                        k = k + 1;
+                    }
+                    let tgt: i32 = it.c;
+                    let mut res: V = unit;
+                    if err == "" && tgt >= 0 {
+                        let callee: Fn = fns[tgt];
+                        if len(args) != len(callee.fam) {
+                            err = "runtime type mismatch: call to '" + callee.name + "' passed " + to_text(len(args))
+                                + " argument(s), but its canonical signature declares " + to_text(len(callee.fam)) + " parameter(s)";
+                        } else {
+                            let mut j: i32 = 0;
+                            while j < len(args) && err == "" {
+                                let ak: i32 = args[j].k;
+                                if ak != callee.fam[j] {
+                                    err = "runtime type mismatch: call to '" + callee.name + "' argument " + to_text(j)
+                                        + " has runtime family " + family_name(ak) + ", but its canonical signature declares "
+                                        + family_name(callee.fam[j]);
+                                }
+                                j = j + 1;
+                            }
+                        }
+                        if err == "" && depth + 1 > maxframes {
+                            err = "quota exceeded: Frames limit=" + to_text(maxframes) + " used=" + to_text(depth + 1);
+                        }
+                        if err == "" {
+                            calls = calls + 1;
+                            if calls > maxcalls {
+                                err = "quota exceeded: Calls limit=" + to_text(maxcalls) + " used=" + to_text(calls);
+                                calls = maxcalls;
+                            } else if callee.borrows {
+                                err = "unsupported: OWN0 borrow tracking (function '" + callee.name + "')";
+                            }
+                        }
+                        if err == "" {
+                            frames = push(frames, Fr { fi: fi, pc: pc + 1, regs: regs, dst: it.b, hasdst: it.a == 1 });
+                            regs = map_empty();
+                            let mut r: i32 = 0;
+                            for v in args {
+                                regs = map_set(regs, r, v);
+                                r = r + 1;
+                            }
+                            fi = tgt;
+                            cur = callee;
+                            next = cur.entry;
+                            fend = cur.entry + cur.nins;
+                            depth = depth + 1;
+                            if depth > peak {
+                                peak = depth;
+                            }
+                        }
+                    } else if err == "" {
+                        // builtins: VM-owned, no host authority is ever forwarded
+                        let n: i32 = len(args);
+                        let mut a0: V = und;
+                        let mut a1: V = und;
+                        let mut a2: V = und;
+                        if n > 0 {
+                            a0 = args[0];
+                        }
+                        if n > 1 {
+                            a1 = args[1];
+                        }
+                        if n > 2 {
+                            a2 = args[2];
+                        }
+                        if tgt <= 0 - 11 && tgt >= 0 - 17 {
+                            err = "ABI " + effect_name(tgt) + " failure [Unavailable]: host boundary does not provide this application operation";
+                        } else if tgt == 0 - 100 {
+                            err = "unsupported: builtin '" + tp[it.f] + "'";
+                        } else if tgt == 0 - 999 {
+                            err = "unknown function '" + tp[it.f] + "'";
+                        } else {
+                            let want: i32 = if tgt == 0 - 5 { 3 } else if tgt == 0 - 4 || tgt == 0 - 7 || tgt == 0 - 8 { 2 } else { 1 };
+                            if n != want {
+                                err = "runtime type mismatch: builtin '" + tp[it.f] + "' expects " + to_text(want) + " argument"
+                                    + (if want == 1 { "" } else { "s" }) + ", got " + to_text(n);
+                            } else if tgt == 0 - 1 {
+                                if a0.k != 3 {
+                                    err = "runtime type mismatch: builtin 'print' expects text, got " + family_name(a0.k);
+                                } else if a0.t == "stdout" || a0.t == "print" || a0.t == "io.write" || a0.t == "file"
+                                    || a0.t == "network" || a0.t == "stdin" {
+                                    err = "runtime type mismatch: builtin 'print' does not admit host-output marker '" + a0.t + "'";
+                                } else {
+                                    outs = push(outs, a0.t);
+                                }
+                            } else if tgt == 0 - 2 {
+                                if a0.k == 3 {
+                                    res = V { k: 3, i: 0, u: 0u32, t: a0.t, h: 0 };
+                                } else if a0.k == 2 {
+                                    res = V { k: 3, i: 0, u: 0u32, t: if a0.i == 1 { "true" } else { "false" }, h: 0 };
+                                } else if a0.k == 7 {
+                                    res = V { k: 3, i: 0, u: 0u32, t: to_text(a0.i), h: 0 };
+                                } else if a0.k == 8 {
+                                    res = V { k: 3, i: 0, u: 0u32, t: to_text(a0.u), h: 0 };
+                                } else if a0.k == 1 {
+                                    let qs: Sequence(text) = ["N", "F", "T", "S"];
+                                    res = V { k: 3, i: 0, u: 0u32, t: qs[a0.i], h: 0 };
+                                } else {
+                                    err = "runtime type mismatch: builtin 'to_text' currently supports text, bool, i32, u32, and quad; got "
+                                        + family_name(a0.k);
+                                }
+                            } else if a0.k != 3 {
+                                err = "runtime type mismatch: builtin '" + tp[it.f] + "' expects text, got " + family_name(a0.k);
+                            } else if tgt == 0 - 3 {
+                                res = V { k: 8, i: 0, u: text_len(a0.t), t: "", h: 0 };
+                            } else if tgt == 0 - 6 {
+                                res = V { k: 2, i: if text_is_empty(a0.t) { 1 } else { 0 }, u: 0u32, t: "", h: 0 };
+                            } else if tgt == 0 - 7 || tgt == 0 - 8 {
+                                if a1.k != 3 {
+                                    err = "runtime type mismatch: builtin '" + tp[it.f] + "' expects text, got " + family_name(a1.k);
+                                } else {
+                                    let r: bool = if tgt == 0 - 7 { text_starts_with(a0.t, a1.t) } else { text_ends_with(a0.t, a1.t) };
+                                    res = V { k: 2, i: if r { 1 } else { 0 }, u: 0u32, t: "", h: 0 };
+                                }
+                            } else if a1.k != 8 || (tgt == 0 - 5 && a2.k != 8) {
+                                err = "runtime type mismatch: builtin '" + tp[it.f] + "' expects u32 arguments";
+                            } else {
+                                // text_byte_at -> Option(u32), text_slice -> Option(text)
+                                let mut some: bool = false;
+                                let mut payload: V = und;
+                                if tgt == 0 - 4 {
+                                    match text_byte_at(a0.t, a1.u) {
+                                        Option::Some(b) => {
+                                            some = true;
+                                            payload = V { k: 8, i: 0, u: b, t: "", h: 0 };
+                                        }
+                                        Option::None => {}
+                                    }
+                                } else {
+                                    match text_slice(a0.t, a1.u, a2.u) {
+                                        Option::Some(s) => {
+                                            some = true;
+                                            payload = V { k: 3, i: 0, u: 0u32, t: s, h: 0 };
+                                        }
+                                        Option::None => {}
+                                    }
+                                }
+                                if some {
+                                    heap = push(heap, Obj { k: 13, name: "Option", vname: "Some", tag: 1, items: [payload] });
+                                } else {
+                                    heap = push(heap, Obj { k: 13, name: "Option", vname: "None", tag: 0, items: [] });
+                                }
+                                res = V { k: 13, i: 0, u: 0u32, t: "", h: len(heap) - 1 };
+                            }
+                        }
+                        if err == "" && it.a == 1 {
+                            regs = map_set(regs, it.b, res);
+                        }
+                    }
+                } else if op == 51 {
+                    let mut rv: V = unit;
+                    if it.a == 1 {
+                        rv = map_get(regs, it.b, und);
+                        if rv.k == 0 {
+                            err = bad(rv, it.b, "value");
+                        }
+                    }
+                    if err == "" {
+                        if len(frames) == 0 {
+                            done = true;
+                        } else {
+                            let fr: Fr = frames[len(frames) - 1];
+                            frames = pop(frames);
+                            regs = fr.regs;
+                            if fr.hasdst {
+                                regs = map_set(regs, fr.dst, rv);
+                            }
+                            fi = fr.fi;
+                            cur = fns[fi];
+                            fend = cur.entry + cur.nins;
+                            next = fr.pc;
+                            depth = depth - 1;
+                        }
+                    }
+                } else if op == 52 {
+                    let c: V = map_get(regs, it.a, und);
+                    if c.k != 2 {
+                        err = if c.k == 0 { bad(c, it.a, "bool") } else { "runtime type mismatch: ASSERT requires bool register, got " + family_name(c.k) };
+                    } else if c.i == 0 {
+                        err = "assertion failed";
+                    }
+                } else {
+                    let x: V = map_get(regs, it.b, und);
+                    let y: V = map_get(regs, it.c, und);
+                    if x.k != 3 {
+                        err = bad(x, it.b, "text");
+                    } else if y.k != 3 {
+                        err = bad(y, it.c, "text");
+                    } else {
+                        regs = map_set(regs, it.a, V { k: 3, i: 0, u: 0u32, t: x.t + y.t, h: 0 });
+                    }
+                }
+            } else if op < 99 {
+                // ---- aggregates
+                if op == 60 || op == 62 || op == 64 || op == 67 {
+                    let mut items: Sequence(V) = [];
+                    let mut k: i32 = 0;
+                    while k < it.e && err == "" {
+                        let v: V = map_get(regs, ap[it.d + k], und);
+                        if v.k == 0 {
+                            err = bad(v, ap[it.d + k], "value");
+                        } else {
+                            items = push(items, v);
+                        }
+                        k = k + 1;
+                    }
+                    if err == "" {
+                        let kind: i32 = if op == 60 { 11 } else if op == 62 { 12 } else if op == 64 { 13 } else { 4 };
+                        let name: text = if op == 62 || op == 64 { tp[it.b] } else { "" };
+                        let vname: text = if op == 64 { tp[it.c] } else { "" };
+                        heap = push(heap, Obj { k: kind, name: name, vname: vname, tag: it.f, items: items });
+                        regs = map_set(regs, it.a, V { k: kind, i: 0, u: 0u32, t: "", h: len(heap) - 1 });
+                    }
+                } else {
+                    let x: V = map_get(regs, it.b, und);
+                    let mut res: V = und;
+                    if op == 61 {
+                        if x.k != 11 {
+                            err = if x.k == 0 { bad(x, it.b, "tuple") } else { "runtime type mismatch: TUPLE_GET source must be tuple" };
+                        } else {
+                            let o: Obj = heap[x.h];
+                            if it.c >= len(o.items) {
+                                err = "bad SemCode format: tuple-get index out of bounds: " + to_text(it.c);
+                            } else {
+                                res = o.items[it.c];
+                            }
+                        }
+                    } else if op == 63 || op == 65 || op == 66 {
+                        let want: i32 = if op == 63 { 12 } else { 13 };
+                        let opn: text = if op == 63 { "RECORD_GET" } else if op == 65 { "ADT_TAG" } else { "ADT_GET" };
+                        let what: text = if op == 63 { "record" } else { "enum" };
+                        if x.k != want {
+                            err = if x.k == 0 { bad(x, it.b, what) } else { "runtime type mismatch: " + opn + " source must be " + what };
+                        } else {
+                            let o: Obj = heap[x.h];
+                            if o.name != tp[it.c] {
+                                err = "runtime type mismatch: " + opn + " expected " + what + " '" + tp[it.c] + "', got '" + o.name + "'";
+                            } else if op == 65 {
+                                res = V { k: 7, i: o.tag, u: 0u32, t: "", h: 0 };
+                            } else if it.d >= len(o.items) {
+                                err = "bad SemCode format: " + (if op == 63 { "record" } else { "adt" }) + "-get index out of bounds: " + to_text(it.d);
+                            } else {
+                                res = o.items[it.d];
+                            }
+                        }
+                    } else if x.k != 4 {
+                        err = if x.k == 0 { bad(x, it.b, "sequence") } else { "runtime type mismatch: sequence operand expected" };
+                    } else {
+                        let o: Obj = heap[x.h];
+                        let n: i32 = len(o.items);
+                        if op == 69 {
+                            res = V { k: 7, i: n, u: 0u32, t: "", h: 0 };
+                        } else if op == 70 {
+                            res = V { k: 2, i: if n == 0 { 1 } else { 0 }, u: 0u32, t: "", h: 0 };
+                        } else if op == 74 {
+                            if n == 0 {
+                                err = "runtime type mismatch: SEQUENCE_POP source must be non-empty";
+                            } else {
+                                heap = push(heap, Obj { k: 4, name: "", vname: "", tag: 0, items: pop(o.items) });
+                                res = V { k: 4, i: 0, u: 0u32, t: "", h: len(heap) - 1 };
+                            }
+                        } else {
+                            let y: V = map_get(regs, it.c, und);
+                            if y.k == 0 {
+                                err = bad(y, it.c, "value");
+                            } else if op == 68 {
+                                if y.k != 7 {
+                                    err = bad(y, it.c, "i32");
+                                } else if y.i < 0 {
+                                    err = "runtime type mismatch: SEQUENCE_GET index must be non-negative";
+                                } else if y.i >= n {
+                                    err = "runtime type mismatch: SEQUENCE_GET index out of bounds: " + to_text(y.i);
+                                } else {
+                                    res = o.items[y.i];
+                                }
+                            } else if op == 71 {
+                                let mut found: bool = false;
+                                for v in o.items {
+                                    if !found && v.k == y.k {
+                                        if y.k == 3 {
+                                            found = v.t == y.t;
+                                        } else if y.k == 8 {
+                                            found = v.u == y.u;
+                                        } else if y.k == 4 || y.k == 11 || y.k == 12 || y.k == 13 {
+                                            found = veq(heap, v, y);
+                                        } else {
+                                            found = v.i == y.i;
+                                        }
+                                    }
+                                }
+                                res = V { k: 2, i: if found { 1 } else { 0 }, u: 0u32, t: "", h: 0 };
+                            } else {
+                                let mut items: Sequence(V) = [];
+                                if op == 72 {
+                                    items = push(o.items, y);
+                                } else {
+                                    items = [y];
+                                    for v in o.items {
+                                        items = push(items, v);
+                                    }
+                                }
+                                heap = push(heap, Obj { k: 4, name: "", vname: "", tag: 0, items: items });
+                                res = V { k: 4, i: 0, u: 0u32, t: "", h: len(heap) - 1 };
+                            }
+                        }
+                    }
+                    if err == "" {
+                        regs = map_set(regs, it.a, res);
+                    }
+                }
+            } else {
+                err = "unsupported: SemCode opcode " + to_text(it.a)
+                    + (if it.b == 2 { " names text outside the transportable ASCII range" } else { " (family not implemented)" });
+            }
+            pc = next;
+        }
+    }
+    let status: text = if err == "" { "ok" } else { "error " + err };
+    let metrics: text = "guest_steps=" + to_text(steps) + " guest_calls=" + to_text(calls) + " peak_frames=" + to_text(peak)
+        + " heap_objects=" + to_text(len(heap)) + " instructions=" + to_text(len(ins)) + " functions=" + to_text(len(fns));
+    return report(status, metrics, outs);
+}

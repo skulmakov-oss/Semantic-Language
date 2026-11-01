@@ -1,0 +1,23 @@
+fn main() {
+    let qs: Sequence(quad) = [N, F, T, S];
+    let mut counts: Sequence(i32) = [0, 0, 0, 0];
+    let mut round: i32 = 0;
+    let mut nn: i32 = 0;
+    let mut ff: i32 = 0;
+    let mut tt: i32 = 0;
+    let mut ss: i32 = 0;
+    while round < 50 {
+        for a in qs {
+            for b in qs {
+                let r: quad = (a && b) || (a -> b);
+                if r == N { nn = nn + 1; }
+                if r == F { ff = ff + 1; }
+                if r == T { tt = tt + 1; }
+                if r == S { ss = ss + 1; }
+            }
+        }
+        round = round + 1;
+    }
+    print(to_text(nn) + " " + to_text(ff) + " " + to_text(tt) + " " + to_text(ss));
+    return;
+}
