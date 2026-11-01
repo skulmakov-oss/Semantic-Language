@@ -1,0 +1,96 @@
+// Clean-slate Quad VM kernel.
+// Quad is represented by two independent Boolean planes: truth and falsity.
+// The representation is deliberately not a Boolean and has no truthiness cast.
+
+record Quad {
+    truth: bool,
+    falsity: bool,
+}
+
+record Instr {
+    op: i32,
+    value: Quad,
+}
+
+record Machine {
+    pc: i32,
+    value: Quad,
+    status: i32,
+}
+
+fn quad_n() -> Quad = Quad { truth: false, falsity: false };
+fn quad_f() -> Quad = Quad { truth: false, falsity: true };
+fn quad_t() -> Quad = Quad { truth: true, falsity: false };
+fn quad_s() -> Quad = Quad { truth: true, falsity: true };
+
+fn quad_join(a: Quad, b: Quad) -> Quad {
+    return Quad { truth: a.truth || b.truth, falsity: a.falsity || b.falsity };
+}
+
+fn quad_meet(a: Quad, b: Quad) -> Quad {
+    return Quad { truth: a.truth && b.truth, falsity: a.falsity && b.falsity };
+}
+
+// Typed four-way dispatch. The result is a branch tag, not a Boolean.
+fn quad_branch4(q: Quad) -> i32 {
+    if q.truth {
+        if q.falsity { return 3; }
+        return 2;
+    }
+    if q.falsity { return 1; }
+    return 0;
+}
+
+// N and S are traps for ordinary control and never authorize an effect.
+fn quad_assert(q: Quad) -> i32 {
+    if q.truth {
+        if q.falsity { return 4; }
+        return 0;
+    }
+    if q.falsity { return 3; }
+    return 2;
+}
+
+// Minimal deterministic guest engine.  It has no host effects: every step
+// returns a new machine state and unresolved control remains a trap status.
+fn step(m: Machine, i: Instr) -> Machine {
+    if i.op == 0 { return m with { pc: m.pc + 1 }; }
+    if i.op == 1 { return m with { value: i.value, pc: m.pc + 1 }; }
+    if i.op == 2 { return m with { status: quad_branch4(i.value), pc: m.pc + 1 }; }
+    if i.op == 3 { return m with { status: quad_assert(i.value), pc: m.pc + 1 }; }
+    return m with { status: 255, pc: m.pc + 1 };
+}
+
+fn run(program: Sequence(Instr), initial: Quad) -> Machine {
+    let mut m: Machine = Machine { pc: 0, value: initial, status: 0 };
+    let mut i: i32 = 0;
+    while i < len(program) {
+        m = step(m, program[i]);
+        i = i + 1;
+    }
+    return m;
+}
+
+fn main() {
+    assert(quad_branch4(quad_n()) == 0);
+    assert(quad_branch4(quad_f()) == 1);
+    assert(quad_branch4(quad_t()) == 2);
+    assert(quad_branch4(quad_s()) == 3);
+    assert(quad_assert(quad_t()) == 0);
+    assert(quad_assert(quad_f()) == 3);
+    assert(quad_assert(quad_n()) == 2);
+    assert(quad_assert(quad_s()) == 4);
+    assert(quad_join(quad_t(), quad_f()).truth);
+    assert(quad_join(quad_t(), quad_f()).falsity);
+    assert(!quad_meet(quad_t(), quad_f()).truth);
+    assert(!quad_meet(quad_t(), quad_f()).falsity);
+    let program: Sequence(Instr) = [
+        Instr { op: 1, value: quad_s() },
+        Instr { op: 2, value: quad_s() },
+        Instr { op: 0, value: quad_n() },
+    ];
+    let machine: Machine = run(program, quad_n());
+    assert(machine.status == 3);
+    assert(machine.pc == 3);
+    return;
+}
