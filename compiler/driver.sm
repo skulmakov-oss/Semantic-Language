@@ -306,22 +306,23 @@ fn compile_source_with_origins(src: text, files: Sequence(SourceFile), spans: Se
         return "error " + p.cat + " @" + to_text(p.errpos) + ": " + p.err;
     }
     let original: Prog = Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs };
-    let parse_error: text = q4_parsed_identity_error(src, original);
-    if parse_error != "" {
-        return "error unsupported @0: source provenance: " + parse_error;
-    }
+    // This entrypoint constructs its AST directly from lex/parse above and its
+    // Sema directly from analyze below. Neither object crosses an untrusted
+    // boundary before lowering. Replaying both stages here doubles compiler
+    // work without checking any additional external input.
+    //
+    // Keep q4_parsed_identity_error and q3_trusted_admit as fail-closed
+    // validation APIs for externally supplied or tampered AST/Sema objects.
     let sem: Sem = analyze(original);
     if sem.err != "" {
         return "error " + sem.cat + " @" + to_text(sem.errpos) + ": " + sem.err;
     }
-    // Q3 admission is separate from the diagnostics produced by Sema.
-    // Do not emit an artifact if a required quad type proof is absent/forged.
-    let admission: TrustedSemAdmission = q3_trusted_admit(sem);
-    if !admission.ok {
-        return "error unsupported @0: lowering precondition: " + admission.error;
+    // Preserve the canonical proof precondition before any IR emission.
+    let boundary: text = q3_lowering_error(sem);
+    if boundary != "" {
+        return "error unsupported @0: lowering precondition: " + boundary;
     }
-    // Only the result of trusted Sema replay crosses into lowering.
-    let authorized: Sem = admission.canonical;
+    let authorized: Sem = sem;
     let mut fns: Sequence(FnIr) = [];
     let mut i: i32 = 0;
     while i < len(authorized.prog.funcs) {
