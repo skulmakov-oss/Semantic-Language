@@ -1,0 +1,111 @@
+// Q2.3 + Q3 + Q4: direct type obligations with authentic AST witnesses.
+Import "lower.sm"
+
+fn analyze_text(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let p: P = parse_program(lx.toks);
+    assert(p.err == "");
+    return analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
+}
+
+fn check_one(source: text, kind: text, expected: quad, must_pass: bool) {
+    let sem: Sem = analyze_text(source);
+    if must_pass {
+        assert(sem.err == "");
+        assert(q3_lowering_error(sem) == "");
+    } else {
+        assert(sem.cat == "type");
+        assert(sem.err != "");
+        assert(q3_lowering_error(sem) != "");
+    }
+    let mut count: i32 = 0;
+    let mut idx: i32 = 0;
+    while idx < len(sem.prog.nodes) {
+        if map_contains(sem.type_evidence, idx) {
+            let e: Evidence = map_get(sem.type_evidence, idx, evidence_empty("missing", 0, 0));
+            if e.proposition_kind == kind {
+                assert(evidence_valid(e));
+                assert(e.subject == idx);
+                assert(e.scope == 0);
+                assert(e.state == expected);
+                let owner: Node = sem.prog.nodes[idx];
+                let pos: u32 = sem.prog.nodes[owner.a].pos;
+                if expected == T {
+                    assert(len(e.positive) == 1);
+                    assert(len(e.negative) == 0);
+                    assert(e.positive[0] == pos);
+                    assert(q3_proof_error(sem, idx) == "");
+                } else {
+                    assert(expected == F);
+                    assert(len(e.positive) == 0);
+                    assert(len(e.negative) == 1);
+                    assert(e.negative[0] == pos);
+                    assert(q3_proof_error(sem, idx) != "");
+                }
+                count = count + 1;
+            }
+        }
+        idx = idx + 1;
+    }
+    assert(count == 1);
+    return;
+}
+
+fn main() {
+    let annotated_ok: text = "fn main() { let x: i32 = 1; assert(x == 1); return; }";
+    let annotated_bad: text = "fn main() { let x: i32 = true; return; }";
+    let assigned_ok: text = "fn main() { let mut x: i32 = 1; x = 2; assert(x == 2); return; }";
+    let assigned_bad: text = "fn main() { let mut x: i32 = 1; x = true; return; }";
+    let return_ok: text = "fn f() -> i32 { return 3; } fn main() { assert(f() == 3); return; }";
+    let return_bad: text = "fn f() -> i32 { return true; } fn main() { return; }";
+    check_one(annotated_ok, "annotated-binding", T, true);
+    check_one(annotated_bad, "annotated-binding", F, false);
+    check_one(assigned_ok, "assignment-type", T, true);
+    check_one(assigned_bad, "assignment-type", F, false);
+    check_one(return_ok, "return-value-type", T, true);
+    check_one(return_bad, "return-value-type", F, false);
+    check_one(assigned_ok, "assignment-type", T, true);
+
+    let mixed: text = "fn f() -> i32 { return 3; } fn main() { let mut x: i32 = 1; x = f(); assert(x == 3); return; }";
+    let sem: Sem = analyze_text(mixed);
+    assert(sem.err == "");
+    assert(q3_lowering_error(sem) == "");
+    let named: i32 = map_get(sem.fnidx, "main", 0 - 1);
+    let f: i32 = map_get(sem.fnidx, "f", 0 - 1);
+    assert(named >= 0);
+    assert(f >= 0);
+    let main_ir: FnIr = lower_function(sem, named);
+    let func_ir: FnIr = lower_function(sem, f);
+    assert(len(main_ir.proofs) == 4);
+    assert(len(func_ir.proofs) == 1);
+    assert(main_ir.proofs[0].evidence.proposition_kind == "annotated-binding");
+    assert(main_ir.proofs[1].evidence.proposition_kind == "assignment-type");
+    assert(main_ir.proofs[2].evidence.proposition_kind == "assert-condition-type");
+    assert(main_ir.proofs[3].evidence.proposition_kind == "binary-operator-types");
+    assert(func_ir.proofs[0].evidence.proposition_kind == "return-value-type");
+    for proof in main_ir.proofs {
+        assert(evidence_valid(proof.evidence));
+        assert(proof.evidence.state == T);
+        assert(len(proof.source_nodes) == len(proof.evidence.positive));
+        assert(len(proof.source_offsets) == len(proof.source_nodes));
+        let mut index: i32 = 0;
+        while index < len(proof.source_nodes) {
+            assert(proof.source_offsets[index] == proof.evidence.positive[index]);
+            assert(proof.source_offsets[index] == sem.prog.nodes[proof.source_nodes[index]].pos);
+            index = index + 1;
+        }
+    }
+
+    // A well-formed but counterfeited witness fails the Q3 AST boundary.
+    let owner: i32 = main_ir.proofs[1].evidence.subject;
+    let legitimate: Evidence = map_get(sem.type_evidence, owner, evidence_empty("missing", 0, 0));
+    assert(evidence_valid(legitimate));
+    let spoof: Evidence = legitimate with { positive: [424242u32] };
+    assert(evidence_valid(spoof));
+    let invalid: Sem = sem with { type_evidence: map_set(sem.type_evidence, owner, spoof) };
+    assert(q3_lowering_error(invalid) != "");
+    let empty: Sem = sem with { type_evidence: map_empty() };
+    assert(q3_lowering_error(empty) != "");
+    return;
+}
