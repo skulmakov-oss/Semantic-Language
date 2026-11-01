@@ -92,7 +92,8 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
     let mut imported: bool = false;
     let mut pos: u32 = 0u32;
     let mut chunk_start: u32 = 0u32;
-    let mut has_chunk: bool = false;
+    // Keep the full source interval (including whitespace) before each import.
+    let mut has_chunk: bool = true;
     while pos < n {
         let mut k: u32 = pos;
         while k < n {
@@ -126,24 +127,23 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
             }
             if end < n { pos = end + 1u32; } else { pos = n; }
         } else {
+            // Scan every source line, not just the initial contiguous import block.
             let mut end: u32 = k + 1u32;
+            while end < n {
+                let eb: u32 = match text_byte_at(src, end) {
+                    Option::Some(x) => { x }
+                    Option::None => { 10u32 }
+                };
+                if eb == 10u32 { break; }
+                end = end + 1u32;
+            }
             let mut is_import: bool = false;
-            if kb0 == 73u32 {
-                while end < n {
-                    let eb: u32 = match text_byte_at(src, end) {
-                        Option::Some(x) => { x }
-                        Option::None => { 10u32 }
-                    };
-                    if eb == 10u32 { break; }
-                    end = end + 1u32;
-                }
-                if k + 7u32 <= end {
-                    let prefix: text = match text_slice(src, k, k + 7u32) {
-                        Option::Some(x) => { x }
-                        Option::None => { "" }
-                    };
-                    if prefix == "Import " { is_import = true; }
-                }
+            if kb0 == 73u32 && k + 7u32 <= end {
+                let prefix: text = match text_slice(src, k, k + 7u32) {
+                    Option::Some(x) => { x }
+                    Option::None => { "" }
+                };
+                if prefix == "Import " { is_import = true; }
             }
             if is_import {
                 if has_chunk {
@@ -274,14 +274,12 @@ fn expand(path: text, stack: Sequence(text), seen0: Sequence(text)) -> Load {
                 for file in child_load.files { files = push(files, file); }
                 seen = child_load.seen;
                 if end < n { pos = end + 1u32; } else { pos = n; }
+                // Begin the next original-source interval immediately after this import.
+                chunk_start = pos;
+                has_chunk = true;
             } else {
-                if !imported { return Load { src: src, seen: seen, err: "", files: files,
-                    spans: append_source_span([], path, 0u32, 0u32, n) }; }
-                if !has_chunk {
-                    chunk_start = pos;
-                    has_chunk = true;
-                }
-                pos = n;
+                // Do not stop at a declaration: an Import may occur on a later line.
+                if end < n { pos = end + 1u32; } else { pos = n; }
             }
         }
     }

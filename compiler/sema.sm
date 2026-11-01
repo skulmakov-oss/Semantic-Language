@@ -64,6 +64,9 @@ record C {
     names: Sequence(text),
     loops: i32,
     fret: i32,
+    // Only trusted accumulation uses this incremental duplicate index.
+    // 1=positive witness, 2=negative witness, 3=both polarities.
+    type_witness_seen: Map(i32, Map(u32, i32)),
 }
 
 // Evidence is a reusable carrier for one proposition. The witness sequences
@@ -97,14 +100,12 @@ fn evidence_state(positive: Sequence(u32), negative: Sequence(u32)) -> quad {
 }
 
 fn evidence_has_duplicate(values: Sequence(u32)) -> bool {
-    let mut i: i32 = 0;
-    while i < len(values) {
-        let mut j: i32 = i + 1;
-        while j < len(values) {
-            if values[i] == values[j] { return true; }
-            j = j + 1;
-        }
-        i = i + 1;
+    // Public validation must still check arbitrary carriers, but a membership
+    // map avoids pairwise O(n²) scans of the witness sequence.
+    let mut seen: Map(u32, bool) = map_empty();
+    for witness in values {
+        if map_contains(seen, witness) { return true; }
+        seen = map_set(seen, witness, true);
     }
     return false;
 }
@@ -169,18 +170,41 @@ fn type_branch_witness(base: Evidence, actual: i32, required: i32, pos: u32) -> 
 fn accumulate_type_constraint(c: C, owner: i32, kind: text, actual: i32, required: i32, witness: u32) -> C {
     let empty: Evidence = evidence_empty(kind, owner, 0);
     let prior: Evidence = map_get(c.sem.type_evidence, owner, empty);
-    if !evidence_valid(prior) {
-        return cerr(c, "type", "invalid accumulated type evidence", witness);
-    }
     if prior.proposition_kind != kind || prior.subject != owner || prior.scope != 0 {
         return cerr(c, "type", "type evidence identity mismatch", witness);
     }
-    let next: Evidence = type_branch_witness(empty, actual, required, witness);
-    let joined: EvidenceResult = evidence_try_join(prior, next);
-    if !joined.ok {
-        return cerr(c, "type", "invalid accumulated type evidence: " + joined.error, witness);
+    // The index belongs to this Sema run, not to externally supplied Evidence.
+    // Validate a pre-existing carrier once; subsequent insertions extend both
+    // the carrier and index atomically instead of rescanning all prior pairs.
+    let mut seen: Map(u32, i32) = map_empty();
+    if map_contains(c.type_witness_seen, owner) {
+        seen = map_get(c.type_witness_seen, owner, seen);
+    } else {
+        if !evidence_valid(prior) {
+            return cerr(c, "type", "invalid accumulated type evidence", witness);
+        }
+        for pos in prior.positive {
+            seen = map_set(seen, pos, map_get(seen, pos, 0) + 1);
+        }
+        for pos in prior.negative {
+            seen = map_set(seen, pos, map_get(seen, pos, 0) + 2);
+        }
     }
-    return c with { sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, owner, joined.value) } };
+    let polarity: i32 = if actual == required { 1 } else { 2 };
+    let previous: i32 = map_get(seen, witness, 0);
+    if (polarity == 1 && (previous == 1 || previous == 3)) ||
+       (polarity == 2 && (previous == 2 || previous == 3)) {
+        return cerr(c, "type", "invalid accumulated type evidence: duplicate evidence witness", witness);
+    }
+    let positive: Sequence(u32) = if polarity == 1 { push(prior.positive, witness) } else { prior.positive };
+    let negative: Sequence(u32) = if polarity == 2 { push(prior.negative, witness) } else { prior.negative };
+    let merged: Evidence = prior with {
+        state: evidence_state(positive, negative), positive: positive, negative: negative
+    };
+    return c with {
+        sem: c.sem with { type_evidence: map_set(c.sem.type_evidence, owner, merged) },
+        type_witness_seen: map_set(c.type_witness_seen, owner, map_set(seen, witness, previous + polarity))
+    };
 }
 
 // Q2.5: evidence answers whether an operand is admissible for this
@@ -1517,7 +1541,8 @@ fn analyze(prog: Prog) -> Sem {
             names = push(names, pnm);
             k = k + 1;
         }
-        let mut c: C = C { sem: sem, syms: syms, symmap: symmap, names: names, loops: 0, fret: sem.frets[i] };
+        let blank_witness_map: Map(i32, Map(u32, i32)) = map_empty();
+        let mut c: C = C { sem: sem, syms: syms, symmap: symmap, names: names, loops: 0, fret: sem.frets[i], type_witness_seen: blank_witness_map };
         for kid in prog.nodes[f.body].kids {
             if c.sem.err == "" { c = check_stmt(c, kid); }
         }
