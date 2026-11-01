@@ -338,10 +338,10 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
     let nd: Node = c0.sem.prog.nodes[id];
     let mut c: C = c0;
     let k: i32 = nd.k;
-    if k == 1 { return typed(c, id, 1); }
-    if k == 2 { return typed(c, id, 2); }
-    if k == 8 { return typed(c, id, 3); }
-    if k == 3 { return typed(c, id, 4); }
+    if k == 1 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 1) } }, 1); }
+    if k == 2 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2); }
+    if k == 8 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 3) } }, 3); }
+    if k == 3 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4); }
     if k == 4 {
         let at: i32 = lookup(c.syms, nd.name);
         if at < 0 {
@@ -352,7 +352,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         }
         let sym: Sym = c.syms[at];
         c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
-        return typed(c, id, sym.ty);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, sym.ty) } }, sym.ty);
     }
     if k == 7 {
         if !map_contains(c.sem.fnidx, nd.name) {
@@ -376,7 +376,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         }
         if c.sem.err != "" { return (c, 0 - 1); }
         c = c with { sem: c.sem with { callees: map_set(c.sem.callees, id, fi) } };
-        return typed(c, id, c.sem.frets[fi]);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, c.sem.frets[fi]) } }, c.sem.frets[fi]);
     }
     let mut l: i32 = 0;
     let mut r: i32 = 0;
@@ -385,7 +385,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         if l < 0 { return (c, 0 - 1); }
         if nd.v == 31 && l != 1 { return (cerr(c, "type", "unary '-' expects i32, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
         if nd.v == 43 && l != 2 { return (cerr(c, "type", "'!' expects bool, got " + ty_text(c.sem, l), nd.pos), 0 - 1); }
-        return typed(c, id, l);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, l) } }, l);
     }
     if k == 6 {
         (c, l) = check_value(c, nd.a, 0 - 1, "operand");
@@ -394,25 +394,25 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         if r < 0 { return (c, 0 - 1); }
         let op: i32 = nd.v;
         if op >= 30 && op <= 34 {
-            if op == 30 && l == 4 && r == 4 { return typed(c, id, 4); }
+            if op == 30 && l == 4 && r == 4 { return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 4) } }, 4); }
             if l == 3 && r == 3 {
                 c = c with { sem: c.sem with { u32arith: true } };
-                return typed(c, id, 3);
+                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 3) } }, 3);
             }
             if l != 1 || r != 1 {
                 return (cerr(c, "type", "arithmetic expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
             }
-            return typed(c, id, 1);
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 1) } }, 1);
         }
         if op >= 37 && op <= 40 {
             if l == 3 && r == 3 {
                 c = c with { sem: c.sem with { u32arith: true } };
-                return typed(c, id, 2);
+                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
             }
             if l != 1 || r != 1 {
                 return (cerr(c, "type", "ordering expects i32 or u32 operands of one family, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
             }
-            return typed(c, id, 2);
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
         }
         if op == 35 || op == 36 {
             if l != r {
@@ -421,12 +421,12 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
             if !is_scalar_eq(l) {
                 return (cerr(c, "unsupported", "equality on " + ty_text(c.sem, l) + " is outside the supported subset", nd.pos), 0 - 1);
             }
-            return typed(c, id, 2);
+            return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
         }
         if l != 2 || r != 2 {
             return (cerr(c, "type", "logical operator expects bool operands, got " + ty_text(c.sem, l) + " and " + ty_text(c.sem, r), nd.pos), 0 - 1);
         }
-        return typed(c, id, 2);
+        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
     }
     if k == 20 {
         (c, l) = check_value(c, nd.a, 0 - 1, "field base");
@@ -440,7 +440,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         while i < len(rec.fnames) {
             if rec.fnames[i] == nd.name {
                 c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, id, i) } };
-                return typed(c, id, c.sem.rftypes[info.a][i]);
+                return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, c.sem.rftypes[info.a][i]) } }, c.sem.rftypes[info.a][i]);
             }
             i = i + 1;
         }

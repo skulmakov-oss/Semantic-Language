@@ -403,6 +403,13 @@ fn parse_primary(p0: P) -> (P, i32) {
 fn parse_postfix(p0: P) -> (P, i32) {
     let mut p: P = p0;
     let mut e: i32 = 0 - 1;
+    let t0: Tok = p.toks[p.i];
+    if t0.kind == 31 || t0.kind == 43 {
+        p = p with { i: p.i + 1 };
+        (p, e) = parse_postfix(p);
+        if p.err != "" { return (p, 0 - 1); }
+        return add_node(p, 5, e, 0 - 1, 0 - 1, t0.kind, "", t0.pos, []);
+    }
     (p, e) = parse_primary(p);
     let mut more: bool = true;
     while more && p.err == "" {
@@ -444,23 +451,11 @@ fn parse_postfix(p0: P) -> (P, i32) {
     return (p, e);
 }
 
-fn parse_unary(p0: P) -> (P, i32) {
-    let t: Tok = p0.toks[p0.i];
-    if t.kind == 31 || t.kind == 43 {
-        let mut p: P = p0 with { i: p0.i + 1 };
-        let mut e: i32 = 0 - 1;
-        (p, e) = parse_unary(p);
-        if p.err != "" { return (p, 0 - 1); }
-        return add_node(p, 5, e, 0 - 1, 0 - 1, t.kind, "", t.pos, []);
-    }
-    return parse_postfix(p0);
-}
-
 // Precedence climbing; every binary operator is left-associative.
 fn parse_expr(p0: P, minp: i32) -> (P, i32) {
     let mut p: P = p0;
     let mut lhs: i32 = 0 - 1;
-    (p, lhs) = parse_unary(p);
+    (p, lhs) = parse_postfix(p);
     while p.err == "" {
         let t: Tok = p.toks[p.i];
         let pr: i32 = prec(t.kind);
