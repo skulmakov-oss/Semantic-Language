@@ -1,9 +1,9 @@
 # Bootstrap Contract
 
-Status: **BOOTSTRAP CONTRACT V2 QUALIFIED / COMPLETE — executable protocol `shf0-bootstrap-contract-v2` in §10**
+Status: **BOOTSTRAP CONTRACT V3 — executable protocol `shf0-bootstrap-contract-v3` in §10**
 
 This document fixes the vocabulary and invariants of the self-hosting proof. §1–§9 state them at
-architecture level; §10 records the executable protocol frozen by Bootstrap Contract v2, whose machine-readable
+architecture level; §10 records the executable protocol frozen by Bootstrap Contract v3, whose machine-readable
 form is [`bootstrap/contract.toml`](../bootstrap/contract.toml) and whose validator is
 [`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). A Semantic-written compiler implementation exists (advancing through frontend and aggregate phases), but full self-hosting fixed-point verification (C1/C2) is not yet completed.
 
@@ -101,12 +101,16 @@ Each qualification run records: reference repository and SHA, source-set identit
 corpus, comparison form, positive/negative/boundary results, mutation-check status, count of
 unexplained deltas (required to be 0), and explicit limitations.
 
-## 10. Executable Protocol (`shf0-bootstrap-contract-v2`)
+## 10. Executable Protocol (`shf0-bootstrap-contract-v3`)
 
-Protocol `shf0-bootstrap-contract-v2` succeeds `shf0-bootstrap-contract-v1`. It establishes the
-qualified baseline C0 (`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`), admits
-`BSF-101` (text inspection) and `BSF-103` (u32 arithmetic and bitwise ops), and formalizes the
-execution quota envelope for the self-hosted compiler.
+Protocol `shf0-bootstrap-contract-v3` succeeds `shf0-bootstrap-contract-v2`, which succeeded
+`shf0-bootstrap-contract-v1`. It keeps the qualified baseline C0
+(`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`) and corrects three statements of v2:
+`BSF-101` (text inspection) and `BSF-103` (checked `u32` arithmetic and ordering) are bound to
+their exact upstream contracts ([BOOTSTRAP_SUBSET.md](./BOOTSTRAP_SUBSET.md) §5); `u32` bitwise
+operations, shifts and conversions are not admitted and become candidate `BSF-107`; and the default
+VM quotas are distinguished from the declared trusted-compiler envelope (§10.5). The fixed-point
+rule, source-set protocol, failure taxonomy, evidence record and host boundary are unchanged.
 
 ### 10.1 C0 identity
 
@@ -141,7 +145,7 @@ framing makes path/content boundaries unambiguous.
 ### 10.3 Compiler interface
 
 `Compile(source_set, declared_config, declared_capability_results) -> (artifact, diagnostics, status)`
-with status `ok | rejected | failed`. Protocol v2 admits no configuration inputs. The artifact is
+with status `ok | rejected | failed`. Protocol v3 admits no configuration inputs. The artifact is
 SemCode under the upstream `sm-format` contract at C0. CLI spelling is not part of the contract.
 
 ### 10.4 Fixed point
@@ -155,8 +159,14 @@ section holds only `(pc, line, col)`, no time/path/random field exists, and
 ### 10.5 Host capabilities and execution quotas
 
 See [HOST_BOUNDARY.md](./HOST_BOUNDARY.md) §9. Default environment inputs: none.
-Default VM execution limits: Calls 16,384, Frames 256, Steps 10,000,000.
-Authorized trusted compiler envelope: `--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`.
+
+Execution quotas are defined upstream by `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2:docs/spec/quotas.md`:
+
+- VerifiedLocal defaults: Steps 100,000, Calls 16,384, Frames 256.
+- Declared trusted-compiler envelope: `--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`, Frames 256. These are explicit selections for running the self-hosted compiler, not defaults.
+
+This protocol declares the envelope and adds no C0 capability. At C0, `quotas.md` lists the
+`--max-calls` override as a P3 candidate; that upstream status is an inherited limitation.
 
 ### 10.6 Failure taxonomy
 

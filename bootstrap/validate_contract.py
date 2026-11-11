@@ -26,11 +26,13 @@ CONTRACT = "bootstrap/contract.toml"
 
 PROTOCOL_V1 = "shf0-bootstrap-contract-v1"
 PROTOCOL_V2 = "shf0-bootstrap-contract-v2"
-PROTOCOL = PROTOCOL_V2
+PROTOCOL_V3 = "shf0-bootstrap-contract-v3"
+PROTOCOL = PROTOCOL_V3
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
 FROZEN_DIGESTS = {
     PROTOCOL_V1: "6f80db639198bfcb90ec49678024e8a793ab497b1300bc308eb2063543027908",
     PROTOCOL_V2: "8a2b910989c55e871c6099c673c6a1c65fbaffb5f8ac5eb876466fe9b7fd727b",
+    PROTOCOL_V3: "26309eb87a8e765407d771f174e0f37966d600b178f4c0d164cfbe351e3925f6",
 }
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
@@ -120,6 +122,62 @@ def check_registry(subset_text):
         else:
             errors.append(f"CONTRACT_DRIFT: registry row {bsf} has unknown state {state!r}")
     return registry, errors
+
+
+# BSF-001..BSF-010 stand under the section-level foundation profile ([subset].authority). Every
+# other ADMITTED / FROZEN entry is additive and needs its own exact upstream authority.
+FOUNDATION_IDS = frozenset(f"BSF-{n:03d}" for n in range(1, 11))
+# The exact upstream contract of each additive entry at C0. A different contract, path or
+# qualification file is a contract change (new protocol), even when registry and TOML agree.
+ADDITIVE_AUTHORITIES = {
+    "BSF-101": {"path": "docs/spec/compiler_text_v0.md", "contract_id": "semantic.compiler.text/0.1",
+                "qualification": ["tests/shf1b_compiler_text_qualification.rs", "tests/shf1c_lexer_probe.rs"]},
+    "BSF-103": {"path": "docs/spec/compiler_u32_v0.md", "contract_id": "semantic.compiler.u32/0.1",
+                "qualification": ["tests/shf3a_u32_qualification.rs"]},
+}
+AUTHORITY_FIELDS = {"repository", "sha", "path", "contract_id", "qualification"}
+
+
+def documented_authorities(subset_text):
+    """({id: authority}, errors) from the registry section's authority lines:
+    - `BSF-nnn` — `repository@sha` `contract path` — contract `contract id`; qualification `file`, ...
+    Only the backticked values are read, in that order. These are list lines, not table rows, so
+    they never add registry rows."""
+    found, errors = {}, []
+    for line in registry_section(subset_text).splitlines():
+        if not line.lstrip().startswith("- `BSF"):
+            continue
+        values = re.findall(r"`([^`]*)`", line)
+        if len(values) < 5 or values[0] in found:
+            errors.append(f"CONTRACT_DRIFT: subset authority line is malformed or duplicated: {line.strip()[:60]!r}")
+            continue
+        repository, _, sha = values[1].partition("@")
+        found[values[0]] = {"repository": repository, "sha": sha, "path": values[2],
+                            "contract_id": values[3], "qualification": values[4:]}
+    return found, errors
+
+
+def check_authorities(contract, subset_text):
+    """Exactly the non-foundation ADMITTED / FROZEN ids carry an authority; each is the pinned
+    upstream contract at the C0 SHA; the registry documents the same values."""
+    sub = contract.get("subset", {})
+    declared = sub.get("authorities", {})
+    documented, errors = documented_authorities(subset_text)
+    required = (set(sub.get("admitted", [])) | set(sub.get("frozen", []))) - FOUNDATION_IDS
+    expected = {bsf: {"repository": REPOSITORY, "sha": contract.get("c0", {}).get("sha"), **a}
+                for bsf, a in ADDITIVE_AUTHORITIES.items()}
+    if required != set(expected):
+        errors.append(f"CONTRACT_DRIFT: no subset authority is known for the additive ADMITTED / FROZEN "
+                      f"entries {sorted(required ^ set(expected))}")
+    if declared != expected:
+        errors.append(f"CONTRACT_DRIFT: subset authority in the contract is not the exact upstream "
+                      f"authority at C0: expected={sorted(expected.items())} contract={declared!r}")
+    if documented != expected:
+        errors.append(f"CONTRACT_DRIFT: subset authority in the registry is not the exact upstream "
+                      f"authority at C0: expected={sorted(expected.items())} registry={sorted(documented.items())}")
+    return errors
+
+
 DOMAIN = b"SHF0-SOURCE-SET\x00v1\x00"
 
 
@@ -381,7 +439,7 @@ def check_contract(contract, reference, subset_text, contract_doc, registry=None
     if registry != declared:
         errors.append(f"CONTRACT_DRIFT: subset registry and contract disagree: "
                       f"registry={sorted(registry.items())} contract={sorted(declared.items())}")
-    return errors
+    return errors + check_authorities(contract, subset_text)
 
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
@@ -920,6 +978,61 @@ def self_test():
     assert read_frozen_digests(mutated_src) == read_frozen_digests(real)           # AST unchanged...
     assert not check_protocol_immutability(real, mutated_src)                       # ...so base check alone passes;
     # the runtime == literal check in check_contract (asserted above) is what closes this path
+    # protocol v3: v1 / v2 stay registered; additive entries carry exact authorities; u32 bitwise
+    # operations, shifts and conversions are candidate BSF-107, never admitted without an authority
+    assert PROTOCOL == PROTOCOL_V3 and set(FROZEN_DIGESTS) == {PROTOCOL_V1, PROTOCOL_V2, PROTOCOL_V3}
+    authorities = contract["subset"]["authorities"]
+    assert set(authorities) == {"BSF-101", "BSF-103"} and not check_authorities(contract, subset)
+    assert all(a["sha"] == contract["c0"]["sha"] for a in authorities.values())
+
+    def authority_fails(fn, text=subset):
+        c = copy.deepcopy(contract)
+        fn(c)
+        errs = check_contract(c, reference, text, doc)
+        assert any("subset authority" in e for e in errs), errs
+
+    authority_fails(lambda c: c["subset"].pop("authorities"))
+    authority_fails(lambda c: c["subset"]["authorities"].pop("BSF-103"))
+    for field in AUTHORITY_FIELDS:
+        authority_fails(lambda c, f=field: c["subset"]["authorities"]["BSF-101"].pop(f))
+    for field, bad in (("repository", "someone/Semantic"), ("sha", "0" * 40), ("sha", "main"),
+                       ("path", "docs/spec/other.md"), ("path", "../spec.md"), ("contract_id", ""),
+                       ("contract_id", "semantic.compiler.u32/9.9"), ("qualification", []),
+                       ("qualification", "tests/x.rs"), ("qualification", ["tests/other.rs"])):
+        authority_fails(lambda c, f=field, b=bad: c["subset"]["authorities"]["BSF-103"].update({f: b}))
+    for bsf in ("BSF-001", "BSF-102", "BSF-107", "BSF-999"):  # foundation / candidate / unlisted
+        authority_fails(lambda c, b=bsf: c["subset"]["authorities"].update({b: dict(authorities["BSF-103"])}))
+    for value in ("semantic.compiler.text/0.1", "docs/spec/compiler_u32_v0.md", "tests/shf1c_lexer_probe.rs"):
+        authority_fails(lambda c: None, subset.replace(value, value + "x"))            # registry side
+    authority_fails(lambda c: None, subset.replace("- `BSF-103`", "- `BSF-101`"))      # duplicated line
+    authority_fails(lambda c: None, subset.replace("- `BSF-103`", "* `BSF-103`"))      # line removed
+    rows = {bsf: cells for bsf, _, cells in registry_rows(subset)}
+    assert rows["BSF-107"][2] == "CANDIDATE" and "BSF-107" in contract["subset"]["candidate"]
+    assert rows["BSF-103"][1] == "`u32` checked arithmetic `+ - * / %` and ordering `< <= > >=`"
+    assert not re.search("bitwise|bitmask|shift|conver|coerci|equal|[=!]=", " ".join(rows["BSF-103"]).lower())
+    assert all(f"`{op}`" in rows["BSF-101"][1] for op in (
+        "text_len", "text_byte_at", "text_slice", "text_starts_with", "text_ends_with", "text_find",
+        "text_is_empty"))
+    # the same wrong authority on both sides is rejected: authorities are pinned, not just consistent
+    for good, bad in (("semantic.compiler.u32/0.1", "semantic.compiler.u32/0.2"),
+                      ("docs/spec/compiler_u32_v0.md", "docs/spec/nonexistent.md")):
+        field = "path" if good.startswith("docs/") else "contract_id"
+        authority_fails(lambda c, f=field, b=bad: c["subset"]["authorities"]["BSF-103"].update({f: b}),
+                        subset.replace(f"`{good}`", f"`{bad}`"))
+
+    def promote(c):
+        c["subset"]["candidate"].remove("BSF-107")
+        c["subset"]["admitted"].append("BSF-107")
+    admitted_row = "| BSF-107 | u32 bitwise | ADMITTED | use | T A F I B / traps | SHF-10..14 |"
+    line = next(l for l in subset.splitlines() if l.startswith("| BSF-107 |"))
+    authority_fails(promote, subset.replace(line, admitted_row))   # consistent promotion, no authority
+    fails("CONTRACT_DRIFT", promote)                               # contract-only promotion
+    # default quotas and the declared envelope stay distinguished (BOOTSTRAP_CONTRACT §10.5)
+    quotas = doc[doc.index("### 10.5"):doc.index("### 10.6")]
+    assert "VerifiedLocal defaults: Steps 100,000, Calls 16,384, Frames 256." in quotas
+    assert "10,000,000" not in quotas and "not defaults" in quotas
+    assert "`--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`, Frames 256." in quotas
+    assert f"`{REPOSITORY}@{contract['c0']['sha']}:docs/spec/quotas.md`" in quotas
     print("shf0 self-test: PASS")
 
 

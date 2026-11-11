@@ -1,9 +1,9 @@
-# SHF-0 executable bootstrap contract (Bootstrap Contract v2).
+# SHF-0 executable bootstrap contract (Bootstrap Contract v3).
 # Normative prose: docs/BOOTSTRAP_CONTRACT.md. Validator: bootstrap/validate_contract.py.
 # Any change to a frozen value below is a contract revision (bump `protocol`), never an edit
 # made to fit a failed bootstrap run.
 
-protocol = "shf0-bootstrap-contract-v2"
+protocol = "shf0-bootstrap-contract-v3"
 status = "frozen"
 
 # ---------------------------------------------------------------- C0
@@ -50,7 +50,7 @@ format = "sha256:<64 lowercase hex>"
 inputs = ["source_set", "declared_config", "declared_capability_results"]
 outputs = ["artifact", "diagnostics", "status"]
 statuses = ["ok", "rejected", "failed"]
-declared_config = []        # no configuration inputs are admitted in protocol v2
+declared_config = []        # no configuration inputs are admitted in protocol v3
 artifact_format = "semcode" # upstream sm-format contract at C0
 
 [deterministic_inputs]
@@ -88,7 +88,7 @@ gap_stage = "SHF-2"
 
 [capabilities.args_read]
 permitted = true
-available_at_c0 = true          # args.read; protocol v2 declares no config, so not required yet
+available_at_c0 = true          # args.read; protocol v3 declares no config, so not required yet
 upstream = "docs/spec/controlled_application_boundary_v0.md"
 
 [capabilities.verifier_execution]
@@ -198,10 +198,27 @@ comparison_result_holds = "equal"                    # byte-equality-v1 also req
 # ---------------------------------------------------------------- subset
 [subset]
 registry = "docs/BOOTSTRAP_SUBSET.md"
-authority = "docs/spec/foundation_source_profile_v1.md"   # semantic.foundation.source/1.2 at C0
+authority = "docs/spec/foundation_source_profile_v1.md"   # semantic.foundation.source/1.2 at C0: BSF-001..BSF-010
 admitted = [
     "BSF-001", "BSF-002", "BSF-003", "BSF-004", "BSF-005", "BSF-006", "BSF-007", "BSF-008",
     "BSF-009", "BSF-010", "BSF-101", "BSF-103",
 ]
-candidate = ["BSF-102", "BSF-104", "BSF-105", "BSF-106"]
+candidate = ["BSF-102", "BSF-104", "BSF-105", "BSF-106", "BSF-107"]
 frozen = []
+
+# Every ADMITTED / FROZEN entry outside BSF-001..BSF-010 is additive: it is admitted only by its
+# own upstream contract at the exact C0 SHA. The same fields are documented in the registry
+# (docs/BOOTSTRAP_SUBSET.md §5); the validator rejects any missing, malformed or differing value.
+[subset.authorities.BSF-101]
+repository = "skulmakov-oss/Semantic"
+sha = "1d1e76c7509a03baa0133abaaa5819f5d32582b2"
+path = "docs/spec/compiler_text_v0.md"
+contract_id = "semantic.compiler.text/0.1"
+qualification = ["tests/shf1b_compiler_text_qualification.rs", "tests/shf1c_lexer_probe.rs"]
+
+[subset.authorities.BSF-103]
+repository = "skulmakov-oss/Semantic"
+sha = "1d1e76c7509a03baa0133abaaa5819f5d32582b2"
+path = "docs/spec/compiler_u32_v0.md"
+contract_id = "semantic.compiler.u32/0.1"
+qualification = ["tests/shf3a_u32_qualification.rs"]

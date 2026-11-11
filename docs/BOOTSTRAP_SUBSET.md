@@ -1,6 +1,6 @@
 # Bootstrap Source Subset
 
-Status: **registry updated for Bootstrap Contract v2 (C0 @ 1d1e76c7509a03baa0133abaaa5819f5d32582b2) — no construction FROZEN yet**
+Status: **registry updated for Bootstrap Contract v3 (C0 @ 1d1e76c7509a03baa0133abaaa5819f5d32582b2) — no construction FROZEN yet**
 
 Salvaged from PR #6 (`docs/BOOTSTRAP_SUBSET.md` @ `3714ce27`) and re-owned under the SHF
 architecture.
@@ -58,20 +58,33 @@ An entry missing any field stays `CANDIDATE`.
 
 ## 5. Registry
 
-Authority for every entry: `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
+Authority for `BSF-001` … `BSF-010`: `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
 (C0), `docs/spec/foundation_source_profile_v1.md` — contract `semantic.foundation.source/1.2`,
 section "Included executable surface", with executable evidence mapped in
-`docs/roadmap/stable_foundation/stable_public_language_contract.md`. An entry is `ADMITTED`
-only where that section lists the construction as Included; nothing is `FROZEN` until its
-comparison forms run against C0 in the owning SHF stage. Machine-readable state lives in
-[`bootstrap/contract.toml`](../bootstrap/contract.toml) `[subset]`; the validator rejects any
-mismatch with this table.
+`docs/roadmap/stable_foundation/stable_public_language_contract.md`. Such an entry is `ADMITTED`
+only where that section lists the construction as Included.
+
+Every other `ADMITTED` or `FROZEN` entry is additive. It is admitted only by its own upstream
+contract at the same exact C0, named here with its contract ID and qualification tests:
+
+- `BSF-101` — `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2` `docs/spec/compiler_text_v0.md` — contract `semantic.compiler.text/0.1`; qualification `tests/shf1b_compiler_text_qualification.rs`, `tests/shf1c_lexer_probe.rs`
+- `BSF-103` — `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2` `docs/spec/compiler_u32_v0.md` — contract `semantic.compiler.u32/0.1`; qualification `tests/shf3a_u32_qualification.rs`
+
+An additive entry admits exactly the operations its contract introduces and nothing else.
+`semantic.compiler.u32/0.1` records `u32` equality as existing and unchanged, so `BSF-103` does
+not introduce it; bitwise operations, shifts and conversions are outside that contract
+(candidate `BSF-107`).
+
+Nothing is `FROZEN` until its comparison forms run against C0 in the owning SHF stage.
+Machine-readable state lives in [`bootstrap/contract.toml`](../bootstrap/contract.toml)
+`[subset]` and `[subset.authorities]`; the validator rejects any mismatch with the tables or
+with the authority lines above.
 
 Evidence forms (used by the columns below): **T** tokens + spans, **A** normalized AST,
 **F** semantic facts + diagnostics, **I** normalized IR, **B** SemCode bytes vs C0.
 "Stages" names the SHF compiler stages whose evidence an entry change invalidates.
 
-### Admitted (Included at C0)
+### Admitted (authority at C0)
 
 | ID | Construction | State | Required compiler use | Positive / negative evidence | Stages |
 |---|---|---|---|---|---|
@@ -85,8 +98,8 @@ Evidence forms (used by the columns below): **T** tokens + spans, **A** normaliz
 | BSF-008 | `Map(K, V)`: empty, get, set, contains (no traversal) | ADMITTED | symbol tables by key lookup | T A F I B / key/value type diagnostics | SHF-12..14 |
 | BSF-009 | `text`: UTF-8 literals, equality, concatenation, `to_text` | ADMITTED | identifiers and diagnostic messages | T A F I B / indexing and cross-family negatives | SHF-10..14 |
 | BSF-010 | Direct local-path bare and selected imports; missing-file, duplicate and cycle rejection | ADMITTED | splitting `S` into modules | T A F I B / alias, wildcard, re-export, cycle negatives | SHF-11..12 |
-| BSF-101 | `text` length, byte inspection, and slicing | ADMITTED | lexer character and byte scanning; source token slicing | T A F I B / out-of-bounds byte/slice indexing, invalid utf8 slice boundaries | SHF-10..14 |
-| BSF-103 | `u32` arithmetic, bitwise shifts, bitwise ops, comparisons, conversions | ADMITTED | binary encoding, bitmasking, instruction layout, unsigned offsets | T A F I B / u32 overflow traps, negative shift amounts, invalid family coercion | SHF-10..14 |
+| BSF-101 | `text` byte inspection: `text_len`, `text_byte_at`, `text_slice`, `text_starts_with`, `text_ends_with`, `text_find`, `text_is_empty` | ADMITTED | lexer character and byte scanning; source token slicing | T A F I B / out-of-bounds byte/slice indexing, invalid utf8 slice boundaries | SHF-10..14 |
+| BSF-103 | `u32` checked arithmetic `+ - * / %` and ordering `< <= > >=` | ADMITTED | unsigned offsets, lengths and counts in instruction layout | T A F I B / overflow traps, division-by-zero traps | SHF-10..14 |
 
 ### Candidates (capability gaps owned upstream)
 
@@ -99,6 +112,7 @@ SHF capability stage (SHF-1 … SHF-9) and this registry admits it with authorit
 | BSF-104 | Deterministic `Map`/`Set` traversal and `Set` | CANDIDATE | traversal order not in contract | `skulmakov-oss/Semantic` / SHF-4 |
 | BSF-105 | Executable generics / monomorphisation | CANDIDATE | broad generics experimental | `skulmakov-oss/Semantic` / SHF-5 |
 | BSF-106 | Module exports and project resolution for a multi-module `S` | CANDIDATE | exports/namespace access not Included | `skulmakov-oss/Semantic` / SHF-7 |
+| BSF-107 | Deterministic u32 bitwise operations, shifts and related integer conversions | CANDIDATE | outside `semantic.compiler.u32/0.1`; deferred upstream to SHF-3B | `skulmakov-oss/Semantic` / SHF-3 |
 
 ## 6. Exclusions
 
