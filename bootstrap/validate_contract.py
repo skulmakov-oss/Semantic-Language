@@ -127,10 +127,15 @@ def check_registry(subset_text):
 # BSF-001..BSF-010 stand under the section-level foundation profile ([subset].authority). Every
 # other ADMITTED / FROZEN entry is additive and needs its own exact upstream authority.
 FOUNDATION_IDS = frozenset(f"BSF-{n:03d}" for n in range(1, 11))
+# The exact upstream contract of each additive entry at C0. A different contract, path or
+# qualification file is a contract change (new protocol), even when registry and TOML agree.
+ADDITIVE_AUTHORITIES = {
+    "BSF-101": {"path": "docs/spec/compiler_text_v0.md", "contract_id": "semantic.compiler.text/0.1",
+                "qualification": ["tests/shf1b_compiler_text_qualification.rs", "tests/shf1c_lexer_probe.rs"]},
+    "BSF-103": {"path": "docs/spec/compiler_u32_v0.md", "contract_id": "semantic.compiler.u32/0.1",
+                "qualification": ["tests/shf3a_u32_qualification.rs"]},
+}
 AUTHORITY_FIELDS = {"repository", "sha", "path", "contract_id", "qualification"}
-SPEC_PATH = re.compile(r"docs/spec/[a-z0-9_]+\.md")
-CONTRACT_ID = re.compile(r"semantic(\.[a-z0-9_]+)+/\d+\.\d+")
-QUALIFICATION_FILE = re.compile(r"tests/[a-z0-9_]+\.rs")
 
 
 def documented_authorities(subset_text):
@@ -153,35 +158,27 @@ def documented_authorities(subset_text):
 
 
 def check_authorities(contract, subset_text):
-    """Additive entries carry an exact, well-formed authority at the C0 SHA, declared for exactly
-    the non-foundation ADMITTED / FROZEN ids, and documented identically in the registry."""
+    """Exactly the non-foundation ADMITTED / FROZEN ids carry an authority; each is the pinned
+    upstream contract at the C0 SHA; the registry documents the same values."""
     sub = contract.get("subset", {})
     declared = sub.get("authorities", {})
     documented, errors = documented_authorities(subset_text)
     required = (set(sub.get("admitted", [])) | set(sub.get("frozen", []))) - FOUNDATION_IDS
-    if not isinstance(declared, dict) or set(declared) != required:
-        errors.append(f"CONTRACT_DRIFT: a subset authority is required for exactly the additive "
-                      f"ADMITTED / FROZEN entries {sorted(required)}")
-        declared = declared if isinstance(declared, dict) else {}
-    c0 = contract.get("c0", {}).get("sha")
-    for bsf, a in declared.items():
-        files = a.get("qualification") if isinstance(a, dict) else None
-        if not isinstance(a, dict) or set(a) != AUTHORITY_FIELDS or a["repository"] != REPOSITORY \
-                or a["sha"] != c0 or not SHA.fullmatch(str(a["sha"])) \
-                or not SPEC_PATH.fullmatch(str(a["path"])) \
-                or not CONTRACT_ID.fullmatch(str(a["contract_id"])) \
-                or not isinstance(files, list) or not files \
-                or not all(isinstance(f, str) and QUALIFICATION_FILE.fullmatch(f) for f in files):
-            errors.append(f"CONTRACT_DRIFT: subset authority of {bsf} is malformed (needs repository "
-                          f"{REPOSITORY!r}, the C0 SHA, a docs/spec contract path, a contract id "
-                          "and qualification test files)")
-    if documented != declared:
-        errors.append(f"CONTRACT_DRIFT: subset authority differs between the registry and the contract: "
-                      f"registry={sorted(documented.items())} contract={sorted(declared.items())}")
+    expected = {bsf: {"repository": REPOSITORY, "sha": contract.get("c0", {}).get("sha"), **a}
+                for bsf, a in ADDITIVE_AUTHORITIES.items()}
+    if required != set(expected):
+        errors.append(f"CONTRACT_DRIFT: no subset authority is known for the additive ADMITTED / FROZEN "
+                      f"entries {sorted(required ^ set(expected))}")
+    if declared != expected:
+        errors.append(f"CONTRACT_DRIFT: subset authority in the contract is not the exact upstream "
+                      f"authority at C0: expected={sorted(expected.items())} contract={declared!r}")
+    if documented != expected:
+        errors.append(f"CONTRACT_DRIFT: subset authority in the registry is not the exact upstream "
+                      f"authority at C0: expected={sorted(expected.items())} registry={sorted(documented.items())}")
     return errors
 
 
-DOMAIN =b"SHF0-SOURCE-SET\x00v1\x00"
+DOMAIN = b"SHF0-SOURCE-SET\x00v1\x00"
 
 
 # ------------------------------------------------------------------ source set
@@ -1011,7 +1008,17 @@ def self_test():
     authority_fails(lambda c: None, subset.replace("- `BSF-103`", "* `BSF-103`"))      # line removed
     rows = {bsf: cells for bsf, _, cells in registry_rows(subset)}
     assert rows["BSF-107"][2] == "CANDIDATE" and "BSF-107" in contract["subset"]["candidate"]
-    assert not re.search("bitwise|bitmask|shift|conver|coerci", " ".join(rows["BSF-103"]).lower())
+    assert rows["BSF-103"][1] == "`u32` checked arithmetic `+ - * / %` and ordering `< <= > >=`"
+    assert not re.search("bitwise|bitmask|shift|conver|coerci|equal|[=!]=", " ".join(rows["BSF-103"]).lower())
+    assert all(f"`{op}`" in rows["BSF-101"][1] for op in (
+        "text_len", "text_byte_at", "text_slice", "text_starts_with", "text_ends_with", "text_find",
+        "text_is_empty"))
+    # the same wrong authority on both sides is rejected: authorities are pinned, not just consistent
+    for good, bad in (("semantic.compiler.u32/0.1", "semantic.compiler.u32/0.2"),
+                      ("docs/spec/compiler_u32_v0.md", "docs/spec/nonexistent.md")):
+        field = "path" if good.startswith("docs/") else "contract_id"
+        authority_fails(lambda c, f=field, b=bad: c["subset"]["authorities"]["BSF-103"].update({f: b}),
+                        subset.replace(f"`{good}`", f"`{bad}`"))
 
     def promote(c):
         c["subset"]["candidate"].remove("BSF-107")
@@ -1024,6 +1031,8 @@ def self_test():
     quotas = doc[doc.index("### 10.5"):doc.index("### 10.6")]
     assert "VerifiedLocal defaults: Steps 100,000, Calls 16,384, Frames 256." in quotas
     assert "10,000,000" not in quotas and "not defaults" in quotas
+    assert "`--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`, Frames 256." in quotas
+    assert f"`{REPOSITORY}@{contract['c0']['sha']}:docs/spec/quotas.md`" in quotas
     print("shf0 self-test: PASS")
 
 

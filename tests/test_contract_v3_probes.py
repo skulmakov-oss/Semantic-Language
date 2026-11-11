@@ -129,6 +129,25 @@ def d1_missing_or_altered_authority_fields_rejected():
         authority_rejected(substantive(c=c), f"authority for {unknown}")
 
 
+def d1_coordinated_authority_substitution_rejected():
+    """The same wrong authority on both sides (registry and TOML) is still rejected: the exact
+    authority of each additive entry is pinned, not merely kept consistent."""
+    for field, good, bad in (("contract_id", "semantic.compiler.u32/0.1", "semantic.compiler.u32/0.2"),
+                             ("path", "docs/spec/compiler_u32_v0.md", "docs/spec/nonexistent.md"),
+                             ("qualification", "tests/shf3a_u32_qualification.rs", "tests/shf9z_other.rs")):
+        c = with_contract(lambda c, f=field, b=bad: c["subset"]["authorities"]["BSF-103"].update(
+            {f: [b] if f == "qualification" else b}))
+        s = subset.replace(f"`{good}`", f"`{bad}`")
+        assert s != subset
+        authority_rejected(substantive(c=c, s=s), f"coordinated {field} -> {bad}")
+
+    def swap(c):
+        a = c["subset"]["authorities"]
+        a["BSF-101"], a["BSF-103"] = a["BSF-103"], a["BSF-101"]
+    s = subset.replace("- `BSF-101`", "- `BSF-x`").replace("- `BSF-103`", "- `BSF-101`").replace("- `BSF-x`", "- `BSF-103`")
+    authority_rejected(substantive(c=with_contract(swap), s=s), "coordinated swap of authorities")
+
+
 # ---------------------------------------------------------------- D2
 def d2_bsf103_excludes_bitwise_shifts_conversions():
     cells = row("BSF-103")
@@ -136,7 +155,8 @@ def d2_bsf103_excludes_bitwise_shifts_conversions():
     for claim in ("bitwise", "bitmask", "shift", "conver", "coerci"):
         assert claim not in text, f"BSF-103 still claims {claim!r}: {cells}"
     assert cells[2] == "ADMITTED"
-    assert all(op in cells[1] for op in ("+ - * / %", "< <= > >=")), cells[1]
+    assert cells[1] == "`u32` checked arithmetic `+ - * / %` and ordering `< <= > >=`", cells[1]
+    assert "==" not in text and "!=" not in text and "equal" not in text, "equality is not introduced by BSF-103"
     assert "overflow" in text and "division" in text, "trap evidence must be preserved"
 
 
@@ -261,6 +281,7 @@ def p_host_capability_escalation_rejected():
 PROBES = [
     d1_bsf101_exact_authority, d1_bsf103_exact_authority, d1_only_additive_entries_have_authorities,
     d1_documented_authorities_equal_toml, d1_missing_or_altered_authority_fields_rejected,
+    d1_coordinated_authority_substitution_rejected,
     d2_bsf103_excludes_bitwise_shifts_conversions, d2_bsf107_is_the_single_candidate,
     d2_implicit_promotion_rejected,
     d3_verified_local_defaults, d3_trusted_compiler_envelope_is_explicit,
