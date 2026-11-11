@@ -2,37 +2,41 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF-ENGINEERING-RESTORE-G3R
-  title: "Restore ordinary compiler and Semantic VM engineering after licensing migration"
-  type: implementation
+  id: SHF0R-V3-GOVERNANCE-G1
+  title: "Temporary narrow scope for Bootstrap Contract v3"
+  type: governance
   mode: active
-  supersedes: SHF-LICENSE-GOVERNANCE-G1
-  authorized_by: "Repository owner explicit IMPLEMENTATION GO 2026-10-27; recovery task"
+  supersedes: SHF-ENGINEERING-RESTORE-G3R
+  authorized_by: "Repository owner explicit GOVERNANCE GO 2026-11-11; SHF-0R G1"
 
 intent:
-  summary: "Restore ordinary compiler, VM, test and documentation delivery while preserving frozen C0, Bootstrap Contract v2, licensing boundaries and trusted governance."
+  summary: "Temporary envelope-only governance transition (G1 of 3): admit exactly five files for the later Bootstrap Contract v3 payload PR (D1-D3 registry and quota-documentation repair), while the C0 pin, reference manifest, source-set, compiler, VM, checker, workflows and licensing stay locked. Ordinary engineering is restored by a later envelope-only PR."
 
 scope:
   allowed_paths:
-    - compiler/**
-    - vm/**
-    - tests/**
-    - docs/**
-    - README.md
-    - CONTRIBUTING.md
+    - bootstrap/contract.toml
+    - bootstrap/validate_contract.py
+    - docs/BOOTSTRAP_CONTRACT.md
+    - docs/BOOTSTRAP_SUBSET.md
+    - tests/test_contract_v3_probes.py
   forbidden_paths:
     - .github/**
     - scripts/harness-check.ps1
     - .harness/current.task.yaml
-    - bootstrap/**
+    - bootstrap/source-set.toml
     - reference/**
+    - compiler/**
+    - vm/**
+    - AGENTS.md
+    - README.md
+    - CONTRIBUTING.md
     - LICENSE
     - COMMERCIAL-LICENSE.md
 
 authorization:
   rust_implementation: false
   language_implementation: false
-  compiler_implementation: true
+  compiler_implementation: false
   documentation_addition: true
   documentation_correction: true
   test_addition: true
@@ -49,9 +53,9 @@ authorization:
   visibility_change: false
 
 constraints:
-  issue: 29
+  issue: 11
   base_branch: main
-  base_sha: 0a3afb8e9d8b6c8ad7aa778f704ccf21374e4187
+  base_sha: dfb8130464206230d32dc3c5c1946acab2c9d7b9
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
