@@ -1,4 +1,5 @@
 """Identity rejection must precede compiler execution or evidence creation."""
+import json
 import os
 import pathlib
 import subprocess
@@ -7,11 +8,88 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
+import reference_identity
 from reference_identity import qualify_reference
 
 
 class ReferenceIdentityTests(unittest.TestCase):
+    def test_preflight_rejects_wrong_contract_or_reference_identity(self):
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        contract_path = pathlib.Path("bootstrap/contract.toml")
+        reference_path = pathlib.Path("reference/semantic-reference.toml")
+        for path, old, new in (
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', 'protocol = "shf0-bootstrap-contract-v1"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', 'protocol = "shf0-bootstrap-contract-v2"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', 'protocol = "shf0-bootstrap-contract-v99"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', ''),
+            (contract_path, 'status = "frozen"', 'status = "draft"'),
+            (reference_path, 'status = "qualified-reference"', 'status = "candidate"'),
+            (reference_path, 'skulmakov-oss/Semantic', 'skulmakov-oss/Other'),
+            (reference_path, '1d1e76c7509a03baa0133abaaa5819f5d32582b2', '0' * 40),
+        ):
+            with self.subTest(path=path, replacement=new), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                for identity_path in (contract_path, reference_path):
+                    text = (repo / identity_path).read_text(encoding="utf-8")
+                    if identity_path == path:
+                        self.assertIn(old, text)
+                        text = text.replace(old, new, 1)
+                    (root / identity_path).parent.mkdir(exist_ok=True)
+                    (root / identity_path).write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "frozen Bootstrap Contract v3 identity mismatch"):
+                    qualify_reference(root, None, None, {})
+
+    def test_trusted_validator_rejects_normative_v3_drift(self):
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        contract_path = repo / "bootstrap/contract.toml"
+        original = pathlib.Path.read_text
+
+        def mutated_contract(path, *args, **kwargs):
+            text = original(path, *args, **kwargs)
+            if path == contract_path:
+                self.assertIn("max_component_length = 100", text)
+                return text.replace("max_component_length = 100", "max_component_length = 101", 1)
+            return text
+
+        with mock.patch.object(pathlib.Path, "read_text", mutated_contract):
+            with self.assertRaisesRegex(ValueError, "CONTRACT_DRIFT: a frozen value"):
+                qualify_reference(repo, None, None, os.environ)
+
+    def test_mismatched_provenance_binding_is_rejected(self):
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        provenance = json.loads(pathlib.Path(os.environ["SEMANTIC_C0_PROVENANCE"]).read_text(encoding="utf-8"))
+        provenance["upstream"]["cargo_lock_blob_git_oid"] = "0" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "mismatched.json"
+            path.write_text(json.dumps(provenance), encoding="utf-8")
+            env = {**os.environ, "SEMANTIC_C0_PROVENANCE": str(path),
+                   "SEMANTIC_SMC_PROVENANCE": os.environ.get(
+                       "SEMANTIC_SMC_PROVENANCE", os.environ["SEMANTIC_C0_PROVENANCE"])}
+            with self.assertRaisesRegex(ValueError, "provenance does not bind"):
+                qualify_reference(repo, None, None, env)
+
+    def test_unsupported_platform_is_rejected(self):
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        with mock.patch.object(reference_identity, "os", SimpleNamespace(name="posix")):
+            with self.assertRaisesRegex(ValueError, "Windows qualification attestation"):
+                qualify_reference(repo, None, None, os.environ)
+
+    def test_dirty_reference_checkout_is_rejected(self):
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        checkout = pathlib.Path(os.environ["SEMANTIC_C0_CHECKOUT"]).resolve()
+        run = subprocess.run
+
+        def report_dirty(args, *positional, **kwargs):
+            if args[:4] == ["git", "-C", str(checkout), "status"]:
+                return subprocess.CompletedProcess(args, 0, stdout="?? dirty.sm\n", stderr="")
+            return run(args, *positional, **kwargs)
+
+        with mock.patch.object(subprocess, "run", side_effect=report_dirty):
+            with self.assertRaisesRegex(ValueError, "C0 checkout tree is not clean"):
+                qualify_reference(repo, None, None, os.environ)
+
     def qualify_with_cleanup_lock(self, release_delay):
         repo = pathlib.Path(__file__).resolve().parents[2]
         smc = pathlib.Path(os.environ["SEMANTIC_SMC"])
@@ -52,6 +130,7 @@ class ReferenceIdentityTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows executable sharing contract")
     def test_transient_cleanup_lock_does_not_replace_valid_identity_with_mismatch(self):
         proof = self.qualify_with_cleanup_lock(0.2)
+        self.assertEqual(proof["contract_protocol"], "shf0-bootstrap-contract-v3")
         self.assertEqual(proof["sha"], "1d1e76c7509a03baa0133abaaa5819f5d32582b2")
 
     @unittest.skipUnless(os.name == "nt", "Windows executable sharing contract")
@@ -65,7 +144,7 @@ class ReferenceIdentityTests(unittest.TestCase):
         self.assertTrue(smc, "qualification requires SEMANTIC_SMC")
         # Establish that the same proof is valid before changing only the binary.
         qualify_reference(repo, pathlib.Path(smc), pathlib.Path(smc), os.environ)
-        with self.assertRaisesRegex(ValueError, "REFERENCE_MISMATCH"):
+        with self.assertRaisesRegex(ValueError, "supplied compiler binary differs from the attested build artifact"):
             qualify_reference(repo, pathlib.Path(smc), pathlib.Path(sys.executable), os.environ)
 
     def test_non_reference_checkout_is_rejected_before_binary_execution(self):
@@ -83,14 +162,14 @@ class ReferenceIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             env = os.environ.copy()
-            for key in ("SEMANTIC_C0_CHECKOUT", "SEMANTIC_C0_PROVENANCE", "SEMANTIC_C0_ANCHOR"):
-                env.pop(key, None)
+            env.pop("SEMANTIC_C0_PROVENANCE", None)
             env.update(SEMANTIC_SMC=sys.executable, SEMANTIC_C0_SMC=sys.executable,
                        SEMANTIC_TEST_OUT=str(root / "evidence"))
             result = subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("run_tests.py"))],
                                     env=env, capture_output=True, text=True, timeout=15)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("REFERENCE_MISMATCH", result.stdout + result.stderr)
+            self.assertIn("REFERENCE_MISMATCH: SEMANTIC_C0_PROVENANCE is required",
+                          result.stdout + result.stderr)
             self.assertFalse((root / "evidence").exists())
 
 

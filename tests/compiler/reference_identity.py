@@ -44,10 +44,10 @@ def qualify_reference(repo, smc, c0, env):
         contract = tomllib.loads(contract_path.read_text(encoding="utf-8"))
         if (reference["repository"] != "skulmakov-oss/Semantic"
                 or reference["status"] != "qualified-reference"
-                or contract["protocol"] != "shf0-bootstrap-contract-v2"
+                or contract.get("protocol") != "shf0-bootstrap-contract-v3"
                 or contract["status"] != "frozen"
                 or contract["c0"]["sha"] != reference["sha"]):
-            raise ValueError("reference / frozen Bootstrap Contract v2 identity mismatch")
+            raise ValueError("reference / frozen Bootstrap Contract v3 identity mismatch")
         paths = {}
         for key in ("SEMANTIC_C0_CHECKOUT", "SEMANTIC_C0_PROVENANCE", "SEMANTIC_C0_ANCHOR"):
             if not env.get(key):
