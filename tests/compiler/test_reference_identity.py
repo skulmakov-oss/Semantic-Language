@@ -64,7 +64,9 @@ class ReferenceIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "mismatched.json"
             path.write_text(json.dumps(provenance), encoding="utf-8")
-            env = {**os.environ, "SEMANTIC_C0_PROVENANCE": str(path)}
+            env = {**os.environ, "SEMANTIC_C0_PROVENANCE": str(path),
+                   "SEMANTIC_SMC_PROVENANCE": os.environ.get(
+                       "SEMANTIC_SMC_PROVENANCE", os.environ["SEMANTIC_C0_PROVENANCE"])}
             with self.assertRaisesRegex(ValueError, "provenance does not bind"):
                 qualify_reference(repo, None, None, env)
 
@@ -142,7 +144,7 @@ class ReferenceIdentityTests(unittest.TestCase):
         self.assertTrue(smc, "qualification requires SEMANTIC_SMC")
         # Establish that the same proof is valid before changing only the binary.
         qualify_reference(repo, pathlib.Path(smc), pathlib.Path(smc), os.environ)
-        with self.assertRaisesRegex(ValueError, "REFERENCE_MISMATCH"):
+        with self.assertRaisesRegex(ValueError, "supplied compiler binary differs from the attested build artifact"):
             qualify_reference(repo, pathlib.Path(smc), pathlib.Path(sys.executable), os.environ)
 
     def test_non_reference_checkout_is_rejected_before_binary_execution(self):
