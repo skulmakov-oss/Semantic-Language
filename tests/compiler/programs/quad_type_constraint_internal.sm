@@ -1,0 +1,79 @@
+// Q2: real Sema check_expr if-branch constraint witnesses and decisions.
+// This imports the actual compiler analyzer; no Python reimplementation.
+Import "sema.sm"
+
+fn analyze_source(source: text) -> Sem {
+    let tokens: Lexed = lex(source);
+    assert(tokens.err == "");
+    let parsed: P = parse_program(tokens.toks);
+    assert(parsed.err == "");
+    return analyze(Prog { nodes: parsed.nodes, funcs: parsed.funcs, recs: parsed.recs });
+}
+
+fn inspect_type_evidence(source: text, should_pass: bool, expected: quad) {
+    let sem: Sem = analyze_source(source);
+    if should_pass {
+        assert(sem.err == "");
+    } else {
+        assert(sem.err != "");
+        assert(sem.cat == "type");
+        assert(text_len(sem.err) > 0u32);
+    }
+    let mut found: i32 = 0;
+    let mut i: i32 = 0;
+    while i < len(sem.prog.nodes) {
+        let nd: Node = sem.prog.nodes[i];
+        if nd.k == 26 {
+            assert(map_contains(sem.type_evidence, i));
+            let evidence: Evidence = map_get(sem.type_evidence, i, evidence_empty("missing", 0, 0));
+            assert(evidence_valid(evidence));
+            assert(evidence.proposition_kind == "if-branch-type");
+            assert(evidence.subject == i);
+            assert(evidence.scope == 0);
+            assert(evidence.state == expected);
+            assert(evidence.positive[0] == sem.prog.nodes[nd.b].pos);
+            if expected == T {
+                assert(len(evidence.positive) == 2);
+                assert(len(evidence.negative) == 0);
+                assert(evidence.positive[1] == sem.prog.nodes[nd.c].pos);
+            } else {
+                assert(expected == S);
+                assert(len(evidence.positive) == 1);
+                assert(len(evidence.negative) == 1);
+                assert(evidence.negative[0] == sem.prog.nodes[nd.c].pos);
+            }
+            found = found + 1;
+        }
+        i = i + 1;
+    }
+    assert(found == 1);
+    return;
+}
+
+fn main() {
+    let valid: text = "fn main() { let x: i32 = if true { 1 } else { 2 }; assert(x == 1); return; }";
+    let invalid: text = "fn main() { let x: i32 = if true { 1 } else { true }; return; }";
+    inspect_type_evidence(valid, true, T);
+    inspect_type_evidence(invalid, false, S);
+    // Repeat the same analysis to prove deterministic witness ordering.
+    inspect_type_evidence(valid, true, T);
+    inspect_type_evidence(invalid, false, S);
+
+    let base: Evidence = evidence_empty("if-branch-type", 12, 0);
+    assert(evidence_valid(base));
+    assert(base.state == N);
+    let yes: Evidence = type_branch_witness(base, 1, 1, 10u32);
+    let no: Evidence = type_branch_witness(base, 2, 1, 20u32);
+    assert(yes.state == T);
+    assert(no.state == F);
+    let mixed: EvidenceResult = evidence_try_join(yes, no);
+    assert(mixed.ok);
+    assert(mixed.value.state == S);
+    assert(mixed.value.positive[0] == 10u32);
+    assert(mixed.value.negative[0] == 20u32);
+    let other: Evidence = type_branch_witness(evidence_empty("if-branch-type", 13, 0), 2, 1, 30u32);
+    let rejected: EvidenceResult = evidence_try_join(yes, other);
+    assert(!rejected.ok);
+    assert(rejected.error != "");
+    return;
+}

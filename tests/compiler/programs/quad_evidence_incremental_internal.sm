@@ -1,0 +1,30 @@
+// Exercises the real incremental evidence accumulator with duplicate witnesses.
+Import "sema.sm"
+
+fn main() {
+    let parsed: P = parse_program(lex("fn main() { return; }").toks);
+    assert(parsed.err == "");
+    let sem: Sem = analyze(Prog { nodes: parsed.nodes, funcs: parsed.funcs, recs: parsed.recs });
+    assert(sem.err == "");
+    let syms: Sequence(Sym) = [];
+    let symmap: Map(text, i32) = map_empty();
+    let index: Map(i32, Map(u32, i32)) = map_empty();
+    let c0: C = C {
+        sem: sem, syms: syms, symmap: symmap, names: [],
+        loops: 0, fret: 0, type_witness_seen: index
+    };
+
+    let a: C = accumulate_type_constraint(c0, 1000000, "witness-duplicate", 1, 1, 25u32);
+    assert(a.sem.err == "");
+    let b: C = accumulate_type_constraint(a, 1000000, "witness-duplicate", 1, 1, 25u32);
+    assert(b.sem.err == "invalid accumulated type evidence: duplicate evidence witness");
+
+    let c: C = accumulate_type_constraint(a, 1000000, "witness-duplicate", 2, 1, 25u32);
+    assert(c.sem.err == "");
+    let proof: Evidence = map_get(c.sem.type_evidence, 1000000, evidence_empty("missing", 0, 0));
+    assert(proof.state == S);
+    assert(evidence_valid(proof));
+    let d: C = accumulate_type_constraint(c, 1000000, "witness-duplicate", 2, 1, 25u32);
+    assert(d.sem.err == "invalid accumulated type evidence: duplicate evidence witness");
+    return;
+}

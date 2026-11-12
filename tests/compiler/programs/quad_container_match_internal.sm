@@ -1,0 +1,154 @@
+// Q2.4: tuple target, sequence element, match-arm quad evidence and Q3/Q4.
+Import "lower.sm"
+
+fn analyze_text(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let p: P = parse_program(lx.toks);
+    assert(p.err == "");
+    return analyze(Prog { nodes: p.nodes, funcs: p.funcs, recs: p.recs });
+}
+
+fn inspect(source: text, kind: text, expected: quad, pos_count: i32, neg_count: i32, valid_program: bool) {
+    let sem: Sem = analyze_text(source);
+    if valid_program {
+        assert(sem.err == "");
+        assert(q3_lowering_error(sem) == "");
+    } else {
+        assert(sem.err != "");
+        assert(sem.cat == "type");
+    }
+    let mut found: i32 = 0;
+    let mut i: i32 = 0;
+    while i < len(sem.prog.nodes) {
+        if map_contains(sem.type_evidence, i) {
+            let e: Evidence = map_get(sem.type_evidence, i, evidence_empty("missing", 0, 0));
+            if e.proposition_kind == kind {
+                assert(evidence_valid(e));
+                assert(e.subject == i);
+                assert(e.scope == 0);
+                assert(e.state == expected);
+                assert(len(e.positive) == pos_count);
+                assert(len(e.negative) == neg_count);
+                let sources: Sequence(i32) = q3_source_nodes(sem, i);
+                assert(len(sources) == pos_count + neg_count);
+                let mut x: i32 = 0;
+                while x < pos_count {
+                    assert(e.positive[x] == sem.prog.nodes[sources[x]].pos);
+                    x = x + 1;
+                }
+                x = 0;
+                while x < neg_count {
+                    assert(e.negative[x] == sem.prog.nodes[sources[pos_count + x]].pos);
+                    x = x + 1;
+                }
+                if valid_program { assert(q3_proof_error(sem, i) == ""); }
+                else { assert(q3_proof_error(sem, i) != ""); }
+                found = found + 1;
+            }
+        }
+        i = i + 1;
+    }
+    assert(found == 1);
+    return;
+}
+
+fn main() {
+    let tuple_good: text = "fn main() { let t: (i32, bool) = (1, true); assert(t == t); return; }";
+    // No tuple-record equality is supported: use a tuple binding with no comparison.
+    let tuple_pass: text = "fn main() { let t: (i32, bool) = (1, true); return; }";
+    let tuple_fail: text = "fn main() { let t: (i32, bool) = (1, 2); return; }";
+    let sequence_pass: text = "fn main() { let xs: Sequence(i32) = [1, 2, 3]; assert(xs[1] == 2); return; }";
+    let sequence_fail: text = "fn main() { let xs: Sequence(i32) = [1, true]; return; }";
+    let sequence_only_negative: text = "fn main() { let xs: Sequence(i32) = [true]; return; }";
+    let sequence_inferred: text = "fn main() { let xs = [1, true]; return; }";
+    let match_pass: text = "fn main() { let value: i32 = match 1 { 1 => { 10 } _ => { 20 } }; assert(value == 10); return; }";
+    let match_fail: text = "fn main() { let value: i32 = match 1 { 1 => { 10 } _ => { true } }; return; }";
+    inspect(tuple_pass, "tuple-target-items", T, 2, 0, true);
+    inspect(tuple_fail, "tuple-target-items", S, 1, 1, false);
+    inspect(sequence_pass, "sequence-elements", T, 3, 0, true);
+    inspect(sequence_fail, "sequence-elements", S, 1, 1, false);
+    inspect(sequence_only_negative, "sequence-elements", F, 0, 1, false);
+    inspect(sequence_inferred, "sequence-elements", S, 1, 1, false);
+    inspect(match_pass, "match-arm-types", T, 2, 0, true);
+    inspect(match_fail, "match-arm-types", S, 1, 1, false);
+    // Inference is not an externally imposed tuple target.
+    let tuple_unconstrained: Sem = analyze_text("fn main() { let t = (1, true); return; }");
+    assert(tuple_unconstrained.err == "");
+    let mut i0: i32 = 0;
+    while i0 < len(tuple_unconstrained.prog.nodes) {
+        if tuple_unconstrained.prog.nodes[i0].k == 22 {
+            assert(!map_contains(tuple_unconstrained.tuple_expected, i0));
+            assert(!map_contains(tuple_unconstrained.type_evidence, i0));
+        }
+        i0 = i0 + 1;
+    }
+    assert(q3_lowering_error(tuple_unconstrained) == "");
+    // No observations means no synthetic sequence proof.
+    let empty: Sem = analyze_text("fn main() { let xs: Sequence(i32) = []; return; }");
+    assert(empty.err == "");
+    assert(q3_lowering_error(empty) == "");
+
+    let combined: text = "fn main() { let t: (i32, bool) = (1, true); let xs: Sequence(i32) = [1, 2]; let m: i32 = match 1 { 1 => { 3 } _ => { 4 } }; assert(xs[1] == 2); return; }";
+    let sem: Sem = analyze_text(combined);
+    assert(sem.err == "");
+    assert(q3_lowering_error(sem) == "");
+    let mi: i32 = map_get(sem.fnidx, "main", 0 - 1);
+    let f: FnIr = lower_function(sem, mi);
+    let mut tuple_proofs: i32 = 0;
+    let mut sequence_proofs: i32 = 0;
+    let mut match_proofs: i32 = 0;
+    for proof in f.proofs {
+        assert(evidence_valid(proof.evidence));
+        assert(proof.evidence.state == T);
+        assert(q3_proof_error(sem, proof.evidence.subject) == "");
+        if proof.evidence.proposition_kind == "tuple-target-items" { tuple_proofs = tuple_proofs + 1; }
+        if proof.evidence.proposition_kind == "sequence-elements" { sequence_proofs = sequence_proofs + 1; }
+        if proof.evidence.proposition_kind == "match-arm-types" { match_proofs = match_proofs + 1; }
+    }
+    assert(tuple_proofs == 1);
+    assert(sequence_proofs == 1);
+    assert(match_proofs == 1);
+    let mut i: i32 = 0;
+    let mut target_node: i32 = 0 - 1;
+    while i < len(sem.prog.nodes) {
+        if sem.prog.nodes[i].k == 23 { target_node = i; }
+        i = i + 1;
+    }
+    assert(target_node >= 0);
+    let legit: Evidence = map_get(sem.type_evidence, target_node, evidence_empty("invalid", 0, 0));
+    assert(evidence_valid(legit));
+    let fake: Evidence = legit with { positive: [999999u32, legit.positive[1]] };
+    assert(evidence_valid(fake));
+    assert(q3_lowering_error(sem with { type_evidence: map_set(sem.type_evidence, target_node, fake) }) != "");
+    assert(q3_lowering_error(sem with { type_evidence: map_empty() }) != "");
+
+    // Remove only the match proof, retaining all unrelated valid Evidence.
+    // Q3 must still refuse the completed value-producing match.
+    let mut match_id: i32 = 0 - 1;
+    let mut j: i32 = 0;
+    while j < len(sem.prog.nodes) {
+        if sem.prog.nodes[j].k == 25 && map_contains(sem.match_result_checked, j) {
+            match_id = j;
+        }
+        j = j + 1;
+    }
+    assert(match_id >= 0);
+    let mut retained: Map(i32, Evidence) = map_empty();
+    j = 0;
+    while j < len(sem.prog.nodes) {
+        if j != match_id {
+            if map_contains(sem.type_evidence, j) {
+                retained = map_set(retained, j, map_get(sem.type_evidence, j, evidence_empty("missing", 0, 0)));
+            }
+        }
+        j = j + 1;
+    }
+    let missing_match_only: Sem = sem with { type_evidence: retained };
+    assert(missing_match_only.err == "");
+    assert(map_contains(missing_match_only.match_result_checked, match_id));
+    assert(!map_contains(missing_match_only.type_evidence, match_id));
+    assert(q3_proof_error(missing_match_only, match_id) != "");
+    assert(q3_lowering_error(missing_match_only) != "");
+    return;
+}
