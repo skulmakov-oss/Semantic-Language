@@ -131,7 +131,13 @@ fn parse_field_inits(p0: P) -> (P, Sequence(i32)) {
     let mut kids: Sequence(i32) = [];
     while p.err == "" && p.toks[p.i].kind != 23 {
         let f: Tok = p.toks[p.i];
-        p = expect(p, 2, "field name");
+        // C0 admits the built-in type token `text` as a contextual field name.
+        // Other reserved keywords remain rejected; avoid a charged helper call.
+        if p.err == "" && p.toks[p.i].kind == 55 {
+            p = p with { i: p.i + 1 };
+        } else {
+            p = expect(p, 2, "field name");
+        }
         if p.err == "" && p.toks[p.i].kind != 25 {
             return (fail_cat(p, "unsupported", "field punning is outside the supported subset"), kids);
         }
@@ -354,7 +360,7 @@ fn parse_primary(p0: P) -> (P, i32) {
             if p.err != "" { return (p, 0 - 1); }
             return add_node(p, 7, 0 - 1, 0 - 1, 0 - 1, 0, t.word, t.pos, args);
         }
-        if k1 == 22 && kind_at(p, 2) == 2 && kind_at(p, 3) == 25 {
+        if k1 == 22 && (kind_at(p, 2) == 2 || kind_at(p, 2) == 55) && kind_at(p, 3) == 25 {
             // record literal: Name { field: expr, ... }
             p = p with { i: p.i + 1 };
             let mut fields: Sequence(i32) = [];
@@ -363,7 +369,30 @@ fn parse_primary(p0: P) -> (P, i32) {
             return add_node(p, 29, 0 - 1, 0 - 1, 0 - 1, 0, t.word, t.pos, fields);
         }
         if k1 == 49 {
-            return (fail_cat(p, "unsupported", "path expressions ('" + t.word + "::...') are outside the supported subset"), 0 - 1);
+            if t.word != "Option" {
+                return (fail_cat(p, "unsupported", "path expressions ('" + t.word + "::...') are outside the supported subset"), 0 - 1);
+            }
+            p = p with { i: p.i + 2 };
+            let variant: Tok = p.toks[p.i];
+            p = expect(p, 2, "Option variant");
+            if p.err != "" { return (p, 0 - 1); }
+            if variant.word == "Some" {
+                p = expect(p, 20, "'('");
+                let mut args: Sequence(i32) = [];
+                (p, args) = parse_expr_list(p, 21, "')'");
+                if p.err != "" { return (p, 0 - 1); }
+                if len(args) != 1 {
+                    return (fail_cat(p, "type", "Option::Some expects exactly one payload item"), 0 - 1);
+                }
+                return add_node(p, 34, 0 - 1, 0 - 1, 0 - 1, 0, "Some", t.pos, args);
+            }
+            if variant.word == "None" {
+                if p.toks[p.i].kind == 20 {
+                    return (fail_cat(p, "type", "Option::None does not accept payload items"), 0 - 1);
+                }
+                return add_node(p, 34, 0 - 1, 0 - 1, 0 - 1, 0, "None", t.pos, []);
+            }
+            return (fail_cat(p, "syntax", "unknown Option variant '" + variant.word + "'"), 0 - 1);
         }
         return add_node(p with { i: p.i + 1 }, 4, 0 - 1, 0 - 1, 0 - 1, 0, t.word, t.pos, []);
     }
@@ -422,7 +451,13 @@ fn parse_postfix(p0: P) -> (P, i32) {
             if f.kind == 1 {
                 p = fail_cat(p, "unsupported", "tuple field access is outside the supported subset");
             }
-            p = expect(p, 2, "field name");
+            // C0 admits the built-in type token `text` as a contextual field name.
+            // Other reserved keywords remain rejected; avoid a charged helper call.
+            if p.err == "" && p.toks[p.i].kind == 55 {
+                p = p with { i: p.i + 1 };
+            } else {
+                p = expect(p, 2, "field name");
+            }
             if p.err == "" && p.toks[p.i].kind == 20 {
                 p = fail_cat(p, "unsupported", "method calls are outside the supported subset");
             }
@@ -744,7 +779,13 @@ fn parse_record(p0: P) -> P {
     let mut ftypes: Sequence(i32) = [];
     while p.err == "" && p.toks[p.i].kind != 23 {
         let f: Tok = p.toks[p.i];
-        p = expect(p, 2, "field name");
+        // C0 admits the built-in type token `text` as a contextual field name.
+        // Other reserved keywords remain rejected; avoid a charged helper call.
+        if p.err == "" && p.toks[p.i].kind == 55 {
+            p = p with { i: p.i + 1 };
+        } else {
+            p = expect(p, 2, "field name");
+        }
         p = expect(p, 25, "':'");
         let mut ft: i32 = 0 - 1;
         if p.err == "" {

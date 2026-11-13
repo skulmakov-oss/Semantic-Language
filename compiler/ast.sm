@@ -12,6 +12,7 @@ Import "lexer.sm"
 //     31 FieldInit(name, a)  32 Arm(v = pattern kind, b = literal, name = binding, a = body)
 //        pattern kinds: 0 `_`, 1 i32 literal, 2 u32 literal, 3 Option::Some(name), 4 Option::None
 //     33 Name(name) - an item of a destructuring list
+//     34 OptionCtor(name = Some|None, kids = payload for Some)
 //   statements:
 //     10 Let(name, a = init, v = type node or -1, c = 1 if mut)  11 Assign(name, a)
 //     12 If(a = cond, b = then block, c = else node or -1)  13 While(a = cond, b = body)

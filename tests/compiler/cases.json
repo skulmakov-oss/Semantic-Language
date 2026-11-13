@@ -122,5 +122,9 @@
  "t03_min_div_minus_one": "trap:ArithmeticOverflow",
  "t04_unbounded_recursion_frame_quota": "trap:quota",
  "t05_index_out_of_bounds": "trap:out of bounds",
- "t06_u32_underflow": "trap:ArithmeticOverflow"
+ "t06_u32_underflow": "trap:ArithmeticOverflow",
+ "sh_record_text_field": "ok",
+ "sh_opt_i32_eq": "ok",
+ "sh_opt_nested_none": "ok",
+ "sh_bad_none_no_context": "reject:type:"
 }

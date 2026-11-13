@@ -1,0 +1,2 @@
+record R { text: text }
+fn main() { let a: R = R { text: "one" }; let b: R = a with { text: "two" }; assert(b.text == "two"); }

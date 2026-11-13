@@ -1,0 +1,1 @@
+fn main() { let a: Option(Option(u32)) = Option::None; let b: Option(Option(u32)) = Option::None; assert(a == b); }
