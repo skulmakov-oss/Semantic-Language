@@ -1,0 +1,10 @@
+fn main() {
+    let a: i32 = 17;
+    let b: i32 = 5;
+    print(to_text(a + b) + " " + to_text(a - b) + " " + to_text(a * b) + " " + to_text(a / b) + " " + to_text(a % b));
+    let n: i32 = 0 - 7;
+    print(to_text(n / 2) + " " + to_text(n % 2) + " " + to_text(7 / (0 - 2)) + " " + to_text(7 % (0 - 2)));
+    let big: i32 = 2147483647;
+    print(to_text(big + 1) + " " + to_text(big * 2) + " " + to_text((0 - big) - 2));
+    return;
+}

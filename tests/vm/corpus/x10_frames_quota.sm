@@ -1,0 +1,11 @@
+fn down(n: i32) -> i32 {
+    if n == 0 {
+        return 0;
+    }
+    return down(n - 1) + 1;
+}
+
+fn main() {
+    print(to_text(down(1000)));
+    return;
+}

@@ -1,0 +1,198 @@
+{
+ "b01_empty_main": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "b02_i32_arithmetic": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "b03_bool_logic": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "b04_branching": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "b05_loops": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "b06_assert_pass": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "f01_parameters": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "f02_nested_calls": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "f03_recursion": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "f04_mutual_recursion": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "f05_fibonacci": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "f06_unit_function": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "u01_map_values": {
+  "expect": "ok",
+  "semvm": "unsupported"
+ },
+ "u02_f64": {
+  "expect": "ok",
+  "semvm": "unsupported"
+ },
+ "v01_text": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v02_sequences": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v03_tuples": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v04_records": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v05_option": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v06_enums": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v07_quad_lattice": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v08_quad_truth": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v09_quad_match": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v10_u32": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v11_records_in_sequences": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v12_text_builder": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "v13_non_ascii_unexecuted": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "w01_counting_loop": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "w02_insertion_sort": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "w03_call_heavy": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "w04_quad_batch": {
+  "expect": "ok",
+  "semvm": null
+ },
+ "x01_assert_fail": {
+  "expect": "error:assertion failed",
+  "semvm": null
+ },
+ "x02_div_zero": {
+  "expect": "error:runtime trap: DivisionByZero",
+  "semvm": null
+ },
+ "x03_mod_zero": {
+  "expect": "error:runtime trap: DivisionByZero",
+  "semvm": null
+ },
+ "x04_i32_div_overflow": {
+  "expect": "error:runtime trap: ArithmeticOverflow",
+  "semvm": null
+ },
+ "x05_u32_add_overflow": {
+  "expect": "error:runtime trap: ArithmeticOverflow",
+  "semvm": null
+ },
+ "x06_u32_sub_underflow": {
+  "expect": "error:runtime trap: ArithmeticOverflow",
+  "semvm": null
+ },
+ "x07_u32_mul_overflow": {
+  "expect": "error:runtime trap: ArithmeticOverflow",
+  "semvm": null
+ },
+ "x08_u32_div_zero": {
+  "expect": "error:runtime trap: DivisionByZero",
+  "semvm": null
+ },
+ "x09_steps_quota": {
+  "expect": "error:quota exceeded: Steps limit=100000 used=100001",
+  "semvm": null
+ },
+ "x10_frames_quota": {
+  "expect": "error:quota exceeded: Frames limit=256 used=257",
+  "semvm": null
+ },
+ "x11_sequence_index_oob": {
+  "expect": "error:runtime type mismatch: SEQUENCE_GET index out of bounds: 3",
+  "semvm": null
+ },
+ "x12_sequence_index_negative": {
+  "expect": "error:runtime type mismatch: SEQUENCE_GET index must be non-negative",
+  "semvm": null
+ },
+ "x13_pop_empty": {
+  "expect": "error:runtime type mismatch: SEQUENCE_POP source must be non-empty",
+  "semvm": null
+ },
+ "x14_capability_fs_read": {
+  "expect": "error:ABI FsRead failure [Unavailable]",
+  "semvm": null
+ },
+ "x15_capability_stdout_write": {
+  "expect": "error:ABI StdoutWrite failure [Unavailable]",
+  "semvm": null
+ },
+ "x16_capability_args_read": {
+  "expect": "error:ABI ArgsRead failure [Unavailable]",
+  "semvm": null
+ },
+ "x17_trap_after_output": {
+  "expect": "error:runtime trap: DivisionByZero",
+  "semvm": null
+ },
+ "x18_print_marker_rejected": {
+  "expect": "error:runtime type mismatch: builtin 'print' does not admit host-output marker 'stdout'",
+  "semvm": null
+ }
+}

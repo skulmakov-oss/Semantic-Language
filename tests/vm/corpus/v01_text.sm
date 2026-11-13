@@ -1,0 +1,21 @@
+fn main() {
+    let a: text = "Sem";
+    let b: text = "antic";
+    let c: text = a + b;
+    print(c + " " + to_text(c == "Semantic") + " " + to_text(c != a) + " " + to_text(text_len(c)));
+    let first: u32 = match text_byte_at(c, 0u32) {
+        Option::Some(x) => { x }
+        Option::None => { 0u32 }
+    };
+    let past: bool = match text_byte_at(c, 99u32) {
+        Option::Some(x) => { false }
+        Option::None => { true }
+    };
+    let mid: text = match text_slice(c, 1u32, 4u32) {
+        Option::Some(s) => { s }
+        Option::None => { "?" }
+    };
+    print(to_text(first) + " " + to_text(past) + " " + mid);
+    print(to_text(text_starts_with(c, "Se")) + " " + to_text(text_ends_with(c, "x")) + " " + to_text(text_is_empty("")));
+    return;
+}

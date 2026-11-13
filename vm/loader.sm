@@ -1,0 +1,669 @@
+// loader: transport bytes -> validated executable program (Prog).
+//
+// Two stages, both written in Semantic:
+//   hex_decode  the host transport boundary: the artifact arrives as a
+//               lowercase hex text file (two digits per byte, optional
+//               trailing newline). This is byte transport only.
+//   decode      the SemCode decoder: header, ADT0, function envelopes,
+//               string tables, DBG0/OWN0/SIG0 sections and every
+//               instruction, then branch-target and call-target resolution.
+// Decoding is strict: a truncated or malformed artifact, an unknown opcode,
+// a non-canonical literal or flag, an out-of-range string id or a branch
+// into the middle of an instruction is rejected with "load: ...". A known
+// opcode family this VM does not implement decodes to an UNSUPPORTED
+// instruction, which fails explicitly if executed and is never skipped.
+//
+// The decoder is a structural check, not a verifier: admission stays with
+// sm-verify (see docs/VM.md).
+Import "program.sm"
+
+record Raw {
+    bi: Sequence(i32),
+    bu: Sequence(u32),
+    err: text
+}
+
+record Str {
+    t: text,
+    ok: bool,
+    quoted: bool
+}
+
+// Byte value of every two-digit lowercase hex pair ("00".."ff"), as i32 and
+// as u32 (Semantic has no conversion between the two). Built once; each
+// transported byte then costs one slice and two lookups.
+record HexTable {
+    bi: Map(text, i32),
+    bu: Map(text, u32)
+}
+
+fn hex_table() -> HexTable {
+    let digits: text = "0123456789abcdef";
+    let mut ds: Sequence(text) = [];
+    let mut k: u32 = 0u32;
+    while k < 16u32 {
+        ds = push(ds, match text_slice(digits, k, k + 1u32) {
+            Option::Some(x) => { x }
+            Option::None => { "" }
+        });
+        k = k + 1u32;
+    }
+    let mut mi: Map(text, i32) = map_empty();
+    let mut mu: Map(text, u32) = map_empty();
+    let mut hi: i32 = 0;
+    let mut hu: u32 = 0u32;
+    for h in ds {
+        let mut lo: i32 = 0;
+        let mut lu: u32 = 0u32;
+        for l in ds {
+            mi = map_set(mi, h + l, hi * 16 + lo);
+            mu = map_set(mu, h + l, hu * 16u32 + lu);
+            lo = lo + 1;
+            lu = lu + 1u32;
+        }
+        hi = hi + 1;
+        hu = hu + 1u32;
+    }
+    return HexTable { bi: mi, bu: mu };
+}
+
+// Fixed operand bytes after each opcode byte (variable lists and RET's
+// source come on top). Absent = unknown opcode.
+fn operand_sizes() -> Map(i32, i32) {
+    let sizes: Sequence((i32, i32)) = [
+        (1, 3), (2, 3), (3, 6), (4, 4), (5, 4), (6, 6), (7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6),
+        (16, 6), (17, 6), (18, 4), (19, 6), (20, 6), (21, 6), (22, 4), (23, 6), (24, 6), (25, 4), (26, 6),
+        (32, 6), (33, 6), (34, 6), (35, 6), (36, 6), (37, 6), (38, 6), (39, 6), (40, 6), (41, 6), (42, 6),
+        (48, 4), (49, 6), (64, 7), (65, 1), (66, 2), (67, 4), (68, 6), (69, 6), (70, 8), (71, 10), (72, 6), (73, 8),
+        (80, 10), (81, 6), (82, 6), (83, 6), (84, 6), (85, 6), (86, 6), (87, 6), (88, 6), (89, 6),
+        (90, 4), (91, 4), (92, 6), (93, 6), (94, 7), (95, 4),
+        (96, 6), (97, 6), (98, 2), (99, 4), (100, 4), (101, 2), (102, 2),
+        (103, 4), (104, 6), (105, 6), (106, 6), (107, 4),
+        (112, 2), (113, 6), (114, 8), (115, 8), (116, 4), (117, 6)
+    ];
+    let mut m: Map(i32, i32) = map_empty();
+    for s in sizes {
+        let (op, n) = s;
+        m = map_set(m, op, n);
+    }
+    return m;
+}
+
+fn hex_decode(hx: text) -> Raw {
+    let tab: HexTable = hex_table();
+    let n: u32 = text_len(hx);
+    let mut bi: Sequence(i32) = [];
+    let mut bu: Sequence(u32) = [];
+    let mut err: text = "";
+    let mut i: u32 = 0u32;
+    while i < n && err == "" {
+        let pair: text = match text_slice(hx, i, i + 2u32) {
+            Option::Some(x) => { x }
+            Option::None => { "" }
+        };
+        let v: i32 = map_get(tab.bi, pair, 0 - 1);
+        if v >= 0 {
+            bi = push(bi, v);
+            bu = push(bu, map_get(tab.bu, pair, 0u32));
+            i = i + 2u32;
+        } else {
+            // only a line ending may follow the digits
+            let c: u32 = match text_byte_at(hx, i) {
+                Option::Some(x) => { x }
+                Option::None => { 0u32 }
+            };
+            if c == 10u32 || c == 13u32 {
+                let mut j: u32 = i;
+                while j < n {
+                    let d: u32 = match text_byte_at(hx, j) {
+                        Option::Some(x) => { x }
+                        Option::None => { 0u32 }
+                    };
+                    if d != 10u32 && d != 13u32 {
+                        err = "transport: data after the end of line at " + to_text(j);
+                    }
+                    j = j + 1u32;
+                }
+                i = n;
+            } else {
+                err = "transport: invalid hex digit at " + to_text(i);
+            }
+        }
+    }
+    return Raw { bi: bi, bu: bu, err: err };
+}
+
+// Printable ASCII without '"' (no Semantic text literal can contain it).
+fn ascii_chars() -> text {
+    return " !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+}
+
+// Text of ln bytes at q. A string-table literal keeps its quotes on the wire;
+// they are removed here (the reference strips exactly one leading and one
+// trailing '"'). Raw outside the transportable range give ok = false.
+// Byte value -> one-character text for the transportable range.
+fn char_table() -> Map(i32, text) {
+    let chars: text = ascii_chars();
+    let mut m: Map(i32, text) = map_empty();
+    let mut k: u32 = 0u32;
+    let mut b: i32 = 32;
+    while b <= 126 {
+        if b != 34 {
+            m = map_set(m, b, match text_slice(chars, k, k + 1u32) {
+                Option::Some(x) => { x }
+                Option::None => { "" }
+            });
+            k = k + 1u32;
+        }
+        b = b + 1;
+    }
+    return m;
+}
+
+fn str_at(bi: Sequence(i32), q: i32, ln: i32, chars: Map(i32, text)) -> Str {
+    let mut lo: i32 = q;
+    let mut hi: i32 = q + ln;
+    let mut quoted: bool = false;
+    if ln >= 2 {
+        if bi[q] == 34 && bi[q + ln - 1] == 34 {
+            quoted = true;
+            lo = q + 1;
+            hi = q + ln - 1;
+        }
+    }
+    let mut s: text = "";
+    let mut ok: bool = true;
+    let mut j: i32 = lo;
+    while j < hi {
+        let ch: text = map_get(chars, bi[j], "");
+        if ch == "" {
+            ok = false;
+        } else {
+            s = s + ch;
+        }
+        j = j + 1;
+    }
+    return Str { t: s, ok: ok, quoted: quoted };
+}
+
+fn decode(bt: Raw) -> Prog {
+    let bi: Sequence(i32) = bt.bi;
+    let bu: Sequence(u32) = bt.bu;
+    let n: i32 = len(bi);
+    let chars: Map(i32, text) = char_table();
+    let sizes: Map(i32, i32) = operand_sizes();
+    let mut err: text = "";
+    let mut rev: i32 = 0;
+    let mut ins: Sequence(Ins) = [];
+    let mut fns: Sequence(Fn) = [];
+    let mut tp: Sequence(text) = [];
+    let mut up: Sequence(u32) = [];
+    let mut ap: Sequence(i32) = [];
+
+    // ---- header: SEMCOD22 (rev 23) and SEMCOD23 (rev 24, u32 arithmetic)
+    if n < 8 {
+        err = "load: bad SemCode header";
+    } else {
+        let semcod: bool = bi[0] == 83 && bi[1] == 69 && bi[2] == 77 && bi[3] == 67 && bi[4] == 79 && bi[5] == 68;
+        if semcod && bi[6] == 50 && bi[7] == 50 {
+            rev = 23;
+        } else if semcod && bi[6] == 50 && bi[7] == 51 {
+            rev = 24;
+        } else {
+            err = "load: unsupported SemCode header (supported: SEMCOD22, SEMCOD23)";
+        }
+    }
+
+    // ---- ADT0 descriptor section (validated structurally, then skipped:
+    // ADT values carry their own type/variant names and tag)
+    let mut p: i32 = 8;
+    if err == "" {
+        if n < 14 {
+            err = "load: truncated ADT0 section";
+        } else if bi[8] != 65 || bi[9] != 68 || bi[10] != 84 || bi[11] != 48 {
+            err = "load: missing ADT0 section";
+        } else {
+            let dc: i32 = bi[12] + bi[13] * 256;
+            p = 14;
+            let mut k: i32 = 0;
+            while k < dc && err == "" {
+                if p + 2 > n {
+                    err = "load: truncated ADT0 descriptor";
+                } else {
+                    p = p + 2 + bi[p] + bi[p + 1] * 256;
+                    if p + 2 > n {
+                        err = "load: truncated ADT0 descriptor";
+                    } else {
+                        let vc: i32 = bi[p] + bi[p + 1] * 256;
+                        p = p + 2;
+                        let mut v: i32 = 0;
+                        while v < vc && err == "" {
+                            if p + 2 > n {
+                                err = "load: truncated ADT0 variant";
+                            } else {
+                                p = p + 2 + bi[p] + bi[p + 1] * 256;
+                                if p + 2 > n {
+                                    err = "load: truncated ADT0 variant";
+                                } else {
+                                    p = p + 2;
+                                }
+                            }
+                            v = v + 1;
+                        }
+                    }
+                }
+                k = k + 1;
+            }
+        }
+    }
+
+    // ---- function envelopes
+    let mut main: i32 = 0 - 1;
+    while p < n && err == "" {
+        let mut fname: text = "";
+        let mut cend: i32 = 0;
+        if p + 2 > n {
+            err = "load: truncated function header";
+        } else {
+            let nl: i32 = bi[p] + bi[p + 1] * 256;
+            if nl == 0 || p + 2 + nl + 4 > n {
+                err = "load: bad function header";
+            } else {
+                let ns: Str = str_at(bi, p + 2, nl, chars);
+                if !ns.ok || ns.quoted {
+                    err = "load: function name outside the transportable ASCII range";
+                }
+                fname = ns.t;
+                p = p + 2 + nl;
+                let cl: i32 = bi[p] + bi[p + 1] * 256 + bi[p + 2] * 65536 + bi[p + 3] * 16777216;
+                p = p + 4;
+                cend = p + cl;
+                if cl < 0 || cend > n {
+                    err = "load: function code out of bounds";
+                }
+            }
+        }
+        let mut q: i32 = p;
+        // string table
+        let mut sv: Sequence(text) = [];
+        let mut sq: Sequence(bool) = [];
+        let mut sok: Sequence(bool) = [];
+        let mut sc: i32 = 0;
+        if err == "" {
+            if q + 2 > cend {
+                err = "load: truncated string table";
+            } else {
+                sc = bi[q] + bi[q + 1] * 256;
+                q = q + 2;
+                let mut k: i32 = 0;
+                while k < sc && err == "" {
+                    if q + 2 > cend {
+                        err = "load: truncated string table";
+                    } else {
+                        let sl: i32 = bi[q] + bi[q + 1] * 256;
+                        if q + 2 + sl > cend {
+                            err = "load: truncated string table";
+                        } else {
+                            let s: Str = str_at(bi, q + 2, sl, chars);
+                            sv = push(sv, s.t);
+                            sq = push(sq, s.quoted);
+                            sok = push(sok, s.ok);
+                            q = q + 2 + sl;
+                        }
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+        // frame slot of each string id: the first entry with the same text
+        let mut canon: Sequence(i32) = [];
+        if err == "" {
+            let mut k: i32 = 0;
+            while k < sc {
+                let mut j: i32 = 0;
+                let mut found: i32 = 0 - 1;
+                while found < 0 {
+                    if sv[j] == sv[k] && sq[j] == sq[k] {
+                        found = j;
+                    }
+                    j = j + 1;
+                }
+                canon = push(canon, found);
+                k = k + 1;
+            }
+        }
+        // optional DBG0 (skipped: debug symbols carry no execution meaning)
+        if err == "" {
+            if q + 6 <= cend {
+                if bi[q] == 68 && bi[q + 1] == 66 && bi[q + 2] == 71 && bi[q + 3] == 48 {
+                    q = q + 6 + (bi[q + 4] + bi[q + 5] * 256) * 10;
+                    if q > cend {
+                        err = "load: truncated DBG0 section";
+                    }
+                }
+            }
+        }
+        // OWN0, mandatory per function at these revisions
+        let mut borrows: bool = false;
+        if err == "" {
+            if q + 6 > cend {
+                err = "load: missing OWN0 section";
+            } else if bi[q] != 79 || bi[q + 1] != 87 || bi[q + 2] != 78 || bi[q + 3] != 48 {
+                err = "load: missing OWN0 section";
+            } else {
+                let ec: i32 = bi[q + 4] + bi[q + 5] * 256;
+                q = q + 6;
+                let mut k: i32 = 0;
+                while k < ec && err == "" {
+                    if q + 2 > cend {
+                        err = "load: truncated OWN0 event";
+                    } else {
+                        let kind: i32 = bi[q];
+                        let mode: i32 = bi[q + 1];
+                        q = q + 2;
+                        if kind == 0 {
+                            borrows = true;
+                            if mode == 1 {
+                                q = q + 4;
+                            } else if mode != 0 {
+                                err = "load: unknown OWN0 borrow activation mode";
+                            }
+                        } else if kind == 1 {
+                            if mode > 1 {
+                                err = "load: unknown OWN0 write execution mode";
+                            }
+                            q = q + 4;
+                        } else {
+                            err = "load: unknown OWN0 event kind";
+                        }
+                        if err == "" {
+                            if q + 6 > cend {
+                                err = "load: truncated OWN0 path";
+                            } else {
+                                let cc: i32 = bi[q + 4] + bi[q + 5] * 256;
+                                q = q + 6;
+                                let mut m: i32 = 0;
+                                while m < cc && err == "" {
+                                    if q + 1 > cend {
+                                        err = "load: truncated OWN0 component";
+                                    } else {
+                                        let ck: i32 = bi[q];
+                                        if ck == 0 {
+                                            q = q + 3;
+                                        } else if ck == 1 || ck == 3 {
+                                            q = q + 5;
+                                        } else if ck == 2 {
+                                            q = q + 7;
+                                        } else {
+                                            err = "load: unknown OWN0 path component";
+                                        }
+                                        if q > cend {
+                                            err = "load: truncated OWN0 component";
+                                        }
+                                    }
+                                    m = m + 1;
+                                }
+                            }
+                        }
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+        // SIG0
+        let mut fam: Sequence(i32) = [];
+        if err == "" {
+            if q + 6 > cend {
+                err = "load: missing SIG0 section";
+            } else if bi[q] != 83 || bi[q + 1] != 73 || bi[q + 2] != 71 || bi[q + 3] != 48 {
+                err = "load: missing SIG0 section";
+            } else {
+                let pc: i32 = bi[q + 4] + bi[q + 5] * 256;
+                q = q + 6;
+                if q + pc > cend {
+                    err = "load: truncated SIG0 section";
+                } else {
+                    let mut k: i32 = 0;
+                    while k < pc {
+                        let fb: i32 = bi[q + k];
+                        if fb < 1 || fb > 15 {
+                            err = "load: unknown SIG0 family tag";
+                        }
+                        fam = push(fam, fb);
+                        k = k + 1;
+                    }
+                    q = q + pc;
+                }
+            }
+        }
+        // instruction stream
+        let istart: i32 = q;
+        let base: i32 = len(ins);
+        let mut fins: Sequence(Ins) = [];
+        let mut offs: Map(i32, i32) = map_empty();
+        while q < cend && err == "" {
+            let op: i32 = bi[q];
+            let o: i32 = q + 1;
+            let need: i32 = map_get(sizes, op, 0 - 1);
+            if need < 0 {
+                err = "load: unknown opcode " + to_text(op) + " at offset " + to_text(q - istart) + " in '" + fname + "'";
+            } else if o + need > cend {
+                err = "load: truncated instruction at offset " + to_text(q - istart) + " in '" + fname + "'";
+            } else {
+                // variable-length tail: operand lists and RET's source
+                let mut extra: i32 = 0;
+                let mut cnt: i32 = 0;
+                if op == 64 || op == 67 || op == 69 || op == 71 || op == 91 || op == 93 {
+                    cnt = bi[o + need - 2] + bi[o + need - 1] * 256;
+                    extra = 2 * cnt;
+                } else if op == 65 {
+                    if bi[o] == 1 {
+                        extra = 2;
+                    } else if bi[o] != 0 {
+                        err = "load: non-canonical return flag";
+                    }
+                }
+                if o + need + extra > cend {
+                    err = "load: truncated instruction at offset " + to_text(q - istart) + " in '" + fname + "'";
+                }
+                if op >= 36 && op <= 42 && rev < 24 {
+                    err = "load: u32 arithmetic opcode under a header older than SEMCOD23";
+                }
+                let mut it: Ins = Ins { op: 99, a: op, b: 1, c: 0, d: 0, e: 0, f: 0 };
+                if err == "" {
+                    // operand list (pool start = current pool length)
+                    let lst: i32 = len(ap);
+                    if extra > 0 && op != 65 {
+                        let mut k: i32 = 0;
+                        while k < cnt {
+                            let at: i32 = o + need + 2 * k;
+                            ap = push(ap, bi[at] + bi[at + 1] * 256);
+                            k = k + 1;
+                        }
+                    }
+                    let r0: i32 = if need >= 2 { bi[o] + bi[o + 1] * 256 } else { 0 };
+                    if op == 1 || op == 2 {
+                        let lit: i32 = bi[o + 2];
+                        if (op == 1 && lit > 3) || (op == 2 && lit > 1) {
+                            err = "load: non-canonical literal";
+                        }
+                        it = Ins { op: if op == 1 { 9 } else { 6 }, a: r0, b: lit, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 3 {
+                        let v: i32 = bi[o + 2] + bi[o + 3] * 256 + bi[o + 4] * 65536 + bi[o + 5] * 16777216;
+                        it = Ins { op: 3, a: r0, b: v, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 4 || op == 5 {
+                        let sid: i32 = if op == 4 { bi[o + 2] + bi[o + 3] * 256 } else { r0 };
+                        let reg: i32 = if op == 4 { r0 } else { bi[o + 2] + bi[o + 3] * 256 };
+                        if sid >= sc {
+                            err = "load: invalid string id " + to_text(sid);
+                        } else if op == 4 {
+                            tp = push(tp, sv[sid]);
+                            it = Ins { op: 1, a: reg, b: canon[sid], c: len(tp) - 1, d: 0, e: 0, f: 0 };
+                        } else {
+                            it = Ins { op: 2, a: canon[sid], b: reg, c: 0, d: 0, e: 0, f: 0 };
+                        }
+                    } else if op == 6 {
+                        let v: u32 = bu[o + 2] + bu[o + 3] * 256u32 + bu[o + 4] * 65536u32 + bu[o + 5] * 16777216u32;
+                        up = push(up, v);
+                        it = Ins { op: 7, a: r0, b: len(up) - 1, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 48 {
+                        let t: i32 = bi[o] + bi[o + 1] * 256 + bi[o + 2] * 65536 + bi[o + 3] * 16777216;
+                        it = Ins { op: 5, a: t, b: 0, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 49 {
+                        let t: i32 = bi[o + 2] + bi[o + 3] * 256 + bi[o + 4] * 65536 + bi[o + 5] * 16777216;
+                        it = Ins { op: 4, a: r0, b: t, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 64 {
+                        let flag: i32 = bi[o];
+                        let dst: i32 = bi[o + 1] + bi[o + 2] * 256;
+                        let sid: i32 = bi[o + 3] + bi[o + 4] * 256;
+                        if flag > 1 {
+                            err = "load: non-canonical call destination flag";
+                        } else if sid >= sc {
+                            err = "load: invalid string id " + to_text(sid);
+                        } else if !sok[sid] {
+                            it = Ins { op: 99, a: op, b: 2, c: 0, d: 0, e: 0, f: 0 };
+                        } else {
+                            tp = push(tp, sv[sid]);
+                            it = Ins { op: 50, a: flag, b: dst, c: len(tp) - 1, d: lst, e: cnt, f: 0 };
+                        }
+                    } else if op == 65 {
+                        let src: i32 = if bi[o] == 1 { bi[o + 1] + bi[o + 2] * 256 } else { 0 };
+                        it = Ins { op: 51, a: bi[o], b: src, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 66 {
+                        it = Ins { op: 52, a: r0, b: 0, c: 0, d: 0, e: 0, f: 0 };
+                    } else if op == 67 || op == 91 {
+                        if op == 67 && cnt < 2 {
+                            err = "load: tuple literal arity must be at least 2";
+                        }
+                        it = Ins { op: if op == 67 { 60 } else { 67 }, a: r0, b: 0, c: 0, d: lst, e: cnt, f: 0 };
+                    } else if op == 68 {
+                        let r1: i32 = bi[o + 2] + bi[o + 3] * 256;
+                        it = Ins { op: 61, a: r0, b: r1, c: bi[o + 4] + bi[o + 5] * 256, d: 0, e: 0, f: 0 };
+                    } else if op == 69 || op == 70 || op == 71 || op == 72 || op == 73 || op == 90 {
+                        // instructions that name a string: type, variant or literal
+                        let r1: i32 = bi[o + 2] + bi[o + 3] * 256;
+                        let sid: i32 = if op == 69 || op == 71 || op == 90 { r1 } else { bi[o + 4] + bi[o + 5] * 256 };
+                        let two: bool = op == 71;
+                        let sid2: i32 = if two { bi[o + 4] + bi[o + 5] * 256 } else { sid };
+                        if sid >= sc || sid2 >= sc {
+                            err = "load: invalid string id";
+                        } else if !sok[sid] || !sok[sid2] {
+                            it = Ins { op: 99, a: op, b: 2, c: 0, d: 0, e: 0, f: 0 };
+                        } else {
+                            tp = push(tp, sv[sid]);
+                            let ti: i32 = len(tp) - 1;
+                            if op == 69 {
+                                if cnt == 0 {
+                                    err = "load: record literal must encode at least one slot";
+                                }
+                                it = Ins { op: 62, a: r0, b: ti, c: 0, d: lst, e: cnt, f: 0 };
+                            } else if op == 70 {
+                                it = Ins { op: 63, a: r0, b: r1, c: ti, d: bi[o + 6] + bi[o + 7] * 256, e: 0, f: 0 };
+                            } else if op == 71 {
+                                tp = push(tp, sv[sid2]);
+                                it = Ins { op: 64, a: r0, b: ti, c: ti + 1, d: lst, e: cnt, f: bi[o + 6] + bi[o + 7] * 256 };
+                            } else if op == 72 {
+                                it = Ins { op: 65, a: r0, b: r1, c: ti, d: 0, e: 0, f: 0 };
+                            } else if op == 73 {
+                                it = Ins { op: 66, a: r0, b: r1, c: ti, d: bi[o + 6] + bi[o + 7] * 256, e: 0, f: 0 };
+                            } else {
+                                it = Ins { op: 8, a: r0, b: ti, c: 0, d: 0, e: 0, f: 0 };
+                            }
+                        }
+                    } else if (op >= 7 && op <= 12) || (op >= 16 && op <= 26) || (op >= 32 && op <= 42)
+                        || op == 92 || op == 95 || op == 103 || (op >= 104 && op <= 107) {
+                        let r1: i32 = bi[o + 2] + bi[o + 3] * 256;
+                        let mut r2: i32 = 0;
+                        if need >= 6 {
+                            r2 = bi[o + 4] + bi[o + 5] * 256;
+                        }
+                        let mut code: i32 = 0;
+                        if op >= 7 && op <= 11 {
+                            code = op + 3;
+                        } else if op == 12 {
+                            code = 53;
+                        } else if op >= 16 && op <= 19 {
+                            code = op + 17;
+                        } else if op >= 20 && op <= 22 {
+                            code = op + 10;
+                        } else if op >= 23 && op <= 26 {
+                            code = op + 14;
+                        } else if op == 32 || op == 33 {
+                            code = op - 15;
+                        } else if op == 34 || op == 35 {
+                            code = op - 19;
+                        } else if op == 36 || op == 37 {
+                            code = op - 11;
+                        } else if op >= 38 && op <= 42 {
+                            code = op - 18;
+                        } else if op == 92 {
+                            code = 68;
+                        } else if op == 95 {
+                            code = 69;
+                        } else if op == 103 {
+                            code = 70;
+                        } else {
+                            code = op - 33;
+                        }
+                        it = Ins { op: code, a: r0, b: r1, c: r2, d: 0, e: 0, f: 0 };
+                    }
+                }
+                offs = map_set(offs, q - istart, base + len(fins));
+                fins = push(fins, it);
+                q = o + need + extra;
+            }
+        }
+        // branch targets: byte offsets -> instruction indexes
+        if err == "" {
+            let codelen: i32 = cend - istart;
+            for it in fins {
+                let mut r: Ins = it;
+                if it.op == 4 || it.op == 5 {
+                    let off: i32 = if it.op == 4 { it.b } else { it.a };
+                    let t: i32 = map_get(offs, off, 0 - 1);
+                    if off < 0 || off >= codelen || t < 0 {
+                        err = "load: invalid jump address " + to_text(off) + " in '" + fname + "'";
+                    } else if it.op == 4 {
+                        r = it with { b: t };
+                    } else {
+                        r = it with { a: t };
+                    }
+                }
+                ins = push(ins, r);
+            }
+            if fname == "main" {
+                main = len(fns);
+            }
+            fns = push(fns, Fn { name: fname, entry: base, nins: len(fins), fam: fam, borrows: borrows });
+        }
+        p = cend;
+    }
+
+    // ---- call targets: user functions first, then builtins (reference order)
+    if err == "" && main < 0 {
+        err = "load: unknown function 'main'";
+    }
+    let mut out: Sequence(Ins) = [];
+    if err == "" {
+        for it in ins {
+            if it.op == 50 {
+                let name: text = tp[it.c];
+                let mut t: i32 = 0 - 1;
+                let mut k: i32 = 0;
+                for f in fns {
+                    if t < 0 && f.name == name {
+                        t = k;
+                    }
+                    k = k + 1;
+                }
+                if t < 0 {
+                    t = builtin_code(name);
+                }
+                out = push(out, it with { c: t, f: it.c });
+            } else {
+                out = push(out, it);
+            }
+        }
+    }
+    return Prog { ins: out, fns: fns, tp: tp, up: up, ap: ap, main: main, rev: rev, err: err };
+}

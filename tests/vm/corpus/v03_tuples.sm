@@ -1,0 +1,13 @@
+fn divmod(a: i32, b: i32) -> (i32, i32) {
+    return (a / b, a % b);
+}
+
+fn main() {
+    let p: (i32, (bool, text)) = (1, (true, "in"));
+    print(to_text(divmod(9, 4) == (2, 1)) + " " + to_text(p == (1, (true, "out"))) + " " + to_text(p == (1, (true, "in"))));
+    let (q, r) = divmod(17, 5);
+    let (n, inner) = p;
+    let (flag, word) = inner;
+    print(to_text(q) + " " + to_text(r) + " " + to_text(n) + " " + to_text(flag) + " " + word);
+    return;
+}

@@ -1,0 +1,26 @@
+fn find(xs: Sequence(i32), target: i32) -> Option(i32) {
+    let mut i: i32 = 0;
+    let mut found: Option(i32) = Option::None;
+    for x in xs {
+        if x == target {
+            found = Option::Some(i);
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+fn show(o: Option(i32)) -> text {
+    return match o {
+        Option::Some(v) => { "some " + to_text(v) }
+        Option::None => { "none" }
+    };
+}
+
+fn main() {
+    let xs: Sequence(i32) = [4, 7, 9];
+    print(show(find(xs, 7)) + " " + show(find(xs, 5)));
+    let none: Option(i32) = Option::None;
+    print(to_text(find(xs, 9) == Option::Some(2)) + " " + to_text(find(xs, 1) == none) + " " + to_text(find(xs, 4) == none));
+    return;
+}

@@ -1,0 +1,21 @@
+fn digits(n0: i32) -> text {
+    let mut n: i32 = n0;
+    let mut out: text = "";
+    while n > 0 {
+        out = to_text(n % 10) + out;
+        n = n / 10;
+    }
+    return out;
+}
+
+fn main() {
+    let mut line: text = "";
+    let mut i: i32 = 1;
+    while i <= 30 {
+        line = line + digits(i * 37) + ";";
+        i = i + 1;
+    }
+    print(line);
+    print(to_text(text_len(line)));
+    return;
+}

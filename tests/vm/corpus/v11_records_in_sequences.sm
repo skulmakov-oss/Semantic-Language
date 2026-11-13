@@ -1,0 +1,27 @@
+record Item {
+    name: text,
+    qty: i32
+}
+
+fn restock(items: Sequence(Item), extra: i32) -> Sequence(Item) {
+    let mut out: Sequence(Item) = [];
+    for it in items {
+        out = push(out, it with { qty: it.qty + extra });
+    }
+    return out;
+}
+
+fn main() {
+    let mut items: Sequence(Item) = [Item { name: "a", qty: 1 }, Item { name: "b", qty: 0 }];
+    let mut round: i32 = 0;
+    while round < 3 {
+        items = restock(items, round);
+        round = round + 1;
+    }
+    let mut report: text = "";
+    for it in items {
+        report = report + it.name + "=" + to_text(it.qty) + " ";
+    }
+    print(report);
+    return;
+}

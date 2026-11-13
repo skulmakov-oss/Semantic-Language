@@ -1,0 +1,10 @@
+fn shout(t: text) {
+    print(t + "!");
+    return;
+}
+
+fn main() {
+    shout("a");
+    shout("b");
+    return;
+}
