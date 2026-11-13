@@ -1088,6 +1088,12 @@ case('m10_empty_arity', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_
 case('m11_wrong_default', 'reject:type:', 'fn main() { let m: Map(i32, i32) = map_empty(); let x: i32 = map_get(m, 1, true); return; }')
 case('m12_missing_context', 'reject:type:', 'fn main() { let m = map_empty(); return; }')
 
+# Self-host grammar regression: contextual text fields and Option constructors.
+case('sh_record_text_field', 'ok', 'record R { text: text }\nfn main() { let a: R = R { text: "one" }; let b: R = a with { text: "two" }; assert(b.text == "two"); }')
+case('sh_opt_i32_eq', 'ok', 'fn main() { assert(Option::Some(2) == Option::Some(2)); }')
+case('sh_opt_nested_none', 'ok', 'fn main() { let a: Option(Option(u32)) = Option::None; let b: Option(Option(u32)) = Option::None; assert(a == b); }')
+case('sh_bad_none_no_context', 'reject:type:', 'fn main() { Option::None; }')
+
 def main():
     d = HERE / "cases"
     d.mkdir(exist_ok=True)
