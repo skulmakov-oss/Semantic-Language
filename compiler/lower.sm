@@ -154,6 +154,18 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         (l, d) = fresh(l);
         return (emit(l, 4, d, slot_of(l, id), 0, 0), d);
     }
+    if k == 34 {
+        let mut regs: Sequence(i32) = [];
+        (l, regs) = lower_args(l, nd.kids);
+        let mut sid: i32 = 0;
+        (l, sid) = symbol(l, "Option");
+        (l, d) = fresh(l);
+        let tag: i32 = if nd.name == "Some" { 1 } else { 0 };
+        let mut variant_sid: i32 = 0;
+        (l, variant_sid) = symbol(l, nd.name);
+        let make: Ins = Ins { op: 71, a: d, b: sid, c: variant_sid, imm: tag, args: regs };
+        return (l with { ins: push(l.ins, make) }, d);
+    }
     if k == 7 {
         let mut args: Sequence(i32) = [];
         (l, args) = lower_args(l, nd.kids);

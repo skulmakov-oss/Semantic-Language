@@ -60,5 +60,6 @@
   "r28_return_in_value_block": "reject:at 27: value-producing block currently supports only const-bindings, let-bindings, discard binds, and expression statements before the tail value",
   "r29_while_in_value_block": "reject:at 27: expected primary expression",
   "r30_empty_with": "reject:at 0: record copy-with requires at least one explicit override field",
-  "r32_statement_if_in_value_block": "reject:at 51: value-producing block requires trailing value expression before '}'"
+  "r32_statement_if_in_value_block": "reject:at 51: value-producing block requires trailing value expression before '}'",
+  "sh_bad_none_no_context": "reject:at 0: Option::None currently requires contextual Option(T) type in v0"
 }

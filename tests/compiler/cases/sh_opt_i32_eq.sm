@@ -1,0 +1,1 @@
+fn main() { assert(Option::Some(2) == Option::Some(2)); }

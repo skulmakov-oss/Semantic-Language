@@ -41,6 +41,7 @@ fn ins_size(i: Ins) -> i32 {
         67 => { 5 + 2 * n }
         91 => { 5 + 2 * n }
         69 => { 7 + 2 * n }
+        71 => { 11 + 2 * n }
         68 => { 7 }
         70 => { 9 }
         73 => { 9 }
@@ -161,6 +162,13 @@ fn encode_function(hx: Sequence(text), art: Sequence(text), f: FnIr) -> (Sequenc
             if op == 69 {
                 code = push(push(code, hx[i.b % 256]), hx[i.b / 256]);
             }
+            let cnt: i32 = len(i.args);
+            code = push(push(code, hx[cnt % 256]), hx[cnt / 256]);
+            for r in i.args {
+                code = push(push(code, hx[r % 256]), hx[r / 256]);
+            }
+        } else if op == 71 {
+            code = push(push(push(push(push(push(push(push(code, hx[i.a % 256]), hx[i.a / 256]), hx[i.b % 256]), hx[i.b / 256]), hx[i.c % 256]), hx[i.c / 256]), hx[i.imm % 256]), hx[i.imm / 256]);
             let cnt: i32 = len(i.args);
             code = push(push(code, hx[cnt % 256]), hx[cnt / 256]);
             for r in i.args {

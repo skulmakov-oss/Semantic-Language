@@ -201,8 +201,33 @@ fn pop_scope(c: C, saved: i32) -> C {
 }
 
 // ---------------------------------------------------------------- expressions
-fn is_scalar_eq(t: i32) -> bool {
-    return t >= 1 && t <= 4;
+// Mirrors C0 stable structural equality: scalars and acyclic structural
+// Sequence / tuple / record / Option whose nested elements also support it.
+// Maps and recursive record cycles are not admitted.
+fn supports_eq(s: Sem, t: i32, active: Sequence(i32)) -> bool {
+    if t >= 1 && t <= 4 { return true; }
+    if t < 0 || t >= len(s.tys) { return false; }
+    for prior in active {
+        if prior == t { return false; }
+    }
+    let info: TyInfo = s.tys[t];
+    let next: Sequence(i32) = push(active, t);
+    if info.k == 5 || info.k == 8 {
+        return supports_eq(s, info.a, next);
+    }
+    if info.k == 6 {
+        for kid in info.kids {
+            if !supports_eq(s, kid, next) { return false; }
+        }
+        return true;
+    }
+    if info.k == 7 {
+        for field_ty in s.rftypes[info.a] {
+            if !supports_eq(s, field_ty, next) { return false; }
+        }
+        return true;
+    }
+    return false;
 }
 
 // Builtin code of a call name, or 0.
@@ -366,6 +391,33 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         c = c with { sem: c.sem with { slots: map_set(c.sem.slots, id, sym.slot) } };
         return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, sym.ty) } }, sym.ty);
     }
+    if k == 34 {
+        if nd.name == "Some" {
+            let mut payload: i32 = 0;
+            // Pass contextual element type to nested Option::None.
+            let mut pw: i32 = 0 - 1;
+            if want >= 0 && want < len(c.sem.tys) {
+                if c.sem.tys[want].k == 8 { pw = c.sem.tys[want].a; }
+            }
+            (c, payload) = check_value(c, nd.kids[0], pw, "Option::Some payload");
+            if payload < 0 { return (c, 0 - 1); }
+            let mut ot: i32 = 0;
+            let mut s: Sem = c.sem;
+            (s, ot) = option_of(s, payload);
+            return typed(c with { sem: s }, id, ot);
+        }
+        // Never index the type table for an untyped None.
+        if want < 0 {
+            return (cerr(c, "type", "Option::None currently requires contextual Option(T) type in v0", nd.pos), 0 - 1);
+        }
+        if want >= len(c.sem.tys) {
+            return (cerr(c, "type", "Option::None currently requires contextual Option(T) type in v0", nd.pos), 0 - 1);
+        }
+        if c.sem.tys[want].k != 8 {
+            return (cerr(c, "type", "Option::None currently requires contextual Option(T) type in v0", nd.pos), 0 - 1);
+        }
+        return typed(c, id, want);
+    }
     if k == 7 {
         if !map_contains(c.sem.fnidx, nd.name) {
             let code: i32 = builtin_code(nd.name);
@@ -430,7 +482,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
             if l != r {
                 return (cerr(c, "type", "cannot compare " + ty_text(c.sem, l) + " with " + ty_text(c.sem, r), nd.pos), 0 - 1);
             }
-            if !is_scalar_eq(l) {
+            if !supports_eq(c.sem, l, []) {
                 return (cerr(c, "unsupported", "equality on " + ty_text(c.sem, l) + " is outside the supported subset", nd.pos), 0 - 1);
             }
             return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, 2) } }, 2);
