@@ -212,8 +212,37 @@ fn encode_program(fns: Sequence(FnIr), u32arith: bool) -> (Sequence(text), text)
     let header: text = if u32arith { "SEMCOD23" } else { "SEMCOD22" };
     let (magic, n) = put_text(hx, [], header);
     let mut art: Sequence(text) = append(magic, adt_section(hx));
+    // OWN0 FieldSymbol is a VM-global RuntimeSymbolTable ID, not a
+    // per-function string-table offset. Reproduce VM first-seen interning
+    // in final envelope order before encoding any ownership metadata.
+    let mut global_symbols: Map(text, i32) = map_empty();
+    let mut next_global: i32 = 0;
     for f in fns {
-        let (encoded, encoding_error) = encode_function(hx, art, f);
+        for name in f.strings {
+            if !map_contains(global_symbols, name) {
+                global_symbols = map_set(global_symbols, name, next_global);
+                next_global = next_global + 1;
+            }
+        }
+    }
+    for f in fns {
+        let mut remapped: Sequence(OwnPath) = [];
+        for ev in f.owns {
+            if ev.comp_kind == 1 {
+                if ev.comp_a < 0 || ev.comp_a >= len(f.strings) {
+                    return ([], "ownership FieldSymbol local index out of bounds");
+                }
+                let field_name: text = f.strings[ev.comp_a];
+                if !map_contains(global_symbols, field_name) {
+                    return ([], "ownership FieldSymbol missing global symbol");
+                }
+                remapped = push(remapped, ev with { comp_a: map_get(global_symbols, field_name, 0) });
+            } else {
+                remapped = push(remapped, ev);
+            }
+        }
+        let normalized: FnIr = f with { owns: remapped };
+        let (encoded, encoding_error) = encode_function(hx, art, normalized);
         if encoding_error != "" {
             return ([], encoding_error);
         }
