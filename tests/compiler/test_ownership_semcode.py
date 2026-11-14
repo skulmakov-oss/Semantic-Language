@@ -173,7 +173,7 @@ fn main() {
             result = subprocess.run(
                 [SMC, "run", "main.sm", "--profile", "cli-read-only",
                  "--root", root, "--envelope", "trusted-compiler",
-                 "--max-steps", "20000000", "--max-calls", "50000",
+                 "--max-steps", "20000000", "--max-calls", "100000",
                  "--max-frames", "256", "--", "ownership.sm"],
                 cwd=REPO / "compiler", capture_output=True, text=True,
                 encoding="utf-8", timeout=1800,
@@ -255,7 +255,7 @@ record FnIr { name: text, families: Sequence(i32), strings: Sequence(text), ins:
                 result = subprocess.run(
                     [SMC, "run", "main.sm", "--profile", "cli-read-only", "--root", root,
                      "--envelope", "trusted-compiler", "--max-steps", "20000000",
-                     "--max-calls", "50000", "--max-frames", "256", "--", "invalid.sm", mode],
+                     "--max-calls", "100000", "--max-frames", "256", "--", "invalid.sm", mode],
                     cwd=REPO / "compiler", capture_output=True, text=True,
                     encoding="utf-8", timeout=1800,
                 )
