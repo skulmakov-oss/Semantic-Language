@@ -574,6 +574,9 @@ fn check_option_ctor(c0: C, id: i32, nd: Node, want: i32) -> (C, i32) {
         let mut payload: i32 = 0 - 1;
         (c, payload) = check_expr(c, nd.kids[0], pw);
         if c.sem.err != "" || payload < 0 { return (c, 0 - 1); }
+        if payload == 0 {
+            return (cerr(c, "type", "Option::Some payload has unit type", c.sem.prog.nodes[nd.kids[0]].pos), 0 - 1);
+        }
         let mut s: Sem = c.sem;
         let mut ot: i32 = 0 - 1;
         (s, ot) = intern(s, "O" + to_text(payload), TyInfo { k: 8, a: payload, kids: [], name: "" });
