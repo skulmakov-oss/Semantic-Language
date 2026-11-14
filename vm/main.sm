@@ -147,12 +147,13 @@ fn main() {
     assert(conflict_machine.phase == 1);
     assert(conflict_machine.pc == 5);
     let bad_target: Sequence(Instr) = [
-        Instr { op: 1, value: quad_s(), n_target: 0, f_target: 0, t_target: 0, s_target: 99 },
-        Instr { op: 2, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 1, value: quad_s(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 2, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 99 },
     ];
     let bad: Machine = run(bad_target, quad_n());
     assert(bad.phase == 2);
-    assert(bad.trap != 0);
+    assert(bad.trap == 100);
+    assert(bad.pc == 1);
 
     let assert_stop: Sequence(Instr) = [
         Instr { op: 1, value: quad_s(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
