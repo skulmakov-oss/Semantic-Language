@@ -106,9 +106,25 @@ Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 
 ## Current phase
 
-**Bootstrap Contract v2 is frozen; a Semantic-written compiler exists in `compiler/`.**
-Differential qualification of its supported subset is in progress. C1/C2 self-compilation and
-the fixed point are not yet proven; this is not stable self-hosting or full language coverage.
+**Bootstrap Contract v3 is frozen** (`shf0-bootstrap-contract-v3`). The Semantic-written
+compiler in [`compiler/`](compiler/) includes the integrated Quad-native
+main-compatibility checkpoint from [PR #63](https://github.com/skulmakov-oss/Semantic-Language/pull/63).
+
+As of 2026-11-14, on `main` commit
+[`e296ada`](https://github.com/skulmakov-oss/Semantic-Language/commit/e296adac229df628108772520cd27e5e32244872),
+local qualification established **byte-identical `C2 = C3 = C4`** compiler artifacts
+(301,087 bytes each, SHA-256
+`120ed3c18d1d8d48cadc3f9597bafec87cb45d143e33c4f026e2a66dcdc4df03`).
+Every artifact passed the pinned Frozen C0 verifier. The differential corpus passed
+131/131 cases and 9/9 mutations; see the
+[exact-HEAD qualification report](https://github.com/skulmakov-oss/Semantic-Language/pull/63#issuecomment-6876851138).
+
+**Proof boundary:** This C2/C3/C4 engineering fixed-point checkpoint is not an
+accepted **C1/C2 Bootstrap Seal** under the frozen
+[Bootstrap Contract v3](docs/BOOTSTRAP_CONTRACT.md). The protocol additionally requires
+its declared source-set and reference bindings, the prescribed C1/C2 comparison,
+independent reproduction and Seal acceptance evidence. Formal SHF-16 completion,
+SHF-17 cross-platform qualification and full language coverage are not claimed here.
 
 C0 reference pin: `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
 (Semantic 1.3.0-beta.1 Windows x64 Developer Preview, with explicit limits) —
@@ -120,6 +136,11 @@ reference repository is never a qualification oracle.
 `sm-verify` and `sm-vm` remain Rust components in `skulmakov-oss/Semantic`. Each of
 C1 and C2 is admitted by that verifier, and C1 is executed by that VM to produce C2. See
 [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md).
+
+A separate Semantic-written VM implementation exists in [`vm/`](vm/README.md)
+(Issue #29). It is an independent, non-canonical experimental track: its presence
+does not transfer verifier or VM authority, and it is not a prerequisite for the
+contractual bootstrap proof.
 
 ## Documents
 

@@ -1,10 +1,28 @@
 # Self-Hosting Roadmap — SHF-0 … SHF-17
 
-Status: canonical roadmap. **SHF-0 QUALIFIED / COMPLETE (issue #11); SHF-1 … SHF-17 not started.**
+Status: canonical roadmap. **SHF-0 QUALIFIED / COMPLETE (issue #11; Bootstrap Contract v3).**
+Implementation and test evidence now exist for later stages, so the earlier blanket
+"SHF-1 through SHF-17 not started" description is no longer an accurate implementation
+snapshot. This does **not** independently mark any later stage QUALIFIED / COMPLETE:
+formal stage exit, owner approval and the protocol-defined Bootstrap Seal remain separate
+qualification decisions.
 
 This is the only milestone vocabulary of this repository. Stage names and dependencies follow
 the upstream authority `skulmakov-oss/Semantic#1910`. A stage is not started merely because it
 is documented here; starting a stage requires an explicit owner GO.
+
+## Implementation checkpoint (2026-11-14; not a stage-promotion record)
+
+| Surface | Evidence on `main` | Qualification boundary |
+|---|---|---|
+| Bootstrap foundation (SHF-0) | Frozen `shf0-bootstrap-contract-v3` in [`bootstrap/contract.toml`](../bootstrap/contract.toml) | Protocol v3 defines the C1/C2 Seal; it does not attest a completed Seal by itself |
+| Compiler implementation (SHF-10 through SHF-14) | [PR #63](https://github.com/skulmakov-oss/Semantic-Language/pull/63) integrated Quad-native compiler sources; 131/131 corpus cases, 9/9 mutations and 11/11 string-boundary cases passed in local qualification | Feature and test evidence, not a blanket stage-by-stage exit declaration |
+| Self-host engineering (SHF-15 / SHF-16) | At [`e296ada`](https://github.com/skulmakov-oss/Semantic-Language/commit/e296adac229df628108772520cd27e5e32244872), locally labelled `C2`, `C3` and `C4` artifacts were byte-identical: 301,087 bytes, SHA-256 `120ed3c18d1d8d48cadc3f9597bafec87cb45d143e33c4f026e2a66dcdc4df03`; each verified by Frozen C0 ([qualification report](https://github.com/skulmakov-oss/Semantic-Language/pull/63#issuecomment-6876851138)) | This does **not** by itself prove the protocol-v3 `C1 = C0(S)`, `C2 = C1(S)`, `C1 == C2` Seal, required reference/source-set bindings or independent Seal acceptance |
+| Semantic VM (separate Issue #29) | Independent implementation present in [`vm/`](../vm/README.md) | Experimental and non-canonical; upstream Rust `sm-vm` remains bootstrap execution authority |
+| Cross-platform qualification (SHF-17) | No qualifying cross-platform Seal evidence asserted by this checkpoint | Not declared complete |
+
+Milestone requirements below remain the normative exit criteria. This dated snapshot
+does not alter their dependencies, the frozen protocol or their approval rules.
 
 ## Groups
 
