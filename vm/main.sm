@@ -1,0 +1,179 @@
+// Clean-slate Quad VM kernel.
+// Quad is represented by two independent Boolean planes: truth and falsity.
+// The representation is deliberately not a Boolean and has no truthiness cast.
+
+record Quad {
+    truth: bool,
+    falsity: bool,
+}
+
+record Instr {
+    op: i32,
+    value: Quad,
+    n_target: i32,
+    f_target: i32,
+    t_target: i32,
+    s_target: i32,
+}
+
+record Machine {
+    pc: i32,
+    value: Quad,
+    halted: bool,
+    phase: i32,
+    trap: i32,
+}
+
+fn quad_n() -> Quad = Quad { truth: false, falsity: false };
+fn quad_f() -> Quad = Quad { truth: false, falsity: true };
+fn quad_t() -> Quad = Quad { truth: true, falsity: false };
+fn quad_s() -> Quad = Quad { truth: true, falsity: true };
+
+fn quad_join(a: Quad, b: Quad) -> Quad {
+    return Quad { truth: a.truth || b.truth, falsity: a.falsity || b.falsity };
+}
+
+fn quad_meet(a: Quad, b: Quad) -> Quad {
+    return Quad { truth: a.truth && b.truth, falsity: a.falsity && b.falsity };
+}
+
+// Typed four-way dispatch. The result is a branch tag, not a Boolean.
+fn quad_branch4(q: Quad) -> i32 {
+    if q.truth {
+        if q.falsity { return 3; }
+        return 2;
+    }
+    if q.falsity { return 1; }
+    return 0;
+}
+
+// N and S are traps for ordinary control and never authorize an effect.
+fn quad_assert(q: Quad) -> i32 {
+    if q.truth {
+        if q.falsity { return 3; }
+        return 0;
+    }
+    if q.falsity { return 1; }
+    return 2;
+}
+
+fn trap(m: Machine, code: i32) -> Machine {
+    return m with { halted: true, phase: 2, trap: code };
+}
+
+fn valid_target(program: Sequence(Instr), target: i32) -> bool {
+    return target >= 0 && target < len(program);
+}
+
+// The machine PC is the only instruction-selection authority.  Branch reads
+// the stored machine Quad; its immediate value is used only by LOAD.
+fn step(program: Sequence(Instr), m: Machine) -> Machine {
+    if m.halted { return m; }
+    if m.pc < 0 || m.pc >= len(program) { return trap(m, 100); }
+    let i: Instr = program[m.pc];
+    if i.op == 0 { return m with { halted: true, phase: 1, pc: m.pc + 1 }; }
+    if i.op == 1 { return m with { value: i.value, pc: m.pc + 1 }; }
+    if i.op == 2 {
+        let branch: i32 = quad_branch4(m.value);
+        let target: i32 = if branch == 0 { i.n_target } else if branch == 1 { i.f_target } else if branch == 2 { i.t_target } else { i.s_target };
+        if !valid_target(program, target) { return trap(m, 100); }
+        return m with { pc: target };
+    }
+    if i.op == 3 {
+        let result: i32 = quad_assert(m.value);
+        if result == 0 { return m with { pc: m.pc + 1 }; }
+        return trap(m, result);
+    }
+    return trap(m, 101);
+}
+
+fn run(program: Sequence(Instr), initial: Quad) -> Machine {
+    let mut m: Machine = Machine { pc: 0, value: initial, halted: false, phase: 0, trap: 0 };
+    let mut fuel: i32 = 0;
+    while !m.halted && fuel < 64 {
+        m = step(program, m);
+        fuel = fuel + 1;
+    }
+    if !m.halted { return trap(m, 102); }
+    return m;
+}
+
+fn main() {
+    assert(quad_branch4(quad_n()) == 0);
+    assert(quad_branch4(quad_f()) == 1);
+    assert(quad_branch4(quad_t()) == 2);
+    assert(quad_branch4(quad_s()) == 3);
+    assert(quad_assert(quad_t()) == 0);
+    assert(quad_assert(quad_f()) == 1);
+    assert(quad_assert(quad_n()) == 2);
+    assert(quad_assert(quad_s()) == 3);
+    assert(quad_join(quad_t(), quad_f()).truth);
+    assert(quad_join(quad_t(), quad_f()).falsity);
+    assert(!quad_meet(quad_t(), quad_f()).truth);
+    assert(!quad_meet(quad_t(), quad_f()).falsity);
+    let halt_only: Sequence(Instr) = [
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+    ];
+    let direct: Machine = step(halt_only, Machine { pc: 0, value: quad_n(), halted: false, phase: 0, trap: 0 });
+    assert(halt_only[0].op == 0);
+    assert(direct.phase == 1);
+    assert(run(halt_only, quad_n()).phase == 1);
+    let program: Sequence(Instr) = [
+        Instr { op: 1, value: quad_t(), n_target: 0, f_target: 0, t_target: 3, s_target: 0 },
+        Instr { op: 2, value: quad_n(), n_target: 5, f_target: 6, t_target: 3, s_target: 7 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+    ];
+    let machine: Machine = run(program, quad_n());
+    assert(machine.phase == 1);
+    assert(machine.trap == 0);
+    assert(machine.pc == 4);
+
+    let conflict_program: Sequence(Instr) = [
+        Instr { op: 1, value: quad_s(), n_target: 0, f_target: 0, t_target: 0, s_target: 4 },
+        Instr { op: 2, value: quad_t(), n_target: 5, f_target: 6, t_target: 7, s_target: 4 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 0, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+    ];
+    let conflict_machine: Machine = run(conflict_program, quad_n());
+    assert(conflict_machine.phase == 1);
+    assert(conflict_machine.pc == 5);
+    let bad_target: Sequence(Instr) = [
+        Instr { op: 1, value: quad_s(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 2, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 99 },
+    ];
+    let bad: Machine = run(bad_target, quad_n());
+    assert(bad.phase == 2);
+    assert(bad.trap == 100);
+    assert(bad.pc == 1);
+
+    let assert_stop: Sequence(Instr) = [
+        Instr { op: 1, value: quad_s(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 3, value: quad_t(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+        Instr { op: 1, value: quad_t(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+    ];
+    let stopped: Machine = run(assert_stop, quad_n());
+    assert(stopped.phase == 2);
+    assert(stopped.trap != 0);
+    assert(stopped.trap != bad.trap);
+    assert(stopped.pc == 1);
+
+    let unsupported: Sequence(Instr) = [
+        Instr { op: 99, value: quad_n(), n_target: 0, f_target: 0, t_target: 0, s_target: 0 },
+    ];
+    let rejected: Machine = run(unsupported, quad_n());
+    assert(rejected.phase == 2);
+    assert(rejected.trap != 0);
+    assert(rejected.trap != bad.trap);
+    assert(rejected.pc == 0);
+
+    return;
+}
