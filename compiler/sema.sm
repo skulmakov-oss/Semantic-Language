@@ -1553,7 +1553,7 @@ fn analyze(prog: Prog) -> Sem {
             sem = serr(sem, "name", "function '" + f.name + "' is defined more than once", f.pos);
         }
         let fnm: text = f.name;
-        if fnm == "len" || fnm == "push" || fnm == "pop" || fnm == "to_text" || fnm == "text_len" || fnm == "text_byte_at" || fnm == "text_slice" || fnm == "map_empty" || fnm == "map_contains" || fnm == "map_get" || fnm == "map_set" {
+        if fnm == "len" || fnm == "push" || fnm == "pop" || fnm == "to_text" || fnm == "text_len" || fnm == "text_byte_at" || fnm == "text_slice" || fnm == "map_empty" || fnm == "map_contains" || fnm == "map_get" || fnm == "map_set" || fnm == "args_read" || fnm == "fs_read_text" || fnm == "stdout_write" {
             sem = serr(sem, "name", "'" + fnm + "' is a reserved builtin name", f.pos);
         }
         sem = sem with { fnidx: map_set(sem.fnidx, f.name, i) };
