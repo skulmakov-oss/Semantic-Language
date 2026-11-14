@@ -97,9 +97,17 @@ The other four checks:
 
 ### 3.3 Inside the boundary
 
-The nodes for which `q3_required_kind` returns a kind are the eighteen propositions listed in the
-evidence contract, section 5.1, plus the map, tuple-shape and if-expression-condition propositions
-of section 5.2.
+The Q3 boundary is the combination of the five checks that `q3_lowering_error` runs. No single
+helper enumerates it:
+
+| Propositions | Required by |
+|---|---|
+| the eighteen kinds of the evidence contract, section 5.1 | `q3_required_kind`, checked by `q3_proof_error` |
+| `map-container-type`, `map-context-type`, `map-key-type`, `map-value-type` | `q3_map_proof_error` |
+| `tuple-destructure-shape` | `q3_tuple_proof_error` |
+| `if-expression-condition-type` | `q3_control_type_error` |
+
+`q3_required_kind` alone returns only the first row.
 
 ### 3.4 Outside the boundary
 
@@ -149,7 +157,7 @@ binding, argument or return, each of which is inside the boundary.
 
 ## 5. Q4: cross-phase provenance
 
-Lowering copies each checked proposition into the function's IR:
+Lowering copies the checked proposition of each node it visits into the function's IR:
 
 | IR field of `FnIr` | Built by | Content |
 |---|---|---|
@@ -159,6 +167,12 @@ Lowering copies each checked proposition into the function's IR:
 | `control_type_checks` | `q4_control_type_check` | observed and required type family of a condition |
 
 `q4_phase_proof` asserts `q3_proof_error(s, id) == ""` before it copies a carrier.
+
+The copy is not complete transport of everything Q3 checked. `q3_lowering_error` examines every
+AST node, but lowering stops at a `return` and after a statement that always returns, so
+statements after that point are never visited. For example, in
+`fn main() { return; let x: i32 = 1; }` semantic analysis records an `annotated-binding` carrier
+for the `let` and Q3 checks it, but no proof for it appears in `FnIr.proofs`.
 
 `q4_trace_function(sem, fn_ir, spans)` then checks every entry: the carrier must be valid, equal to
 the carrier semantic analysis holds for the same owner (`q4_matches_canonical_proof`,
@@ -171,8 +185,8 @@ yields a `ProvenanceStep` with one of three stages: `evidence-to-ir`, `type-infe
 | Implementation | `q4_*` functions in `compiler/lower.sm`; `q4_trace_function`, `q4_matches_canonical_proof`, `q4_append_origin`, `q4_origin_at` in `compiler/driver.sm` |
 | Tests | TQN `test_q3_q4_lowering_admission_and_provenance`, `test_q2_q3_q4_binding_assignment_return_evidence`, `test_q2_q3_q4_tuple_sequence_match_provenance`, `test_q49_source_file_proof_chain_tamper` |
 | Historical source | `PR46:docs/architecture/QUAD_NATIVE_CROSS_PHASE_PROVENANCE_Q4.md` |
-| Guarantee | every proof in the IR of an emitted function equals the carrier held by semantic analysis and resolves to a byte in a named source file |
-| Not guaranteed | visibility outside the compiler. `FnIr.proofs` and the three link lists are **not serialized into SemCode**. C0's verifier cannot see or check them, and no verifier-facing proof format is claimed |
+| Guarantee | every proof that is in the IR of an emitted function equals the carrier held by semantic analysis and resolves to a byte in a named source file |
+| Not guaranteed | completeness: a proposition on a node that lowering does not visit is checked by Q3 but is not carried into the IR. Visibility outside the compiler: `FnIr.proofs` and the three link lists are **not serialized into SemCode**. C0's verifier cannot see or check them, and no verifier-facing proof format is claimed |
 
 ## 6. Q4.9: file and source-span identity
 
@@ -198,7 +212,7 @@ falls on a generated separator or outside every span.
 | Implementation | `q4_source_bundle_error`, `q4_origin_at` in `compiler/driver.sm`; import expansion in `compiler/main.sm` |
 | Tests | TQN `test_q49_source_file_proof_chain_tamper`, `test_q49_nested_import_source_identity_parity`; TPF `test_interspersed_imports_preserve_source_lineage`; `tests/compiler/test_imports.py`; fixture `quad_source_provenance_internal.sm` (replaced file content, duplicate file identity, gapped span, wrong local offset, missing span, separator, tampered IR witness, tampered AST position) |
 | Historical source | `PR46:docs/architecture/QUAD_NATIVE_FILE_PROVENANCE_Q4_9.md`; `PR46:docs/architecture/CODEX_PR46_P2_FOLLOWUP_20261101.md` |
-| Guarantee | the expanded text is exactly the concatenation of the recorded file pieces, and every witness offset of an emitted function maps to one file and one local offset |
+| Guarantee | the expanded text is exactly the concatenation of the recorded file pieces, and every witness offset carried in the IR of an emitted function maps to one file and one local offset |
 | Not guaranteed | cryptographic identity: the identity is a path plus exact text, not a hash or signature. Freedom from races: the re-read can be overtaken by a later change to the file. Authentication of the path or of the file system |
 
 `q4_parsed_identity_error(src, prog)` re-lexes and re-parses a source snapshot and compares every
@@ -213,7 +227,7 @@ exercised by tests; the production path does not call it.
 | `evidence_try_join` | two consistent records of one proposition were merged without loss | that either input was authentic |
 | `q3_lowering_error` | every in-boundary node has a T carrier matching the current AST | anything about out-of-boundary nodes, ownership, effects, runtime safety |
 | `q3_trusted_admit` | the returned `Sem` was computed by the trusted analysis from the given AST | that the AST matches any source file |
-| `q4_trace_function` | IR proofs equal analysis carriers and resolve to file bytes | that those bytes are the intended program, or that SemCode carries the proof |
+| `q4_trace_function` | the proofs present in the IR equal analysis carriers and resolve to file bytes | that those bytes are the intended program, or that SemCode carries the proof |
 | `q4_source_bundle_error` | the expanded text is consistent with the recorded files at check time | that the files are authentic or unchanged afterwards |
 | Frozen C0 `verify` on the artifact | the artifact satisfies C0's SemCode admission rules | anything about the evidence, which is not in the artifact |
 
