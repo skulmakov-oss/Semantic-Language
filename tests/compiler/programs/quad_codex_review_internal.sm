@@ -1,0 +1,74 @@
+// Codex P2 findings: preserve full-width unsigned wire encodings.
+// Exercise actual semcode.sm, not a Python imitation.
+Import "semcode.sm"
+
+fn make_ir(name: text, ins: Sequence(Ins), owns: Sequence(OwnPath)) -> FnIr {
+    return FnIr {
+        name: name, families: [], strings: [], ins: ins, owns: owns,
+        proofs: [], tuple_inferences: [], binding_inferences: [],
+        control_type_checks: []
+    };
+}
+
+fn main() {
+    let hx: Sequence(text) = hex_table();
+    let mut cache: Sequence(text) = [];
+    for hi in ["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "0a", "0b", "0c"] {
+        for lo in hx { cache = push(cache, lo + hi); }
+    }
+    assert(len(cache) == 3328);
+    assert(encode_u16_le(hx, cache, 3327) == "ff0c");
+    assert(encode_u16_le(hx, cache, 3328) == "000d");
+    assert(encode_u16_le(hx, cache, 65535) == "ffff");
+    assert(encode_u32_le(hx, cache, 65535) == "ffff0000");
+    assert(encode_u32_le(hx, cache, 65536) == "00000100");
+    assert(encode_u32_le(hx, cache, 67510) == "b6070100");
+
+    let small: FnIr = make_ir("main", [
+        Ins { op: 2, a: 3328, b: 0, c: 0, imm: 1, args: [] },
+        Ins { op: 4, a: 65535, b: 3328, c: 0, imm: 0, args: [] },
+        Ins { op: 3, a: 3328, b: 0, c: 0, imm: 65536, args: [] },
+        Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }
+    ], []);
+    let mut chunks: Sequence(text) = [];
+    let mut error: text = "";
+    (chunks, error) = encode_program([small], false);
+    assert(error == "");
+    assert(len(chunks) >= 4);
+    assert(chunks[3] == "02000d01" + "04ffff000d" + "03000d00000100" + "4100");
+
+    // A genuine 32-bit jump target and OWN0 anchor must keep high bytes.
+    // 7500 nine-byte ops put the target and ownership site above 65535.
+    let mut large: Sequence(Ins) = [Ins { op: 48, a: 0, b: 0, c: 0, imm: 42, args: [] }];
+    let mut n: i32 = 0;
+    while n < 7500 {
+        large = push(large, Ins { op: 70, a: 0, b: 0, c: 0, imm: 0, args: [] });
+        n = n + 1;
+    }
+    large = push(large, Ins { op: 5, a: 0, b: 0, c: 0, imm: 0, args: [] });
+    large = push(large, Ins { op: 0, a: 0, b: 0, c: 0, imm: 42, args: [] });
+    large = push(large, Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] });
+    let anchored: FnIr = make_ir("large", large, [
+        OwnPath { kind: 0, mode: 0, root: 0, anchor: 7501, comp_kind: 0 - 1, comp_a: 0, comp_b: 0 }
+    ]);
+    (chunks, error) = encode_program([anchored], false);
+    assert(error == "");
+    assert(len(chunks) > 4);
+    let jump_prefix: text = match text_slice(chunks[3], 0u32, 10u32) {
+        Option::Some(value) => { value }
+        Option::None => { "" }
+    };
+    assert(jump_prefix == "30b6070100");
+    // Function header: name + 4-byte code length with the high byte preserved.
+    let code_len_tail: text = match text_slice(chunks[1], text_len(chunks[1]) - 8u32, text_len(chunks[1])) {
+        Option::Some(value) => { value }
+        Option::None => { "" }
+    };
+    assert(code_len_tail == encode_u32_le(hx, cache, 67512 + 26));
+    let own_prefix: text = match text_slice(chunks[2], 0u32, 28u32) {
+        Option::Some(value) => { value }
+        Option::None => { "" }
+    };
+    assert(own_prefix == "00004f574e3001000000b1070100");
+    return;
+}

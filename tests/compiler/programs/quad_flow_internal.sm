@@ -1,0 +1,96 @@
+// Internal witness test: return-path evidence is not an arbitrary status enum.
+// This fixture runs against the current sema.sm imported through the C0 toolchain.
+Import "sema.sm"
+
+fn node(k: i32, a: i32, b: i32, c: i32, v: i32, kids: Sequence(i32)) -> Node {
+    return Node { k: k, a: a, b: b, c: c, v: v, name: "", pos: 0u32, kids: kids };
+}
+
+fn main() {
+    let nodes: Sequence(Node) = [
+        node(14, -1, -1, -1, 0, []),          // 0 unconditional return => T
+        node(10, -1, -1, -1, 0, []),          // 1 ordinary statement => F
+        node(15, -1, -1, -1, 0, [0]),         // 2 returning block => T
+        node(15, -1, -1, -1, 0, []),          // 3 empty block => F
+        node(12, -1, 2, 3, 0, []),            // 4 split return/fallthrough => S
+        node(12, -1, 2, 2, 0, []),            // 5 both return => T
+        node(12, -1, 3, 3, 0, []),            // 6 neither returns => F
+        node(15, -1, -1, -1, 0, [4, 0]),      // 7 mixed then final return => T
+        node(15, -1, -1, -1, 0, [4, 1]),      // 8 mixed then fallthrough => S
+        node(15, -1, -1, -1, 0, [2, 1]),      // 9 return then unreachable => T
+        node(32, 2, 1, -1, 1, []),            // 10 literal match arm returning
+        node(32, 3, 0, -1, 0, []),            // 11 default arm falling through
+        node(25, -1, -1, -1, 0, [10, 11]),    // 12 match with mixed outcomes => S
+        node(32, 2, 0, -1, 0, []),            // 13 default arm returning
+        node(25, -1, -1, -1, 0, [10, 13]),    // 14 match all return => T
+        node(16, 14, -1, -1, 0, []),          // 15 match as statement => T
+        node(27, 0, -1, -1, 0, [4]),          // 16 value block: mixed then return => T
+        node(27, 1, -1, -1, 0, []),           // 17 value block: no returns => F
+        node(12, -1, 2, -1, 0, []),           // 18 conditional without else => S
+        node(12, -1, 3, -1, 0, []),           // 19 conditional without else => F
+        node(15, -1, -1, -1, 0, [4, 2]),      // 20 mixed then returning block => T
+        node(32, 3, 2, -1, 1, []),            // 21 non-default arm falling through
+        node(25, -1, -1, -1, 0, [10, 21]),    // 22 incomplete match => S
+        node(25, -1, -1, -1, 0, [13, 21]),    // 23 default returning before unreachable fallthrough => T
+        node(25, -1, -1, -1, 0, [11, 10])     // 24 default falling through before unreachable return => F
+    ];
+    assert(return_path_evidence(nodes, 0) == T);
+    assert(return_path_evidence(nodes, 1) == F);
+    assert(return_path_evidence(nodes, 2) == T);
+    assert(return_path_evidence(nodes, 3) == F);
+    assert(return_path_evidence(nodes, 4) == S);
+    assert(return_path_evidence(nodes, 5) == T);
+    assert(return_path_evidence(nodes, 6) == F);
+    assert(return_path_evidence(nodes, 7) == T);
+    assert(return_path_evidence(nodes, 8) == S);
+    assert(return_path_evidence(nodes, 9) == T);
+    assert(return_path_evidence(nodes, 12) == S);
+    assert(return_path_evidence(nodes, 14) == T);
+    assert(return_path_evidence(nodes, 15) == T);
+    assert(return_path_evidence(nodes, 16) == T);
+    assert(return_path_evidence(nodes, 17) == F);
+    assert(return_path_evidence(nodes, 18) == S);
+    assert(return_path_evidence(nodes, 19) == F);
+    assert(return_path_evidence(nodes, 20) == T);
+    assert(return_path_evidence(nodes, 22) == S);
+    assert(return_path_evidence(nodes, 23) == T);
+    assert(return_path_evidence(nodes, 24) == F);
+    assert(always_returns(nodes, 5));
+    assert(!always_returns(nodes, 4));
+    assert(!always_returns(nodes, 8));
+    assert(!always_returns(nodes, 22));
+
+    let mut accumulated: quad = N;
+    assert(accumulated == N);
+    accumulated = accumulated || return_path_evidence(nodes, 2);
+    assert(accumulated == T);
+    accumulated = accumulated || return_path_evidence(nodes, 3);
+    assert(accumulated == S);
+
+    let empty: Evidence = evidence_empty("return", 1, 0);
+    let positive: Evidence = evidence_positive(empty, 10u32);
+    let negative: Evidence = evidence_negative(empty, 20u32);
+    assert(positive.state == T);
+    assert(negative.state == F);
+    assert(evidence_can_join(positive, negative));
+    let joined: EvidenceResult = evidence_try_join(positive, negative);
+    assert(joined.ok);
+    let conflict: Evidence = joined.value;
+    assert(conflict.state == S);
+    assert(len(conflict.positive) == 1);
+    assert(len(conflict.negative) == 1);
+    assert(conflict.positive[0] == 10u32);
+    assert(conflict.negative[0] == 20u32);
+
+    let other: Evidence = evidence_empty("type", 1, 0);
+    assert(!evidence_can_join(conflict, other));
+    let rejected: EvidenceResult = evidence_try_join(conflict, other);
+    assert(!rejected.ok);
+
+    let forged: Evidence = Evidence { proposition_kind: "return", subject: 1, scope: 0,
+                                      state: S, positive: [], negative: [] };
+    assert(!evidence_valid(forged));
+    let duplicate: Evidence = evidence_positive(evidence_positive(empty, 30u32), 30u32);
+    assert(!evidence_valid(duplicate));
+    return;
+}

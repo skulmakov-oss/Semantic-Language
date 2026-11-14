@@ -1,0 +1,112 @@
+// Q4.9 — file-qualified byte sources -> AST -> Sema -> non-emitted IR.
+Import "driver.sm"
+
+fn analyzed(src: text) -> Sem {
+    let lx: Lexed = lex(src);
+    assert(lx.err == "");
+    let pp: P = parse_program(lx.toks);
+    assert(pp.err == "");
+    return analyze(Prog { nodes: pp.nodes, funcs: pp.funcs, recs: pp.recs });
+}
+
+fn main() {
+    let helper: text = "fn helper() { let x: i32 = 1; assert(x == 1); return; } ";
+    let parent: text = "fn main() { let v: i32 = 2; assert(v == 2); return; }";
+    let src: text = helper + parent;
+    let files: Sequence(SourceFile) = [
+        SourceFile { path: "helper.sm", content: helper },
+        SourceFile { path: "main.sm", content: parent }
+    ];
+    let spans: Sequence(SourceSpan) = [
+        SourceSpan { path: "helper.sm", local_start: 0u32, flat_start: 0u32, size: text_len(helper) },
+        SourceSpan { path: "main.sm", local_start: 0u32, flat_start: text_len(helper), size: text_len(parent) }
+    ];
+    assert(q4_source_bundle_error(src, files, spans, false) == "");
+    let sem: Sem = analyzed(src);
+    assert(sem.err == "");
+    assert(q4_parsed_identity_error(src, sem.prog) == "");
+    let admission: TrustedSemAdmission = q3_trusted_admit(sem);
+    assert(admission.ok);
+    let mut helper_count: i32 = 0;
+    let mut parent_count: i32 = 0;
+    let mut i: i32 = 0;
+    while i < len(admission.canonical.prog.funcs) {
+        let ir: FnIr = lower_function(admission.canonical, i);
+        let trace: ProvenanceResult = q4_trace_function(admission.canonical, ir, spans);
+        assert(trace.ok);
+        assert(len(trace.steps) > 0);
+        for step in trace.steps {
+            assert(step.stage != "");
+            assert(step.proposition != "");
+            let node: Node = sem.prog.nodes[step.source_node];
+            assert(step.flat_offset == node.pos);
+            let origin: SourceOrigin = q4_origin_at(spans, step.flat_offset);
+            assert(origin.ok);
+            assert(origin.path == step.path);
+            assert(origin.local_offset == step.file_offset);
+            if ir.name == "helper" {
+                assert(step.path == "helper.sm");
+                assert(step.file_offset < text_len(helper));
+                helper_count = helper_count + 1;
+            } else {
+                assert(ir.name == "main");
+                assert(step.path == "main.sm");
+                assert(step.file_offset < text_len(parent));
+                parent_count = parent_count + 1;
+            }
+        }
+        // A tampered IR witness edge must fail even when Sema was admitted.
+        let mut bad_proofs: Sequence(PhaseProof) = ir.proofs;
+        let target: PhaseProof = ir.proofs[0];
+        bad_proofs = [target with { source_offsets: [] }];
+        let mut j: i32 = 1;
+        while j < len(ir.proofs) {
+            bad_proofs = push(bad_proofs, ir.proofs[j]);
+            j = j + 1;
+        }
+        assert(!q4_trace_function(admission.canonical, ir with { proofs: bad_proofs }, spans).ok);
+        i = i + 1;
+    }
+    assert(helper_count > 0 && parent_count > 0);
+
+    // File identity and byte-range drift are independently checked.
+    let replaced_file: Sequence(SourceFile) = [
+        SourceFile { path: "helper.sm", content: parent },
+        SourceFile { path: "main.sm", content: helper }
+    ];
+    assert(q4_source_bundle_error(src, replaced_file, spans, false) != "");
+    let duplicate_file: Sequence(SourceFile) = [
+        SourceFile { path: "helper.sm", content: helper },
+        SourceFile { path: "helper.sm", content: parent }
+    ];
+    assert(q4_source_bundle_error(src, duplicate_file, spans, false) != "");
+    let gap: Sequence(SourceSpan) = [
+        spans[0],
+        spans[1] with { flat_start: text_len(helper) + 1u32 }
+    ];
+    assert(q4_source_bundle_error(src, files, gap, false) != "");
+    let wrong_offset: Sequence(SourceSpan) = [
+        spans[0] with { local_start: 1u32 },
+        spans[1]
+    ];
+    assert(q4_source_bundle_error(src, files, wrong_offset, false) != "");
+    let missing_source: Sequence(SourceSpan) = [spans[0]];
+    assert(q4_source_bundle_error(src, files, missing_source, false) != "");
+    let synthetic: SourceOrigin = q4_origin_at([
+        SourceSpan { path: "", local_start: 0u32, flat_start: 0u32, size: 1u32 }
+    ], 0u32);
+    assert(!synthetic.ok);
+
+    let bad_nodes: Sequence(Node) = [
+        sem.prog.nodes[0] with { pos: 123456u32 }
+    ];
+    let mut idx: i32 = 1;
+    while idx < len(sem.prog.nodes) {
+        bad_nodes = push(bad_nodes, sem.prog.nodes[idx]);
+        idx = idx + 1;
+    }
+    assert(q4_parsed_identity_error(src, sem.prog with { nodes: bad_nodes }) != "");
+    let replay: Sem = analyzed(src);
+    assert(q4_parsed_identity_error(src, replay.prog) == "");
+    return;
+}

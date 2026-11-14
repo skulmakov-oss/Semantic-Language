@@ -1,11 +1,4 @@
 // bytes: byte-level encoding for SemCode output.
-//
-// A byte buffer is a Sequence(text) holding one two-character lowercase hex
-// string per byte, so its length is the byte count. Every output byte of the
-// compiler is produced through this module.
-//
-// Encoding uses a 256-entry table (index = byte value) built from one literal,
-// so a byte costs one indexed read instead of two nibble selections.
 
 fn hex_table() -> Sequence(text) {
     return [
@@ -30,82 +23,6 @@ fn hex_table() -> Sequence(text) {
     ];
 }
 
-// One byte from an i32 in 0..=255.
-fn put_u8(hx: Sequence(text), buf: Sequence(text), b: i32) -> Sequence(text) {
-    return push(buf, hx[b]);
-}
-
-// Little-endian u16 from an i32 in 0..=65535.
-fn put_u16(hx: Sequence(text), buf: Sequence(text), v: i32) -> Sequence(text) {
-    return push(push(buf, hx[v % 256]), hx[v / 256]);
-}
-
-// Little-endian two's-complement 32-bit value from any i32, without bit
-// operations: b = v mod 256 (non-negative) and v = (v - b) / 256 is exact, so
-// this is an arithmetic shift by 8 for negative values too.
-fn put_i32(hx: Sequence(text), buf: Sequence(text), v0: i32) -> Sequence(text) {
-    let b0: i32 = ((v0 % 256) + 256) % 256;
-    let v1: i32 = (v0 - b0) / 256;
-    let b1: i32 = ((v1 % 256) + 256) % 256;
-    let v2: i32 = (v1 - b1) / 256;
-    let b2: i32 = ((v2 % 256) + 256) % 256;
-    let v3: i32 = (v2 - b2) / 256;
-    let b3: i32 = ((v3 % 256) + 256) % 256;
-    return push(push(push(push(buf, hx[b0]), hx[b1]), hx[b2]), hx[b3]);
-}
-
-// Raw UTF-8 bytes of a text value; returns the buffer and the byte count.
-// A byte arrives as u32 and indexes the i32 table, so it is converted by
-// binary decomposition (Semantic has no u32 -> i32 conversion).
-fn put_text(hx: Sequence(text), buf0: Sequence(text), t: text) -> (Sequence(text), i32) {
-    let mut buf: Sequence(text) = buf0;
-    let n: u32 = text_len(t);
-    let mut i: u32 = 0u32;
-    let mut count: i32 = 0;
-    while i < n {
-        let mut b: u32 = match text_byte_at(t, i) {
-            Option::Some(x) => { x }
-            Option::None => { 0u32 }
-        };
-        let mut v: i32 = 0;
-        if b >= 128u32 { v = v + 128; b = b - 128u32; }
-        if b >= 64u32 { v = v + 64; b = b - 64u32; }
-        if b >= 32u32 { v = v + 32; b = b - 32u32; }
-        if b >= 16u32 { v = v + 16; b = b - 16u32; }
-        if b >= 8u32 { v = v + 8; b = b - 8u32; }
-        if b >= 4u32 { v = v + 4; b = b - 4u32; }
-        if b >= 2u32 { v = v + 2; b = b - 2u32; }
-        if b >= 1u32 { v = v + 1; }
-        buf = push(buf, hx[v]);
-        i = i + 1u32;
-        count = count + 1;
-    }
-    return (buf, count);
-}
-
-// u16 byte-length prefix followed by the UTF-8 bytes (names, string-table entries).
-// Dynamic callers are validated by encode_program before any bytes are emitted;
-// adt_section's prelude names are fixed ASCII strings within the same bound.
-fn put_str16(hx: Sequence(text), buf: Sequence(text), t: text) -> Sequence(text) {
-    let (bytes, n) = put_text(hx, [], t);
-    let mut out: Sequence(text) = put_u16(hx, buf, n);
-    for b in bytes {
-        out = push(out, b);
-    }
-    return out;
-}
-
-fn append(dst0: Sequence(text), src: Sequence(text)) -> Sequence(text) {
-    let mut dst: Sequence(text) = dst0;
-    for b in src {
-        dst = push(dst, b);
-    }
-    return dst;
-}
-
-// Concatenates the buffer into one hex text. Bytes are first joined into
-// 64-byte chunks so the final concatenation copies each byte a bounded number
-// of times instead of once per preceding byte.
 fn join_hex(buf: Sequence(text)) -> text {
     let mut chunks: Sequence(text) = [];
     let mut chunk: text = "";
@@ -113,7 +30,7 @@ fn join_hex(buf: Sequence(text)) -> text {
     for b in buf {
         chunk = chunk + b;
         k = k + 1;
-        if k == 64 {
+        if k == 16 {
             chunks = push(chunks, chunk);
             chunk = "";
             k = 0;

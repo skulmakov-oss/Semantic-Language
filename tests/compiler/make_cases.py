@@ -521,7 +521,16 @@ fn main() {
     return;
 }
 """)
-case("n24_unsupported_type_annotation", "reject:unsupported:type 'quad'", """
+case("n24_unsupported_type_annotation", "reject:unsupported:type 'f64'", """
+fn f(q: f64) {
+    return;
+}
+
+fn main() {
+    return;
+}
+""")
+case("p24_quad_type_annotation", "ok", """
 fn f(q: quad) {
     return;
 }
