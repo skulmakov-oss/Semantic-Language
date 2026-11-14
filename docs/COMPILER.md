@@ -105,9 +105,11 @@ That upstream limitation is not counted as successful differential parity.
 - `main` must exist, take no parameters and return `unit`.
 
 **Types and operators:**
-- Types include `i32`, `bool`, `u32`, `text`, records, tuples, `Sequence(T)`, `Option(T)` and scalar-key `Map(K,V)`. A `unit` value can't be an operand, an initializer, an argument or a condition.
+- Types include `i32`, `bool`, `u32`, `text`, `quad`, records, tuples, `Sequence(T)`, `Option(T)` and scalar-key `Map(K,V)`. A `unit` value can't be an operand, an initializer, an argument or a condition.
 - Operators follow Semantic's typing rules.
 - `==` and `!=` take two operands of one type and compare structurally. They are supported for `i32`, `bool`, `u32`, `text` and `quad`, and for records, tuples, `Sequence(T)` and `Option(T)` whose nested types are all comparable. A `Map`, a type that contains a `Map` and a type that contains itself are rejected with category `unsupported` (`equality on <type> is outside the supported subset`). Operands of two different types are rejected with category `type` (`cannot compare A with B`).
+- `quad` is admitted as a type with the literals `N`, `F`, `T` and `S`, in annotations and by inference. It may be a function parameter or result, a record field, a tuple item, a `Sequence(T)` or `Option(T)` element and a `Map` value. The admitted operators on `quad` are `==`, `!=`, `&&` (knowledge meet), `||` (knowledge join) and `!`; both operands of a binary operator must be `quad`. A `match` on `quad` takes the four literals as patterns and requires a `_` arm.
+- There is no conversion between `quad` and `bool`. A `quad` value is rejected with category `type` as the condition of `if`, `while` or `assert`, when mixed with `bool` in one operator or one binding, in arithmetic, in ordering comparisons and as the argument of `to_text`. `quad` is not a `Map` key (category `unsupported`). The compiler-internal use of four-state values is described in [architecture/QUAD_NATIVE_EVIDENCE_CONTRACT.md](architecture/QUAD_NATIVE_EVIDENCE_CONTRACT.md) and [architecture/QUAD_NATIVE_PROOF_BOUNDARIES.md](architecture/QUAD_NATIVE_PROOF_BOUNDARIES.md); the meaning of `quad` in the language is defined by the upstream Semantic specification, not here.
 
 **Variables:**
 - Variables are block-scoped and may be shadowed.
@@ -131,14 +133,13 @@ All runtime behaviour belongs to the VM:
 
 These forms are rejected with category `unsupported`:
 - enums;
-- Map traversal and non-scalar Map keys; `Result`, `quad`, `f64`, `fx` and `Bytes`;
+- Map traversal and non-scalar Map keys; `Result`, `f64`, `fx` and `Bytes`;
 - closures and function values;
 - method calls;
 - ranges and `loop`;
 - `const`;
 - match guards, equality on `Map`-carrying or self-containing types, tuple field access and field punning;
 - compound assignment;
-- tuples;
 - default parameters, contracts and expression-bodied functions;
 - function values;
 - bare blocks.
@@ -171,7 +172,7 @@ Because `SIG0` is present, the verifier runs its definite-register-assignment pr
 
 ### Instructions emitted
 
-`LOAD_BOOL`, `LOAD_I32`, `LOAD_U32`, `LOAD_VAR`, `STORE_VAR`, record/tuple/sequence/ADT operations, `MAP_EMPTY`, `MAP_GET`, `MAP_SET`, `MAP_CONTAINS`, arithmetic/comparison, control flow, `CALL`, `RET`, `ASSERT`.
+`LOAD_BOOL`, `LOAD_I32`, `LOAD_U32`, `LOAD_Q`, `Q_AND`, `Q_OR`, `Q_NOT`, `LOAD_VAR`, `STORE_VAR`, record/tuple/sequence/ADT operations, `MAP_EMPTY`, `MAP_GET`, `MAP_SET`, `MAP_CONTAINS`, arithmetic/comparison, control flow, `CALL`, `RET`, `ASSERT`.
 
 ### Design constraint: Calls
 
