@@ -1,0 +1,7 @@
+fn f(q: quad) {
+    return;
+}
+
+fn main() {
+    return;
+}
