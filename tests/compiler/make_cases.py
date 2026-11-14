@@ -981,7 +981,7 @@ fn main() {
     return;
 }
 """)
-case("n36_record_equality_unsupported", "reject:unsupported:equality on", """
+case("p25_record_equality", "ok", """
 record Pt {
     x: i32,
 }

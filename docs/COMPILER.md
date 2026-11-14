@@ -107,6 +107,7 @@ That upstream limitation is not counted as successful differential parity.
 **Types and operators:**
 - Types include `i32`, `bool`, `u32`, `text`, records, tuples, `Sequence(T)`, `Option(T)` and scalar-key `Map(K,V)`. A `unit` value can't be an operand, an initializer, an argument or a condition.
 - Operators follow Semantic's typing rules.
+- `==` and `!=` take two operands of one type and compare structurally. They are supported for `i32`, `bool`, `u32`, `text` and `quad`, and for records, tuples, `Sequence(T)` and `Option(T)` whose nested types are all comparable. A `Map`, a type that contains a `Map` and a type that contains itself are rejected with category `unsupported` (`equality on <type> is outside the supported subset`). Operands of two different types are rejected with category `type` (`cannot compare A with B`).
 
 **Variables:**
 - Variables are block-scoped and may be shadowed.
@@ -135,7 +136,7 @@ These forms are rejected with category `unsupported`:
 - method calls;
 - ranges and `loop`;
 - `const`;
-- match guards, record/tuple equality, tuple field access and field punning;
+- match guards, equality on `Map`-carrying or self-containing types, tuple field access and field punning;
 - compound assignment;
 - tuples;
 - default parameters, contracts and expression-bodied functions;
