@@ -1,0 +1,119 @@
+// Q3+Q4: validate Sema->Lower admission and inspect non-emitted PhaseProof snapshots.
+Import "lower.sm"
+
+fn analyze_source(source: text) -> Sem {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let parsed: P = parse_program(lx.toks);
+    assert(parsed.err == "");
+    return analyze(Prog { nodes: parsed.nodes, funcs: parsed.funcs, recs: parsed.recs });
+}
+
+fn main() {
+    let source: text = "record Pair { left: i32, right: i32 } fn add(a: i32, b: i32) -> i32 { return a + b; } fn main() { let x: i32 = add(1, 2); let p: Pair = Pair { left: 1, right: 2 }; let y: i32 = if true { x } else { p.left }; assert(y == 3); return; }";
+    let sem: Sem = analyze_source(source);
+    assert(sem.err == "");
+    assert(q3_lowering_error(sem) == "");
+    let main_index: i32 = map_get(sem.fnidx, "main", 0 - 1);
+    assert(main_index >= 0);
+    let lowered: FnIr = lower_function(sem, main_index);
+    assert(len(lowered.proofs) == 8);
+    let mut count_if: i32 = 0;
+    let mut count_call: i32 = 0;
+    let mut count_record: i32 = 0;
+    let mut count_binding: i32 = 0;
+    let mut count_binary: i32 = 0;
+    let mut count_assert: i32 = 0;
+    for p in lowered.proofs {
+        assert(evidence_valid(p.evidence));
+        assert(p.evidence.state == T);
+        let contributors: i32 = len(p.source_nodes);
+        assert(contributors == len(p.source_offsets));
+        assert(contributors == len(p.evidence.positive));
+        let mut index: i32 = 0;
+        while index < contributors {
+            assert(p.evidence.positive[index] == p.source_offsets[index]);
+            assert(sem.prog.nodes[p.source_nodes[index]].pos == p.source_offsets[index]);
+            index = index + 1;
+        }
+        assert(q3_proof_error(sem, p.evidence.subject) == "");
+        if p.evidence.proposition_kind == "if-branch-type" {
+            assert(contributors == 2);
+            count_if = count_if + 1;
+        } else if p.evidence.proposition_kind == "call-arguments" {
+            assert(contributors == 2);
+            count_call = count_call + 1;
+        } else if p.evidence.proposition_kind == "record-fields" {
+            assert(contributors == 2);
+            count_record = count_record + 1;
+        } else if p.evidence.proposition_kind == "annotated-binding" {
+            assert(contributors == 1);
+            count_binding = count_binding + 1;
+        } else if p.evidence.proposition_kind == "binary-operator-types" {
+            assert(contributors == 2);
+            count_binary = count_binary + 1;
+        } else if p.evidence.proposition_kind == "assert-condition-type" {
+            assert(contributors == 1);
+            count_assert = count_assert + 1;
+        } else {
+            assert(false);
+        }
+    }
+    assert(count_if == 1);
+    assert(count_call == 1);
+    assert(count_record == 1);
+    assert(count_binding == 3);
+    assert(count_binary == 1);
+    assert(count_assert == 1);
+
+    // Missing proof must refuse all lowering.
+    let missing: Sem = sem with { type_evidence: map_empty() };
+    assert(q3_lowering_error(missing) != "");
+
+    // Forged but internally well-shaped T with wrong origin must fail.
+    let mut j: i32 = 0;
+    let mut owner: i32 = 0 - 1;
+    while j < len(sem.prog.nodes) {
+        if sem.prog.nodes[j].k == 26 { owner = j; }
+        j = j + 1;
+    }
+    assert(owner >= 0);
+    let legitimate: Evidence = map_get(sem.type_evidence, owner, evidence_empty("missing", 0, 0));
+    assert(evidence_valid(legitimate));
+    let fake: Evidence = legitimate with { positive: [999999u32, legitimate.positive[1]] };
+    assert(evidence_valid(fake));
+    let corrupted: Sem = sem with { type_evidence: map_set(sem.type_evidence, owner, fake) };
+    assert(q3_proof_error(corrupted, owner) != "");
+    assert(q3_lowering_error(corrupted) != "");
+
+    // Conflicted proof is not an admission ticket, even if it is valid Evidence.
+    let conflicted: Evidence = evidence_negative(legitimate, 888888u32);
+    assert(evidence_valid(conflicted));
+    assert(conflicted.state == S);
+    let bad: Sem = sem with { type_evidence: map_set(sem.type_evidence, owner, conflicted) };
+    assert(q3_lowering_error(bad) != "");
+
+    let wrong_subject: Evidence = legitimate with { subject: owner + 1 };
+    assert(evidence_valid(wrong_subject));
+    let mismatched: Sem = sem with { type_evidence: map_set(sem.type_evidence, owner, wrong_subject) };
+    assert(q3_lowering_error(mismatched) != "");
+
+    // Source metadata and proof order remain repeatable on independent analysis.
+    let again: Sem = analyze_source(source);
+    assert(q3_lowering_error(again) == "");
+    let again_lowered: FnIr = lower_function(again, map_get(again.fnidx, "main", 0 - 1));
+    assert(len(again_lowered.proofs) == len(lowered.proofs));
+    let mut x: i32 = 0;
+    while x < len(lowered.proofs) {
+        assert(lowered.proofs[x].evidence.proposition_kind == again_lowered.proofs[x].evidence.proposition_kind);
+        assert(lowered.proofs[x].source_offsets[0] == again_lowered.proofs[x].source_offsets[0]);
+        assert(len(lowered.proofs[x].source_offsets) == len(again_lowered.proofs[x].source_offsets));
+        let mut wi: i32 = 0;
+        while wi < len(lowered.proofs[x].source_offsets) {
+            assert(lowered.proofs[x].source_offsets[wi] == again_lowered.proofs[x].source_offsets[wi]);
+            wi = wi + 1;
+        }
+        x = x + 1;
+    }
+    return;
+}

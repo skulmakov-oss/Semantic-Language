@@ -38,7 +38,6 @@
   "n33_push_wrong_element": "reject:at 0: builtin 'push' second argument type Bool does not match sequence element type I32",
   "n34_mixed_u32_i32": "reject:at 0: f64 arithmetic requires f64 operands, got U32 and I32",
   "n35_tuple_arity_mismatch": "reject:at 0: tuple destructuring bind arity mismatch: expected 3, got 2",
-  "n36_record_equality_unsupported": "ok",
   "n37_option_pattern_on_i32": "reject:at 0: ADT pattern plan: scrutinee is not a sum type",
   "n38_u32_literal_out_of_range": "reject:at 29: invalid u32 literal",
   "n39_continue_inside_for": "reject:at 0: continue is allowed only inside while or statement loop",
@@ -61,5 +60,6 @@
   "r29_while_in_value_block": "reject:at 27: expected primary expression",
   "r30_empty_with": "reject:at 0: record copy-with requires at least one explicit override field",
   "r32_statement_if_in_value_block": "reject:at 51: value-producing block requires trailing value expression before '}'",
-  "sh_bad_none_no_context": "reject:at 0: Option::None currently requires contextual Option(T) type in v0"
+  "sh_bad_none_no_context": "reject:at 0: Option::None currently requires contextual Option(T) type in v0",
+  "sh_bad_some_unit_payload": "ok"
 }

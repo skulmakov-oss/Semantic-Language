@@ -1,0 +1,1 @@
+fn main() { let a = Option::Some(42); let b = Option::Some(true); let c = Option::Some("hello"); let d: Option(Option(i32)) = Option::Some(Option::Some(7)); let e: Option(i32) = Option::None; assert(a == Option::Some(42)); assert(b == Option::Some(true)); assert(d == Option::Some(Option::Some(7))); assert(a != e); }

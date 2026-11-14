@@ -1,0 +1,2 @@
+fn noop() { return; }
+fn main() { let x = Option::Some(noop()); }

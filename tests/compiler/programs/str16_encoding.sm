@@ -15,6 +15,10 @@ fn main() {
         strings: strings,
         ins: [Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }],
         owns: [],
+        proofs: [],
+        tuple_inferences: [],
+        binding_inferences: [],
+        control_type_checks: [],
     };
     let (artifact, error) = encode_program([f], false);
     if error != "" {

@@ -1,0 +1,60 @@
+// Q2: actual analyzer witnesses for call signatures and record field types.
+Import "sema.sm"
+
+fn inspect(source: text, expected_kind: text, expected_state: quad, expected_positive: i32, expected_negative: i32, should_pass: bool) {
+    let lx: Lexed = lex(source);
+    assert(lx.err == "");
+    let parsed: P = parse_program(lx.toks);
+    assert(parsed.err == "");
+    let sem: Sem = analyze(Prog { nodes: parsed.nodes, funcs: parsed.funcs, recs: parsed.recs });
+    if should_pass {
+        assert(sem.err == "");
+    } else {
+        assert(sem.err != "");
+        assert(sem.cat == "type");
+    }
+    let mut found: i32 = 0;
+    let mut i: i32 = 0;
+    while i < len(sem.prog.nodes) {
+        if map_contains(sem.type_evidence, i) {
+            let proof: Evidence = map_get(sem.type_evidence, i, evidence_empty("missing", 0, 0));
+            if proof.proposition_kind == expected_kind {
+                assert(evidence_valid(proof));
+                assert(proof.subject == i);
+                assert(proof.scope == 0);
+                assert(proof.state == expected_state);
+                assert(len(proof.positive) == expected_positive);
+                assert(len(proof.negative) == expected_negative);
+                let owner: Node = sem.prog.nodes[i];
+                let mut j: i32 = 0;
+                while j < expected_positive {
+                    let source_node: i32 = if expected_kind == "record-fields" { owner.kids[j] } else { owner.kids[j] };
+                    assert(proof.positive[j] == sem.prog.nodes[source_node].pos);
+                    j = j + 1;
+                }
+                if expected_negative > 0 {
+                    assert(proof.negative[0] == sem.prog.nodes[owner.kids[expected_positive]].pos);
+                }
+                found = found + 1;
+            }
+        }
+        i = i + 1;
+    }
+    assert(found == 1);
+    return;
+}
+
+fn main() {
+    let good_call: text = "fn add(a: i32, b: i32) -> i32 { return a + b; } fn main() { let x: i32 = add(1, 2); assert(x == 3); return; }";
+    let bad_call: text = "fn add(a: i32, b: i32) -> i32 { return a + b; } fn main() { let x: i32 = add(1, true); return; }";
+    let good_record: text = "record Pair { left: i32, right: i32 } fn main() { let p: Pair = Pair { left: 1, right: 2 }; assert(p.left == 1); return; }";
+    let bad_record: text = "record Pair { left: i32, right: i32 } fn main() { let p: Pair = Pair { left: 1, right: true }; return; }";
+    inspect(good_call, "call-arguments", T, 2, 0, true);
+    inspect(bad_call, "call-arguments", S, 1, 1, false);
+    inspect(good_record, "record-fields", T, 2, 0, true);
+    inspect(bad_record, "record-fields", S, 1, 1, false);
+    // Repeated analysis must retain witness order and state.
+    inspect(good_call, "call-arguments", T, 2, 0, true);
+    inspect(bad_record, "record-fields", S, 1, 1, false);
+    return;
+}
