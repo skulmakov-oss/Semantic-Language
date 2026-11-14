@@ -1102,6 +1102,9 @@ case('sh_record_text_field', 'ok', 'record R { text: text }\nfn main() { let a: 
 case('sh_opt_i32_eq', 'ok', 'fn main() { assert(Option::Some(2) == Option::Some(2)); }')
 case('sh_opt_nested_none', 'ok', 'fn main() { let a: Option(Option(u32)) = Option::None; let b: Option(Option(u32)) = Option::None; assert(a == b); }')
 case('sh_bad_none_no_context', 'reject:type:', 'fn main() { Option::None; }')
+# PR #63 review: a unit-valued expression is not an Option::Some payload.
+case('sh_opt_some_payloads', 'ok', 'fn main() { let a = Option::Some(42); let b = Option::Some(true); let c = Option::Some("hello"); let d: Option(Option(i32)) = Option::Some(Option::Some(7)); let e: Option(i32) = Option::None; assert(a == Option::Some(42)); assert(b == Option::Some(true)); assert(d == Option::Some(Option::Some(7))); assert(a != e); }')
+case('sh_bad_some_unit_payload', 'reject:type:Option::Some payload has unit type', 'fn noop() { return; }\nfn main() { let x = Option::Some(noop()); }')
 
 def main():
     d = HERE / "cases"
