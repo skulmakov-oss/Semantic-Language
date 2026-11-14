@@ -130,7 +130,8 @@ fn evidence_try_join(a: Evidence, b: Evidence) -> EvidenceResult {
     if !evidence_valid(a) || !evidence_valid(b) {
         return evidence_reject("invalid evidence carrier");
     }
-    if !evidence_can_join(a, b) {
+    // Both carriers were validated just above; only the identity remains to compare.
+    if a.proposition_kind != b.proposition_kind || a.subject != b.subject || a.scope != b.scope {
         return evidence_reject("incompatible proposition identity");
     }
     let mut positive: Sequence(u32) = a.positive;
