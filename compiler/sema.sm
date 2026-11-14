@@ -588,6 +588,78 @@ fn check_option_ctor(c0: C, id: i32, nd: Node, want: i32) -> (C, i32) {
     return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, want) } }, want);
 }
 
+// Preserve record evidence while keeping check_expr within the self-host register budget.
+fn check_record_expr(c0: C, id: i32, nd: Node, k: i32) -> (C, i32) {
+    let mut c: C = c0;
+    if k == 21 {
+        if len(nd.kids) == 0 {
+            return (cerr(c, "type", "record copy-with requires at least one explicit override field", nd.pos), 0 - 1);
+        }
+    }
+    let mut ri: i32 = 0;
+    let mut rt: i32 = 0;
+    if k == 29 {
+        ri = map_get(c.sem.recidx, nd.name, 0 - 1);
+        if ri < 0 {
+            return (cerr(c, "name", "unknown record '" + nd.name + "'", nd.pos), 0 - 1);
+        }
+        let mut s: Sem = c.sem;
+        (s, rt) = intern(s, "R" + nd.name, TyInfo { k: 7, a: ri, kids: [], name: nd.name });
+        c = c with { sem: s };
+    } else {
+        (c, rt) = check_expr(c, nd.a, 0 - 1);
+        if rt == 0 {
+            return (cerr(c, "type", "record base has unit type", c.sem.prog.nodes[nd.a].pos), 0 - 1);
+        }
+        if rt < 0 { return (c, 0 - 1); }
+        if c.sem.tys[rt].k != 7 {
+            return (cerr(c, "type", "'with' needs a record, got " + ty_text(c.sem, rt), nd.pos), 0 - 1);
+        }
+        ri = c.sem.tys[rt].a;
+    }
+    let rec: Rec = c.sem.prog.recs[ri];
+    let fmap: Map(text, i32) = c.sem.rfidx[ri];
+    let mut seen: Map(text, bool) = map_empty();
+    for fid in nd.kids {
+        let fi: Node = c.sem.prog.nodes[fid];
+        let slot: i32 = map_get(fmap, fi.name, 0 - 1);
+        if slot < 0 {
+            return (cerr(c, "name", "record '" + rec.name + "' has no field '" + fi.name + "'", fi.pos), 0 - 1);
+        }
+        if map_contains(seen, fi.name) {
+            return (cerr(c, "type", "field '" + fi.name + "' given more than once", fi.pos), 0 - 1);
+        }
+        seen = map_set(seen, fi.name, true);
+        let ft: i32 = c.sem.rftypes[ri][slot];
+        let mut vt: i32 = 0;
+        let fia: Node = c.sem.prog.nodes[fi.a];
+        if fia.k <= 3 { vt = if fia.k == 3 { 4 } else { fia.k }; }
+        else if fia.k == 8 { vt = 3; }
+        else { (c, vt) = check_expr(c, fi.a, ft); }
+        if vt == 0 {
+            c = cerr(c, "type", "field '" + fi.name + "' has unit type", fia.pos);
+            vt = 0 - 1;
+        }
+        if vt >= 0 {
+            c = accumulate_type_constraint(c, id, "record-fields", vt, ft, fi.pos);
+            if c.sem.err != "" { return (c, 0 - 1); }
+        }
+        if vt != ft {
+            if vt >= 0 {
+                c = cerr(c, "type", "field '" + fi.name + "' expects " + ty_text(c.sem, ft) + ", got " + ty_text(c.sem, vt), fi.pos);
+            }
+        }
+        c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, fid, slot) } };
+        if c.sem.err != "" { return (c, 0 - 1); }
+    }
+    if k == 29 {
+        if len(nd.kids) != len(rec.fnames) {
+            return (cerr(c, "type", "record literal '" + rec.name + "' must give every field exactly once", nd.pos), 0 - 1);
+        }
+    }
+    return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, rt) } }, rt);
+}
+
 fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
     let nd: Node = c0.sem.prog.nodes[id];
     let mut c: C = c0;
@@ -819,75 +891,7 @@ fn check_expr(c0: C, id: i32, want: i32) -> (C, i32) {
         }
         return (cerr(c, "name", "record '" + c.sem.prog.recs[info.a].name + "' has no field '" + nd.name + "'", nd.pos), 0 - 1);
     }
-    if k == 29 || k == 21 {
-        if k == 21 {
-            if len(nd.kids) == 0 {
-                return (cerr(c, "type", "record copy-with requires at least one explicit override field", nd.pos), 0 - 1);
-            }
-        }
-        let mut ri: i32 = 0;
-        let mut rt: i32 = 0;
-        if k == 29 {
-            ri = map_get(c.sem.recidx, nd.name, 0 - 1);
-            if ri < 0 {
-                return (cerr(c, "name", "unknown record '" + nd.name + "'", nd.pos), 0 - 1);
-            }
-            let mut s: Sem = c.sem;
-            (s, rt) = intern(s, "R" + nd.name, TyInfo { k: 7, a: ri, kids: [], name: nd.name });
-            c = c with { sem: s };
-        } else {
-            (c, rt) = check_expr(c, nd.a, 0 - 1);
-            if rt == 0 {
-                return (cerr(c, "type", "record base has unit type", c.sem.prog.nodes[nd.a].pos), 0 - 1);
-            }
-            if rt < 0 { return (c, 0 - 1); }
-            if c.sem.tys[rt].k != 7 {
-                return (cerr(c, "type", "'with' needs a record, got " + ty_text(c.sem, rt), nd.pos), 0 - 1);
-            }
-            ri = c.sem.tys[rt].a;
-        }
-        let rec: Rec = c.sem.prog.recs[ri];
-        let fmap: Map(text, i32) = c.sem.rfidx[ri];
-        let mut seen: Map(text, bool) = map_empty();
-        for fid in nd.kids {
-            let fi: Node = c.sem.prog.nodes[fid];
-            let slot: i32 = map_get(fmap, fi.name, 0 - 1);
-            if slot < 0 {
-                return (cerr(c, "name", "record '" + rec.name + "' has no field '" + fi.name + "'", fi.pos), 0 - 1);
-            }
-            if map_contains(seen, fi.name) {
-                return (cerr(c, "type", "field '" + fi.name + "' given more than once", fi.pos), 0 - 1);
-            }
-            seen = map_set(seen, fi.name, true);
-            let ft: i32 = c.sem.rftypes[ri][slot];
-            let mut vt: i32 = 0;
-            let fia: Node = c.sem.prog.nodes[fi.a];
-            if fia.k <= 3 { vt = if fia.k == 3 { 4 } else { fia.k }; }
-            else if fia.k == 8 { vt = 3; }
-            else { (c, vt) = check_expr(c, fi.a, ft); }
-            if vt == 0 {
-                c = cerr(c, "type", "field '" + fi.name + "' has unit type", fia.pos);
-                vt = 0 - 1;
-            }
-            if vt >= 0 {
-                c = accumulate_type_constraint(c, id, "record-fields", vt, ft, fi.pos);
-                if c.sem.err != "" { return (c, 0 - 1); }
-            }
-            if vt != ft {
-                if vt >= 0 {
-                    c = cerr(c, "type", "field '" + fi.name + "' expects " + ty_text(c.sem, ft) + ", got " + ty_text(c.sem, vt), fi.pos);
-                }
-            }
-            c = c with { sem: c.sem with { fieldix: map_set(c.sem.fieldix, fid, slot) } };
-            if c.sem.err != "" { return (c, 0 - 1); }
-        }
-        if k == 29 {
-            if len(nd.kids) != len(rec.fnames) {
-                return (cerr(c, "type", "record literal '" + rec.name + "' must give every field exactly once", nd.pos), 0 - 1);
-            }
-        }
-        return (c with { sem: c.sem with { exprty: map_set(c.sem.exprty, id, rt) } }, rt);
-    }
+    if k == 29 || k == 21 { return check_record_expr(c, id, nd, k); }
     if k == 22 {
         let mut elems: Sequence(i32) = [];
         let mut wk: Sequence(i32) = [];
