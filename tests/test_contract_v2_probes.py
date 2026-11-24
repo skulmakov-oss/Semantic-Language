@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Historical regression probes for Bootstrap Contract v2 (PR #35) under active v3.
+"""Historical regression probes for Bootstrap Contract v2 (PR #35) under the active protocol (v4).
 
 v2 is a frozen, inactive protocol: only its registered digest survives in this repository.
-v3 is the only active protocol. The five negative probes of the original v2 suite are kept,
+v4 is the only active protocol (v3 was active when this suite was written; the probes are unchanged in substance). The five negative probes of the original v2 suite are kept,
 each bound to the layer that enforces it today:
 
 1. v2 digest mutation or removal    -> registry consistency and protocol immutability
@@ -25,16 +25,19 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode = True  # bootstrap/** is protected: never leave __pycache__ there
 sys.path.insert(0, str(ROOT / "bootstrap"))
 
 import validate_contract as vc  # noqa: E402
 
-V1, V2, V3 = (f"shf0-bootstrap-contract-v{n}" for n in (1, 2, 3))
+V1, V2, V3, V4 = (f"shf0-bootstrap-contract-v{n}" for n in (1, 2, 3, 4))
+ACTIVE = V4
 # Independent pins: never read back from the registry under test.
 PINNED = {
     V1: "6f80db639198bfcb90ec49678024e8a793ab497b1300bc308eb2063543027908",
     V2: "8a2b910989c55e871c6099c673c6a1c65fbaffb5f8ac5eb876466fe9b7fd727b",
     V3: "26309eb87a8e765407d771f174e0f37966d600b178f4c0d164cfbe351e3925f6",
+    V4: "2b5e7d21b4b6962d002509b7255eccba4113d6de640e7edc6f3af57b1a6d31b6",
 }
 OTHER_DIGEST = "f" * 64  # a well-formed digest that is not the v2 one
 DRIFT_PROTOCOL = "CONTRACT_DRIFT: evidence bound to a different contract protocol"
@@ -53,7 +56,7 @@ def run_tests():
 
     # Historical protocol identity: v3 active, v2 registered and inactive, all digests pinned,
     # literal registry == parsed source == runtime registry.
-    assert vc.PROTOCOL == V3 and contract.get("protocol") == V3, "Expected active protocol v3"
+    assert vc.PROTOCOL == ACTIVE and contract.get("protocol") == ACTIVE, "Expected active protocol v4"
     assert V2 != vc.PROTOCOL and V2 in vc.FROZEN_DIGESTS, "Expected v2 registered as historical"
     assert vc.FROZEN_DIGESTS == PINNED, f"frozen registry differs from the pinned digests: {vc.FROZEN_DIGESTS}"
     assert vc.literal_frozen_digests() == PINNED, "literal registry differs from the pinned digests"
@@ -62,7 +65,7 @@ def run_tests():
     # Clean baseline: every rejection below is caused by its own mutation.
     assert check() == [], check()
     assert vc.check_protocol_immutability(validator_source, validator_source) == []
-    print("[test:PASS] Identity: v3 active; v2 historical; v1/v2/v3 digests pinned; literal == parsed == runtime")
+    print("[test:PASS] Identity: v4 active; v2 historical; v1-v4 digests pinned; literal == parsed == runtime")
 
     # 1. Probe: historical v2 digest mutated or removed
     altered = {**PINNED, V2: OTHER_DIGEST}
@@ -75,28 +78,28 @@ def run_tests():
     assert errs1 == [f"CONTRACT_DRIFT: frozen protocol {V2} was removed"], errs1
     print("[test:PASS] Probe 1: historical v2 digest mutation and removal rejected fail-closed")
 
-    # 2. Probe: reference C0 substitution / SHA mismatch (inherited invariant, active v3 contract)
+    # 2. Probe: reference C0 substitution / SHA mismatch (inherited invariant, active contract)
     ref_tampered = copy.deepcopy(reference)
     ref_tampered["sha"] = "0" * 40
     errs2 = check(r=ref_tampered)
     assert "REFERENCE_MISMATCH: contract C0 SHA differs from the reference manifest" in errs2, errs2
-    print("[test:PASS] Probe 2: reference C0 substitution rejected (inherited invariant under active v3)")
+    print("[test:PASS] Probe 2: reference C0 substitution rejected (inherited invariant under the active contract)")
 
     # 3. Probe: unadmitted capability claim (artifact_write is a declared gap at C0)
     assert contract["capabilities"]["artifact_write"]["available_at_c0"] is False
     c_cap = copy.deepcopy(contract)
     c_cap["capabilities"]["artifact_write"]["available_at_c0"] = True
     errs3 = check(c=c_cap)
-    assert any(e.startswith(f"CONTRACT_DRIFT: a frozen value of {V3} changed") for e in errs3), errs3
+    assert any(e.startswith(f"CONTRACT_DRIFT: a frozen value of {ACTIVE} changed") for e in errs3), errs3
     print("[test:PASS] Probe 3: unadmitted artifact_write availability rejected by the active contract")
 
-    # 4. Probe: evidence bound to an obsolete protocol, evaluated by active v3 admission.
-    # Historical v2 admission is not executed here; only "v1/v2 evidence is stale under v3".
+    # 4. Probe: evidence bound to an obsolete protocol, evaluated by the active admission.
+    # Historical v2 admission is not executed here; only "v1/v2/v3 evidence is stale under v4".
     h = "sha256:" + "ab" * 32
     identity = "sha256:" + "cd" * 32
     c0_sha = contract["c0"]["sha"]
     record = dict(
-        contract_protocol=V3,
+        contract_protocol=ACTIVE,
         comparison_rule="byte-equality-v1",
         c0_identity=f"skulmakov-oss/Semantic@{c0_sha}",
         source_set_identity=identity,
@@ -119,13 +122,17 @@ def run_tests():
         limitations=["Windows x64 only (C0 platform scope)"],
         c0_checkout_head=c0_sha,
         c0_checkout_clean=True,
+        executor_identity=f"skulmakov-oss/Semantic@{contract['executor']['sha']}:crates/smc-cli",
+        effective_quotas={"max_steps": 150000000, "max_calls": 2000000, "max_frames": 256},
+        c1_execution={"outcome": "ok", "counters": {"steps": 100906156, "calls": 1089283, "peak_frames": 36}},
+        determinism="identical",
     )
     control = vc.check_record(contract, reference, record, identity)
-    assert control == [], control  # the same record bound to v3 is well-formed
-    for stale in (V1, V2):
+    assert control == [], control  # the same record bound to v4 is well-formed
+    for stale in (V1, V2, V3):
         errs4 = vc.check_record(contract, reference, {**record, "contract_protocol": stale}, identity)
         assert errs4 == [DRIFT_PROTOCOL], (stale, errs4)  # the binding is the only defect
-    print("[test:PASS] Probe 4: stale v1 / v2 evidence binding rejected against active v3 contract")
+    print("[test:PASS] Probe 4: stale v1 / v2 / v3 evidence binding rejected against the active v4 contract")
 
     # 5. Probe: protocol immutability catches the v2 digest redefined in place vs base
     head_mutated = validator_source.replace(PINNED[V2], OTHER_DIGEST)
@@ -135,7 +142,7 @@ def run_tests():
                      "(introduce a new protocol identifier instead)"], errs5
     print("[test:PASS] Probe 5: protocol immutability catches v2 digest redefinition vs base")
 
-    print("\nSummary: 5/5 Bootstrap Contract v2 historical probes PASSED under active v3.")
+    print("\nSummary: 5/5 Bootstrap Contract v2 historical probes PASSED under active v4.")
 
 
 if __name__ == "__main__":

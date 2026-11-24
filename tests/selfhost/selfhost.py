@@ -12,12 +12,21 @@ One entry point, one fresh attempt directory per run:
 
 Declared inputs (flags win over environment variables; nothing is guessed):
   --smc          SEMANTIC_C0_SMC        smc-cli built from the pinned C0 (sha256 pinned in pins.json)
-  --driver       SEMANTIC_REV5_DRIVER   rev5 stored-exec-driver (sha256 pinned in pins.json)
+  --executor     SEMANTIC_EXECUTOR      smc-cli built from the admitted upstream revision; its stored-artifact
+                                        `smc run-smc` executes every stored generation (Bootstrap Contract v4;
+                                        identity pinned in pins.json)
   --c0-checkout  SEMANTIC_C0_CHECKOUT   clean checkout of skulmakov-oss/Semantic at the pinned SHA
-  --s2           SEMANTIC_S2_HARNESS    optional: run every generation step under the S2 harness
+  --s2           SEMANTIC_S2_HARNESS    optional engineering containment: run every generation step under the
+                                        S2 harness, which wraps the rev5 driver (not the v4 executor)
+  --driver       SEMANTIC_REV5_DRIVER   rev5 stored-exec-driver; required only with --s2
   --source       compiler source root (default: <repo>/compiler); files are listed in pins.json
+  --reproduction-build  accept an executor binary that is not pinned by hash (an independent rebuild of
+                        the admitted revision on another host). Its self-reported `smc version --json`
+                        source fingerprint must equal the pinned one, which is a consistency check, not
+                        proof. Such an attempt yields reproduction identities for a Seal candidate and
+                        never a v4 qualification record.
 
-The host only moves bytes: it copies declared files, runs smc/driver/s2-harness, decodes the
+The host only moves bytes: it copies declared files, runs smc/the executor/s2-harness, decodes the
 compiler's "hex ..." stdout line and compares bytes. Lexing, parsing, analysis, lowering and
 SemCode emission are performed by the Semantic compiler. Every phase writes <phase>.json; every
 command is logged in commands.jsonl with its stdout/stderr under logs/. Files are created with
@@ -96,15 +105,38 @@ def classify(out):
     return {"kind": "no_output" if not out.strip() else "other"}
 
 
-def driver_provenance(stderr):
+METRICS_SCHEMA = "semantic.run.metrics/0.1"
+
+
+def exec_provenance(stderr):
+    """The executor's own report of one run: the `smc run-smc` metrics line (v4 executor) or the rev5
+    driver's provenance line (S2 engineering path). `completed` means the program ran to its end."""
     for line in reversed(stderr.decode("utf-8", "replace").splitlines()):
-        if line.startswith("{") and "stored_exec_provenance" in line:
-            try:
-                j = json.loads(line)
-            except ValueError:
-                continue
-            return {k: j.get(k) for k in ("outcome", "phase_reached", "error", "counters", "executed_artifact_sha256", "effective_quotas")}
+        if not line.startswith("{"):
+            continue
+        try:
+            j = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(j, dict):
+            continue
+        keep = {k: j.get(k) for k in ("outcome", "phase_reached", "error", "counters", "effective_quotas")}
+        if j.get("schema") == METRICS_SCHEMA:
+            return {**keep, "schema": METRICS_SCHEMA, "executed_artifact_sha256": None, "completed": j.get("outcome") == "ok"}
+        if "stored_exec_provenance" in line:
+            return {**keep, "schema": "stored_exec_provenance", "executed_artifact_sha256": j.get("executed_artifact_sha256"),
+                    "completed": j.get("outcome") == "executed_ok"}
     return None
+
+
+def executed(rec, want_sha):
+    """The run executed exactly the stored artifact `want_sha` to completion. smc run-smc binds the bytes it
+    executes to --expect-sha256 before admission (a mismatch stops in phase "read"); the rev5 driver reports
+    the executed hash itself."""
+    p = rec.get("provenance") or {}
+    if rec.get("executor") == "smc-run-smc":
+        return bool(p.get("completed")) and p.get("phase_reached") == "execute" and rec.get("artifact_sha256") == want_sha
+    return bool(p.get("completed")) and p.get("executed_artifact_sha256") == want_sha
 
 
 class Attempt:
@@ -172,8 +204,11 @@ class Tools:
             v = getattr(args, flag, None) or os.environ.get(env)
             return pathlib.Path(v).resolve() if v else None
         self.smc = pick("smc", "SEMANTIC_C0_SMC")
+        self.executor = pick("executor", "SEMANTIC_EXECUTOR")
         self.driver = pick("driver", "SEMANTIC_REV5_DRIVER")
         self.s2 = pick("s2", "SEMANTIC_S2_HARNESS")
+        self.reproduction_build = bool(getattr(args, "reproduction_build", False))
+        self.seen = {}
         self.c0_checkout = pick("c0_checkout", "SEMANTIC_C0_CHECKOUT")
         self.source = pathlib.Path(args.source).resolve() if getattr(args, "source", None) else REPO / PINS["source_set"]["root"]
 
@@ -182,11 +217,19 @@ class Tools:
         p = getattr(self, name)
         if p is None or not p.is_file():
             sys.exit(f"selfhost: required tool '{name}' is not supplied or does not exist")
-        want = PINS["tools"][name]["sha256"]
         got = sha256_file(p)
-        if got != want:
-            sys.exit(f"selfhost: tool identity mismatch for {name}: {got} != pinned {want}")
+        allowed = pinned_identities(name)
+        if name == "executor" and self.reproduction_build:
+            # an unpinned rebuild, admitted by its source fingerprint in preflight; it must not change afterwards
+            allowed = [self.seen.setdefault(name, got)]
+        if got not in allowed:
+            sys.exit(f"selfhost: tool identity mismatch for {name}: {got} not in pinned {allowed}")
         return p
+
+
+def pinned_identities(name):
+    t = PINS["tools"][name]
+    return list(t.get("sha256_allowed") or [t["sha256"]])
 
 
 def git(repo, *args):
@@ -202,14 +245,33 @@ def snapshot_entries(directory):
 
 def preflight(att, tools, args):
     v = load_validator()
-    res = {"schema": "semantic.selfhost.preflight/1", "utc": now(), "attempt_root": str(att.out)}
+    import platform
+    res = {"schema": "semantic.selfhost.preflight/1", "utc": now(), "attempt_root": str(att.out),
+           "platform": {"sys_platform": sys.platform, "machine": platform.machine()}}
     ok = True
     tool_rows = {}
-    for name in ("smc", "driver"):
+    for name in ("smc", "executor") + (("driver",) if tools.s2 else ()):
         p = getattr(tools, name)
         got = sha256_file(p) if p and p.is_file() else None
-        tool_rows[name] = {"path": str(p) if p else None, "sha256": got, "pinned": PINS["tools"][name]["sha256"], "match": got == PINS["tools"][name]["sha256"]}
-        ok &= tool_rows[name]["match"]
+        pinned = pinned_identities(name)
+        tool_rows[name] = {"path": str(p) if p else None, "sha256": got, "pinned": pinned, "match": got in pinned}
+        if name != "executor":
+            ok &= tool_rows[name]["match"]
+    ex = tool_rows["executor"]
+    if ex["sha256"]:
+        ec, so, _ = att.run("preflight.executor_version", [tools.executor, "version", "--json"])
+        try:
+            fp = json.loads(so).get("source_fingerprint") if ec == 0 else None
+        except ValueError:
+            fp = None
+        ex.update(source_fingerprint=fp, pinned_source_fingerprint=PINS["tools"]["executor"]["source_fingerprint"],
+                  revision=PINS["tools"]["executor"]["revision"], reproduction_build=tools.reproduction_build)
+        ex["ok"] = fp == ex["pinned_source_fingerprint"] and (ex["match"] or tools.reproduction_build)
+        if ex["ok"] and tools.reproduction_build:
+            tools.seen["executor"] = ex["sha256"]
+    else:
+        ex["ok"] = False
+    ok &= ex["ok"]
     if tools.s2:
         if not tools.s2.is_file():
             sys.exit("selfhost: --s2 does not exist")
@@ -275,9 +337,9 @@ def execute_compiler(att, tools, tag, artifact, root, entry, envelope, source_fi
     """Executes an admitted stored compiler artifact on <root>/<entry>. Returns (kind, stdout_bytes, record)."""
     art_sha = sha256_file(artifact)
     env = PINS["envelopes"][envelope]
-    rec = {"executor": "s2" if (tools.s2 and source_files) else "driver", "artifact": str(artifact), "artifact_sha256": art_sha, "envelope": envelope}
-    driver = tools.need("driver")
+    rec = {"executor": "s2" if (tools.s2 and source_files) else "smc-run-smc", "artifact": str(artifact), "artifact_sha256": art_sha, "envelope": envelope}
     if rec["executor"] == "s2":
+        driver = tools.need("driver")
         out = att.path(f"s2/{tag}")
         out.parent.mkdir(parents=True, exist_ok=True)
         argv = [tools.s2, "--driver", driver, "--artifact", artifact, "--artifact-sha256", art_sha, "--root", root, "--profile", "cli-read-only",
@@ -294,16 +356,17 @@ def execute_compiler(att, tools, tag, artifact, root, entry, envelope, source_fi
                      "qualification": s2rec.get("qualification"), "published": s2rec.get("published"), "provenance": s2rec.get("provenance"),
                      "harness": s2rec.get("harness")}
         stdout = (out / "capture" / "stdout.bin").read_bytes() if (out / "capture" / "stdout.bin").exists() else b""
-        rec["driver"] = driver_provenance((out / "capture" / "stderr.bin").read_bytes()) if (out / "capture" / "stderr.bin").exists() else None
+        rec["provenance"] = exec_provenance((out / "capture" / "stderr.bin").read_bytes()) if (out / "capture" / "stderr.bin").exists() else None
         if vec == 0 and s2rec.get("accepted") is True:
             accepted = (out / "accepted" / accepted_name).read_bytes()
             rec["accepted_sha256"] = sha256(accepted)
             return "semcode", accepted, rec
         return "rejected_by_s2", stdout, rec
-    argv = [driver, artifact, "--expect-sha256", art_sha, "--profile", "cli-read-only", "--root", root, "--envelope", "trusted-compiler",
-            "--max-steps", env["max_steps"], "--max-calls", env["max_calls"], "--max-frames", env["max_frames"], "--metrics", "json", "--", entry]
+    argv = [tools.need("executor"), "run-smc", artifact, "--expect-sha256", "sha256:" + art_sha, "--profile", "cli-read-only", "--root", root,
+            "--envelope", "trusted-compiler", "--max-steps", env["max_steps"], "--max-calls", env["max_calls"], "--max-frames", env["max_frames"],
+            "--metrics", "json", "--", entry]
     ec, so, se = att.run(tag, argv, timeout=env["timeout_secs"] + 300)
-    rec.update(exit=ec, driver=driver_provenance(se))
+    rec.update(exit=ec, provenance=exec_provenance(se))
     return None, so, rec
 
 
@@ -324,7 +387,8 @@ def build(att, tools, args):
     if ec == 0 and c1.exists():
         row.update(sha256=sha256_file(c1), bytes=c1.stat().st_size)
         row["verify_exit"] = att.run("build.C1.verify", [tools.need("smc"), "verify", c1])[0]
-    ok &= row.get("verify_exit") == 0
+        row["executor_verify_exit"] = att.run("build.C1.executor_verify", [tools.need("executor"), "verify", c1])[0]
+    ok &= row.get("verify_exit") == 0 and row.get("executor_verify_exit") == 0
     res["generations"].append(row)
     prev = row
     names = [f.split("/", 1)[1] for f in PINS["source_set"]["files"]]
@@ -344,7 +408,8 @@ def build(att, tools, args):
             p = att.create(f"gen/{name}.smc", out)
             row.update(artifact=f"gen/{name}.smc", sha256=sha256(out), bytes=len(out))
             row["verify_exit"] = att.run(f"build.{name}.verify", [tools.need("smc"), "verify", p])[0]
-        ok &= row.get("verify_exit") == 0 and (rec.get("driver") or {}).get("executed_artifact_sha256") == prev["sha256"]
+            row["executor_verify_exit"] = att.run(f"build.{name}.executor_verify", [tools.need("executor"), "verify", p])[0]
+        ok &= row.get("verify_exit") == 0 and row.get("executor_verify_exit") == 0 and executed(rec, prev["sha256"])
         res["generations"].append(row)
         prev = row
     res["snapshot_identity_after"] = v.source_set_identity(snapshot_entries(snap))
@@ -402,7 +467,7 @@ def differential(att, tools, args):
     rows = corpus()
     att.create("corpus/cases.json", (REPO / "tests/compiler/cases.json").read_bytes())
     smc = tools.need("smc")
-    tools.need("driver")
+    tools.need("executor")
     for r in rows:
         for f in r["files"]:
             att.create(f"fixtures/{r['id']}/root/{f}", (REPO / r["dir"] / f).read_bytes())
@@ -420,7 +485,7 @@ def differential(att, tools, args):
             g = next(x for x in gens if x["name"] == name)
             kind, out, rec = execute_compiler(att, tools, f"diff.{r['id']}.{name}{suffix}", att.path(g["artifact"]), root, r["entry"], "fixture")
             c = classify(out)
-            row = {"exit": rec["exit"], "stdout_sha256": sha256(out), "kind": c["kind"], "driver": rec["driver"]}
+            row = {"exit": rec["exit"], "stdout_sha256": sha256(out), "kind": c["kind"], "provenance": rec["provenance"]}
             if c["kind"] == "diagnostic":
                 row.update(category=c["category"], message=c["message"])
             if c["kind"] == "semcode":
@@ -448,10 +513,10 @@ def differential(att, tools, args):
             re_, so, se = att.run(f"exec.{h[:16]}.run_smc", [smc, "run-smc", p], timeout=300)
             e.update(run_exit=re_, run_output=(so + se).decode("utf-8", "replace")[-600:])
             env = PINS["envelopes"]["program"]
-            pe, pso, pse = att.run(f"exec.{h[:16]}.driver_pure", [tools.need("driver"), p, "--expect-sha256", h, "--profile", "pure", "--root", att.out / "fixtures",
-                                                                  "--envelope", "trusted-compiler", "--max-steps", env["max_steps"], "--max-calls", env["max_calls"],
-                                                                  "--max-frames", env["max_frames"], "--metrics", "json"], timeout=300)
-            e.update(pure_exit=pe, pure=driver_provenance(pse))
+            pe, pso, pse = att.run(f"exec.{h[:16]}.executor_pure", [tools.need("executor"), "run-smc", p, "--expect-sha256", "sha256:" + h, "--profile", "pure",
+                                                                    "--root", att.out / "fixtures", "--envelope", "trusted-compiler", "--max-steps", env["max_steps"],
+                                                                    "--max-calls", env["max_calls"], "--max-frames", env["max_frames"], "--metrics", "json"], timeout=300)
+            e.update(pure_exit=pe, pure=exec_provenance(pse))
         return h, e
 
     with cf.ThreadPoolExecutor(args.jobs) as ex:
@@ -469,10 +534,10 @@ def differential(att, tools, args):
     return ok
 
 
-def driver_trapped(pure, frag):
-    """A program trap on the driver: execution started, did not finish ok, and reports the expected text
-    (runtime_error for assertions/arithmetic, quota_exceeded for a frame/step quota)."""
-    return (pure.get("phase_reached") == "execute" and pure.get("outcome") not in (None, "executed_ok")
+def executor_trapped(pure, frag):
+    """A program trap on the executor: execution started, did not complete, and reports the expected text
+    (trap for assertions/arithmetic, quota_exceeded for a frame/step quota)."""
+    return (pure.get("phase_reached") == "execute" and pure.get("outcome") is not None and not pure.get("completed")
             and frag in (pure.get("error") or ""))
 
 
@@ -498,25 +563,25 @@ def row_failures(r, execs, gens):
                 f.append("SemCode not admitted by sm-verify")
                 continue
             if expect == "ok":
-                if e.get("run_exit") != 0 or (e.get("pure") or {}).get("outcome") != "executed_ok":
+                if e.get("run_exit") != 0 or not (e.get("pure") or {}).get("completed"):
                     f.append("expected a clean run on both VMs")
             else:
                 frag = expect.split(":", 1)[1]
                 pure = e.get("pure") or {}
                 if e.get("run_exit") == 0 or frag not in e.get("run_output", ""):
                     f.append(f"expected a trap containing {frag!r} on smc run-smc")
-                if not driver_trapped(pure, frag):
-                    f.append(f"expected a trap containing {frag!r} on the driver")
+                if not executor_trapped(pure, frag):
+                    f.append(f"expected a trap containing {frag!r} on the executor")
         elif expect.startswith("reject:"):
             _, cat, frag = expect.split(":", 2)
             if kind != "diagnostic" or o.get("category") != cat or frag not in o.get("message", ""):
                 f.append(f"expected diagnostic {cat}: {frag!r}, got {kind}")
-            if (o.get("driver") or {}).get("outcome") != "executed_ok":
+            if not (o.get("provenance") or {}).get("completed"):
                 f.append("a compiler diagnostic must come from a completed compiler run")
         elif expect.startswith("fault:"):
             frag = expect.split(":", 1)[1]
-            d = o.get("driver") or {}
-            if kind == "semcode" or d.get("outcome") == "executed_ok" or frag not in (d.get("error") or ""):
+            d = o.get("provenance") or {}
+            if kind == "semcode" or d.get("completed") or frag not in (d.get("error") or ""):
                 f.append(f"expected a compiler process fault containing {frag!r}")
         else:
             f.append(f"unknown expectation {expect!r}")
@@ -569,14 +634,17 @@ def main(argv=None):
     ap.add_argument("phase", choices=PHASES + ("all",))
     ap.add_argument("--out", required=True, help="attempt directory (created by preflight/all; must not exist)")
     ap.add_argument("--smc")
+    ap.add_argument("--executor")
     ap.add_argument("--driver")
+    ap.add_argument("--reproduction-build", dest="reproduction_build", action="store_true",
+                    help="accept an unpinned executor binary whose source fingerprint equals the pinned one")
     ap.add_argument("--s2")
     ap.add_argument("--c0-checkout", dest="c0_checkout")
     ap.add_argument("--source", help="compiler source root (default <repo>/compiler)")
     ap.add_argument("--generations", type=int, default=3, choices=(3, 4, 5),
                     help="C1..Cn; at least 3, because both fixed-point modes compare C2 with C3")
     ap.add_argument("--fixed-point", default="c1c2", choices=("c1c2", "c2c3"),
-                    help="c1c2: Bootstrap Contract v3 rule C1 == C2 (and C2 == C3); c2c3: post-bootstrap stability only")
+                    help="c1c2: Bootstrap Contract v4 rule (byte-equality-v1) C1 == C2 (and C2 == C3); c2c3: post-bootstrap stability only")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--require-clean", action="store_true", help="fail preflight on a dirty repository tree")
     args = ap.parse_args(argv)

@@ -106,7 +106,7 @@ Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 
 ## Current phase
 
-**Bootstrap Contract v3 is frozen** (`shf0-bootstrap-contract-v3`). The Semantic-written
+**Bootstrap Contract v4 is in force** (`shf0-bootstrap-contract-v4`, succeeding v3). The Semantic-written
 compiler in [`compiler/`](compiler/) includes the integrated Quad-native
 main-compatibility checkpoint from [PR #63](https://github.com/skulmakov-oss/Semantic-Language/pull/63).
 
@@ -121,17 +121,18 @@ Every artifact passed the pinned Frozen C0 verifier. The differential corpus pas
 
 **Self-host engineering integration (SHF-15/16, this tree):** the compiler now emits SemCode
 byte-identical to the pinned C0 for every accepted corpus program and for its own source.
-`C1 = C0(S)`, `C2 = C1(S)` and `C3 = C2(S)` are byte-identical, so the protocol-v3 comparison
+`C1 = C0(S)`, `C2 = C1(S)` and `C3 = C2(S)` are byte-identical, so the contract comparison
 `C1.smc == C2.smc` (`byte-equality-v1`) is measured as equal. Run it with
 [`tests/selfhost/selfhost.py`](tests/selfhost/selfhost.py); see
 [`docs/selfhost/README.md`](docs/selfhost/README.md) and [`docs/selfhost/C0_PARITY.md`](docs/selfhost/C0_PARITY.md).
-The Seal is still **not** established. The source-set manifest is empty, the execution
-envelope exceeds the declared v3 numbers, the stored-artifact executor is not upstream-admitted,
-and independent reproduction and owner acceptance are outstanding.
+Bootstrap Contract v4 binds the canonical source set (`bootstrap/source-set.toml`), the
+stored-artifact executor (`smc run-smc` at an exact upstream revision) and the trusted-compiler
+envelope (150M steps / 2M calls / 256 frames). The Seal is **not accepted**: it needs an independent
+reproduction (distinct host and operator) and the owner's acceptance (BOOTSTRAP_CONTRACT §10.9).
 
 **Proof boundary:** This C2/C3/C4 engineering fixed-point checkpoint is not an
-accepted **C1/C2 Bootstrap Seal** under the frozen
-[Bootstrap Contract v3](docs/BOOTSTRAP_CONTRACT.md). The protocol additionally requires
+accepted **C1/C2 Bootstrap Seal** under
+[Bootstrap Contract v4](docs/BOOTSTRAP_CONTRACT.md). The protocol additionally requires
 its declared source-set and reference bindings, the prescribed C1/C2 comparison,
 independent reproduction and Seal acceptance evidence. Formal SHF-16 completion,
 SHF-17 cross-platform qualification and full language coverage are not claimed here.

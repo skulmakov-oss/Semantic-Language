@@ -60,6 +60,13 @@ class SelfhostToolTests(unittest.TestCase):
             self.assertTrue(c.violations)
             self.assertTrue(any("missing file preflight.json" in v for v in c.violations))
 
+    def test_only_contract_eligible_attempts_yield_a_v4_record(self):
+        base = {"scope": "full", "fixed_point_rule": "c1c2", "generation_runner": "smc-run-smc"}
+        self.assertTrue(check_results.record_eligible(base))
+        for key, value in (("scope", "partial"), ("fixed_point_rule", "c2c3"), ("generation_runner", "s2")):
+            self.assertFalse(check_results.record_eligible({**base, key: value}), key)
+        self.assertFalse(check_results.record_eligible({}))
+
     def test_checker_tables_match_the_pipeline(self):
         """The checker keeps its own copies of the import expectations and mutations; they must not drift."""
         self.assertEqual(check_results.IMPORT_EXPECT, selfhost.IMPORT_EXPECT)
@@ -67,7 +74,7 @@ class SelfhostToolTests(unittest.TestCase):
         self.assertEqual(set(check_results.IMPORT_EXPECT), {p.name for p in (REPO / "tests/compiler/imports").iterdir() if p.is_dir()})
 
     def test_row_predicate_never_passes_on_exit_code_alone(self):
-        ok_run = {"exit": 0, "driver": {"outcome": "executed_ok"}}
+        ok_run = {"exit": 0, "provenance": {"outcome": "ok", "completed": True}}
         ok_semcode = dict(ok_run, kind="semcode", semcode=b"\x01")
         diag = dict(ok_run, kind="diagnostic", category="type", message="m")
         exits = {}
@@ -80,35 +87,35 @@ class SelfhostToolTests(unittest.TestCase):
         # SemCode that differs from the C0 compilation fails even if it would verify and run.
         h1, h2 = check_results.sha(b"\x01")[:16], check_results.sha(b"\x02")[:16]
         for h in (h1, h2):
-            exits.update({f"exec.{h}.verify": 0, f"exec.{h}.run_smc": 0, f"exec.{h}.driver_pure": 0})
-            logs[(f"exec.{h}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","outcome":"executed_ok"}\n'
+            exits.update({f"exec.{h}.verify": 0, f"exec.{h}.run_smc": 0, f"exec.{h}.executor_pure": 0})
+            logs[(f"exec.{h}.executor_pure", "stderr")] = b'{"schema":"semantic.run.metrics/0.1","phase_reached":"execute","outcome":"ok"}\n'
         other = dict(ok_semcode, semcode=b"\x02")
         self.assertIn("SemCode differs from C0", rr("ok", b"\x01", {"C2": other, "C2.repeat": other}, ["C2"], exit_of, log))
         self.assertIn("nondeterministic", rr("ok", b"\x01", {"C2": ok_semcode, "C2.repeat": other}, ["C2"], exit_of, log))
         self.assertEqual(rr("ok", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
         # A compiler run that printed valid hex and then faulted is not a completed compilation.
-        faulted = dict(ok_semcode, exit=5, driver={"outcome": "runtime_error"})
+        faulted = dict(ok_semcode, exit=5, provenance={"outcome": "runtime_error", "completed": False})
         self.assertIn("no SemCode from a completed compiler run", rr("ok", b"\x01", {"C2": faulted, "C2.repeat": faulted}, ["C2"], exit_of, log))
         # Without the second VM's provenance the run is not proven, whatever the exit codes say.
-        logs.pop((f"exec.{h1}.driver_pure", "stderr"))
+        logs.pop((f"exec.{h1}.executor_pure", "stderr"))
         self.assertIn("run failed", rr("ok", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
         # A trap must appear on both VMs, read from their logs.
         exits[f"exec.{h1}.run_smc"] = 1
         logs[(f"exec.{h1}.run_smc", "stdout")] = b"assertion failed\n"
-        self.assertIn("no expected trap on the driver", rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
-        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","phase_reached":"execute","outcome":"runtime_error","error":"assertion failed"}\n'
+        self.assertIn("no expected trap on the executor", rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
+        logs[(f"exec.{h1}.executor_pure", "stderr")] = b'{"schema":"semantic.run.metrics/0.1","phase_reached":"execute","outcome":"trap","error":"assertion failed"}\n'
         self.assertEqual(rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
-        # A quota trap (frame limit) is reported by the driver as quota_exceeded; it is still a trap.
+        # A quota trap (frame limit) is reported by the executor as quota_exceeded; it is still a trap.
         logs[(f"exec.{h1}.run_smc", "stdout")] = b"quota exceeded: Frames limit=256 used=257\n"
-        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","phase_reached":"execute","outcome":"quota_exceeded","error":"quota exceeded: Frames limit=256 used=257"}\n'
+        logs[(f"exec.{h1}.executor_pure", "stderr")] = b'{"schema":"semantic.run.metrics/0.1","phase_reached":"execute","outcome":"quota_exceeded","error":"quota exceeded: Frames limit=256 used=257"}\n'
         self.assertEqual(rr("trap:quota", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
-        self.assertTrue(selfhost.driver_trapped({"phase_reached": "execute", "outcome": "quota_exceeded", "error": "quota exceeded: Frames"}, "quota"))
+        self.assertTrue(selfhost.executor_trapped({"phase_reached": "execute", "outcome": "quota_exceeded", "completed": False, "error": "quota exceeded: Frames"}, "quota"))
         # A run that never reached execution (e.g. rejected by the verifier) is not a program trap.
-        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","phase_reached":"verify","outcome":"verify_rejected","error":"quota"}\n'
-        self.assertIn("no expected trap on the driver", rr("trap:quota", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
-        self.assertFalse(selfhost.driver_trapped({"phase_reached": "verify", "outcome": "verify_rejected", "error": "quota"}, "quota"))
+        logs[(f"exec.{h1}.executor_pure", "stderr")] = b'{"schema":"semantic.run.metrics/0.1","phase_reached":"verify","outcome":"verify_rejected","error":"quota"}\n'
+        self.assertIn("no expected trap on the executor", rr("trap:quota", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
+        self.assertFalse(selfhost.executor_trapped({"phase_reached": "verify", "outcome": "verify_rejected", "completed": False, "error": "quota"}, "quota"))
         # A process fault is not a compiler diagnostic, and vice versa.
-        fault = {"kind": "no_output", "exit": 5, "driver": {"outcome": "runtime_error", "error": "ABI FsRead failure [HostFault]"}}
+        fault = {"kind": "no_output", "exit": 5, "provenance": {"outcome": "runtime_error", "completed": False, "error": "ABI FsRead failure [HostFault]"}}
         self.assertEqual(rr("fault:ABI FsRead failure", None, {"C2": fault, "C2.repeat": fault}, ["C2"], exit_of, log), [])
         self.assertTrue(rr("reject:type:m", None, {"C2": fault, "C2.repeat": fault}, ["C2"], exit_of, log))
         self.assertTrue(rr("fault:ABI FsRead failure", None, {"C2": diag, "C2.repeat": diag}, ["C2"], exit_of, log))

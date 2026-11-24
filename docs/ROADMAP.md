@@ -1,6 +1,6 @@
 # Self-Hosting Roadmap — SHF-0 … SHF-17
 
-Status: canonical roadmap. **SHF-0 QUALIFIED / COMPLETE (issue #11; Bootstrap Contract v3).**
+Status: canonical roadmap. **SHF-0 QUALIFIED / COMPLETE (issue #11; Bootstrap Contract v3, revised to v4 for SHF-15/16).**
 Implementation and test evidence now exist for later stages, so the earlier blanket
 "SHF-1 through SHF-17 not started" description is no longer an accurate implementation
 snapshot. This does **not** independently mark any later stage QUALIFIED / COMPLETE:
@@ -15,10 +15,10 @@ is documented here; starting a stage requires an explicit owner GO.
 
 | Surface | Evidence on `main` | Qualification boundary |
 |---|---|---|
-| Bootstrap foundation (SHF-0) | Frozen `shf0-bootstrap-contract-v3` in [`bootstrap/contract.toml`](../bootstrap/contract.toml) | Protocol v3 defines the C1/C2 Seal; it does not attest a completed Seal by itself |
+| Bootstrap foundation (SHF-0) | `shf0-bootstrap-contract-v4` in [`bootstrap/contract.toml`](../bootstrap/contract.toml) (succeeds v3; v1–v3 digests preserved) | Protocol v4 defines the C1/C2 Seal and its states (validated → reproduced → accepted); it does not attest a completed Seal by itself |
 | Compiler implementation (SHF-10 through SHF-14) | [PR #63](https://github.com/skulmakov-oss/Semantic-Language/pull/63) integrated Quad-native compiler sources; 131/131 corpus cases, 9/9 mutations and 11/11 string-boundary cases passed in local qualification | Feature and test evidence, not a blanket stage-by-stage exit declaration |
 | Self-host engineering (SHF-15 / SHF-16) | At [`e296ada`](https://github.com/skulmakov-oss/Semantic-Language/commit/e296adac229df628108772520cd27e5e32244872), locally labelled `C2`, `C3` and `C4` artifacts were byte-identical: 301,087 bytes, SHA-256 `120ed3c18d1d8d48cadc3f9597bafec87cb45d143e33c4f026e2a66dcdc4df03`; each verified by Frozen C0 ([qualification report](https://github.com/skulmakov-oss/Semantic-Language/pull/63#issuecomment-6876851138)) | This does **not** by itself prove the protocol-v3 `C1 = C0(S)`, `C2 = C1(S)`, `C1 == C2` Seal, required reference/source-set bindings or independent Seal acceptance |
-| Self-host engineering integration (SHF-15 / SHF-16) | With C0 code-generation parity ([selfhost/C0_PARITY.md](selfhost/C0_PARITY.md)), `C1 = C0(S)`, `C2 = C1(S)` and `C3 = C2(S)` are byte-identical; reproducible with `tests/selfhost/selfhost.py` ([selfhost/README.md](selfhost/README.md)) | Engineering evidence only. Seal blocked by the empty `bootstrap/source-set.toml`, the v3 §10.5 envelope, executor admission, independent reproduction and owner acceptance |
+| Self-host engineering integration (SHF-15 / SHF-16) | With C0 code-generation parity ([selfhost/C0_PARITY.md](selfhost/C0_PARITY.md)), `C1 = C0(S)`, `C2 = C1(S)` and `C3 = C2(S)` are byte-identical; reproducible with `tests/selfhost/selfhost.py` ([selfhost/README.md](selfhost/README.md)) | (2026-11-24) Bootstrap Contract v4 binds the canonical source set, the upstream stored-artifact executor and the envelope; the workflow emits a contract evidence record validated by `check_evidence`. SHF-15 / SHF-16 exit and the Seal still need an independent reproduction (distinct host and operator) and owner acceptance |
 | Cross-platform qualification (SHF-17) | No qualifying cross-platform Seal evidence asserted by this checkpoint | Not declared complete |
 
 Milestone requirements below remain the normative exit criteria. This dated snapshot

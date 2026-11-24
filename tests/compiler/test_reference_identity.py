@@ -20,10 +20,11 @@ class ReferenceIdentityTests(unittest.TestCase):
         contract_path = pathlib.Path("bootstrap/contract.toml")
         reference_path = pathlib.Path("reference/semantic-reference.toml")
         for path, old, new in (
-            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', 'protocol = "shf0-bootstrap-contract-v1"'),
-            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', 'protocol = "shf0-bootstrap-contract-v2"'),
-            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', 'protocol = "shf0-bootstrap-contract-v99"'),
-            (contract_path, 'protocol = "shf0-bootstrap-contract-v3"', ''),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v4"', 'protocol = "shf0-bootstrap-contract-v1"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v4"', 'protocol = "shf0-bootstrap-contract-v2"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v4"', 'protocol = "shf0-bootstrap-contract-v3"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v4"', 'protocol = "shf0-bootstrap-contract-v99"'),
+            (contract_path, 'protocol = "shf0-bootstrap-contract-v4"', ''),
             (contract_path, 'status = "frozen"', 'status = "draft"'),
             (reference_path, 'status = "qualified-reference"', 'status = "candidate"'),
             (reference_path, 'skulmakov-oss/Semantic', 'skulmakov-oss/Other'),
@@ -38,10 +39,10 @@ class ReferenceIdentityTests(unittest.TestCase):
                         text = text.replace(old, new, 1)
                     (root / identity_path).parent.mkdir(exist_ok=True)
                     (root / identity_path).write_text(text, encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "frozen Bootstrap Contract v3 identity mismatch"):
+                with self.assertRaisesRegex(ValueError, "frozen Bootstrap Contract v4 identity mismatch"):
                     qualify_reference(root, None, None, {})
 
-    def test_trusted_validator_rejects_normative_v3_drift(self):
+    def test_trusted_validator_rejects_normative_contract_drift(self):
         repo = pathlib.Path(__file__).resolve().parents[2]
         contract_path = repo / "bootstrap/contract.toml"
         original = pathlib.Path.read_text
@@ -130,7 +131,7 @@ class ReferenceIdentityTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows executable sharing contract")
     def test_transient_cleanup_lock_does_not_replace_valid_identity_with_mismatch(self):
         proof = self.qualify_with_cleanup_lock(0.2)
-        self.assertEqual(proof["contract_protocol"], "shf0-bootstrap-contract-v3")
+        self.assertEqual(proof["contract_protocol"], "shf0-bootstrap-contract-v4")
         self.assertEqual(proof["sha"], "1d1e76c7509a03baa0133abaaa5819f5d32582b2")
 
     @unittest.skipUnless(os.name == "nt", "Windows executable sharing contract")
