@@ -109,6 +109,17 @@ fn main() {
     assert(tuple_proofs == 1);
     assert(sequence_proofs == 1);
     assert(match_proofs == 1);
+    // A statement-position match carries the same proof into FnIr (Codex P2 on PR #66).
+    let stmt_sem: Sem = analyze_text("fn main() { let mut v: i32 = 0; match 1 { 1 => { v = 10; } _ => { v = 20; } } assert(v == 10); return; }");
+    assert(stmt_sem.err == "");
+    assert(q3_lowering_error(stmt_sem) == "");
+    let sf: FnIr = lower_function(stmt_sem, map_get(stmt_sem.fnidx, "main", 0 - 1));
+    let mut stmt_match_proofs: i32 = 0;
+    for proof in sf.proofs {
+        assert(evidence_valid(proof.evidence));
+        if proof.evidence.proposition_kind == "match-arm-types" { stmt_match_proofs = stmt_match_proofs + 1; }
+    }
+    assert(stmt_match_proofs == 1);
     let mut i: i32 = 0;
     let mut target_node: i32 = 0 - 1;
     while i < len(sem.prog.nodes) {

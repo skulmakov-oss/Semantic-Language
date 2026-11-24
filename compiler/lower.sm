@@ -1200,6 +1200,14 @@ fn lower_stmt(l0: L, id: i32) -> L {
     }
     if k == 16 {
         if l.sem.prog.nodes[nd.a].k == 25 {
+            // Same phase-proof preamble as lower_expr: the statement path must not drop the
+            // match's proofs (FnIr.proofs feeds the evidence-to-ir provenance trace).
+            if q3_required_kind(l.sem, nd.a) != "" {
+                l = l with { proofs: push(l.proofs, q4_phase_proof(l.sem, nd.a)) };
+            }
+            for map_proof in q4_map_phase_proofs(l.sem, nd.a) {
+                l = l with { proofs: push(l.proofs, map_proof) };
+            }
             let mut unused: i32 = 0;
             (l, unused) = lower_match(l, nd.a, true);
             return l;
