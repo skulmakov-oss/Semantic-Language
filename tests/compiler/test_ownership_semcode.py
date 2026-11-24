@@ -195,19 +195,22 @@ fn main() {
             self.assertEqual(events[2]["anchor"], events[3]["anchor"])
             self.assertEqual([event["components"][0][0] for event in events[2:]], [1, 1])
             self.assertNotEqual(events[2]["components"], events[3]["components"])
-            field_names = {
-                functions[0]["strings"][event["components"][0][1]]
-                for event in events[2:]
-            }
-            self.assertEqual(field_names, {"x", "y"})
-            self.assertEqual(events[0]["root"], 0)
-            self.assertEqual(events[1]["root"], 0)
-            self.assertEqual(events[2]["root"], 1)
-            self.assertEqual(events[3]["root"], 1)
-            self.assertEqual(functions[0]["strings"][events[0]["root"]], "x#0")
-            self.assertEqual(functions[0]["strings"][events[2]["root"]], "r#1")
+            # FieldSymbol values are C0 arena symbol ids (parse order: R=0, x=1, y=2),
+            # not indexes into the function string table.
+            field_symbols = {event["components"][0][1] for event in events[2:]}
+            self.assertEqual(field_symbols, {1, 2})
+            self.assertEqual(events[0]["root"], events[1]["root"])
+            self.assertEqual(events[2]["root"], events[3]["root"])
+            self.assertEqual(functions[0]["strings"][events[0]["root"]], "__sm_local_0_x")
+            self.assertEqual(functions[0]["strings"][events[2]["root"]], "__sm_local_1_r")
             out = root / "ownership.smc"
             out.write_bytes(artifact)
+            # C0 parity: the Semantic compiler emits exactly the bytes the pinned C0 emits.
+            reference = root / "ownership.c0.smc"
+            compiled = subprocess.run([SMC, "compile", root / "ownership.sm", "-o", reference],
+                                      capture_output=True, text=True, encoding="utf-8", timeout=1800)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            self.assertEqual(artifact, reference.read_bytes())
             verified = subprocess.run([SMC, "verify", out], capture_output=True,
                                       text=True, encoding="utf-8", timeout=1800)
             self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)

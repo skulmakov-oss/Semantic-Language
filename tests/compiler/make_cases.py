@@ -1041,6 +1041,65 @@ fn main() {
     return;
 }
 """)
+case("a14_match_and_loop_shapes", "ok", """
+fn classify(q: quad) -> i32 {
+    let mut r: i32 = 0;
+    match q {
+        T => { r = 1; }
+        F => { r = 2; }
+        _ => { r = 3; }
+    }
+    return r;
+}
+
+fn weight(q: quad) -> i32 {
+    let w: i32 = match q {
+        N => { 0 }
+        S => { 9 }
+        _ => { 5 }
+    };
+    return w;
+}
+
+fn pick(o: Option(i32)) -> i32 {
+    let mut r: i32 = 0;
+    match o {
+        Option::Some(v) => { r = v; }
+        Option::None => { r = 0 - 1; }
+    }
+    return r;
+}
+
+fn steps(n: i32) -> i32 {
+    let mut i: i32 = 0;
+    let mut acc: i32 = 0;
+    while i < n {
+        i = i + 1;
+        if i == 2 { continue; }
+        if i > 6 { break; }
+        let add: i32 = if i % 2 == 0 { i } else { 1 };
+        acc = acc + add;
+    }
+    for x in [1, 2, 3] {
+        let m: i32 = match x { 1 => { 10 } 2 => { 20 } _ => { 30 } };
+        acc = acc + m;
+    }
+    return acc;
+}
+
+fn main() {
+    assert(classify(T) == 1);
+    assert(classify(F) == 2);
+    assert(classify(N) == 3);
+    assert(weight(S) == 9);
+    assert(weight(N) == 0);
+    assert(weight(T) == 5);
+    assert(pick(Option::Some(4)) == 4);
+    assert(pick(Option::None) == 0 - 1);
+    assert(steps(10) == 73);
+    return;
+}
+""")
 
 # Recovery regressions: literal ranges, value tails and existing tuple contracts.
 case("r01_padded_u32_one", "ok", "fn main() { let n: u32 = 00000000001u32; assert(n == 1u32); return; }")

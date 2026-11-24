@@ -22,8 +22,10 @@ def main():
         ("name_65535", "fn " + "a" * 65535 + "() { return; }\nfn main() { return; }\n", False, "main.sm"),
         ("name_1025", "fn " + "a" * 1025 + "() { return; }\nfn main() { return; }\n", False, "main.sm"),
         ("name_1024", "fn " + "a" * 1024 + "() { return; }\nfn main() { return; }\n", True, "main.sm"),
-        ("local_suffix_1025", "fn main() { let " + "a" * 1023 + ": i32 = 1; return; }\n", False, "main.sm"),
-        ("local_suffix_1024", "fn main() { let " + "a" * 1022 + ": i32 = 1; return; }\n", True, "main.sm"),
+        # A local is emitted as `__sm_local_<n>_<spelling>` (C0 parity), so the 13-byte prefix of the
+        # first local counts towards the 1024-byte entry limit exactly as it does in C0.
+        ("local_suffix_1025", "fn main() { let " + "a" * 1012 + ": i32 = 1; return; }\n", False, "main.sm"),
+        ("local_suffix_1024", "fn main() { let " + "a" * 1011 + ": i32 = 1; return; }\n", True, "main.sm"),
         ("utf8_string_65536", "é" * 32768, False, "../tests/compiler/programs/str16_encoding.sm"),
         ("utf8_string_1025", "é" * 512 + "a", False, "../tests/compiler/programs/str16_encoding.sm"),
         ("utf8_string_1024", "é" * 512, True, "../tests/compiler/programs/str16_encoding.sm"),
