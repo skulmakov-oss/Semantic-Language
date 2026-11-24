@@ -2,15 +2,15 @@
 # Supported syntax is deliberately minimal: top-level sections, two-space scalar keys,
 # and four-space "- item" lists under scope.*_paths. Anything else fails closed.
 task:
-  id: SHF15-16-V4-GOVERNANCE-G1
-  title: "Temporary narrow scope for Bootstrap Contract v4 and the canonical source set"
+  id: SHF15-16-V4-GOVERNANCE-G1B
+  title: "Temporary narrow scope for Bootstrap Contract v4 and the canonical source set (G1 scope correction)"
   type: governance
   mode: active
-  supersedes: SHF0R-V3-ENGINEERING-RESTORE-R3
-  authorized_by: "Repository owner authorization SEMANTIC-SELFHOST-FINAL-CLOSEOUT-GO-01 2026-11-24; SHF-15/16 G1"
+  supersedes: SHF15-16-V4-GOVERNANCE-G1
+  authorized_by: "Repository owner authorization SEMANTIC-SELFHOST-FINAL-CLOSEOUT-GO-01 2026-11-24; SHF-15/16 G1b: G1 omitted the C0 reference-identity check, which pins the active contract protocol"
 
 intent:
-  summary: "Temporary envelope-only governance transition (G1 of 3): admit exactly the files of the later Bootstrap Contract v4 payload PR (canonical source-set manifest, v4 contract, validator, normative and status documentation, contract probes and the self-host workflow bindings), while the C0 pin, reference manifest, subset registry, compiler, VM, checker, workflows and licensing stay locked. Ordinary engineering is restored by a later envelope-only PR."
+  summary: "Temporary envelope-only governance transition (G1b, a scope correction of G1): admit exactly the files of the later Bootstrap Contract v4 payload PR (canonical source-set manifest, v4 contract, validator, normative and status documentation, contract probes and the self-host workflow bindings), while the C0 pin, reference manifest, subset registry, compiler, VM, checker, workflows and licensing stay locked. Ordinary engineering is restored by a later envelope-only PR."
 
 scope:
   allowed_paths:
@@ -27,6 +27,8 @@ scope:
     - tests/test_contract_v2_probes.py
     - tests/test_contract_v3_probes.py
     - tests/test_contract_v4_probes.py
+    - tests/compiler/reference_identity.py
+    - tests/compiler/test_reference_identity.py
     - tests/selfhost/selfhost.py
     - tests/selfhost/check_results.py
     - tests/selfhost/pins.json
@@ -66,7 +68,7 @@ authorization:
 constraints:
   issue: 11
   base_branch: main
-  base_sha: 9826ba0357a7661ed23a486950aa8aab2050a2cd
+  base_sha: 978297f7d9ff54b09825a0f3151408654aeed1dd
   one_logical_change_per_pr: true
   evidence_before_claims: true
   no_merge_without_owner_go: true
