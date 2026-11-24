@@ -44,7 +44,7 @@ The host transports bytes only. It reads the declared files and runs `smc`, the 
 optionally `s2-harness`. It decodes the compiler's `hex …` line and compares bytes. All
 compiler-domain work runs as Semantic code: lexing, parsing, analysis, lowering and SemCode emission.
 
-With `--s2`, every self-compilation runs under the S2 harness (K1 job, K2 child-process policy,
+With `--s2` (an S2 build whose SHA-256 is pinned in `pins.json`), every self-compilation runs under the S2 harness (K1 job, K2 child-process policy,
 K3 Low integrity). Acceptance is decided by `s2-harness --verify-attempt`, and the published
 output must equal the generation artifact.
 
@@ -63,7 +63,7 @@ Files are created exclusively: nothing is overwritten or deleted, and there are 
 
 ## Differential corpus
 
-- **Corpus:** all 133 cases of [`tests/compiler/cases.json`](../../tests/compiler/cases.json) and the
+- **Corpus:** all 134 cases of [`tests/compiler/cases.json`](../../tests/compiler/cases.json) and the
   six import fixtures in `tests/compiler/imports/`.
 - **Isolation:** each fixture is copied into its own source root, so imports cannot reach outside it.
 - **Runs:** each fixture is compiled by C0 (`smc compile`) and by C1 and C2 executed through the driver,
@@ -93,8 +93,9 @@ python -B -m unittest discover -s tests/selfhost -p "test_*.py"                #
 The checker trusts no recorded verdict and is independent of `selfhost.py` (it has its own framing,
 classification, import expectations and mutation table). It recomputes from the raw files:
 - **Inventory and logs:** the exact file inventory and the log hashes.
-- **Commands and tools:** which tool, subcommand and file each logged command ran. Each pinned tool is
-  re-hashed when it is still present.
+- **Commands and tools:** the exact set of commands, each compared with the full command line rebuilt
+  from `pins.json`, the recorded attempt root and the corpus (tool, subcommand, input, output, root,
+  envelope and entry). Each pinned tool, including the pinned S2 build, is re-hashed when it is still present.
 - **C0 attestation:** the C0 checkout is attested from the logged `git rev-parse HEAD` and
   `git status` output. That is an attestation, not cryptographic proof.
 - **Snapshot:** the source-set identity of the snapshot.
@@ -108,14 +109,15 @@ classification, import expectations and mutation table). It recomputes from the 
   from stdout, the driver provenance and both VMs' logs.
 - **Mutations:** the two pinned source mutations are re-applied to the snapshot.
 
-The self-test injects 22 known violations, plus 2 more for S2 attempts:
+The self-test injects 25 known violations, plus 3 more for S2 attempts:
 - forged artifact, log, tool and C0 records;
 - a verifier rejection, and a verify command that ran something else;
 - an exit-0 diagnostic, and a fixture run executed by the wrong generation;
 - removed, duplicated and dropped rows or cases, and rewritten case, import and mutation expectations;
 - an altered mutation source and an altered trap log;
-- a mutated snapshot, a forged verdict, a failed VM run and a deleted differential phase;
-- for S2, a non-accepted record and a stray file.
+- a mutated snapshot, a forged verdict and a failed VM run;
+- a deleted, `null` or single-generation differential phase, and an unexpected extra command;
+- for S2, a non-accepted record, a stray file inside the S2 attempt and a verification aimed at another attempt.
 
 It requires every one to be rejected and the unmodified copy to pass.
 

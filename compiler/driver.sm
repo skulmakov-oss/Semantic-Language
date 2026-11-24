@@ -295,15 +295,19 @@ fn q4_trace_function(s: Sem, f: FnIr, spans: Sequence(SourceSpan)) -> Provenance
 // C0 parity: the C0 parser interns identifier spellings into its arena symbol table
 // in parse order, and OWN0 FieldSymbol values are those ids. Type keywords, quad
 // literals, `_` and `Option` in type position are not interned; `assert` is;
-// the parser interns "Iterable" once a `for` body has been parsed.
-fn c0_symbol_ids(toks: Sequence(Tok)) -> Map(text, i32) {
+// the parser interns "Iterable" once a `for` body has been parsed. The body of each
+// `for` is taken from the parsed AST (the offset of its block's `{`), never guessed
+// from tokens: the iterable may itself contain braces (record literals, value `if`).
+fn c0_symbol_ids(toks: Sequence(Tok), nodes: Sequence(Node)) -> Map(text, i32) {
+    let mut body_open: Map(u32, bool) = map_empty();
+    for nd in nodes {
+        if nd.k == 42 {
+            body_open = map_set(body_open, nodes[nd.b].pos, true);
+        }
+    }
     let mut ids: Map(text, i32) = map_empty();
     let mut n: i32 = 0;
     let mut depth: i32 = 0;
-    // Parenthesis/bracket nesting: a `for` body is the first `{` at the nesting level of
-    // its `for`, so a record literal inside the iterable expression is not taken for it.
-    let mut nest: i32 = 0;
-    let mut awaiting_nest: Sequence(i32) = [];
     let mut for_bodies: Sequence(i32) = [];
     let mut i: i32 = 0;
     while i < len(toks) {
@@ -339,24 +343,9 @@ fn c0_symbol_ids(toks: Sequence(Tok)) -> Map(text, i32) {
         }
         if t.kind == 6 {
             w = "assert";
-        } else if t.kind == 19 {
-            awaiting_nest = push(awaiting_nest, nest);
-        } else if t.kind == 20 || t.kind == 47 {
-            nest = nest + 1;
-        } else if t.kind == 21 || t.kind == 48 {
-            nest = nest - 1;
         } else if t.kind == 22 {
-            if len(awaiting_nest) > 0 {
-                if awaiting_nest[len(awaiting_nest) - 1] == nest {
-                    for_bodies = push(for_bodies, depth);
-                    let mut rest: Sequence(i32) = [];
-                    let mut j: i32 = 0;
-                    while j + 1 < len(awaiting_nest) {
-                        rest = push(rest, awaiting_nest[j]);
-                        j = j + 1;
-                    }
-                    awaiting_nest = rest;
-                }
+            if map_contains(body_open, t.pos) {
+                for_bodies = push(for_bodies, depth);
             }
             depth = depth + 1;
         } else if t.kind == 23 {
@@ -416,7 +405,7 @@ fn compile_source_with_origins(src: text, files: Sequence(SourceFile), spans: Se
         return "error unsupported @0: lowering precondition: " + boundary;
     }
     let authorized: Sem = sem;
-    let symids: Map(text, i32) = c0_symbol_ids(lx.toks);
+    let symids: Map(text, i32) = c0_symbol_ids(lx.toks, p.nodes);
     let mut fns: Sequence(FnIr) = [];
     let mut i: i32 = 0;
     while i < len(authorized.prog.funcs) {

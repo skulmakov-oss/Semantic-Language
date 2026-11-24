@@ -107,7 +107,6 @@ class Check:
         self.violations = []
         self.facts = {}
         self.expected = set()
-        self.allowed_dirs = []
 
     def bad(self, msg):
         self.violations.append(msg)
@@ -127,10 +126,14 @@ class Check:
         if b is None:
             return None
         try:
-            return json.loads(b)
+            obj = json.loads(b)
         except ValueError:
             self.bad(f"{rel} is not JSON")
             return None
+        if not isinstance(obj, dict):
+            self.bad(f"{rel} is not a JSON object")
+            return None
+        return obj
 
 
 def sidecar(c, rel, data):
@@ -171,18 +174,18 @@ def check(root, partial=False):
     pre = c.json("preflight.json") or {}
     tools = pre.get("tools") or {}
 
-    def argv_is(tag, tool, sub=None, path=None):
-        """Binds a command to the tool that ran it, its subcommand and its target file."""
-        a = (cmds.get(tag) or {}).get("argv") or []
-        want_tool = (tools.get(tool) or {}).get("path")
-        ok = bool(a) and want_tool is not None and norm(a[0]) == norm(want_tool)
-        if sub is not None:
-            ok = ok and len(a) > 1 and a[1] == sub
-        if path is not None:
-            i = 2 if sub is not None else 1
-            ok = ok and len(a) > i and norm(a[i]).endswith("/" + path.lower())
-        if not ok:
-            c.bad(f"command {tag} did not run {tool} {sub or ''} {path or ''}".rstrip())
+    root_rec = pre.get("attempt_root") or ""
+    exp_cmds = {}
+
+    def P(rel):
+        return root_rec + "/" + rel
+
+    def tool(name):
+        return (tools.get(name) or {}).get("path") or f"<no {name}>"
+
+    def expect_cmd(tag, argv):
+        """Records the exact command line the pipeline must have run for this tag."""
+        exp_cmds[tag] = [str(a) for a in argv]
 
     # ---------------------------------------------------------------- preflight
     for name in ("smc", "driver"):
@@ -195,6 +198,10 @@ def check(root, partial=False):
                 c.bad(f"preflight: {name} at {p} no longer hashes to its pin")
             c.facts.setdefault("tools_rechecked", []).append(name)
     c0 = pre.get("c0_checkout") or {}
+    if tools.get("smc", {}).get("sha256") == PINS["tools"]["smc"]["sha256"]:
+        expect_cmd("preflight.smc_version", [tool("smc"), "version", "--json"])
+    expect_cmd("preflight.c0_head", ["git", "-C", c0.get("path"), "rev-parse", "HEAD"])
+    expect_cmd("preflight.c0_status", ["git", "-C", c0.get("path"), "status", "--porcelain", "--untracked-files=all"])
     head_log = log("preflight.c0_head").decode("utf-8", "replace").strip()
     if (exit_of("preflight.c0_head") != 0 or head_log != PINS["c0"]["sha"] or c0.get("head") != head_log
             or exit_of("preflight.c0_status") != 0 or log("preflight.c0_status").strip() != b"" or c0.get("clean") is not True
@@ -218,7 +225,17 @@ def check(root, partial=False):
     if s2_configured:
         if exit_of("preflight.s2_identity") != 0:
             c.bad("preflight: s2 --print-identity failed")
-        argv_is("preflight.s2_identity", "s2")
+        expect_cmd("preflight.s2_identity", [tool("s2"), "--print-identity"])
+        s2t = tools["s2"]
+        if s2t.get("sha256") not in PINS["s2_harness"]["sha256_allowed"]:
+            c.bad("preflight: the S2 harness identity is not pinned")
+        sp = pathlib.Path(s2t.get("path") or "")
+        if s2t.get("path") and sp.is_file():
+            if sha(sp.read_bytes()) != s2t.get("sha256"):
+                c.bad(f"preflight: s2 at {sp} no longer hashes to its recorded identity")
+            c.facts.setdefault("tools_rechecked", []).append("s2")
+    if not root_rec:
+        c.bad("preflight: attempt root not recorded")
     if (pre.get("status") == "pass") == bool(c.violations):
         c.bad("preflight: recorded status disagrees with the evidence")
     c.facts["source_set_identity"] = snap_id
@@ -246,10 +263,10 @@ def check(root, partial=False):
             c.bad(f"build: {name} artifact hash differs from the record")
         if exit_of(f"build.{name}.verify") != 0:
             c.bad(f"build: {name} was not admitted by sm-verify")
-        argv_is(f"build.{name}.verify", "smc", "verify", rel)
+        expect_cmd(f"build.{name}.verify", [tool("smc"), "verify", P(rel)])
         if name == "C1":
             sidecar(c, rel, art)
-            argv_is("build.C1.compile", "smc", "compile", "snapshot/" + PINS["source_set"]["entry"])
+            expect_cmd("build.C1.compile", [tool("smc"), "compile", P("snapshot/" + PINS["source_set"]["entry"]), "-o", P(rel)])
             if exit_of("build.C1.compile") != 0:
                 c.bad("build: C0 compilation of S failed")
         else:
@@ -257,11 +274,19 @@ def check(root, partial=False):
             tag = f"build.{name}.execute"
             if ex.get("executor") != ("s2" if s2_configured else "driver"):
                 c.bad(f"build: {name} executor does not match the declared configuration")
+            env = PINS["envelopes"]["compiler"]
+            prev_rel = f"gen/{prev.get('name') if prev else '?'}.smc"
+            prev_sha = (prev or {}).get("sha256")
+            entry = PINS["source_set"]["entry"]
             if s2_configured:
                 d = f"s2/{tag}"
-                c.allowed_dirs.append(d + "/")
-                argv_is(tag, "s2")
-                argv_is(tag + ".verify_attempt", "s2", "--verify-attempt")
+                expect_cmd(tag, [tool("s2"), "--driver", tool("driver"), "--artifact", P(prev_rel), "--artifact-sha256", prev_sha, "--root", P("snapshot"),
+                                 "--profile", "cli-read-only", "--envelope", "trusted-compiler", "--steps", env["max_steps"], "--calls", env["max_calls"],
+                                 "--frames", env["max_frames"], "--job-memory-bytes", env["job_memory_bytes"], "--timeout-secs", env["timeout_secs"],
+                                 "--active-process-limit", "1", "--source-set-id", snap_id, "--source-snapshot", P("snapshot"),
+                                 "--source-files", ",".join(f.split("/", 1)[1] for f in files), "--stdout-hex-decode", "--accepted-name", f"{name}.smc",
+                                 "--out-dir", P(d), "--", entry])
+                expect_cmd(tag + ".verify_attempt", [tool("s2"), "--verify-attempt", P(d)])
                 if exit_of(tag) != 0 or exit_of(tag + ".verify_attempt") != 0:
                     c.bad(f"build: {name}: S2 did not commit and accept the attempt")
                 rec = c.json(f"{d}/s2_record.json") or {}
@@ -271,10 +296,13 @@ def check(root, partial=False):
                     c.bad(f"build: {name}: the S2 record does not publish exactly the generation artifact")
                 stderr = c.read(f"{d}/capture/stderr.bin") or b""
                 stdout = c.read(f"{d}/capture/stdout.bin") or b""
+                # every file of the S2 attempt directory is read above: s2_record.json, accepted/, capture/
                 c.facts.setdefault("s2", {})[name] = {"containment_verdict": (rec.get("containment") or {}).get("verdict"),
                                                        "harness": (rec.get("harness") or {}).get("sha256") if isinstance(rec.get("harness"), dict) else rec.get("harness")}
             else:
-                argv_is(tag, "driver", None, f"gen/{prev.get('name') if prev else '?'}.smc")
+                expect_cmd(tag, [tool("driver"), P(prev_rel), "--expect-sha256", prev_sha, "--profile", "cli-read-only", "--root", P("snapshot"),
+                                 "--envelope", "trusted-compiler", "--max-steps", env["max_steps"], "--max-calls", env["max_calls"],
+                                 "--max-frames", env["max_frames"], "--metrics", "json", "--", entry])
                 stderr, stdout = log(tag, "stderr"), log(tag)
                 if exit_of(tag) != 0:
                     c.bad(f"build: {name}: driver exit code is not 0")
@@ -323,7 +351,21 @@ def check(root, partial=False):
     d = c.json("differential.json", required=not partial)
     c.facts["scope"] = "full" if d is not None else "partial"
     if d is not None:
-        check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is)
+        if not isinstance(d, dict):
+            c.bad("differential.json is not an object")
+        else:
+            check_differential(c, d, gens, snapshot, snap_id, log, exit_of, expect_cmd, P, tool)
+
+    # ---------------------------------------------------------------- commands
+    norm_argv = lambda a: [norm(x) for x in a]  # noqa: E731
+    for tag in sorted(set(cmds) | set(exp_cmds)):
+        if tag not in exp_cmds:
+            c.bad(f"commands: unexpected command {tag}")
+        elif tag not in cmds:
+            c.bad(f"commands: expected command {tag} was not run")
+        elif norm_argv(cmds[tag].get("argv") or []) != norm_argv(exp_cmds[tag]):
+            c.bad(f"commands: {tag} did not run the expected command line")
+    c.facts["commands"] = len(cmds)
 
     # ---------------------------------------------------------------- inventory
     for tag in cmds:
@@ -334,8 +376,7 @@ def check(root, partial=False):
             c.bad(f"link in attempt: {p.relative_to(c.root).as_posix()}")
         if p.is_file():
             present.add(p.relative_to(c.root).as_posix())
-    allowed = {x for x in present if any(x.startswith(a) for a in c.allowed_dirs)}
-    extra = present - c.expected - set(OUTPUTS) - allowed - {"preflight.json", "build.json", "verify.json", "differential.json"}
+    extra = present - c.expected - set(OUTPUTS) - {"preflight.json", "build.json", "verify.json", "differential.json"}
     if extra:
         c.bad(f"inventory: {len(extra)} unexpected file(s): {sorted(extra)[:5]}")
     missing = {x for x in c.expected if x not in present}
@@ -344,7 +385,7 @@ def check(root, partial=False):
     return c
 
 
-def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
+def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, expect_cmd, P, tool):
     n_before = len(c.violations)
     repo_cases = json.loads((REPO / "tests/compiler/cases.json").read_text(encoding="utf-8"))
     packaged = c.read("corpus/cases.json")
@@ -359,10 +400,12 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
     if sorted(ids) != sorted(expected) or len(set(ids)) != len(ids):
         c.bad("differential: fixture inventory differs from the repository corpus (missing, extra or duplicate rows)")
     gl = d.get("generations") or []
-    if not gl or any(g not in gens for g in gl):
-        c.bad("differential: generations are not built artifacts")
+    if gl != ["C1", "C2"] or any(g not in gens for g in gl):
+        c.bad("differential: the corpus must be compiled by exactly C1 and C2")
         return
-    artifacts = {}
+    fenv = PINS["envelopes"]["fixture"]
+    penv = PINS["envelopes"]["program"]
+    artifacts = {}  # hash -> set of attempt-relative paths holding exactly those bytes
     for r in rows:
         rid = r.get("id", "?")
         exp, src_dir, src_files = expected.get(rid, (None, None, []))
@@ -376,14 +419,15 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
             if fb != repo_bytes or (r.get("file_sha256") or {}).get(f) != sha(repo_bytes):
                 c.bad(f"differential: {rid}: fixture file {f} differs from the repository")
         entry = (r.get("c0") or {}).get("artifact")
-        argv_is(f"diff.{rid}.c0", "smc", "compile", f"fixtures/{rid}/root/{src_files[0] if exp and rid.startswith('case.') else 'main.sm'}")
+        src_entry = src_files[0] if rid.startswith("case.") and src_files else "main.sm"
+        expect_cmd(f"diff.{rid}.c0", [tool("smc"), "compile", P(f"fixtures/{rid}/root/{src_entry}"), "-o", P(f"fixtures/{rid}/c0.smc")])
         ref = None
         if exit_of(f"diff.{rid}.c0") == 0:
             if entry != f"fixtures/{rid}/c0.smc":
                 c.bad(f"differential: {rid}: C0 artifact missing")
             ref = c.read(f"fixtures/{rid}/c0.smc")
             if ref is not None:
-                artifacts[sha(ref)] = f"fixtures/{rid}/c0.smc"
+                artifacts.setdefault(sha(ref), set()).add(f"fixtures/{rid}/c0.smc")
                 sidecar(c, f"fixtures/{rid}/c0.smc", ref)
         elif entry:
             c.bad(f"differential: {rid}: C0 artifact recorded for a failed compilation")
@@ -391,7 +435,9 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
         for gname in gl + [gl[-1] + ".repeat"]:
             base = gname.split(".")[0]
             tag = f"diff.{rid}.{gname}"
-            argv_is(tag, "driver", None, f"gen/{base}.smc")
+            expect_cmd(tag, [tool("driver"), P(f"gen/{base}.smc"), "--expect-sha256", gens[base]["sha256"], "--profile", "cli-read-only",
+                             "--root", P(f"fixtures/{rid}/root"), "--envelope", "trusted-compiler", "--max-steps", fenv["max_steps"],
+                             "--max-calls", fenv["max_calls"], "--max-frames", fenv["max_frames"], "--metrics", "json", "--", src_entry])
             so = log(tag)
             cl = classify(so)
             cl["driver"] = provenance(log(tag, "stderr")) or {}
@@ -402,7 +448,7 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
                 rel = f"fixtures/{rid}/{gname}.smc"
                 if c.read(rel) != cl["semcode"]:
                     c.bad(f"differential: {rid}/{gname}: stored SemCode is not the compiler's stdout")
-                artifacts[sha(cl["semcode"])] = rel
+                artifacts.setdefault(sha(cl["semcode"]), set()).add(rel)
             rec = (r.get("gens") or {}).get(gname) or {}
             if rec.get("kind") != cl["kind"] or rec.get("stdout_sha256") != sha(so):
                 c.bad(f"differential: {rid}/{gname}: recorded outcome differs from the raw stdout")
@@ -415,11 +461,20 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
     execs = d.get("executions") or {}
     if sorted(execs) != sorted(artifacts):
         c.bad("differential: executed artifact set differs from the distinct SemCode artifacts")
-    for h, rel in artifacts.items():
-        argv_is(f"exec.{h[:16]}.verify", "smc", "verify", rel)
+    for h, paths in artifacts.items():
+        rel = (execs.get(h) or {}).get("artifact")
+        if rel not in paths:
+            c.bad(f"differential: execution of {h[:16]} is not bound to a file holding those bytes")
+            continue
+        expect_cmd(f"exec.{h[:16]}.verify", [tool("smc"), "verify", P(rel)])
         if exit_of(f"exec.{h[:16]}.verify") == 0:
-            argv_is(f"exec.{h[:16]}.run_smc", "smc", "run-smc", rel)
-            argv_is(f"exec.{h[:16]}.driver_pure", "driver", None, rel)
+            expect_cmd(f"exec.{h[:16]}.run_smc", [tool("smc"), "run-smc", P(rel)])
+            expect_cmd(f"exec.{h[:16]}.driver_pure", [tool("driver"), P(rel), "--expect-sha256", h, "--profile", "pure", "--root", P("fixtures"),
+                                                      "--envelope", "trusted-compiler", "--max-steps", penv["max_steps"], "--max-calls", penv["max_calls"],
+                                                      "--max-frames", penv["max_frames"], "--metrics", "json"])
+            pure = provenance(log(f"exec.{h[:16]}.driver_pure", "stderr")) or {}
+            if pure.get("executed_artifact_sha256") != h:
+                c.bad(f"differential: the driver run of {h[:16]} executed a different artifact")
     muts = {m.get("name"): m for m in (d.get("source_mutations") or [])}
     if sorted(muts) != sorted(MUTATIONS):
         c.bad("differential: source mutation set differs from the pinned mutations")
@@ -430,7 +485,7 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, argv_is):
         if msrc != want_src:
             c.bad(f"differential: mutation {name}: sources are not exactly the pinned edit of the snapshot")
         mid = frame_identity([("compiler/" + f, msrc[f]) for f in snapshot])
-        argv_is(f"mutation.{name}.compile", "smc", "compile", f"mutations/{name}/src/main.sm")
+        expect_cmd(f"mutation.{name}.compile", [tool("smc"), "compile", P(f"mutations/{name}/src/main.sm"), "-o", P(f"mutations/{name}/C1.smc")])
         art = c.read(f"mutations/{name}/C1.smc") if exit_of(f"mutation.{name}.compile") == 0 else None
         if art is not None:
             sidecar(c, f"mutations/{name}/C1.smc", art)
@@ -590,10 +645,14 @@ def selftest(src, scratch):
         "status_forged": lambda r: mutate_json(r / "differential.json", lambda o: o["rows"][0].__setitem__("pass", False)),
         "vm_run_failed": lambda r: edit_command(r, next(e["tag"] for e in map(json.loads, (r / "commands.jsonl").read_text().splitlines()) if e["tag"].endswith(".run_smc")), lambda e: e.__setitem__("exit", 3)),
         "differential_deleted": lambda r: (r / "differential.json").unlink(),
+        "differential_null": lambda r: (r / "differential.json").write_text("null\n"),
+        "differential_single_generation": lambda r: mutate_json(r / "differential.json", lambda o: o.__setitem__("generations", ["C2"])),
+        "unexpected_command": lambda r: edit_command(r, "build.C1.verify", lambda e: e.__setitem__("tag", "build.C1.verify")) or (r / "commands.jsonl").write_text((r / "commands.jsonl").read_text() + json.dumps({"tag": "extra.cmd", "argv": ["x"], "exit": 0, "stdout_sha256": sha(b""), "stderr_sha256": sha(b"")}) + "\n") or (r / "logs" / "extra.cmd.stdout").write_bytes(b"") or (r / "logs" / "extra.cmd.stderr").write_bytes(b""),
     }
     if s2:
         injections["s2_record_not_accepted"] = lambda r: mutate_json(r / "s2" / "build.C2.execute" / "s2_record.json", lambda o: o.__setitem__("accepted", False))
-        injections["s2_stray_file"] = lambda r: (r / "s2" / "stray.txt").write_bytes(b"x")
+        injections["s2_stray_file"] = lambda r: (r / "s2" / "build.C2.execute" / "stray.txt").write_bytes(b"x")
+        injections["s2_verify_other_attempt"] = lambda r: edit_command(r, "build.C2.execute.verify_attempt", lambda e: e.__setitem__("argv", [e["argv"][0], "--verify-attempt", e["argv"][2].replace("C2", "C3")]))
     results = {}
     scratch.mkdir()
     for name, inject in injections.items():

@@ -1,0 +1,19 @@
+fn walk(c: bool) -> i32 {
+    let mut s: i32 = 0;
+    for x in if c { [1, 2] } else { [3] } {
+        let marker: i32 = x;
+        s = s + marker;
+    }
+    return s;
+}
+
+record Later {
+    marker: i32,
+}
+
+fn main() {
+    let a: Later = Later { marker: 1 };
+    let b: Later = a with { marker: walk(true) };
+    assert(b.marker == 3);
+    return;
+}

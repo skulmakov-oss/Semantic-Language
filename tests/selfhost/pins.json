@@ -16,7 +16,10 @@
   }
  },
  "s2_harness": {
-  "note": "Optional containment executor. Any s2-harness build is accepted; its sha256 and --print-identity are recorded, never assumed."
+  "sha256_allowed": [
+   "929a2905a5bff3b7daac33483b81591f2163acb1c5cdab8897f2b032f74ab1d7"
+  ],
+  "note": "Production (no test-hooks) s2-harness built from the published head 7bdbe2a of skulmakov-oss/s2-harness Draft PR #1 (fresh default clone; recorded in evidence package S2_V02_PR_PUBLICATION_01, raw/build/F_7bdbe2a_default_crlf_t4.binary_hashes.txt). Builds embed their path, so any other build is a different identity and must be pinned explicitly."
  },
  "source_set": {
   "protocol": "shf0-source-set-v1",

@@ -202,7 +202,7 @@ def snapshot_entries(directory):
 
 def preflight(att, tools, args):
     v = load_validator()
-    res = {"schema": "semantic.selfhost.preflight/1", "utc": now(), "checks": {}}
+    res = {"schema": "semantic.selfhost.preflight/1", "utc": now(), "attempt_root": str(att.out)}
     ok = True
     tool_rows = {}
     for name in ("smc", "driver"):
@@ -214,8 +214,10 @@ def preflight(att, tools, args):
         if not tools.s2.is_file():
             sys.exit("selfhost: --s2 does not exist")
         ec, so, _ = att.run("preflight.s2_identity", [tools.s2, "--print-identity"])
-        tool_rows["s2"] = {"path": str(tools.s2), "sha256": sha256_file(tools.s2), "print_identity_exit": ec}
-        ok &= ec == 0
+        got = sha256_file(tools.s2)
+        tool_rows["s2"] = {"path": str(tools.s2), "sha256": got, "print_identity_exit": ec, "pinned": PINS["s2_harness"]["sha256_allowed"],
+                           "match": got in PINS["s2_harness"]["sha256_allowed"]}
+        ok &= ec == 0 and tool_rows["s2"]["match"]
     res["tools"] = tool_rows
     if tool_rows["smc"]["match"]:
         att.run("preflight.smc_version", [tools.smc, "version", "--json"])
@@ -567,11 +569,10 @@ def main(argv=None):
     ap.add_argument("--generations", type=int, default=3, choices=(2, 3, 4, 5))
     ap.add_argument("--fixed-point", default="c1c2", choices=("c1c2", "c2c3"),
                     help="c1c2: Bootstrap Contract v3 rule C1 == C2 (and C2 == C3); c2c3: post-bootstrap stability only")
-    ap.add_argument("--gens", default="C1,C2", help="compiler generations used in the differential phase")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--require-clean", action="store_true", help="fail preflight on a dirty repository tree")
     args = ap.parse_args(argv)
-    args.gens = args.gens.split(",")
+    args.gens = ["C1", "C2"]  # the differential phase always compiles the corpus with C1 and C2 (plus a C2 repeat)
     tools = Tools(args)
     att = Attempt(args.out, create=args.phase in ("preflight", "all"))
     steps = PHASES if args.phase == "all" else (args.phase,)
