@@ -300,7 +300,10 @@ fn c0_symbol_ids(toks: Sequence(Tok)) -> Map(text, i32) {
     let mut ids: Map(text, i32) = map_empty();
     let mut n: i32 = 0;
     let mut depth: i32 = 0;
-    let mut awaiting_body: i32 = 0;
+    // Parenthesis/bracket nesting: a `for` body is the first `{` at the nesting level of
+    // its `for`, so a record literal inside the iterable expression is not taken for it.
+    let mut nest: i32 = 0;
+    let mut awaiting_nest: Sequence(i32) = [];
     let mut for_bodies: Sequence(i32) = [];
     let mut i: i32 = 0;
     while i < len(toks) {
@@ -337,11 +340,23 @@ fn c0_symbol_ids(toks: Sequence(Tok)) -> Map(text, i32) {
         if t.kind == 6 {
             w = "assert";
         } else if t.kind == 19 {
-            awaiting_body = awaiting_body + 1;
+            awaiting_nest = push(awaiting_nest, nest);
+        } else if t.kind == 20 || t.kind == 47 {
+            nest = nest + 1;
+        } else if t.kind == 21 || t.kind == 48 {
+            nest = nest - 1;
         } else if t.kind == 22 {
-            if awaiting_body > 0 {
-                for_bodies = push(for_bodies, depth);
-                awaiting_body = awaiting_body - 1;
+            if len(awaiting_nest) > 0 {
+                if awaiting_nest[len(awaiting_nest) - 1] == nest {
+                    for_bodies = push(for_bodies, depth);
+                    let mut rest: Sequence(i32) = [];
+                    let mut j: i32 = 0;
+                    while j + 1 < len(awaiting_nest) {
+                        rest = push(rest, awaiting_nest[j]);
+                        j = j + 1;
+                    }
+                    awaiting_nest = rest;
+                }
             }
             depth = depth + 1;
         } else if t.kind == 23 {

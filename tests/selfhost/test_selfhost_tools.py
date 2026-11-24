@@ -60,35 +60,57 @@ class SelfhostToolTests(unittest.TestCase):
             self.assertTrue(c.violations)
             self.assertTrue(any("missing file preflight.json" in v for v in c.violations))
 
+    def test_checker_tables_match_the_pipeline(self):
+        """The checker keeps its own copies of the import expectations and mutations; they must not drift."""
+        self.assertEqual(check_results.IMPORT_EXPECT, selfhost.IMPORT_EXPECT)
+        self.assertEqual(check_results.MUTATIONS, selfhost.SOURCE_MUTATIONS)
+        self.assertEqual(set(check_results.IMPORT_EXPECT), {p.name for p in (REPO / "tests/compiler/imports").iterdir() if p.is_dir()})
+
     def test_row_predicate_never_passes_on_exit_code_alone(self):
-        ok_semcode = {"kind": "semcode", "semcode": b"\x01", "driver": {"outcome": "executed_ok"}}
-        diag = {"kind": "diagnostic", "category": "type", "message": "m", "driver": {"outcome": "executed_ok"}}
-        pure_ok = lambda tag, stream: b'{"schema":"semantic.ud1a.stored_exec_provenance/2","outcome":"executed_ok"}\n'  # noqa: E731
+        ok_run = {"exit": 0, "driver": {"outcome": "executed_ok"}}
+        ok_semcode = dict(ok_run, kind="semcode", semcode=b"\x01")
+        diag = dict(ok_run, kind="diagnostic", category="type", message="m")
         exits = {}
+        logs = {}
         exit_of = exits.get
+        log = lambda tag, stream="stdout": logs.get((tag, stream), b"")  # noqa: E731
+        rr = check_results.recompute_row
         # An expected-ok fixture whose compiler printed a diagnostic fails although every exit code is 0.
-        f = check_results.recompute_row("ok", b"\x01", {"C2": diag, "C2.repeat": diag}, ["C2"], {}, exit_of, {})
-        self.assertIn("no SemCode", f)
+        self.assertIn("no SemCode from a completed compiler run", rr("ok", b"\x01", {"C2": diag, "C2.repeat": diag}, ["C2"], exit_of, log))
         # SemCode that differs from the C0 compilation fails even if it would verify and run.
-        h = check_results.sha(b"\x02")[:16]
-        exits.update({f"exec.{h}.verify": 0, f"exec.{h}.run_smc": 0, f"exec.{h}.driver_pure": 0})
+        h1, h2 = check_results.sha(b"\x01")[:16], check_results.sha(b"\x02")[:16]
+        for h in (h1, h2):
+            exits.update({f"exec.{h}.verify": 0, f"exec.{h}.run_smc": 0, f"exec.{h}.driver_pure": 0})
+            logs[(f"exec.{h}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","outcome":"executed_ok"}\n'
         other = dict(ok_semcode, semcode=b"\x02")
-        f = check_results.recompute_row("ok", b"\x01", {"C2": other, "C2.repeat": other}, ["C2"], {}, exit_of, {})
-        self.assertIn("SemCode differs from C0", f)
-        # A nondeterministic repeat fails.
-        same = dict(ok_semcode)
-        h1 = check_results.sha(b"\x01")[:16]
-        exits.update({f"exec.{h1}.verify": 0, f"exec.{h1}.run_smc": 0, f"exec.{h1}.driver_pure": 0})
-        f = check_results.recompute_row("ok", b"\x01", {"C2": same, "C2.repeat": other}, ["C2"], {}, exit_of, {})
-        self.assertIn("nondeterministic", f)
-        self.assertEqual(check_results.recompute_row("ok", b"\x01", {"C2": same, "C2.repeat": same}, ["C2"], {}, exit_of, {}, pure_ok), [])
-        # Exit codes 0 everywhere but no proof that the second VM executed the artifact: fails.
-        self.assertIn("run failed", check_results.recompute_row("ok", b"\x01", {"C2": same, "C2.repeat": same}, ["C2"], {}, exit_of, {}))
+        self.assertIn("SemCode differs from C0", rr("ok", b"\x01", {"C2": other, "C2.repeat": other}, ["C2"], exit_of, log))
+        self.assertIn("nondeterministic", rr("ok", b"\x01", {"C2": ok_semcode, "C2.repeat": other}, ["C2"], exit_of, log))
+        self.assertEqual(rr("ok", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
+        # A compiler run that printed valid hex and then faulted is not a completed compilation.
+        faulted = dict(ok_semcode, exit=5, driver={"outcome": "runtime_error"})
+        self.assertIn("no SemCode from a completed compiler run", rr("ok", b"\x01", {"C2": faulted, "C2.repeat": faulted}, ["C2"], exit_of, log))
+        # Without the second VM's provenance the run is not proven, whatever the exit codes say.
+        logs.pop((f"exec.{h1}.driver_pure", "stderr"))
+        self.assertIn("run failed", rr("ok", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
+        # A trap must appear on both VMs, read from their logs.
+        exits[f"exec.{h1}.run_smc"] = 1
+        logs[(f"exec.{h1}.run_smc", "stdout")] = b"assertion failed\n"
+        self.assertIn("no expected trap on the driver", rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
+        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","outcome":"runtime_error","error":"assertion failed"}\n'
+        self.assertEqual(rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
         # A process fault is not a compiler diagnostic, and vice versa.
-        fault = {"kind": "no_output", "driver": {"outcome": "runtime_error", "error": "ABI FsRead failure [HostFault]"}}
-        self.assertEqual(check_results.recompute_row("fault:ABI FsRead failure", None, {"C2": fault, "C2.repeat": fault}, ["C2"], {}, exit_of, {}), [])
-        self.assertTrue(check_results.recompute_row("reject:type:m", None, {"C2": fault, "C2.repeat": fault}, ["C2"], {}, exit_of, {}))
-        self.assertTrue(check_results.recompute_row("fault:ABI FsRead failure", None, {"C2": diag, "C2.repeat": diag}, ["C2"], {}, exit_of, {}))
+        fault = {"kind": "no_output", "exit": 5, "driver": {"outcome": "runtime_error", "error": "ABI FsRead failure [HostFault]"}}
+        self.assertEqual(rr("fault:ABI FsRead failure", None, {"C2": fault, "C2.repeat": fault}, ["C2"], exit_of, log), [])
+        self.assertTrue(rr("reject:type:m", None, {"C2": fault, "C2.repeat": fault}, ["C2"], exit_of, log))
+        self.assertTrue(rr("fault:ABI FsRead failure", None, {"C2": diag, "C2.repeat": diag}, ["C2"], exit_of, log))
+
+    def test_mutations_are_reapplied_exactly(self):
+        snap = {"lower.sm": b"fn a() {}\n", "parser.sm": b"x expected '{' y\n", "main.sm": b"m\n"}
+        same = check_results.mutated_sources(snap, "comment_only")
+        self.assertEqual(same["lower.sm"], b"fn a() {}\n\n// selfhost mutation probe: comment only\n")
+        self.assertEqual(same["parser.sm"], snap["parser.sm"])
+        diff = check_results.mutated_sources(snap, "diagnostic_text")
+        self.assertEqual(diff["parser.sm"], b"x expected '{' [mutated] y\n")
 
 
 if __name__ == "__main__":

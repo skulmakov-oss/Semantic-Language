@@ -63,7 +63,7 @@ Files are created exclusively: nothing is overwritten or deleted, and there are 
 
 ## Differential corpus
 
-- **Corpus:** all 132 cases of [`tests/compiler/cases.json`](../../tests/compiler/cases.json) and the
+- **Corpus:** all 133 cases of [`tests/compiler/cases.json`](../../tests/compiler/cases.json) and the
   six import fixtures in `tests/compiler/imports/`.
 - **Isolation:** each fixture is copied into its own source root, so imports cannot reach outside it.
 - **Runs:** each fixture is compiled by C0 (`smc compile`) and by C1 and C2 executed through the driver,
@@ -90,22 +90,41 @@ python -I tests/selfhost/check_results.py --selftest <attempt> <new scratch>  # 
 python -B -m unittest discover -s tests/selfhost -p "test_*.py"                # binary-free unit tests
 ```
 
-The checker trusts no recorded verdict. It recomputes everything from the raw files:
-- the exact file inventory and the log hashes;
-- the tool and C0 identities against `pins.json`;
-- the snapshot identity;
-- each generation, decoded again from the compiler's stdout and bound to the executor provenance;
-- the byte comparisons;
-- every fixture verdict.
+The checker trusts no recorded verdict and is independent of `selfhost.py` (it has its own framing,
+classification, import expectations and mutation table). It recomputes from the raw files:
+- **Inventory and logs:** the exact file inventory and the log hashes.
+- **Commands and tools:** which tool, subcommand and file each logged command ran. Each pinned tool is
+  re-hashed when it is still present.
+- **C0 attestation:** the C0 checkout is attested from the logged `git rev-parse HEAD` and
+  `git status` output. That is an attestation, not cryptographic proof.
+- **Snapshot:** the source-set identity of the snapshot.
+- **Generations:** each generation is decoded again from the producing run's stdout and bound to the
+  executor provenance of the previous generation. Under S2, the accepted record must publish exactly
+  that artifact.
+- **Comparisons:** the byte comparisons.
+- **Corpus:** it must equal this repository's `tests/compiler/cases.json` and import fixtures, byte for
+  byte. Verify an old package from the commit that produced it.
+- **Fixture verdicts:** every fixture run is bound to its generation, and every verdict is recomputed
+  from stdout, the driver provenance and both VMs' logs.
+- **Mutations:** the two pinned source mutations are re-applied to the snapshot.
 
-The self-test injects 14 known violations (a flipped artifact byte, a removed log, an extra file, a
-forged comparison, a forged tool hash, a dirty C0 attestation, a verifier rejection, an exit-0
-diagnostic, a removed or duplicated row, a rewritten expectation, a mutated snapshot, a forged
-verdict and a failed VM run). It requires every one to be rejected and the unmodified copy to pass.
+The self-test injects 22 known violations, plus 2 more for S2 attempts:
+- forged artifact, log, tool and C0 records;
+- a verifier rejection, and a verify command that ran something else;
+- an exit-0 diagnostic, and a fixture run executed by the wrong generation;
+- removed, duplicated and dropped rows or cases, and rewritten case, import and mutation expectations;
+- an altered mutation source and an altered trap log;
+- a mutated snapshot, a forged verdict, a failed VM run and a deleted differential phase;
+- for S2, a non-accepted record and a stray file.
+
+It requires every one to be rejected and the unmodified copy to pass.
 
 ## Successful engineering self-host
 
-An attempt is an engineering success when `report.json` says `PASS`:
+An attempt is an engineering success when `report.json` has `"engineering_self_host_success": true`.
+That requires `PASS`, the full scope (all phases) and the default `--fixed-point c1c2`. A `PASS` with
+`--fixed-point c2c3` or `--partial` (the historical reproduction) only says the evidence matches that
+narrower claim. Engineering success means:
 - C1, C2 and C3 are admitted, and C1 == C2 == C3;
 - every corpus expectation holds, with C0-identical SemCode for every accepted program;
 - compiler output is deterministic;

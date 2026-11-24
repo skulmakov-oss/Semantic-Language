@@ -222,8 +222,11 @@ def preflight(att, tools, args):
     c0 = {"path": str(tools.c0_checkout) if tools.c0_checkout else None, "pinned_sha": PINS["c0"]["sha"]}
     if tools.c0_checkout and tools.c0_checkout.is_dir():
         errors = v.verify_reference_checkout(tools.c0_checkout, PINS["c0"]["sha"])
-        c0["head"] = git(tools.c0_checkout, "rev-parse", "HEAD")[1]
-        c0["clean"] = git(tools.c0_checkout, "status", "--porcelain", "--untracked-files=all")[1] == ""
+        # Logged so the checker can recompute the attestation from raw output.
+        he, hso, _ = att.run("preflight.c0_head", ["git", "-C", tools.c0_checkout, "rev-parse", "HEAD"])
+        se_, sso, _ = att.run("preflight.c0_status", ["git", "-C", tools.c0_checkout, "status", "--porcelain", "--untracked-files=all"])
+        c0["head"] = hso.decode("utf-8", "replace").strip() if he == 0 else None
+        c0["clean"] = se_ == 0 and sso.strip() == b""
         c0["origin"] = git(tools.c0_checkout, "remote", "get-url", "origin")[1]
         c0["verify_reference_checkout_errors"] = errors
         c0["ok"] = not errors and c0["head"] == PINS["c0"]["sha"] and c0["clean"]
@@ -490,8 +493,11 @@ def row_failures(r, execs, gens):
                     f.append("expected a clean run on both VMs")
             else:
                 frag = expect.split(":", 1)[1]
+                pure = e.get("pure") or {}
                 if e.get("run_exit") == 0 or frag not in e.get("run_output", ""):
-                    f.append(f"expected a trap containing {frag!r}")
+                    f.append(f"expected a trap containing {frag!r} on smc run-smc")
+                if pure.get("outcome") != "runtime_error" or frag not in (pure.get("error") or ""):
+                    f.append(f"expected a trap containing {frag!r} on the driver")
         elif expect.startswith("reject:"):
             _, cat, frag = expect.split(":", 2)
             if kind != "diagnostic" or o.get("category") != cat or frag not in o.get("message", ""):
@@ -545,7 +551,8 @@ def source_mutations(att, tools, build_record):
 def report(att, tools, args):
     sys.path.insert(0, str(HERE))
     import check_results  # noqa: E402  (sibling module, independent checker)
-    return check_results.main([str(att.out), "--write"]) == 0
+    extra = [] if (att.out / "differential.json").exists() else ["--partial"]
+    return check_results.main([str(att.out), "--write"] + extra) == 0
 
 
 def main(argv=None):

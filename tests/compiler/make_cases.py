@@ -1100,6 +1100,32 @@ fn main() {
     return;
 }
 """)
+case("a15_for_iterable_record_literal", "ok", """
+record R {
+    x: i32,
+}
+
+fn walk() -> i32 {
+    let mut s: i32 = 0;
+    for r in [R { x: 1 }] {
+        let marker: i32 = r.x;
+        s = s + marker;
+    }
+    return s;
+}
+
+record Later {
+    marker: i32,
+    other: i32,
+}
+
+fn main() {
+    let a: Later = Later { marker: 1, other: 2 };
+    let b: Later = a with { marker: walk() };
+    assert(b.marker == 1);
+    return;
+}
+""")
 
 # Recovery regressions: literal ranges, value tails and existing tuple contracts.
 case("r01_padded_u32_one", "ok", "fn main() { let n: u32 = 00000000001u32; assert(n == 1u32); return; }")

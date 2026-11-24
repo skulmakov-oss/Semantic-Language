@@ -13,6 +13,7 @@
  "a12_mini_lexer_workload": "ok",
  "a13_u32_match_unsuffixed_arms": "ok",
  "a14_match_and_loop_shapes": "ok",
+ "a15_for_iterable_record_literal": "ok",
  "m01_map_i32": "ok",
  "m02_map_text": "ok",
  "m03_map_bool": "ok",

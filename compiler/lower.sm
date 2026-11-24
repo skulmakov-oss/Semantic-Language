@@ -1284,7 +1284,8 @@ fn lower_stmt(l0: L, id: i32) -> L {
 
     if k == 42 {
         // C0 parity (lower_for_sequence_stmt_from_reg): the sequence stays in its register;
-        // only the index is a frame local (__for_each_seq_<id>_index).
+        // only the index is a frame local (__for_each_seq_<id>_index). Like C0, no loop frame is
+        // pushed: sema rejects `break` and `continue` inside `for` ("allowed only inside a while loop").
         let s_idx: i32 = map_get(l.sem.slots, id, 0) + 1;
         let s_var: i32 = s_idx + 1;
         (l, r) = lower_expr(l, nd.a);
@@ -1299,15 +1300,11 @@ fn lower_stmt(l0: L, id: i32) -> L {
         let test_l: i32 = l.labels;
         let body_l: i32 = test_l + 1;
         let end_l: i32 = test_l + 2;
-        let saved_b: Sequence(i32) = l.breaks;
-        let saved_c: Sequence(i32) = l.conts;
         l = l with {
             reg: z + 7,
             labels: test_l + 3,
             ifid: fid + 1,
             tnames: map_set(l.tnames, s_idx, "__for_each_seq_" + to_text(fid) + "_index"),
-            breaks: push(l.breaks, end_l),
-            conts: push(l.conts, test_l),
             ins: push(push(push(push(push(push(push(push(push(push(push(push(l.ins,
                 Ins { op: 3, a: z, b: 0, c: 0, imm: 0, args: [] }),
                 Ins { op: 3, a: one, b: 0, c: 0, imm: 1, args: [] }),
@@ -1326,8 +1323,6 @@ fn lower_stmt(l0: L, id: i32) -> L {
             l = lower_stmt(l, kid);
         }
         return l with {
-            breaks: saved_b,
-            conts: saved_c,
             ins: push(push(push(push(push(l.ins,
                 Ins { op: 4, a: ri, b: s_idx, c: 0, imm: 0, args: [] }),
                 Ins { op: 7, a: nx, b: ri, c: one, imm: 0, args: [] }),

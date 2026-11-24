@@ -30,7 +30,7 @@ the C0 source at the pinned SHA and confirmed by comparing bytes.
 | P7 | Value `if` | Its id is taken from the **register** counter (`alloc_if_expr_id`, `:11256`). Both arms store `__if_expr_<id>_result` and jump to the join, which reloads it. | `BOOL_NOT` form, unnamed temporary |
 | P8 | `match` | Statement position follows `Stmt::Match` (id from `next_if_id`, `:8259`; join only if reached). Expression position follows `Expr::Match` (id from the register counter, `__match_expr_<id>_result`, `:10783`). Each arm is `lit; CMP_EQ; JMP_IF arm; JMP next`. Option matches compare `ADT_TAG`. A `_` arm becomes the default label. An exhaustive Option match without `_` ends in `LOAD_BOOL false; ASSERT` (`lower_impossible_match_trap`, `:9596`). A statement `match` on `quad` without guards uses a dispatch table. | Single shape, `BOOL_NOT`, no ids |
 | P9 | Function end | An implicit `RET` is added only when the last instruction is not `RET` (`:1072`). | Structural `always_returns` analysis |
-| P10 | OWN0 field symbols | `FieldSymbol` is the C0 arena `SymbolId` of the field name. C0's parser interns identifier spellings in parse order (`AstArena::intern_symbol`, `crates/sm-front/src/types.rs:1414`): type keywords, quad literals, `_` and `Option` in type position are not interned; `assert` is; `Iterable` is interned after each `for` body (`crates/sm-front/src/parser.rs:1416`). `driver.sm` (`c0_symbol_ids`) reproduces this order from the token stream of the expanded source. | Index into a global table built from the function string tables |
+| P10 | OWN0 field symbols | `FieldSymbol` is the C0 arena `SymbolId` of the field name. C0's parser interns identifier spellings in parse order (`AstArena::intern_symbol`, `crates/sm-front/src/types.rs:1414`): type keywords, quad literals, `_` and `Option` in type position are not interned; `assert` is; `Iterable` is interned after each `for` body (`crates/sm-front/src/parser.rs:1416`), i.e. at the first `{` opened at the `for`'s parenthesis/bracket nesting. `driver.sm` (`c0_symbol_ids`) reproduces this order from the token stream of the expanded source. | Index into a global table built from the function string tables |
 
 The lowering keeps its structure: every rule is expressed in Semantic in the same lowering pass. The
 host still only transports bytes. `lower_function(sem, fi)` keeps its signature for the internal test
@@ -38,11 +38,12 @@ programs. The driver calls `lower_function_with_symbols`, which carries the C0 s
 
 ## Measured result
 
-- **Compiler corpus:** for all 69 positive programs in `tests/compiler/cases.json` and the positive
+- **Compiler corpus:** for all 70 positive programs in `tests/compiler/cases.json` and the positive
   import fixture, the bytes are equal to the C0 compilation of the same source.
-  `a14_match_and_loop_shapes` was added for this purpose. It exercises the `quad` statement-match
-  dispatch, value `match`, an Option `match` without `_`, and `while` with `break`/`continue`
-  next to `for`. Rejections keep their
+  - `a14_match_and_loop_shapes` exercises the `quad` statement-match dispatch, value `match`, an
+    Option `match` without `_`, and `while` with `break`/`continue` next to `for`.
+  - `a15_for_iterable_record_literal` pins rule P10 for a record literal inside a `for` iterable. This
+    case failed before the review fix: the first `{` after `for` was taken as the body. Rejections keep their
   categories and messages.
 - **Compiler source:** for `S` itself, `C1 = C0(S)` and `C2 = C1(S)` are byte-identical. Exact
   identities, counters and the pipeline that produces them are in [README.md](README.md).
