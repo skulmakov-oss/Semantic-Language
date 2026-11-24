@@ -469,6 +469,13 @@ def differential(att, tools, args):
     return ok
 
 
+def driver_trapped(pure, frag):
+    """A program trap on the driver: execution started, did not finish ok, and reports the expected text
+    (runtime_error for assertions/arithmetic, quota_exceeded for a frame/step quota)."""
+    return (pure.get("phase_reached") == "execute" and pure.get("outcome") not in (None, "executed_ok")
+            and frag in (pure.get("error") or ""))
+
+
 def row_failures(r, execs, gens):
     f = []
     expect = r["expect"]
@@ -498,7 +505,7 @@ def row_failures(r, execs, gens):
                 pure = e.get("pure") or {}
                 if e.get("run_exit") == 0 or frag not in e.get("run_output", ""):
                     f.append(f"expected a trap containing {frag!r} on smc run-smc")
-                if pure.get("outcome") != "runtime_error" or frag not in (pure.get("error") or ""):
+                if not driver_trapped(pure, frag):
                     f.append(f"expected a trap containing {frag!r} on the driver")
         elif expect.startswith("reject:"):
             _, cat, frag = expect.split(":", 2)

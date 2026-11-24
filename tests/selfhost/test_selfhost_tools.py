@@ -96,8 +96,17 @@ class SelfhostToolTests(unittest.TestCase):
         exits[f"exec.{h1}.run_smc"] = 1
         logs[(f"exec.{h1}.run_smc", "stdout")] = b"assertion failed\n"
         self.assertIn("no expected trap on the driver", rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
-        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","outcome":"runtime_error","error":"assertion failed"}\n'
+        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","phase_reached":"execute","outcome":"runtime_error","error":"assertion failed"}\n'
         self.assertEqual(rr("trap:assertion failed", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
+        # A quota trap (frame limit) is reported by the driver as quota_exceeded; it is still a trap.
+        logs[(f"exec.{h1}.run_smc", "stdout")] = b"quota exceeded: Frames limit=256 used=257\n"
+        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","phase_reached":"execute","outcome":"quota_exceeded","error":"quota exceeded: Frames limit=256 used=257"}\n'
+        self.assertEqual(rr("trap:quota", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log), [])
+        self.assertTrue(selfhost.driver_trapped({"phase_reached": "execute", "outcome": "quota_exceeded", "error": "quota exceeded: Frames"}, "quota"))
+        # A run that never reached execution (e.g. rejected by the verifier) is not a program trap.
+        logs[(f"exec.{h1}.driver_pure", "stderr")] = b'{"schema":"semantic.ud1a.stored_exec_provenance/2","phase_reached":"verify","outcome":"verify_rejected","error":"quota"}\n'
+        self.assertIn("no expected trap on the driver", rr("trap:quota", b"\x01", {"C2": ok_semcode, "C2.repeat": ok_semcode}, ["C2"], exit_of, log))
+        self.assertFalse(selfhost.driver_trapped({"phase_reached": "verify", "outcome": "verify_rejected", "error": "quota"}, "quota"))
         # A process fault is not a compiler diagnostic, and vice versa.
         fault = {"kind": "no_output", "exit": 5, "driver": {"outcome": "runtime_error", "error": "ABI FsRead failure [HostFault]"}}
         self.assertEqual(rr("fault:ABI FsRead failure", None, {"C2": fault, "C2.repeat": fault}, ["C2"], exit_of, log), [])

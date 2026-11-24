@@ -535,7 +535,7 @@ def recompute_row(expect, ref, outs, gl, exit_of, log):
                 frag = expect.split(":", 1)[1]
                 if run_exit in (0, None) or frag not in run_text:
                     f.append("no expected trap on smc run-smc")
-                if pure.get("outcome") != "runtime_error" or frag not in (pure.get("error") or ""):
+                if pure.get("phase_reached") != "execute" or pure.get("outcome") in (None, "executed_ok") or frag not in (pure.get("error") or ""):
                     f.append("no expected trap on the driver")
         elif expect.startswith("reject:"):
             _, cat, frag = expect.split(":", 2)
