@@ -86,7 +86,8 @@ def provenance(stderr):
 
 
 def norm(p):
-    return str(p).replace("\\", "/").lower()
+    """Separator normalisation only: paths are compared case-sensitively (the pipeline records the exact strings)."""
+    return str(p).replace("\\", "/")
 
 
 def mutated_sources(snapshot, name):
@@ -594,6 +595,15 @@ def edit_command(root, tag, fn):
     (root / "commands.jsonl").write_text("\n".join(out) + "\n")
 
 
+def add_extra_command(root):
+    """A well-formed extra command (hashed logs present): only the exact command-set rule can reject it."""
+    for stream in ("stdout", "stderr"):
+        (root / "logs" / f"extra.cmd.{stream}").write_bytes(b"")
+    entry = {"tag": "extra.cmd", "argv": ["x"], "exit": 0, "stdout_sha256": sha(b""), "stderr_sha256": sha(b"")}
+    with open(root / "commands.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
 def selftest(src, scratch):
     src, scratch = pathlib.Path(src).resolve(), pathlib.Path(scratch).resolve()
     if scratch.exists():
@@ -647,7 +657,7 @@ def selftest(src, scratch):
         "differential_deleted": lambda r: (r / "differential.json").unlink(),
         "differential_null": lambda r: (r / "differential.json").write_text("null\n"),
         "differential_single_generation": lambda r: mutate_json(r / "differential.json", lambda o: o.__setitem__("generations", ["C2"])),
-        "unexpected_command": lambda r: edit_command(r, "build.C1.verify", lambda e: e.__setitem__("tag", "build.C1.verify")) or (r / "commands.jsonl").write_text((r / "commands.jsonl").read_text() + json.dumps({"tag": "extra.cmd", "argv": ["x"], "exit": 0, "stdout_sha256": sha(b""), "stderr_sha256": sha(b"")}) + "\n") or (r / "logs" / "extra.cmd.stdout").write_bytes(b"") or (r / "logs" / "extra.cmd.stderr").write_bytes(b""),
+        "unexpected_command": add_extra_command,
     }
     if s2:
         injections["s2_record_not_accepted"] = lambda r: mutate_json(r / "s2" / "build.C2.execute" / "s2_record.json", lambda o: o.__setitem__("accepted", False))
