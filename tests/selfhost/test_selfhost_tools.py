@@ -60,6 +60,13 @@ class SelfhostToolTests(unittest.TestCase):
             self.assertTrue(c.violations)
             self.assertTrue(any("missing file preflight.json" in v for v in c.violations))
 
+    def test_only_contract_eligible_attempts_yield_a_v4_record(self):
+        base = {"scope": "full", "fixed_point_rule": "c1c2", "generation_runner": "smc-run-smc"}
+        self.assertTrue(check_results.record_eligible(base))
+        for key, value in (("scope", "partial"), ("fixed_point_rule", "c2c3"), ("generation_runner", "s2")):
+            self.assertFalse(check_results.record_eligible({**base, key: value}), key)
+        self.assertFalse(check_results.record_eligible({}))
+
     def test_checker_tables_match_the_pipeline(self):
         """The checker keeps its own copies of the import expectations and mutations; they must not drift."""
         self.assertEqual(check_results.IMPORT_EXPECT, selfhost.IMPORT_EXPECT)

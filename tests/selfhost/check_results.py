@@ -216,6 +216,7 @@ def check(root, partial=False):
 
     # ---------------------------------------------------------------- preflight
     s2_configured = "s2" in tools
+    c.facts["generation_runner"] = "s2" if s2_configured else "smc-run-smc"
     ext = tools.get("executor") or {}
     repro = ext.get("reproduction_build") is True
     for name in ("smc", "executor") + (("driver",) if s2_configured else ()):
@@ -417,11 +418,12 @@ def check(root, partial=False):
     c.facts["commands"] = len(cmds)
 
     # ---------------------------------------------------------------- Bootstrap Contract record
-    # Only a full-scope attempt by a hash-pinned executor yields a v4 qualification record; the canonical
-    # gate's verdict on it is part of this checker's verdict. A reproduction build (unpinned binary whose
-    # identity rests on the operator's own build) yields reproduction identities for the Seal, never a record.
+    # Only a contract-eligible attempt (record_eligible) by a hash-pinned executor yields a v4 qualification
+    # record; the canonical gate's verdict on it is part of this checker's verdict. A reproduction build
+    # (unpinned binary whose identity rests on the operator's own build) yields reproduction identities for the
+    # Seal, never a record. S2 and c2c3 attempts are narrower engineering claims: no record, no Seal identities.
     c.facts["v4_record"] = None
-    if not c.violations and c.facts.get("scope") == "full":
+    if not c.violations and record_eligible(c.facts):
         if (c.facts.get("executor") or {}).get("binary_pinned"):
             record = bootstrap_record(c)
             c.facts["v4_record"] = record
@@ -630,6 +632,11 @@ LIMITATIONS = [
 ]
 
 
+def record_eligible(f):
+    """The v4 protocol attempt: full scope, rule c1c2 and every stored generation executed by smc run-smc."""
+    return f.get("scope") == "full" and f.get("fixed_point_rule") == "c1c2" and f.get("generation_runner") == "smc-run-smc"
+
+
 def bootstrap_record(c):
     """The Bootstrap Contract evidence record, built only from facts this checker verified (no recorded verdict
     is copied). Returns None unless the attempt passed in full scope."""
@@ -698,7 +705,8 @@ def write_outputs(c):
         record_status = "valid" if ok else "rejected (see violations)"
     else:
         record_status = ("no record: reproduction build (see facts.seal_reproduction)" if f.get("seal_reproduction")
-                         else "no record: the attempt did not pass in full scope")
+                         else "no record: the attempt did not pass" if not ok
+                         else "no record: not a contract-eligible attempt (needs full scope, rule c1c2, smc run-smc)")
     rep = {"schema": "semantic.selfhost.report/1", "attempt": str(c.root), "verdict": "PASS" if ok else "FAIL",
            "engineering_self_host_success": bool(success), "v4_qualification_record": bool(ok and record is not None),
            "violations": c.violations, "facts": f, "bootstrap_record": record, "bootstrap_record_check_evidence": record_status}
