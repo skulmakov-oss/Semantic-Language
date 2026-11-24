@@ -644,7 +644,7 @@ def main(argv=None):
     ap.add_argument("--generations", type=int, default=3, choices=(3, 4, 5),
                     help="C1..Cn; at least 3, because both fixed-point modes compare C2 with C3")
     ap.add_argument("--fixed-point", default="c1c2", choices=("c1c2", "c2c3"),
-                    help="c1c2: Bootstrap Contract v3 rule C1 == C2 (and C2 == C3); c2c3: post-bootstrap stability only")
+                    help="c1c2: Bootstrap Contract v4 rule (byte-equality-v1) C1 == C2 (and C2 == C3); c2c3: post-bootstrap stability only")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--require-clean", action="store_true", help="fail preflight on a dirty repository tree")
     args = ap.parse_args(argv)
