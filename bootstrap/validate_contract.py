@@ -27,15 +27,28 @@ CONTRACT = "bootstrap/contract.toml"
 PROTOCOL_V1 = "shf0-bootstrap-contract-v1"
 PROTOCOL_V2 = "shf0-bootstrap-contract-v2"
 PROTOCOL_V3 = "shf0-bootstrap-contract-v3"
-PROTOCOL = PROTOCOL_V3
+PROTOCOL_V4 = "shf0-bootstrap-contract-v4"
+PROTOCOL = PROTOCOL_V4
 # Canonical digest of every frozen value of each protocol version (see frozen_digest).
 FROZEN_DIGESTS = {
     PROTOCOL_V1: "6f80db639198bfcb90ec49678024e8a793ab497b1300bc308eb2063543027908",
     PROTOCOL_V2: "8a2b910989c55e871c6099c673c6a1c65fbaffb5f8ac5eb876466fe9b7fd727b",
     PROTOCOL_V3: "26309eb87a8e765407d771f174e0f37966d600b178f4c0d164cfbe351e3925f6",
+    PROTOCOL_V4: "2b5e7d21b4b6962d002509b7255eccba4113d6de640e7edc6f3af57b1a6d31b6",
 }
 SOURCE_PROTOCOL = "shf0-source-set-v1"
 REPOSITORY = "skulmakov-oss/Semantic"
+# v4: the admitted stored-artifact execution path and the owner-approved trusted-compiler envelope.
+EXECUTOR = {"component": "crates/smc-cli", "command": "smc run-smc", "spec": "docs/spec/cli.md",
+            "identity_binding": "expect-sha256", "admission": "verify_semcode_token_with_quotas",
+            "profile": "cli-read-only"}
+TRUSTED_COMPILER_ENVELOPE = {"max_steps": 150_000_000, "max_calls": 2_000_000, "max_frames": 256}
+V4_EVIDENCE_FIELDS = ("executor_identity", "effective_quotas", "c1_execution", "determinism")
+SEAL = {"protocol": "shf0-bootstrap-seal-v1", "states": ["validated", "reproduced", "accepted"],
+        "reproduction_distinct": ["host_id", "operator"],
+        "reproduction_equal": ["c0_identity", "source_set_identity", "c1_artifact_hash", "c2_artifact_hash",
+                               "comparison_result"],
+        "acceptance_by": "owner"}
 KNOWN_COMPARISON_RULES = {"byte-equality-v1"}
 REQUIRED_FAILURES = {
     "REFERENCE_MISMATCH", "CAPABILITY_GAP", "ADMISSION_REJECT", "FIXED_POINT_DELTA",
@@ -334,6 +347,34 @@ def check_capabilities(contract):
     return errors
 
 
+def check_executor(contract):
+    """v4: the stored-artifact executor, its envelope, the verifier/runtime it binds and the Seal rules."""
+    errors = []
+    ex = contract.get("executor", {})
+    if ex.get("repository") != REPOSITORY or not SHA.fullmatch(str(ex.get("sha", ""))):
+        errors.append(f"REFERENCE_MISMATCH: executor must be {REPOSITORY!r} at an exact 40-hex SHA")
+    for key, value in EXECUTOR.items():
+        if ex.get(key) != value:
+            errors.append(f"HOST_LOGIC_LEAK: executor {key} must be {value!r}")
+    env = contract.get("trusted_compiler_envelope", {})
+    if env.get("envelope") != "trusted-compiler" or set(env) != {"envelope", *TRUSTED_COMPILER_ENVELOPE} \
+            or any(env.get(k) != v for k, v in TRUSTED_COMPILER_ENVELOPE.items()):
+        errors.append(f"CONTRACT_DRIFT: trusted_compiler_envelope must be exactly trusted-compiler "
+                      f"{TRUSTED_COMPILER_ENVELOPE}")
+    ev = contract.get("evidence", {})
+    for field, component in (("verifier_contract", "crates/sm-verify"), ("runtime_contract", "crates/sm-vm")):
+        if ev.get(field) != f"{REPOSITORY}@{ex.get('sha')}:{component}":
+            errors.append(f"REFERENCE_MISMATCH: evidence {field} must name {component} of the executor revision")
+    missing = [f for f in V4_EVIDENCE_FIELDS if f not in ev.get("required_fields", [])]
+    if missing:
+        errors.append(f"CONTRACT_DRIFT: v4 evidence fields missing: {missing}")
+    if ev.get("c1_execution_outcome") != "ok" or ev.get("determinism_result") != "identical":
+        errors.append("CONTRACT_DRIFT: c1_execution_outcome must be 'ok' and determinism_result 'identical'")
+    if contract.get("seal") != SEAL:
+        errors.append(f"CONTRACT_DRIFT: seal rules must be exactly {SEAL}")
+    return errors
+
+
 CONTRACT_DOC = "docs/BOOTSTRAP_CONTRACT.md"
 
 
@@ -418,6 +459,7 @@ def check_contract(contract, reference, subset_text, contract_doc, registry=None
         errors.append("NONDETERMINISM: protocol v1 admits no configuration inputs")
 
     errors += check_capabilities(contract)
+    errors += check_executor(contract)
 
     failures = contract.get("failures", {})
     for name in sorted(REQUIRED_FAILURES - set(failures)):
@@ -545,6 +587,24 @@ def check_record(contract, reference, record, source_set_identity):
         errors.append("CONTRACT_DRIFT: evidence bound to a different comparison rule")
     if record.get("c0_identity") != f"{contract['c0']['repository']}@{contract['c0']['sha']}":
         errors.append("CONTRACT_DRIFT: evidence bound to a different C0")
+    # v4: the run of C1 went through the admitted executor under exactly the declared envelope
+    ex, env = contract["executor"], contract["trusted_compiler_envelope"]
+    if "executor_identity" in record and record["executor_identity"] != f"{ex['repository']}@{ex['sha']}:{ex['component']}":
+        errors.append("REFERENCE_MISMATCH: evidence executor_identity is not the admitted executor")
+    limits = {k: env[k] for k in TRUSTED_COMPILER_ENVELOPE}
+    if "effective_quotas" in record and record["effective_quotas"] != limits:
+        errors.append(f"CONTRACT_DRIFT: effective_quotas must equal the declared envelope {limits}")
+    if "c1_execution" in record:
+        run = record["c1_execution"]
+        counters = run.get("counters") if isinstance(run, dict) else None
+        within = isinstance(counters, dict) and set(counters) == {"steps", "calls", "peak_frames"} and all(
+            type(counters[k]) is int and 0 < counters[k] <= limits[q]
+            for k, q in (("steps", "max_steps"), ("calls", "max_calls"), ("peak_frames", "max_frames")))
+        if not isinstance(run, dict) or run.get("outcome") != ev["c1_execution_outcome"] or not within:
+            errors.append("CONTRACT_DRIFT: c1_execution must be {outcome: 'ok', counters: {steps, calls, "
+                          "peak_frames}} within the declared envelope")
+    if "determinism" in record and record["determinism"] != ev["determinism_result"]:
+        errors.append(f"NONDETERMINISM: determinism must be {ev['determinism_result']!r}")
     return errors
 
 
@@ -568,6 +628,42 @@ def check_evidence(repo, record):
         return [f"CONTRACT_DRIFT: evidence cannot be evaluated ({type(exc).__name__}: {exc})"]
 
 
+def check_seal(repo, seal):
+    """(state, errors) of a Bootstrap Seal candidate (BOOTSTRAP_CONTRACT §10.9). state is None when the
+    candidate is invalid, else the furthest state reached: "validated" (the evidence record passes
+    check_evidence), "reproduced" (an independent reproduction on a distinct host by a distinct operator
+    reports the same identities) or "accepted" (the owner accepted it). errors name what is still missing.
+    Host ids, operator names and the acceptance are attestations; this gate checks their values only."""
+    try:
+        contract = tomllib.loads((repo / CONTRACT).read_text(encoding="utf-8"))
+        rules = contract.get("seal") or {}
+        if rules != SEAL or not isinstance(seal, dict) or seal.get("protocol") != SEAL["protocol"]:
+            return None, ["CONTRACT_DRIFT: not a shf0-bootstrap-seal-v1 candidate for this contract"]
+        record = seal.get("evidence")
+        errors = check_evidence(repo, record)
+        if errors:
+            return None, errors
+        distinct, equal = SEAL["reproduction_distinct"], SEAL["reproduction_equal"]
+        producer = seal.get("producer")
+        if not isinstance(producer, dict) or not all(isinstance(producer.get(k), str) and producer[k].strip() for k in distinct):
+            return "validated", ["SEAL: the producing run's host_id and operator are not recorded"]
+        independent = []
+        for rep in seal.get("reproductions") or []:
+            if not isinstance(rep, dict) or any(rep.get(k) != record.get(k) for k in equal):
+                return None, ["FIXED_POINT_DELTA: a reproduction does not confirm the evidence identities"]
+            if all(isinstance(rep.get(k), str) and rep[k].strip() and rep[k].strip() != producer[k].strip() for k in distinct):
+                independent.append(rep)
+        if not independent:
+            return "validated", ["SEAL: no reproduction on a distinct host by a distinct operator"]
+        acc = seal.get("acceptance")
+        if isinstance(acc, dict) and acc.get("by") == SEAL["acceptance_by"] and acc.get("decision") == "accepted" \
+                and isinstance(acc.get("reference"), str) and acc["reference"].strip():
+            return "accepted", []
+        return "reproduced", ["SEAL: owner acceptance is not recorded"]
+    except Exception as exc:
+        return None, [f"CONTRACT_DRIFT: seal cannot be evaluated ({type(exc).__name__}: {exc})"]
+
+
 def validate(repo):
     """(source-set identity, errors). Fails closed: unloadable or malformed canonical files are
     reported as CONTRACT_DRIFT rather than raised."""
@@ -589,6 +685,12 @@ def _validate(repo):
 
 
 # ------------------------------------------------------------------ self-test
+def _mut(contract, fn):
+    c = copy.deepcopy(contract)
+    fn(c)
+    return c
+
+
 def self_test():
     contract = tomllib.loads((ROOT / CONTRACT).read_text(encoding="utf-8"))
     reference = tomllib.loads((ROOT / "reference/semantic-reference.toml").read_text(encoding="utf-8"))
@@ -829,7 +931,11 @@ def self_test():
                   boundary_cases={"count": 4, "result": "pass"},
                   mutation_proof="detected", unexplained_deltas=0,
                   input_corpus_size=42, limitations=["Windows x64 only (C0 platform scope)"],
-                  c0_checkout_head=contract["c0"]["sha"], c0_checkout_clean=True)
+                  c0_checkout_head=contract["c0"]["sha"], c0_checkout_clean=True,
+                  executor_identity=f"{REPOSITORY}@{contract['executor']['sha']}:crates/smc-cli",
+                  effective_quotas=dict(TRUSTED_COMPILER_ENVELOPE),
+                  c1_execution={"outcome": "ok", "counters": {"steps": 100_906_156, "calls": 1_089_283, "peak_frames": 36}},
+                  determinism="identical")
     assert set(record) == set(contract["evidence"]["required_fields"])
     current = record["source_set_identity"]
     assert not check_record(contract, reference, record, current)
@@ -889,7 +995,9 @@ def self_test():
                     "docs/BOOTSTRAP_SUBSET.md", CONTRACT_DOC):
             (repo / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / rel, repo / rel)
-        (repo / "compiler").mkdir()
+        for rel in tomllib.loads((ROOT / "bootstrap/source-set.toml").read_text(encoding="utf-8"))["files"]:
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / rel, repo / rel)
         assert not check_evidence(repo, {**record, "source_set_identity": real_identity})
         sha = contract["c0"]["sha"]
         text = (repo / CONTRACT).read_text(encoding="utf-8")
@@ -933,7 +1041,18 @@ def self_test():
                      ({"limitations": "none"}, "CONTRACT_DRIFT"),
                      ({"c0_checkout_head": reference["drift"]["planning_reference"]}, "REFERENCE_MISMATCH"),
                      ({"c0_checkout_clean": False}, "REFERENCE_MISMATCH"),
-                     ({"c0_checkout_clean": "true"}, "REFERENCE_MISMATCH")]:
+                     ({"c0_checkout_clean": "true"}, "REFERENCE_MISMATCH"),
+                     # v4: executor, envelope, execution and determinism are bound by value
+                     ({"executor_identity": f"{REPOSITORY}@{'0' * 40}:crates/smc-cli"}, "REFERENCE_MISMATCH"),
+                     ({"executor_identity": "rev5 stored-exec-driver"}, "REFERENCE_MISMATCH"),
+                     ({"effective_quotas": {"max_steps": 20_000_000, "max_calls": 50_000, "max_frames": 256}}, "CONTRACT_DRIFT"),
+                     ({"effective_quotas": {**TRUSTED_COMPILER_ENVELOPE, "max_calls": 200_000_000}}, "CONTRACT_DRIFT"),
+                     ({"c1_execution": {"outcome": "quota_exceeded", "counters": record["c1_execution"]["counters"]}}, "CONTRACT_DRIFT"),
+                     ({"c1_execution": {"outcome": "ok", "counters": {"steps": 150_000_001, "calls": 1, "peak_frames": 1}}}, "CONTRACT_DRIFT"),
+                     ({"c1_execution": {"outcome": "ok", "counters": {"steps": 1, "calls": 0, "peak_frames": 1}}}, "CONTRACT_DRIFT"),
+                     ({"c1_execution": {"outcome": "ok"}}, "CONTRACT_DRIFT"),
+                     ({"c1_execution": "ok"}, "CONTRACT_DRIFT"),
+                     ({"determinism": "differs"}, "NONDETERMINISM")]:
         errs = check_record(contract, reference, {**record, **bad}, current)
         assert any(e.startswith(cls + ":") for e in errs), (bad, errs)
     assert check_record(contract, reference, record, "sha256:" + "00" * 32)  # stale evidence
@@ -978,9 +1097,9 @@ def self_test():
     assert read_frozen_digests(mutated_src) == read_frozen_digests(real)           # AST unchanged...
     assert not check_protocol_immutability(real, mutated_src)                       # ...so base check alone passes;
     # the runtime == literal check in check_contract (asserted above) is what closes this path
-    # protocol v3: v1 / v2 stay registered; additive entries carry exact authorities; u32 bitwise
+    # protocol v4: v1 / v2 / v3 stay registered; additive entries carry exact authorities; u32 bitwise
     # operations, shifts and conversions are candidate BSF-107, never admitted without an authority
-    assert PROTOCOL == PROTOCOL_V3 and set(FROZEN_DIGESTS) == {PROTOCOL_V1, PROTOCOL_V2, PROTOCOL_V3}
+    assert PROTOCOL == PROTOCOL_V4 and set(FROZEN_DIGESTS) == {PROTOCOL_V1, PROTOCOL_V2, PROTOCOL_V3, PROTOCOL_V4}
     authorities = contract["subset"]["authorities"]
     assert set(authorities) == {"BSF-101", "BSF-103"} and not check_authorities(contract, subset)
     assert all(a["sha"] == contract["c0"]["sha"] for a in authorities.values())
@@ -1031,8 +1150,51 @@ def self_test():
     quotas = doc[doc.index("### 10.5"):doc.index("### 10.6")]
     assert "VerifiedLocal defaults: Steps 100,000, Calls 16,384, Frames 256." in quotas
     assert "10,000,000" not in quotas and "not defaults" in quotas
-    assert "`--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`, Frames 256." in quotas
+    assert ("`--envelope trusted-compiler --max-steps 150000000 --max-calls 2000000 --max-frames 256`"
+            in quotas)
     assert f"`{REPOSITORY}@{contract['c0']['sha']}:docs/spec/quotas.md`" in quotas
+    assert f"`{REPOSITORY}@{contract['executor']['sha']}`" in quotas
+    # v4 executor and envelope: every field is checked, not only covered by the digest
+    executor_errors = lambda fn: check_executor(_mut(contract, fn))  # noqa: E731
+    assert not check_executor(contract)
+    for key in EXECUTOR:
+        assert any(e.startswith("HOST_LOGIC_LEAK:") for e in executor_errors(lambda c, k=key: c["executor"].update({k: "x"}))), key
+    for fn in (lambda c: c["executor"].update(sha="main"), lambda c: c["executor"].update(repository="someone/Semantic")):
+        assert any(e.startswith("REFERENCE_MISMATCH:") for e in executor_errors(fn))
+    for fn in (lambda c: c["trusted_compiler_envelope"].update(max_steps=200_000_000),
+               lambda c: c["trusted_compiler_envelope"].update(max_calls=50_000),
+               lambda c: c["trusted_compiler_envelope"].update(max_frames=1024),
+               lambda c: c["trusted_compiler_envelope"].update(envelope="verified-local"),
+               lambda c: c["trusted_compiler_envelope"].update(max_wall_ms=0),       # no undeclared limit
+               lambda c: c["evidence"]["required_fields"].remove("c1_execution"),
+               lambda c: c["seal"].update(acceptance_by="anyone"),
+               lambda c: c["seal"]["reproduction_distinct"].remove("operator")):
+        assert any(e.startswith("CONTRACT_DRIFT:") for e in executor_errors(fn))
+    for field in ("verifier_contract", "runtime_contract"):          # must name the executor revision
+        assert any(e.startswith("REFERENCE_MISMATCH:") for e in executor_errors(
+            lambda c, f=field: c["evidence"].update({f: c["evidence"][f].replace(c["executor"]["sha"], c["c0"]["sha"])})))
+    # Bootstrap Seal states (§10.9): validated -> reproduced -> accepted, never skipped
+    sealed = {**record, "source_set_identity": validate(ROOT)[0]}
+    seal = {"protocol": SEAL["protocol"], "evidence": sealed,
+            "producer": {"host_id": "host-a", "operator": "operator-a"}, "reproductions": [], "acceptance": None}
+    rep = {k: sealed[k] for k in SEAL["reproduction_equal"]}
+    assert check_seal(ROOT, seal)[0] == "validated"
+    assert check_seal(ROOT, {**seal, "reproductions": [{**rep, "host_id": "host-a", "operator": "operator-b"}]})[0] == "validated"
+    assert check_seal(ROOT, {**seal, "reproductions": [{**rep, "host_id": "host-b", "operator": "operator-a"}]})[0] == "validated"
+    reproduced = {**seal, "reproductions": [{**rep, "host_id": "host-b", "operator": "operator-b"}]}
+    assert check_seal(ROOT, reproduced)[0] == "reproduced"
+    assert check_seal(ROOT, {**reproduced, "acceptance": {"by": "owner", "decision": "accepted", "reference": "x"}})[0] == "accepted"
+    for acc in ({"by": "agent", "decision": "accepted", "reference": "x"}, {"by": "owner", "decision": "accepted", "reference": ""},
+                {"by": "owner", "decision": "pending", "reference": "x"}):
+        assert check_seal(ROOT, {**reproduced, "acceptance": acc})[0] == "reproduced", acc
+    # acceptance without a reproduction, or a reproduction that disagrees, never reaches a later state
+    assert check_seal(ROOT, {**seal, "acceptance": {"by": "owner", "decision": "accepted", "reference": "x"}})[0] == "validated"
+    assert check_seal(ROOT, {**seal, "reproductions": [{**rep, "c2_artifact_hash": "sha256:" + "0" * 64,
+                                                         "host_id": "host-b", "operator": "operator-b"}]})[0] is None
+    assert check_seal(ROOT, {**seal, "producer": {"host_id": "host-a"}})[0] == "validated"
+    assert check_seal(ROOT, {**seal, "evidence": record})[0] is None          # evidence of another S
+    assert check_seal(ROOT, {**seal, "protocol": "x"})[0] is None
+    assert check_seal(ROOT, ["x"])[0] is None
     print("shf0 self-test: PASS")
 
 
@@ -1113,6 +1275,19 @@ if __name__ == "__main__":
     if "--self-test" in sys.argv:
         self_test()
         sys.exit(0)
+    for flag, gate in (("--check-evidence", "evidence"), ("--check-seal", "seal")):
+        if flag in sys.argv:
+            i = sys.argv.index(flag)
+            doc_ = json.loads(Path(sys.argv[i + 1]).read_text(encoding="utf-8"))
+            if gate == "evidence":
+                problems = check_evidence(ROOT, doc_)
+                state = None if problems else "valid"
+            else:
+                state, problems = check_seal(ROOT, doc_)
+            for p in problems:
+                print(f"{'FAIL' if state is None else 'OPEN'}: {p}")
+            print(f"shf0 {gate}: {state or 'INVALID'}")
+            sys.exit(0 if state else 1)
     if "--base-ref" in sys.argv:
         i = sys.argv.index("--base-ref")
         base_ref = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
