@@ -89,6 +89,12 @@ record L {
     tuple_inferences: Sequence(TupleInferenceLink),
     binding_inferences: Sequence(BindingInferenceLink),
     control_type_checks: Sequence(ControlTypeCheck),
+    // C0 parity: per-function label-id counter (C0 LoweringCtx::next_if_id) and
+    // the string-table names of internal temporaries, fixed when they are lowered.
+    ifid: i32,
+    tnames: Map(i32, text),
+    // C0 parity: OWN0 FieldSymbol values are C0 arena symbol ids (see driver c0_symbol_ids).
+    symids: Map(text, i32),
 }
 
 // Q3: reconstruct each type proposition from trusted AST metadata.
@@ -840,12 +846,18 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
             given = map_set(given, map_get(l.sem.fieldix, fid, 0), r);
             if base_is_var {
                 let fnm: text = fn_node.name;
-                let mut field: i32 = map_get(l.strmap, fnm, 0 - 1);
+                let mut field: i32 = map_get(l.symids, fnm, 0 - 1);
                 if field < 0 {
-                    field = len(l.strings);
-                    l = l with { strings: push(l.strings, fnm), strmap: map_set(l.strmap, fnm, field) };
+                    field = map_get(l.strmap, fnm, 0 - 1);
+                    if field < 0 {
+                        field = len(l.strings);
+                        l = l with { strings: push(l.strings, fnm), strmap: map_set(l.strmap, fnm, field) };
+                    }
+                    pending_fields = push(pending_fields, field);
+                } else {
+                    // comp_b = 1 marks a field already in the C0 global symbol domain.
+                    pending_fields = push(pending_fields, 0 - 2 - field);
                 }
-                pending_fields = push(pending_fields, field);
             }
         }
         let mut regs: Sequence(i32) = [];
@@ -864,7 +876,11 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         l = l with { reg: d + 1, ins: push(l.ins, Ins { op: 69, a: d, b: sid, c: 0, imm: 0, args: regs }) };
         let root_slot: i32 = if k == 21 { map_get(l.sem.slots, nd.a, 0) } else { 0 };
         for field in pending_fields {
-            l = l with { owns: push(l.owns, OwnPath { kind: 1, mode: 1, root: root_slot, anchor: anchor, comp_kind: 1, comp_a: field, comp_b: 0 }) };
+            if field <= 0 - 2 {
+                l = l with { owns: push(l.owns, OwnPath { kind: 1, mode: 1, root: root_slot, anchor: anchor, comp_kind: 1, comp_a: 0 - 2 - field, comp_b: 1 }) };
+            } else {
+                l = l with { owns: push(l.owns, OwnPath { kind: 1, mode: 1, root: root_slot, anchor: anchor, comp_kind: 1, comp_a: field, comp_b: 0 }) };
+            }
         }
         return (l, d);
     }
@@ -909,81 +925,170 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         return (l, 0);
     }
     if k == 26 {
+        // C0 parity (lower_expr Expr::If): the expression id is taken from the register
+        // counter; both arms store the result local and jump to the join.
         let t: i32 = map_get(l.sem.exprty, id, 0);
         let slot: i32 = if t != 0 { map_get(l.sem.slots, id, 0) } else { 0 };
         (l, a) = lower_expr(l, nd.a);
-        let n: i32 = l.reg;
-        let else_l: i32 = l.labels;
-        let end_l: i32 = else_l + 1;
+        let eid: i32 = l.reg;
+        let then_l: i32 = l.labels;
+        let else_l: i32 = then_l + 1;
+        let end_l: i32 = then_l + 2;
         l = l with {
-            reg: n + 1,
-            labels: end_l + 1,
-            ins: push(push(l.ins, Ins { op: 22, a: n, b: a, c: 0, imm: 0, args: [] }), Ins { op: 49, a: n, b: 0, c: 0, imm: else_l, args: [] })
+            reg: eid + 1,
+            labels: then_l + 3,
+            tnames: if t != 0 { map_set(l.tnames, slot, "__if_expr_" + to_text(eid) + "_result") } else { l.tnames },
+            ins: push(push(push(l.ins, Ins { op: 49, a: a, b: 0, c: 0, imm: then_l, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: else_l, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: then_l, args: [] })
         };
         let mut r: i32 = 0;
+        // A unit-valued if has no result local (sema allocates none): no store, no load.
         (l, r) = lower_expr(l, nd.b);
         if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
-        l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }), Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
+        l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
+            Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
         (l, r) = lower_expr(l, nd.c);
         if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
-        l = l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+        l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
+            Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
         if t == 0 { return (l, 0); }
         d = l.reg;
         return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: slot, c: 0, imm: 0, args: [] }) }, d);
     }
     if k == 25 {
-        let t: i32 = map_get(l.sem.exprty, id, 0);
-        let slot: i32 = if t != 0 { map_get(l.sem.slots, id, 0) } else { 0 };
-        let lna: Node = l.sem.prog.nodes[nd.a];
-        let st: i32 = if lna.k == 1 { 1 } else if lna.k == 8 { 3 } else if lna.k == 9 { 5 } else { map_get(l.sem.exprty, nd.a, 0) };
-        let is_opt: bool = l.sem.tys[st].k == 8;
-        let mut rs: i32 = 0;
-        (l, rs) = lower_expr(l, nd.a);
-        let mut opt_sid: i32 = 0;
-        let mut tag: i32 = 0;
-        if is_opt {
-            opt_sid = map_get(l.strmap, "Option", 0 - 1);
-            if opt_sid < 0 {
-                opt_sid = len(l.strings);
-                l = l with { strings: push(l.strings, "Option"), strmap: map_set(l.strmap, "Option", opt_sid) };
+        return lower_match(l, id, false);
+    }
+    return (l, 0);
+}
+
+fn intern_string(l0: L, s: text) -> (L, i32) {
+    let sid: i32 = map_get(l0.strmap, s, 0 - 1);
+    if sid >= 0 { return (l0, sid); }
+    let n: i32 = len(l0.strings);
+    return (l0 with { strings: push(l0.strings, s), strmap: map_set(l0.strmap, s, n) }, n);
+}
+
+fn emit_label(l0: L, lab: i32) -> L {
+    return l0 with { ins: push(l0.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: lab, args: [] }) };
+}
+
+fn emit_jmp(l0: L, lab: i32) -> L {
+    return l0 with { ins: push(l0.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: lab, args: [] }) };
+}
+
+// C0 parity (LoweringCtx::jump_to_join_unless_returned): a branch that ended in RET
+// has no edge to the join.
+fn jump_to_join_unless_returned(l0: L, lab: i32) -> (L, bool) {
+    if ends_with_ret(l0.ins) { return (l0, false); }
+    return (emit_jmp(l0, lab), true);
+}
+
+fn match_literal_ins(arm: Node, st: i32, lit: i32) -> Ins {
+    if arm.v == 1 {
+        if st == 1 { return Ins { op: 3, a: lit, b: 0, c: 0, imm: arm.b, args: [] }; }
+        return Ins { op: 6, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
+    }
+    if arm.v == 2 { return Ins { op: 6, a: lit, b: 0, c: 0, imm: arm.b, args: [] }; }
+    if arm.v == 5 { return Ins { op: 1, a: lit, b: 0, c: 0, imm: arm.b, args: [] }; }
+    return Ins { op: 3, a: lit, b: 0, c: 0, imm: if arm.v == 3 { 1 } else { 0 }, args: [] };
+}
+
+fn lower_match_arm_body(l0: L, body: i32) -> L {
+    let bn: Node = l0.sem.prog.nodes[body];
+    let mut l: L = l0;
+    if bn.k == 27 {
+        if bn.a < 0 {
+            for kid in bn.kids {
+                l = lower_stmt(l, kid);
             }
-            tag = l.reg;
-            l = l with { reg: tag + 1, ins: push(l.ins, Ins { op: 72, a: tag, b: rs, c: opt_sid, imm: 0, args: [] }) };
+            return l;
         }
-        let end_l: i32 = l.labels;
-        l = l with { labels: end_l + 1 };
-        for arm_id in nd.kids {
+    }
+    let mut r: i32 = 0;
+    (l, r) = lower_expr(l, body);
+    return l;
+}
+
+// C0 parity: statement-position match is legacy_lowering Stmt::Match (label id from
+// next_if_id, join only when reached); any other match is Expr::Match (id from the
+// register counter, result local __match_expr_<id>_result, LoadVar at the join).
+fn lower_match(l0: L, id: i32, statement: bool) -> (L, i32) {
+    let nd: Node = l0.sem.prog.nodes[id];
+    let mut l: L = l0;
+    let t: i32 = map_get(l.sem.exprty, id, 0);
+    let slot: i32 = if t != 0 { map_get(l.sem.slots, id, 0) } else { 0 };
+    let lna: Node = l.sem.prog.nodes[nd.a];
+    let st: i32 = if lna.k == 1 { 1 } else if lna.k == 8 { 3 } else if lna.k == 9 { 5 } else { map_get(l.sem.exprty, nd.a, 0) };
+    let is_opt: bool = l.sem.tys[st].k == 8;
+    let mut rs: i32 = 0;
+    (l, rs) = lower_expr(l, nd.a);
+    let mut mid: i32 = 0;
+    if statement {
+        mid = l.ifid;
+        l = l with { ifid: mid + 1 };
+    } else {
+        mid = l.reg;
+        l = l with { reg: mid + 1 };
+        if t != 0 {
+            l = l with { tnames: map_set(l.tnames, slot, "__match_expr_" + to_text(mid) + "_result") };
+        }
+    }
+    let mut opt_sid: i32 = 0;
+    let mut subject: i32 = rs;
+    if is_opt {
+        (l, opt_sid) = intern_string(l, "Option");
+        subject = l.reg;
+        l = l with { reg: subject + 1, ins: push(l.ins, Ins { op: 72, a: subject, b: rs, c: opt_sid, imm: 0, args: [] }) };
+    }
+    let mut parms: Sequence(i32) = [];
+    let mut dflt: i32 = 0 - 1;
+    let mut is_quad: bool = false;
+    for arm_id in nd.kids {
+        let an: Node = l.sem.prog.nodes[arm_id];
+        if an.v == 0 { dflt = arm_id; } else { parms = push(parms, arm_id); }
+        if an.v == 5 { is_quad = true; }
+    }
+    let n: i32 = len(parms);
+    let base: i32 = l.labels;
+    let end_l: i32 = base;
+    let dflt_l: i32 = base + 1;
+    l = l with { labels: base + 2 + 2 * n };
+    let mut join: bool = false;
+    let mut reached: bool = false;
+    let mut r: i32 = 0;
+    if statement && is_quad {
+        let mut qi: i32 = 0;
+        for arm_id in parms {
+            let lit: i32 = l.reg;
+            let cmp: i32 = lit + 1;
+            l = l with { reg: lit + 2, ins: push(push(push(l.ins, match_literal_ins(l.sem.prog.nodes[arm_id], st, lit)),
+                Ins { op: 32, a: cmp, b: rs, c: lit, imm: 0, args: [] }),
+                Ins { op: 49, a: cmp, b: 0, c: 0, imm: base + 2 + 2 * qi, args: [] }) };
+            qi = qi + 1;
+        }
+        l = emit_jmp(l, dflt_l);
+        qi = 0;
+        for arm_id in parms {
+            l = emit_label(l, base + 2 + 2 * qi);
+            l = lower_match_arm_body(l, l.sem.prog.nodes[arm_id].a);
+            (l, reached) = jump_to_join_unless_returned(l, end_l);
+            join = join || reached;
+            qi = qi + 1;
+        }
+    } else {
+        let mut i: i32 = 0;
+        for arm_id in parms {
             let arm: Node = l.sem.prog.nodes[arm_id];
-            let next_l: i32 = l.labels;
-            l = l with { labels: next_l + 1 };
-            if arm.v != 0 {
-                let lit: i32 = l.reg;
-                let mut subject: i32 = rs;
-                let mut lit_ins: Ins = Ins { op: 3, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
-                if arm.v == 1 {
-                    if st == 1 {
-                        lit_ins = Ins { op: 3, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
-                    } else {
-                        lit_ins = Ins { op: 6, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
-                    }
-                } else if arm.v == 2 {
-                    lit_ins = Ins { op: 6, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
-                } else if arm.v == 5 {
-                    lit_ins = Ins { op: 1, a: lit, b: 0, c: 0, imm: arm.b, args: [] };
-                } else {
-                    subject = tag;
-                    lit_ins = Ins { op: 3, a: lit, b: 0, c: 0, imm: if arm.v == 3 { 1 } else { 0 }, args: [] };
-                }
-                let eq: i32 = lit + 1;
-                let ne: i32 = lit + 2;
-                l = l with {
-                    reg: lit + 3,
-                    ins: push(push(push(push(l.ins, lit_ins),
-                        Ins { op: 32, a: eq, b: subject, c: lit, imm: 0, args: [] }),
-                        Ins { op: 22, a: ne, b: eq, c: 0, imm: 0, args: [] }),
-                        Ins { op: 49, a: ne, b: 0, c: 0, imm: next_l, args: [] })
-                };
-            }
+            if i > 0 { l = emit_label(l, base + 3 + 2 * i); }
+            let next_l: i32 = if i + 1 < n { base + 3 + 2 * (i + 1) } else { dflt_l };
+            let lit: i32 = l.reg;
+            let cmp: i32 = lit + 1;
+            l = l with { reg: lit + 2, ins: push(push(push(push(l.ins, match_literal_ins(arm, st, lit)),
+                Ins { op: 32, a: cmp, b: subject, c: lit, imm: 0, args: [] }),
+                Ins { op: 49, a: cmp, b: 0, c: 0, imm: base + 2 + 2 * i, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: next_l, args: [] }) };
+            l = emit_label(l, base + 2 + 2 * i);
             if arm.v == 3 {
                 let v: i32 = l.reg;
                 l = l with {
@@ -992,23 +1097,44 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
                         Ins { op: 5, a: map_get(l.sem.slots, arm_id, 0), b: v, c: 0, imm: 0, args: [] })
                 };
             }
-            let mut r: i32 = 0;
-            (l, r) = lower_expr(l, arm.a);
-            if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
-            l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }), Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: next_l, args: [] }) };
+            if statement {
+                l = lower_match_arm_body(l, arm.a);
+                (l, reached) = jump_to_join_unless_returned(l, end_l);
+                join = join || reached;
+            } else {
+                (l, r) = lower_expr(l, arm.a);
+                if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+                l = emit_jmp(l, end_l);
+            }
+            i = i + 1;
         }
-        let g: i32 = l.reg;
-        l = l with {
-            reg: g + 1,
-            ins: push(push(push(l.ins, Ins { op: 2, a: g, b: 0, c: 0, imm: 0, args: [] }),
-                Ins { op: 66, a: g, b: 0, c: 0, imm: 0, args: [] }),
-                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] })
-        };
-        if t == 0 { return (l, 0); }
-        d = l.reg;
-        return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: slot, c: 0, imm: 0, args: [] }) }, d);
     }
-    return (l, 0);
+    l = emit_label(l, dflt_l);
+    if dflt < 0 {
+        let g: i32 = l.reg;
+        l = l with { reg: g + 1, ins: push(push(l.ins, Ins { op: 2, a: g, b: 0, c: 0, imm: 0, args: [] }),
+            Ins { op: 66, a: g, b: 0, c: 0, imm: 0, args: [] }) };
+        if statement {
+            (l, reached) = jump_to_join_unless_returned(l, end_l);
+            join = join || reached;
+        }
+    } else if statement {
+        l = lower_match_arm_body(l, l.sem.prog.nodes[dflt].a);
+        (l, reached) = jump_to_join_unless_returned(l, end_l);
+        join = join || reached;
+    } else {
+        (l, r) = lower_expr(l, l.sem.prog.nodes[dflt].a);
+        if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+        l = emit_jmp(l, end_l);
+    }
+    if statement {
+        if join { l = emit_label(l, end_l); }
+        return (l, 0);
+    }
+    l = emit_label(l, end_l);
+    if t == 0 { return (l, 0); }
+    let d: i32 = l.reg;
+    return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: slot, c: 0, imm: 0, args: [] }) }, d);
 }
 
 fn lower_stmt(l0: L, id: i32) -> L {
@@ -1073,6 +1199,19 @@ fn lower_stmt(l0: L, id: i32) -> L {
         return l with { ins: push(l.ins, Ins { op: 66, a: r, b: 0, c: 0, imm: 0, args: [] }) };
     }
     if k == 16 {
+        if l.sem.prog.nodes[nd.a].k == 25 {
+            // Same phase-proof preamble as lower_expr: the statement path must not drop the
+            // match's proofs (FnIr.proofs feeds the evidence-to-ir provenance trace).
+            if q3_required_kind(l.sem, nd.a) != "" {
+                l = l with { proofs: push(l.proofs, q4_phase_proof(l.sem, nd.a)) };
+            }
+            for map_proof in q4_map_phase_proofs(l.sem, nd.a) {
+                l = l with { proofs: push(l.proofs, map_proof) };
+            }
+            let mut unused: i32 = 0;
+            (l, unused) = lower_match(l, nd.a, true);
+            return l;
+        }
         (l, r) = lower_expr(l, nd.a);
         return l;
     }
@@ -1084,166 +1223,121 @@ fn lower_stmt(l0: L, id: i32) -> L {
         return l with { ins: push(l.ins, Ins { op: 65, a: 1, b: r, c: 0, imm: 0, args: [] }) };
     }
     if k == 12 {
+        // C0 parity (legacy_lowering Stmt::If): JMP_IF cond, then; JMP else; a branch that
+        // ends in RET has no edge to the join; the join label exists only when reached.
         (l, r) = lower_expr(l, nd.a);
-        let n: i32 = l.reg;
-        let else_l: i32 = l.labels;
-        let end_l: i32 = else_l + 1;
+        let then_l: i32 = l.labels;
+        let else_l: i32 = then_l + 1;
+        let end_l: i32 = then_l + 2;
         l = l with {
-            reg: n + 1,
-            labels: end_l + 1,
-            ins: push(push(l.ins, Ins { op: 22, a: n, b: r, c: 0, imm: 0, args: [] }),
-                Ins { op: 49, a: n, b: 0, c: 0, imm: else_l, args: [] })
+            labels: then_l + 3,
+            ifid: l.ifid + 1,
+            ins: push(push(push(l.ins, Ins { op: 49, a: r, b: 0, c: 0, imm: then_l, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: else_l, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: then_l, args: [] })
         };
-        let kids: Sequence(i32) = l.sem.prog.nodes[nd.b].kids;
-        let mut ki: i32 = 0;
-        while ki < len(kids) {
-            let kid: i32 = kids[ki];
+        for kid in l.sem.prog.nodes[nd.b].kids {
             l = lower_stmt(l, kid);
-            let kn: Node = l.sem.prog.nodes[kid];
-            if kn.k == 14 { break; }
-            if kn.k == 12 {
-                if kn.c >= 0 {
-                    if always_returns(l.sem.prog.nodes, kid) { break; }
-                }
-            } else if kn.k == 15 {
-                if always_returns(l.sem.prog.nodes, kid) { break; }
-            }
-            ki = ki + 1;
         }
+        let mut join: bool = false;
+        if !ends_with_ret(l.ins) {
+            l = l with { ins: push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+            join = true;
+        }
+        l = l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
         if nd.c >= 0 {
-            if !always_returns(l.sem.prog.nodes, nd.b) {
-                l = l with { ins: push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
-            }
-            l = l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
             let nc: Node = l.sem.prog.nodes[nd.c];
             if nc.k == 15 {
-                let kids2: Sequence(i32) = nc.kids;
-                let mut ki2: i32 = 0;
-                while ki2 < len(kids2) {
-                    let kid: i32 = kids2[ki2];
+                for kid in nc.kids {
                     l = lower_stmt(l, kid);
-                    let kn: Node = l.sem.prog.nodes[kid];
-                    if kn.k == 14 { break; }
-                    if kn.k == 12 {
-                        if kn.c >= 0 {
-                            if always_returns(l.sem.prog.nodes, kid) { break; }
-                        }
-                    } else if kn.k == 15 {
-                        if always_returns(l.sem.prog.nodes, kid) { break; }
-                    }
-                    ki2 = ki2 + 1;
                 }
             } else {
                 l = lower_stmt(l, nd.c);
             }
-            return l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
         }
-        return l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
+        if !ends_with_ret(l.ins) {
+            l = l with { ins: push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+            join = true;
+        }
+        if join {
+            l = l with { ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+        }
+        return l;
     }
+
     if k == 13 {
-        let top_l: i32 = l.labels;
-        let end_l: i32 = top_l + 1;
-        l = l with { labels: end_l + 1, ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: top_l, args: [] }) };
+        // C0 parity (lower_while_stmt): test: cond; JMP_IF cond, body; JMP end; body: ...; JMP test; end:
+        let test_l: i32 = l.labels;
+        let body_l: i32 = test_l + 1;
+        let end_l: i32 = test_l + 2;
+        l = l with { labels: test_l + 3, ifid: l.ifid + 1, ins: push(l.ins, Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: test_l, args: [] }) };
         (l, r) = lower_expr(l, nd.a);
-        let n: i32 = l.reg;
         let saved_b: Sequence(i32) = l.breaks;
         let saved_c: Sequence(i32) = l.conts;
         l = l with {
-            reg: n + 1,
             breaks: push(l.breaks, end_l),
-            conts: push(l.conts, top_l),
-            ins: push(push(l.ins, Ins { op: 22, a: n, b: r, c: 0, imm: 0, args: [] }),
-                Ins { op: 49, a: n, b: 0, c: 0, imm: end_l, args: [] })
+            conts: push(l.conts, test_l),
+            ins: push(push(push(l.ins, Ins { op: 49, a: r, b: 0, c: 0, imm: body_l, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: body_l, args: [] })
         };
-        let kids: Sequence(i32) = l.sem.prog.nodes[nd.b].kids;
-        let mut ki: i32 = 0;
-        while ki < len(kids) {
-            let kid: i32 = kids[ki];
+        for kid in l.sem.prog.nodes[nd.b].kids {
             l = lower_stmt(l, kid);
-            let kn: Node = l.sem.prog.nodes[kid];
-            if kn.k == 14 { break; }
-            if kn.k == 12 {
-                if kn.c >= 0 {
-                    if always_returns(l.sem.prog.nodes, kid) { break; }
-                }
-            } else if kn.k == 15 {
-                if always_returns(l.sem.prog.nodes, kid) { break; }
-            }
-            ki = ki + 1;
         }
         return l with {
             breaks: saved_b,
             conts: saved_c,
-            ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: top_l, args: [] }),
+            ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: test_l, args: [] }),
                 Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] })
         };
     }
+
     if k == 42 {
-        let s_seq: i32 = map_get(l.sem.slots, id, 0);
-        let s_idx: i32 = s_seq + 1;
-        let s_var: i32 = s_seq + 2;
+        // C0 parity (lower_for_sequence_stmt_from_reg): the sequence stays in its register;
+        // only the index is a frame local (__for_each_seq_<id>_index). Like C0, no loop frame is
+        // pushed: sema rejects `break` and `continue` inside `for` ("allowed only inside a while loop").
+        let s_idx: i32 = map_get(l.sem.slots, id, 0) + 1;
+        let s_var: i32 = s_idx + 1;
         (l, r) = lower_expr(l, nd.a);
+        let fid: i32 = l.ifid;
         let z: i32 = l.reg;
-        let top_l: i32 = l.labels;
-        let step_l: i32 = top_l + 1;
-        let end_l: i32 = top_l + 2;
-        let ri: i32 = z + 1;
-        let rq: i32 = z + 2;
-        let rn: i32 = z + 3;
+        let one: i32 = z + 1;
+        let rn: i32 = z + 2;
+        let ri: i32 = z + 3;
         let rc: i32 = z + 4;
-        let nc: i32 = z + 5;
-        let rv: i32 = z + 6;
-        let saved_b: Sequence(i32) = l.breaks;
-        let saved_c: Sequence(i32) = l.conts;
+        let rv: i32 = z + 5;
+        let nx: i32 = z + 6;
+        let test_l: i32 = l.labels;
+        let body_l: i32 = test_l + 1;
+        let end_l: i32 = test_l + 2;
         l = l with {
             reg: z + 7,
-            labels: top_l + 3,
-            breaks: push(l.breaks, end_l),
-            conts: push(l.conts, step_l),
+            labels: test_l + 3,
+            ifid: fid + 1,
+            tnames: map_set(l.tnames, s_idx, "__for_each_seq_" + to_text(fid) + "_index"),
             ins: push(push(push(push(push(push(push(push(push(push(push(push(l.ins,
-                Ins { op: 5, a: s_seq, b: r, c: 0, imm: 0, args: [] }),
                 Ins { op: 3, a: z, b: 0, c: 0, imm: 0, args: [] }),
+                Ins { op: 3, a: one, b: 0, c: 0, imm: 1, args: [] }),
                 Ins { op: 5, a: s_idx, b: z, c: 0, imm: 0, args: [] }),
-                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: top_l, args: [] }),
+                Ins { op: 95, a: rn, b: r, c: 0, imm: 0, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: test_l, args: [] }),
                 Ins { op: 4, a: ri, b: s_idx, c: 0, imm: 0, args: [] }),
-                Ins { op: 4, a: rq, b: s_seq, c: 0, imm: 0, args: [] }),
-                Ins { op: 95, a: rn, b: rq, c: 0, imm: 0, args: [] }),
                 Ins { op: 34, a: rc, b: ri, c: rn, imm: 0, args: [] }),
-                Ins { op: 22, a: nc, b: rc, c: 0, imm: 0, args: [] }),
-                Ins { op: 49, a: nc, b: 0, c: 0, imm: end_l, args: [] }),
-                Ins { op: 92, a: rv, b: rq, c: ri, imm: 0, args: [] }),
+                Ins { op: 49, a: rc, b: 0, c: 0, imm: body_l, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
+                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: body_l, args: [] }),
+                Ins { op: 92, a: rv, b: r, c: ri, imm: 0, args: [] }),
                 Ins { op: 5, a: s_var, b: rv, c: 0, imm: 0, args: [] })
         };
-        let kids: Sequence(i32) = l.sem.prog.nodes[nd.b].kids;
-        let mut ki: i32 = 0;
-        while ki < len(kids) {
-            let kid: i32 = kids[ki];
+        for kid in l.sem.prog.nodes[nd.b].kids {
             l = lower_stmt(l, kid);
-            let kn: Node = l.sem.prog.nodes[kid];
-            if kn.k == 14 { break; }
-            if kn.k == 12 {
-                if kn.c >= 0 {
-                    if always_returns(l.sem.prog.nodes, kid) { break; }
-                }
-            } else if kn.k == 15 {
-                if always_returns(l.sem.prog.nodes, kid) { break; }
-            }
-            ki = ki + 1;
         }
-        let ri2: i32 = l.reg;
-        let one: i32 = ri2 + 1;
-        let nx: i32 = ri2 + 2;
         return l with {
-            reg: ri2 + 3,
-            breaks: saved_b,
-            conts: saved_c,
-            ins: push(push(push(push(push(push(push(l.ins,
-                Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: step_l, args: [] }),
-                Ins { op: 4, a: ri2, b: s_idx, c: 0, imm: 0, args: [] }),
-                Ins { op: 3, a: one, b: 0, c: 0, imm: 1, args: [] }),
-                Ins { op: 7, a: nx, b: ri2, c: one, imm: 0, args: [] }),
+            ins: push(push(push(push(push(l.ins,
+                Ins { op: 4, a: ri, b: s_idx, c: 0, imm: 0, args: [] }),
+                Ins { op: 7, a: nx, b: ri, c: one, imm: 0, args: [] }),
                 Ins { op: 5, a: s_idx, b: nx, c: 0, imm: 0, args: [] }),
-                Ins { op: 48, a: 0, b: 0, c: 0, imm: top_l, args: [] }),
+                Ins { op: 48, a: 0, b: 0, c: 0, imm: test_l, args: [] }),
                 Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] })
         };
     }
@@ -1255,27 +1349,87 @@ fn lower_stmt(l0: L, id: i32) -> L {
     }
     for kid in nd.kids {
         l = lower_stmt(l, kid);
-        let kn: Node = l.sem.prog.nodes[kid];
-        if kn.k == 14 { return l; }
-        if kn.k == 12 {
-            if kn.c >= 0 {
-                if always_returns(l.sem.prog.nodes, kid) { return l; }
-            }
-        } else if kn.k == 15 {
-            if always_returns(l.sem.prog.nodes, kid) { return l; }
-        }
     }
     return l;
 }
 
+fn ends_with_ret(ins: Sequence(Ins)) -> bool {
+    if len(ins) == 0 { return false; }
+    return ins[len(ins) - 1].op == 65;
+}
+
+fn is_internal_local(nm: text) -> bool {
+    return nm == "$if" || nm == "$match" || nm == "$seq" || nm == "$idx";
+}
+
+fn intern_first_use(m: Map(i32, i32), order: Sequence(i32), old: i32) -> (Map(i32, i32), Sequence(i32), i32) {
+    if map_contains(m, old) { return (m, order, map_get(m, old, 0)); }
+    let n: i32 = len(order);
+    return (map_set(m, old, n), push(order, old), n);
+}
+
+// C0 parity: the emitter interns each string at its first use in instruction
+// order, so the function string table (and every slot number) follows that order.
+fn canonical_string_order(strings: Sequence(text), ins0: Sequence(Ins), owns0: Sequence(OwnPath)) -> (Sequence(text), Sequence(Ins), Sequence(OwnPath)) {
+    let mut m: Map(i32, i32) = map_empty();
+    let mut order: Sequence(i32) = [];
+    let mut ins: Sequence(Ins) = [];
+    let mut v: i32 = 0;
+    let mut w: i32 = 0;
+    for i in ins0 {
+        let op: i32 = i.op;
+        if op == 4 || op == 90 || op == 69 {
+            (m, order, v) = intern_first_use(m, order, i.b);
+            ins = push(ins, i with { b: v });
+        } else if op == 5 {
+            (m, order, v) = intern_first_use(m, order, i.a);
+            ins = push(ins, i with { a: v });
+        } else if op == 64 || op == 70 || op == 72 || op == 73 {
+            (m, order, v) = intern_first_use(m, order, i.c);
+            ins = push(ins, i with { c: v });
+        } else if op == 71 {
+            (m, order, v) = intern_first_use(m, order, i.b);
+            (m, order, w) = intern_first_use(m, order, i.c);
+            ins = push(ins, i with { b: v, c: w });
+        } else {
+            ins = push(ins, i);
+        }
+    }
+    let mut owns: Sequence(OwnPath) = [];
+    for ev in owns0 {
+        (m, order, v) = intern_first_use(m, order, ev.root);
+        if ev.comp_kind == 1 && ev.comp_b == 0 {
+            (m, order, w) = intern_first_use(m, order, ev.comp_a);
+            owns = push(owns, ev with { root: v, comp_a: w });
+        } else {
+            owns = push(owns, ev with { root: v });
+        }
+    }
+    let mut out: Sequence(text) = [];
+    for o in order {
+        out = push(out, strings[o]);
+    }
+    return (out, ins, owns);
+}
+
 fn lower_function(sem: Sem, fi: i32) -> FnIr {
+    return lower_function_with_symbols(sem, fi, map_empty());
+}
+
+fn lower_function_with_symbols(sem: Sem, fi: i32, symids: Map(text, i32)) -> FnIr {
     let f: Func = sem.prog.funcs[fi];
     let names: Sequence(text) = sem.locals[fi];
     let mut strings: Sequence(text) = [];
-    let mut k: i32 = 0;
+    // C0 parity: a declared local is `__sm_local_<bind index>_<spelling>`
+    // (LoweredLocalEnv::bind); internal temporaries are named when lowered.
+    let mut b: i32 = 0;
     for nm in names {
-        strings = push(strings, nm + "#" + to_text(k));
-        k = k + 1;
+        if is_internal_local(nm) {
+            strings = push(strings, nm);
+        } else {
+            strings = push(strings, "__sm_local_" + to_text(b) + "_" + nm);
+            b = b + 1;
+        }
     }
     let ptys: Sequence(i32) = sem.fptypes[fi];
     let mut ins: Sequence(Ins) = [];
@@ -1284,35 +1438,18 @@ fn lower_function(sem: Sem, fi: i32) -> FnIr {
         ins = push(ins, Ins { op: 5, a: p, b: p, c: 0, imm: 0, args: [] });
         p = p + 1;
     }
-    let mut l: L = L { sem: sem, ins: ins, reg: len(ptys), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [], owns: [], proofs: [], tuple_inferences: [], binding_inferences: [], control_type_checks: [] };
-    let kids: Sequence(i32) = sem.prog.nodes[f.body].kids;
-    let mut ki: i32 = 0;
-    while ki < len(kids) {
-        let kid: i32 = kids[ki];
+    let mut l: L = L { sem: sem, ins: ins, reg: len(ptys), labels: 0, strings: strings, strmap: map_empty(), breaks: [], conts: [], owns: [], proofs: [], tuple_inferences: [], binding_inferences: [], control_type_checks: [], ifid: 0, tnames: map_empty(), symids: symids };
+    for kid in sem.prog.nodes[f.body].kids {
         l = lower_stmt(l, kid);
-        let kn: Node = sem.prog.nodes[kid];
-        if kn.k == 14 { break; }
-        if kn.k == 12 {
-            if kn.c >= 0 {
-                if always_returns(sem.prog.nodes, kid) { break; }
-            }
-        } else if kn.k == 15 {
-            if always_returns(sem.prog.nodes, kid) { break; }
-        }
-        ki = ki + 1;
     }
-    if sem.frets[fi] == 0 {
-        if !always_returns(sem.prog.nodes, f.body) {
+    // C0 parity: a unit function gets an implicit RET unless its code already ends with RET.
+    if !ends_with_ret(l.ins) {
+        if sem.frets[fi] == 0 {
             l = l with { ins: push(l.ins, Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }) };
-        }
-    }
-    if len(l.ins) > 0 {
-        // A terminal exhaustive match may end with a jump label.
-        // Jumping to code EOF is invalid SemCode; materialize a valid successor.
-        if l.ins[len(l.ins) - 1].op == 0 - 1 {
-            if sem.frets[fi] == 0 {
-                l = l with { ins: push(l.ins, Ins { op: 65, a: 0, b: 0, c: 0, imm: 0, args: [] }) };
-            } else {
+        } else if len(l.ins) > 0 {
+            // A terminal exhaustive match may end with a jump label.
+            // Jumping to code EOF is invalid SemCode; materialize a valid successor.
+            if l.ins[len(l.ins) - 1].op == 0 - 1 {
                 let g: i32 = l.reg;
                 l = l with { reg: g + 1,
                     ins: push(push(l.ins, Ins { op: 2, a: g, b: 0, c: 0, imm: 0, args: [] }),
@@ -1320,6 +1457,17 @@ fn lower_function(sem: Sem, fi: i32) -> FnIr {
             }
         }
     }
+    let mut named: Sequence(text) = [];
+    let mut si: i32 = 0;
+    for s in l.strings {
+        named = push(named, map_get(l.tnames, si, s));
+        si = si + 1;
+    }
+    let mut final_strings: Sequence(text) = [];
+    let mut final_ins: Sequence(Ins) = [];
+    let mut final_owns: Sequence(OwnPath) = [];
+    (final_strings, final_ins, final_owns) = canonical_string_order(named, l.ins, l.owns);
+    l = l with { strings: final_strings, ins: final_ins, owns: final_owns };
     let mut fams: Sequence(i32) = [];
     for t in ptys {
         let tk: i32 = sem.tys[t].k;

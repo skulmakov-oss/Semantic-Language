@@ -292,6 +292,88 @@ fn q4_trace_function(s: Sem, f: FnIr, spans: Sequence(SourceSpan)) -> Provenance
     return ProvenanceResult { ok: true, steps: lines, error: "" };
 }
 
+// C0 parity: the C0 parser interns identifier spellings into its arena symbol table
+// in parse order, and OWN0 FieldSymbol values are those ids. Type keywords, quad
+// literals, `_` and `Option` in type position are not interned; `assert` is;
+// the parser interns "Iterable" once a `for` body has been parsed. The body of each
+// `for` is taken from the parsed AST (the offset of its block's `{`), never guessed
+// from tokens: the iterable may itself contain braces (record literals, value `if`).
+fn c0_symbol_ids(toks: Sequence(Tok), nodes: Sequence(Node)) -> Map(text, i32) {
+    let mut body_open: Map(u32, bool) = map_empty();
+    for nd in nodes {
+        if nd.k == 42 {
+            body_open = map_set(body_open, nodes[nd.b].pos, true);
+        }
+    }
+    let mut ids: Map(text, i32) = map_empty();
+    let mut n: i32 = 0;
+    let mut depth: i32 = 0;
+    let mut for_bodies: Sequence(i32) = [];
+    let mut i: i32 = 0;
+    while i < len(toks) {
+        let t: Tok = toks[i];
+        let mut w: text = "";
+        let mut type_word: bool = false;
+        if t.kind == 10 || t.kind == 11 || t.kind == 54 || t.kind == 55 {
+            w = t.word;
+            type_word = true;
+        } else if t.kind == 2 {
+            w = t.word;
+            if w == "_" || w == "N" || w == "F" || w == "T" || w == "S" {
+                w = "";
+            } else if w == "quad" || w == "Sequence" || w == "Map" {
+                type_word = true;
+            } else if w == "Option" {
+                if i + 1 < len(toks) {
+                    if toks[i + 1].kind == 20 { type_word = true; }
+                }
+            }
+        }
+        // A type spelling is interned only where it is used as a name:
+        // a field name (`text: ...`) or a field access (`.text`).
+        if type_word {
+            let mut as_name: bool = false;
+            if i + 1 < len(toks) {
+                if toks[i + 1].kind == 25 { as_name = true; }
+            }
+            if i > 0 {
+                if toks[i - 1].kind == 46 { as_name = true; }
+            }
+            if !as_name { w = ""; }
+        }
+        if t.kind == 6 {
+            w = "assert";
+        } else if t.kind == 22 {
+            if map_contains(body_open, t.pos) {
+                for_bodies = push(for_bodies, depth);
+            }
+            depth = depth + 1;
+        } else if t.kind == 23 {
+            depth = depth - 1;
+            if len(for_bodies) > 0 {
+                if for_bodies[len(for_bodies) - 1] == depth {
+                    let mut kept: Sequence(i32) = [];
+                    let mut j: i32 = 0;
+                    while j + 1 < len(for_bodies) {
+                        kept = push(kept, for_bodies[j]);
+                        j = j + 1;
+                    }
+                    for_bodies = kept;
+                    w = "Iterable";
+                }
+            }
+        }
+        if w != "" {
+            if !map_contains(ids, w) {
+                ids = map_set(ids, w, n);
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return ids;
+}
+
 fn compile_source_with_origins(src: text, files: Sequence(SourceFile), spans: Sequence(SourceSpan)) -> text {
     let source_error: text = q4_source_bundle_error(src, files, spans, true);
     if source_error != "" {
@@ -323,10 +405,11 @@ fn compile_source_with_origins(src: text, files: Sequence(SourceFile), spans: Se
         return "error unsupported @0: lowering precondition: " + boundary;
     }
     let authorized: Sem = sem;
+    let symids: Map(text, i32) = c0_symbol_ids(lx.toks, p.nodes);
     let mut fns: Sequence(FnIr) = [];
     let mut i: i32 = 0;
     while i < len(authorized.prog.funcs) {
-        let fn_ir: FnIr = lower_function(authorized, i);
+        let fn_ir: FnIr = lower_function_with_symbols(authorized, i, symids);
         let trace: ProvenanceResult = q4_trace_function(authorized, fn_ir, spans);
         if !trace.ok { return "error unsupported @0: proof provenance: " + trace.error; }
         fns = push(fns, fn_ir);

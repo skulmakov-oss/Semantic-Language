@@ -1,0 +1,24 @@
+record R {
+    x: i32,
+}
+
+fn walk() -> i32 {
+    let mut s: i32 = 0;
+    for r in [R { x: 1 }] {
+        let marker: i32 = r.x;
+        s = s + marker;
+    }
+    return s;
+}
+
+record Later {
+    marker: i32,
+    other: i32,
+}
+
+fn main() {
+    let a: Later = Later { marker: 1, other: 2 };
+    let b: Later = a with { marker: walk() };
+    assert(b.marker == 1);
+    return;
+}
