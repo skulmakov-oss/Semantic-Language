@@ -937,20 +937,22 @@ fn lower_expr(l0: L, id: i32) -> (L, i32) {
         l = l with {
             reg: eid + 1,
             labels: then_l + 3,
-            tnames: map_set(l.tnames, slot, "__if_expr_" + to_text(eid) + "_result"),
+            tnames: if t != 0 { map_set(l.tnames, slot, "__if_expr_" + to_text(eid) + "_result") } else { l.tnames },
             ins: push(push(push(l.ins, Ins { op: 49, a: a, b: 0, c: 0, imm: then_l, args: [] }),
                 Ins { op: 48, a: 0, b: 0, c: 0, imm: else_l, args: [] }),
                 Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: then_l, args: [] })
         };
         let mut r: i32 = 0;
+        // A unit-valued if has no result local (sema allocates none): no store, no load.
         (l, r) = lower_expr(l, nd.b);
-        l = l with { ins: push(push(push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }),
-            Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
+        if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+        l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
             Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: else_l, args: [] }) };
         (l, r) = lower_expr(l, nd.c);
-        l = l with { ins: push(push(push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }),
-            Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
+        if t != 0 { l = l with { ins: push(l.ins, Ins { op: 5, a: slot, b: r, c: 0, imm: 0, args: [] }) }; }
+        l = l with { ins: push(push(l.ins, Ins { op: 48, a: 0, b: 0, c: 0, imm: end_l, args: [] }),
             Ins { op: 0 - 1, a: 0, b: 0, c: 0, imm: end_l, args: [] }) };
+        if t == 0 { return (l, 0); }
         d = l.reg;
         return (l with { reg: d + 1, ins: push(l.ins, Ins { op: 4, a: d, b: slot, c: 0, imm: 0, args: [] }) }, d);
     }
