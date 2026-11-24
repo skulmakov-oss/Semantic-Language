@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Probe suite for Bootstrap Contract v3 (SHF-0R P).
+"""Probe suite for Bootstrap Contract v3 (SHF-0R P), kept as historical regression under active v4.
+
+v3 is registered and inactive; tests/test_contract_v4_probes.py covers the active protocol. The D1/D2
+authority probes still hold unchanged (v4 did not change the subset). The v3 envelope and "v3 active"
+probes now assert that v3 is preserved and superseded, never that it is active.
 
 Each probe asserts one property of the v3 contract. "Substantive" probes ignore the generic
 frozen-digest error, so a pass or failure names the actual authority / capability defect and
@@ -18,6 +22,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode = True  # bootstrap/** is protected: never leave __pycache__ there
 sys.path.insert(0, str(ROOT / "bootstrap"))
 
 import validate_contract as vc  # noqa: E402
@@ -43,7 +48,7 @@ AUTHORITIES = {
 }
 TEXT_OPS = ["text_len", "text_byte_at", "text_slice", "text_starts_with", "text_ends_with",
             "text_find", "text_is_empty"]
-ENVELOPE = "--envelope trusted-compiler --max-calls 50000 --max-steps 20000000"
+V3_DIGEST = "26309eb87a8e765407d771f174e0f37966d600b178f4c0d164cfbe351e3925f6"
 
 contract = tomllib.loads((ROOT / vc.CONTRACT).read_text(encoding="utf-8"))
 reference = tomllib.loads((ROOT / contract["c0"]["reference_manifest"]).read_text(encoding="utf-8"))
@@ -193,24 +198,23 @@ def d3_verified_local_defaults():
     assert "10,000,000" not in sec, "§10.5 still states 10,000,000 default steps"
 
 
-def d3_trusted_compiler_envelope_is_explicit():
+def d3_v3_envelope_is_recorded_as_superseded():
     sec = section_10_5()
-    assert ENVELOPE in sec
-    assert "not defaults" in sec and "explicit" in sec, "envelope must be marked an explicit selection"
-    default_line = next(l for l in sec.splitlines() if "VerifiedLocal" in l and "100,000" in l)
-    assert "50000" not in default_line and "20000000" not in default_line
+    assert "--max-calls 50000" not in sec and "--max-steps 20000000" not in sec, "the v3 envelope is no longer declared"
+    assert "v3 declared 20,000,000 steps and 50,000 calls" in doc, "the v3 envelope is recorded as history"
+    assert "not defaults" in sec and "explicit" in sec, "the active envelope stays an explicit selection"
 
 
 # ---------------------------------------------------------------- protocol
-def p_v3_is_active_with_exact_digest():
-    assert vc.PROTOCOL == V3 and contract["protocol"] == V3
-    assert vc.FROZEN_DIGESTS.get(V3) == vc.frozen_digest(contract, reference, subset, doc)
+def p_v3_registered_and_inactive():
+    assert vc.PROTOCOL != V3 and contract["protocol"] != V3
+    assert vc.FROZEN_DIGESTS.get(V3) == V3_DIGEST
     assert vc.read_frozen_digests(validator_source) == vc.FROZEN_DIGESTS
     assert errors() == [], errors()
 
 
-def p_v3_normative_mutation_rejected():
-    changed = f"a frozen value of {V3} changed"
+def p_normative_mutation_rejected_under_active_protocol():
+    changed = f"a frozen value of {vc.PROTOCOL} changed"
     for kw in (dict(s=subset.replace("ADMITTED", "ADMITTED ", 1).replace("## 3. Minimality", "## 3. Maximality")),
                dict(d=doc.replace("byte-equality-v1", "normalized-equality-v1", 1)),
                dict(d=doc.replace("100,000", "999,999", 1)),
@@ -275,7 +279,7 @@ def p_host_capability_escalation_rejected():
     # claiming the capability gap closed, or admitting a forbidden input, is bound by the v3 digest
     for fn in (lambda c: c["capabilities"]["artifact_write"].update(available_at_c0=True),
                lambda c: c["capabilities"]["environment_read"].update(permitted=True, available_at_c0=True)):
-        assert any(f"a frozen value of {V3} changed" in e for e in errors(c=with_contract(fn)))
+        assert any(f"a frozen value of {vc.PROTOCOL} changed" in e for e in errors(c=with_contract(fn)))
 
 
 PROBES = [
@@ -284,8 +288,8 @@ PROBES = [
     d1_coordinated_authority_substitution_rejected,
     d2_bsf103_excludes_bitwise_shifts_conversions, d2_bsf107_is_the_single_candidate,
     d2_implicit_promotion_rejected,
-    d3_verified_local_defaults, d3_trusted_compiler_envelope_is_explicit,
-    p_v3_is_active_with_exact_digest, p_v3_normative_mutation_rejected, p_v1_v2_digests_preserved,
+    d3_verified_local_defaults, d3_v3_envelope_is_recorded_as_superseded,
+    p_v3_registered_and_inactive, p_normative_mutation_rejected_under_active_protocol, p_v1_v2_digests_preserved,
     p_c0_identity_substitution_rejected, p_runtime_registry_mutation_rejected,
     p_source_set_mutation_rejected, p_host_capability_escalation_rejected,
 ]
@@ -300,7 +304,7 @@ def main():
         except Exception as exc:  # a probe that cannot even run is a failure, not a skip
             failed += 1
             print(f"[test:FAIL] {probe.__name__}: {type(exc).__name__}: {str(exc)[:300]}")
-    print(f"\nSummary: {len(PROBES) - failed}/{len(PROBES)} Bootstrap Contract v3 probes PASSED.")
+    print(f"\nSummary: {len(PROBES) - failed}/{len(PROBES)} Bootstrap Contract v3 historical probes PASSED under active v4.")
     return 1 if failed else 0
 
 

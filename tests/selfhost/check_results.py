@@ -75,14 +75,40 @@ def classify(out):
     return {"kind": "no_output" if not out.strip() else "other"}
 
 
+METRICS_SCHEMA = "semantic.run.metrics/0.1"
+
+
 def provenance(stderr):
+    """The executor's own report of a run, re-read from raw stderr: the `smc run-smc` metrics line (the
+    Bootstrap Contract v4 executor) or the rev5 driver's provenance line (S2 engineering path only).
+    `completed` = the program ran to its end."""
     for line in reversed(stderr.decode("utf-8", "replace").splitlines()):
-        if line.startswith("{") and "stored_exec_provenance" in line:
-            try:
-                return json.loads(line)
-            except ValueError:
-                continue
+        if not line.startswith("{"):
+            continue
+        try:
+            j = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(j, dict):
+            continue
+        if j.get("schema") == METRICS_SCHEMA:
+            return {**j, "completed": j.get("outcome") == "ok"}
+        if "stored_exec_provenance" in line:
+            return {**j, "completed": j.get("outcome") == "executed_ok"}
     return None
+
+
+def ran(pv, sha_=None):
+    """smc run-smc passed the --expect-sha256 identity check and executed (any later phase); the rev5 driver
+    names the executed artifact itself."""
+    if pv.get("schema") == METRICS_SCHEMA:
+        return pv.get("phase_reached") in ("verify", "entry", "host_init", "execute")
+    return sha_ is not None and pv.get("executed_artifact_sha256") == sha_
+
+
+def pinned(name):
+    t = PINS["tools"][name]
+    return list(t.get("sha256_allowed") or [t["sha256"]])
 
 
 def norm(p):
@@ -189,15 +215,31 @@ def check(root, partial=False):
         exp_cmds[tag] = [str(a) for a in argv]
 
     # ---------------------------------------------------------------- preflight
-    for name in ("smc", "driver"):
+    s2_configured = "s2" in tools
+    ext = tools.get("executor") or {}
+    repro = ext.get("reproduction_build") is True
+    for name in ("smc", "executor") + (("driver",) if s2_configured else ()):
         t = tools.get(name) or {}
-        if t.get("sha256") != PINS["tools"][name]["sha256"]:
+        allowed = pinned(name)
+        if name == "executor" and repro:
+            allowed = [t.get("sha256")] if t.get("sha256") else []  # admitted by fingerprint below
+        if t.get("sha256") not in allowed:
             c.bad(f"preflight: {name} identity is not the pinned identity")
         p = pathlib.Path(t.get("path") or "")
         if t.get("path") and p.is_file():
-            if sha(p.read_bytes()) != PINS["tools"][name]["sha256"]:
-                c.bad(f"preflight: {name} at {p} no longer hashes to its pin")
+            if sha(p.read_bytes()) != t.get("sha256"):
+                c.bad(f"preflight: {name} at {p} no longer hashes to its recorded identity")
             c.facts.setdefault("tools_rechecked", []).append(name)
+    pins_ex = PINS["tools"]["executor"]
+    expect_cmd("preflight.executor_version", [tool("executor"), "version", "--json"])
+    try:
+        fp = json.loads(log("preflight.executor_version")).get("source_fingerprint") if exit_of("preflight.executor_version") == 0 else None
+    except ValueError:
+        fp = None
+    if fp != pins_ex["source_fingerprint"] or ext.get("source_fingerprint") != fp:
+        c.bad("preflight: the executor's logged source fingerprint is not the pinned admitted revision")
+    c.facts["executor"] = {"revision": pins_ex["revision"], "sha256": ext.get("sha256"), "source_fingerprint": fp,
+                           "binary_pinned": ext.get("sha256") in pinned("executor"), "reproduction_build": repro}
     c0 = pre.get("c0_checkout") or {}
     if tools.get("smc", {}).get("sha256") == PINS["tools"]["smc"]["sha256"]:
         expect_cmd("preflight.smc_version", [tool("smc"), "version", "--json"])
@@ -222,7 +264,6 @@ def check(root, partial=False):
     for (f, b), r in zip(entries, src.get("files", [])):
         if r.get("sha256") != sha(b):
             c.bad(f"preflight: snapshot file {f} differs from the recorded source")
-    s2_configured = "s2" in tools
     if s2_configured:
         if exit_of("preflight.s2_identity") != 0:
             c.bad("preflight: s2 --print-identity failed")
@@ -265,6 +306,9 @@ def check(root, partial=False):
         if exit_of(f"build.{name}.verify") != 0:
             c.bad(f"build: {name} was not admitted by sm-verify")
         expect_cmd(f"build.{name}.verify", [tool("smc"), "verify", P(rel)])
+        if exit_of(f"build.{name}.executor_verify") != 0:
+            c.bad(f"build: {name} was not admitted by the executor's sm-verify")
+        expect_cmd(f"build.{name}.executor_verify", [tool("executor"), "verify", P(rel)])
         if name == "C1":
             sidecar(c, rel, art)
             expect_cmd("build.C1.compile", [tool("smc"), "compile", P("snapshot/" + PINS["source_set"]["entry"]), "-o", P(rel)])
@@ -273,7 +317,7 @@ def check(root, partial=False):
         else:
             ex = g.get("execution") or {}
             tag = f"build.{name}.execute"
-            if ex.get("executor") != ("s2" if s2_configured else "driver"):
+            if ex.get("executor") != ("s2" if s2_configured else "smc-run-smc"):
                 c.bad(f"build: {name} executor does not match the declared configuration")
             env = PINS["envelopes"]["compiler"]
             prev_rel = f"gen/{prev.get('name') if prev else '?'}.smc"
@@ -301,19 +345,23 @@ def check(root, partial=False):
                 c.facts.setdefault("s2", {})[name] = {"containment_verdict": (rec.get("containment") or {}).get("verdict"),
                                                        "harness": (rec.get("harness") or {}).get("sha256") if isinstance(rec.get("harness"), dict) else rec.get("harness")}
             else:
-                expect_cmd(tag, [tool("driver"), P(prev_rel), "--expect-sha256", prev_sha, "--profile", "cli-read-only", "--root", P("snapshot"),
-                                 "--envelope", "trusted-compiler", "--max-steps", env["max_steps"], "--max-calls", env["max_calls"],
+                expect_cmd(tag, [tool("executor"), "run-smc", P(prev_rel), "--expect-sha256", f"sha256:{prev_sha}", "--profile", "cli-read-only",
+                                 "--root", P("snapshot"), "--envelope", "trusted-compiler", "--max-steps", env["max_steps"], "--max-calls", env["max_calls"],
                                  "--max-frames", env["max_frames"], "--metrics", "json", "--", entry])
                 stderr, stdout = log(tag, "stderr"), log(tag)
                 if exit_of(tag) != 0:
-                    c.bad(f"build: {name}: driver exit code is not 0")
+                    c.bad(f"build: {name}: executor exit code is not 0")
             cl = classify(stdout)
             if cl.get("semcode") != art:
                 c.bad(f"build: {name}: artifact is not the decoded stdout of the producing run")
             pv = provenance(stderr) or {}
-            if pv.get("outcome") != "executed_ok" or pv.get("executed_artifact_sha256") != (prev or {}).get("sha256"):
-                c.bad(f"build: {name}: executor provenance does not bind the previous generation")
+            want_q = {"max_steps": env["max_steps"], "max_calls": env["max_calls"], "max_frames": env["max_frames"]}
+            got_q = {k: (pv.get("effective_quotas") or {}).get(k) for k in want_q}
+            if not pv.get("completed") or pv.get("phase_reached") != "execute" or not ran(pv, prev_sha) or got_q != want_q:
+                c.bad(f"build: {name}: executor provenance does not bind the previous generation under the declared envelope")
             c.facts.setdefault("counters", {})[name] = pv.get("counters")
+            c.facts.setdefault("effective_quotas", {})[name] = pv.get("effective_quotas")
+            c.facts.setdefault("outcomes", {})[name] = pv.get("outcome")
         gens[name] = {"sha256": sha(art), "bytes": len(art), "data": art}
         prev = g
     if len(gens) < 2:
@@ -367,6 +415,20 @@ def check(root, partial=False):
         elif norm_argv(cmds[tag].get("argv") or []) != norm_argv(exp_cmds[tag]):
             c.bad(f"commands: {tag} did not run the expected command line")
     c.facts["commands"] = len(cmds)
+
+    # ---------------------------------------------------------------- Bootstrap Contract record
+    # Only a full-scope attempt by a hash-pinned executor yields a v4 qualification record; the canonical
+    # gate's verdict on it is part of this checker's verdict. A reproduction build (unpinned binary whose
+    # identity rests on the operator's own build) yields reproduction identities for the Seal, never a record.
+    c.facts["v4_record"] = None
+    if not c.violations and c.facts.get("scope") == "full":
+        if (c.facts.get("executor") or {}).get("binary_pinned"):
+            record = bootstrap_record(c)
+            c.facts["v4_record"] = record
+            for e in contract_check(record):
+                c.bad(f"contract: {e}")
+        else:
+            c.facts["seal_reproduction"] = seal_reproduction(c)
 
     # ---------------------------------------------------------------- inventory
     for tag in cmds:
@@ -436,14 +498,15 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, expect_cmd, 
         for gname in gl + [gl[-1] + ".repeat"]:
             base = gname.split(".")[0]
             tag = f"diff.{rid}.{gname}"
-            expect_cmd(tag, [tool("driver"), P(f"gen/{base}.smc"), "--expect-sha256", gens[base]["sha256"], "--profile", "cli-read-only",
-                             "--root", P(f"fixtures/{rid}/root"), "--envelope", "trusted-compiler", "--max-steps", fenv["max_steps"],
-                             "--max-calls", fenv["max_calls"], "--max-frames", fenv["max_frames"], "--metrics", "json", "--", src_entry])
+            expect_cmd(tag, [tool("executor"), "run-smc", P(f"gen/{base}.smc"), "--expect-sha256", "sha256:" + gens[base]["sha256"],
+                             "--profile", "cli-read-only", "--root", P(f"fixtures/{rid}/root"), "--envelope", "trusted-compiler",
+                             "--max-steps", fenv["max_steps"], "--max-calls", fenv["max_calls"], "--max-frames", fenv["max_frames"],
+                             "--metrics", "json", "--", src_entry])
             so = log(tag)
             cl = classify(so)
-            cl["driver"] = provenance(log(tag, "stderr")) or {}
+            cl["provenance"] = provenance(log(tag, "stderr")) or {}
             cl["exit"] = exit_of(tag)
-            if cl["driver"].get("executed_artifact_sha256") != gens[base]["sha256"]:
+            if not ran(cl["provenance"], gens[base]["sha256"]):
                 c.bad(f"differential: {rid}/{gname}: the run is not bound to generation {base}")
             if cl["kind"] == "semcode":
                 rel = f"fixtures/{rid}/{gname}.smc"
@@ -470,12 +533,12 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, expect_cmd, 
         expect_cmd(f"exec.{h[:16]}.verify", [tool("smc"), "verify", P(rel)])
         if exit_of(f"exec.{h[:16]}.verify") == 0:
             expect_cmd(f"exec.{h[:16]}.run_smc", [tool("smc"), "run-smc", P(rel)])
-            expect_cmd(f"exec.{h[:16]}.driver_pure", [tool("driver"), P(rel), "--expect-sha256", h, "--profile", "pure", "--root", P("fixtures"),
-                                                      "--envelope", "trusted-compiler", "--max-steps", penv["max_steps"], "--max-calls", penv["max_calls"],
-                                                      "--max-frames", penv["max_frames"], "--metrics", "json"])
-            pure = provenance(log(f"exec.{h[:16]}.driver_pure", "stderr")) or {}
-            if pure.get("executed_artifact_sha256") != h:
-                c.bad(f"differential: the driver run of {h[:16]} executed a different artifact")
+            expect_cmd(f"exec.{h[:16]}.executor_pure", [tool("executor"), "run-smc", P(rel), "--expect-sha256", f"sha256:{h}", "--profile", "pure",
+                                                        "--root", P("fixtures"), "--envelope", "trusted-compiler", "--max-steps", penv["max_steps"],
+                                                        "--max-calls", penv["max_calls"], "--max-frames", penv["max_frames"], "--metrics", "json"])
+            pure = provenance(log(f"exec.{h[:16]}.executor_pure", "stderr")) or {}
+            if not ran(pure, h):
+                c.bad(f"differential: the executor run of {h[:16]} did not execute the declared artifact")
     muts = {m.get("name"): m for m in (d.get("source_mutations") or [])}
     if sorted(muts) != sorted(MUTATIONS):
         c.bad("differential: source mutation set differs from the pinned mutations")
@@ -498,6 +561,13 @@ def check_differential(c, d, gens, snapshot, snap_id, log, exit_of, expect_cmd, 
         c.bad("differential: recorded status disagrees with the evidence")
     c.facts["fixtures"] = len(rows)
     c.facts["distinct_artifacts"] = len(artifacts)
+    # corpus identity and case classes for the Bootstrap Contract record (rows were bound to the repository above)
+    inventory = sorted([r.get("id"), r.get("expect"), sorted((r.get("file_sha256") or {}).items())] for r in rows)
+    c.facts["input_corpus"] = "sha256:" + sha(json.dumps(inventory, separators=(",", ":")).encode("utf-8"))
+    c.facts["case_classes"] = {
+        "positive": sum(1 for r in rows if r.get("expect") == "ok"),
+        "negative": sum(1 for r in rows if str(r.get("expect")).startswith(("reject:", "fault:"))),
+        "boundary": sum(1 for r in rows if str(r.get("expect")).startswith("trap:"))}
 
 
 def recompute_row(expect, ref, outs, gl, exit_of, log):
@@ -513,8 +583,8 @@ def recompute_row(expect, ref, outs, gl, exit_of, log):
         f.append("nondeterministic")
     for o in main + [rep]:
         k = o.get("kind")
-        drv = o.get("driver") or {}
-        completed = o.get("exit") == 0 and drv.get("outcome") == "executed_ok"
+        drv = o.get("provenance") or {}
+        completed = o.get("exit") == 0 and drv.get("completed") is True
         if expect == "ok" or expect.startswith("trap:"):
             if k != "semcode" or not completed:
                 f.append("no SemCode from a completed compiler run")
@@ -527,16 +597,16 @@ def recompute_row(expect, ref, outs, gl, exit_of, log):
                 continue
             run_exit = exit_of(f"exec.{h}.run_smc")
             run_text = (log(f"exec.{h}.run_smc") + log(f"exec.{h}.run_smc", "stderr")).decode("utf-8", "replace")
-            pure = provenance(log(f"exec.{h}.driver_pure", "stderr")) or {}
+            pure = provenance(log(f"exec.{h}.executor_pure", "stderr")) or {}
             if expect == "ok":
-                if run_exit != 0 or exit_of(f"exec.{h}.driver_pure") != 0 or pure.get("outcome") != "executed_ok":
+                if run_exit != 0 or exit_of(f"exec.{h}.executor_pure") != 0 or pure.get("completed") is not True:
                     f.append("run failed")
             else:
                 frag = expect.split(":", 1)[1]
                 if run_exit in (0, None) or frag not in run_text:
                     f.append("no expected trap on smc run-smc")
-                if pure.get("phase_reached") != "execute" or pure.get("outcome") in (None, "executed_ok") or frag not in (pure.get("error") or ""):
-                    f.append("no expected trap on the driver")
+                if pure.get("phase_reached") != "execute" or pure.get("outcome") is None or pure.get("completed") or frag not in (pure.get("error") or ""):
+                    f.append("no expected trap on the executor")
         elif expect.startswith("reject:"):
             _, cat, frag = expect.split(":", 2)
             if k != "diagnostic" or o.get("category") != cat or frag not in o.get("message", "") or not completed:
@@ -550,12 +620,88 @@ def recompute_row(expect, ref, outs, gl, exit_of, log):
     return sorted(set(f))
 
 
+PLATFORMS = {("win32", "AMD64"): "x86_64-pc-windows-msvc"}
+LIMITATIONS = [
+    "one host and one operator produced this record; independent reproduction is recorded in the Seal candidate, not here",
+    "platform scope is the C0 platform only (no cross-platform claim; SHF-17 is separate)",
+    "C0 parity and the fixed point are shown for the qualification corpus and S; constructs outside them are not covered",
+    "the --expect-sha256 binding proves which bytes ran, not who produced them; no signing",
+    "VM quotas bound steps, calls and frames; memory and wall-clock are not bounded by the protocol",
+]
+
+
+def bootstrap_record(c):
+    """The Bootstrap Contract evidence record, built only from facts this checker verified (no recorded verdict
+    is copied). Returns None unless the attempt passed in full scope."""
+    f = c.facts
+    if f.get("scope") != "full" or not f.get("c1_equals_c2") or "C2" not in (f.get("generations") or {}):
+        return None
+    pre = json.loads((c.root / "preflight.json").read_text(encoding="utf-8"))
+    plat = pre.get("platform") or {}
+    run = (f.get("counters") or {}).get("C2") or {}
+    quotas = (f.get("effective_quotas") or {}).get("C2") or {}
+    ex = f.get("executor") or {}
+    cls = f.get("case_classes") or {}
+    revision = ex.get("revision") or ""
+    return {
+        "contract_protocol": "shf0-bootstrap-contract-v4", "comparison_rule": "byte-equality-v1",
+        "c0_identity": f"{PINS['c0']['repository']}@{PINS['c0']['sha']}",
+        "source_set_identity": f.get("source_set_identity"),
+        "c1_artifact_hash": "sha256:" + f["generations"]["C1"]["sha256"],
+        "c2_artifact_hash": "sha256:" + f["generations"]["C2"]["sha256"],
+        "c1_verifier_binding": "admitted", "c2_verifier_binding": "admitted", "comparison_result": "equal",
+        "platform": PLATFORMS.get((plat.get("sys_platform"), plat.get("machine")), f"{plat.get('machine')}-{plat.get('sys_platform')}"),
+        "verifier_contract": f"{revision}:crates/sm-verify", "runtime_contract": f"{revision}:crates/sm-vm",
+        "remaining_rust_responsibilities": ["oracle", "host_mechanics", "verifier_runtime_foundation"],
+        "input_corpus": f.get("input_corpus"), "input_corpus_size": f.get("fixtures"),
+        "positive_cases": {"count": cls.get("positive"), "result": "pass"},
+        "negative_cases": {"count": cls.get("negative"), "result": "pass"},
+        "boundary_cases": {"count": cls.get("boundary"), "result": "pass"},
+        "mutation_proof": "detected", "unexplained_deltas": 0, "limitations": LIMITATIONS,
+        "c0_checkout_head": (pre.get("c0_checkout") or {}).get("head"),
+        "c0_checkout_clean": (pre.get("c0_checkout") or {}).get("clean"),
+        "executor_identity": f"{revision}:crates/smc-cli",
+        "effective_quotas": {k: quotas.get(k) for k in ("max_steps", "max_calls", "max_frames")},
+        "c1_execution": {"outcome": (f.get("outcomes") or {}).get("C2"),
+                         "counters": {k: run.get(k) for k in ("steps", "calls", "peak_frames")}},
+        "determinism": "identical",
+    }
+
+
+def seal_reproduction(c):
+    """Identities a reproduction contributes to a Seal candidate (BOOTSTRAP_CONTRACT §10.9). host_id and
+    operator are added by the reproducing operator; the executor binary is operator-attested."""
+    f = c.facts
+    return {"c0_identity": f"{PINS['c0']['repository']}@{PINS['c0']['sha']}",
+            "source_set_identity": f.get("source_set_identity"),
+            "c1_artifact_hash": "sha256:" + f["generations"]["C1"]["sha256"],
+            "c2_artifact_hash": "sha256:" + f["generations"]["C2"]["sha256"],
+            "comparison_result": "equal" if f.get("c1_equals_c2") else "different",
+            "executor": f.get("executor"), "executor_binary": "operator-built from the pinned revision (not hash-pinned)"}
+
+
+def contract_check(record):
+    """Runs the canonical gate bootstrap/validate_contract.py check_evidence (read, never modified)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bootstrap_validate_contract", REPO / "bootstrap" / "validate_contract.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.check_evidence(REPO, record)
+
+
 def write_outputs(c):
     ok = not c.violations
     f = c.facts
     success = ok and f.get("scope") == "full" and f.get("fixed_point_rule") == "c1c2" and f.get("c1_equals_c2") and f.get("c2_equals_c3")
+    record = f.get("v4_record")
+    if record is not None:
+        record_status = "valid" if ok else "rejected (see violations)"
+    else:
+        record_status = ("no record: reproduction build (see facts.seal_reproduction)" if f.get("seal_reproduction")
+                         else "no record: the attempt did not pass in full scope")
     rep = {"schema": "semantic.selfhost.report/1", "attempt": str(c.root), "verdict": "PASS" if ok else "FAIL",
-           "engineering_self_host_success": bool(success), "violations": c.violations, "facts": f}
+           "engineering_self_host_success": bool(success), "v4_qualification_record": bool(ok and record is not None),
+           "violations": c.violations, "facts": f, "bootstrap_record": record, "bootstrap_record_check_evidence": record_status}
     (c.root / "report.json").open("x", encoding="utf-8").write(json.dumps(rep, indent=1, sort_keys=True) + "\n")
     lines = [f"# Self-host attempt report: {rep['verdict']} (scope {f.get('scope')}, fixed-point rule {f.get('fixed_point_rule')})", "",
              f"- engineering self-host success (full scope, C1 == C2 == C3): {rep['engineering_self_host_success']}",
@@ -564,6 +710,7 @@ def write_outputs(c):
         lines.append(f"- {k}: sha256 {g['sha256']} ({g['bytes']} bytes); counters {(f.get('counters') or {}).get(k)}")
     lines += [f"- C1 == C2 (byte-equality-v1): {f.get('c1_equals_c2')}", f"- C2 == C3: {f.get('c2_equals_c3')}",
               f"- fixtures: {f.get('fixtures')}; distinct SemCode artifacts: {f.get('distinct_artifacts')}",
+              f"- Bootstrap Contract v4 record (check_evidence): {record_status}",
               f"- violations: {len(c.violations)}"] + [f"  - {v}" for v in c.violations[:50]]
     (c.root / "summary.md").open("x", encoding="utf-8").write("\n".join(lines) + "\n")
 
@@ -626,12 +773,11 @@ def selftest(src, scratch):
         mutate_json(r / "differential.json", lambda o: o.__setitem__("rows", [x for x in o["rows"] if x["id"] != first_ok]))
 
     def wrong_generation(r):
-        # the C2 run of a fixture actually executed C1 (argv and provenance both say so)
+        # the C2 run of a fixture actually executed C1 (its command line names C1 and C1's identity)
         tag = f"diff.{first_ok}.C2"
-        c1 = json.loads((r / "build.json").read_text())["generations"][0]["sha256"]
-        edit_command(r, tag, lambda e: e.__setitem__("argv", [e["argv"][0], e["argv"][1].replace("C2.smc", "C1.smc")] + e["argv"][2:]))
-        se = (r / "logs" / f"{tag}.stderr").read_bytes().replace(b'"executed_artifact_sha256":"', b'"executed_artifact_sha256":"x', 1)
-        rewrite_log(r, tag, "stderr", se)
+        gens_ = json.loads((r / "build.json").read_text())["generations"]
+        c1, c2 = gens_[0]["sha256"], gens_[1]["sha256"]
+        edit_command(r, tag, lambda e: e.__setitem__("argv", [a.replace("C2.smc", "C1.smc").replace(c2, c1) for a in e["argv"]]))
 
     injections = {
         "artifact_byte_flip": lambda r: flip_byte(r / "gen" / "C2.smc"),
@@ -661,6 +807,14 @@ def selftest(src, scratch):
         "differential_null": lambda r: (r / "differential.json").write_text("null\n"),
         "differential_single_generation": lambda r: mutate_json(r / "differential.json", lambda o: o.__setitem__("generations", ["C2"])),
         "unexpected_command": add_extra_command,
+        # the producing run of C2 did not complete (its own metrics say so) although stdout is intact
+        "executor_not_completed": lambda r: rewrite_log(r, "build.C2.execute", "stderr", (r / "logs" / "build.C2.execute.stderr").read_bytes().replace(b'"outcome":"ok"', b'"outcome":"trap"')),
+        # the producing run of C2 used a smaller envelope than the declared one
+        "executor_envelope_changed": lambda r: rewrite_log(r, "build.C2.execute", "stderr", (r / "logs" / "build.C2.execute.stderr").read_bytes().replace(b'"max_calls":2000000', b'"max_calls":1999999')),
+        "executor_fingerprint_forged": lambda r: rewrite_log(r, "preflight.executor_version", "stdout", (r / "logs" / "preflight.executor_version.stdout").read_bytes().replace(b'"source_fingerprint": "', b'"source_fingerprint": "0')),
+        "executor_admission_missing": lambda r: edit_command(r, "build.C2.executor_verify", lambda e: e.__setitem__("exit", 1)),
+        # an otherwise clean attempt whose contract record the canonical gate rejects (platform outside C0's scope)
+        "record_rejected_by_contract": lambda r: mutate_json(r / "preflight.json", lambda o: o["platform"].__setitem__("machine", "ARM64")),
     }
     if s2:
         injections["s2_record_not_accepted"] = lambda r: mutate_json(r / "s2" / "build.C2.execute" / "s2_record.json", lambda o: o.__setitem__("accepted", False))

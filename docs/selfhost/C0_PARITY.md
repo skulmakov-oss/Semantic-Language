@@ -6,7 +6,7 @@ Checked by byte comparison against the pinned C0 (`skulmakov-oss/Semantic@1d1e76
 
 ## Why
 
-Bootstrap Contract v3 fixes `C1 = C0(S)`, `C2 = C1(S)` and `C1.smc == C2.smc` under
+Bootstrap Contracts v3 and v4 fix `C1 = C0(S)`, `C2 = C1(S)` and `C1.smc == C2.smc` under
 `byte-equality-v1` ([BOOTSTRAP_CONTRACT.md §10.4](../BOOTSTRAP_CONTRACT.md)). C1 is produced by the
 Rust code generator of C0; C2 is produced by the Semantic compiler. The two artifacts can only be equal
 if the Semantic compiler emits exactly the bytes C0 emits for the same source.

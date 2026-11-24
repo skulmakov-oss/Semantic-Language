@@ -7,8 +7,18 @@
 #   - the list is strictly ascending by UTF-8 bytes; no duplicates (case-insensitive);
 #   - an unsorted list is rejected, never silently re-sorted.
 #
-# The list is empty until compiler source exists (SHF-10 onward).
+# The compiler entry point is compiler/main.sm; every module it imports is listed (SHF-15/16).
 
 protocol = "shf0-source-set-v1"
 root = "compiler"
-files = []
+files = [
+    "compiler/ast.sm",
+    "compiler/bytes.sm",
+    "compiler/driver.sm",
+    "compiler/lexer.sm",
+    "compiler/lower.sm",
+    "compiler/main.sm",
+    "compiler/parser.sm",
+    "compiler/sema.sm",
+    "compiler/semcode.sm",
+]

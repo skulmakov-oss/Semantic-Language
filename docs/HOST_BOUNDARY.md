@@ -112,6 +112,8 @@ Forbidden host logic (any occurrence is `HOST_LOGIC_LEAK`): tokenization, parsin
 binding, typechecking, IR selection, lowering, opcode selection, SemCode construction, diagnostic
 meaning, compiler ordering decisions.
 
-Bootstrap Contract v2 permits the existing trusted-compiler execution path with Steps
-20,000,000, Calls 50,000 and Frames 256. This is not an authorization to widen ordinary
-application quotas, alter capability checks or execute unverified artifacts.
+Bootstrap Contract v4 permits the trusted-compiler execution of the stored, admitted C1 through
+the admitted executor (`smc run-smc`, [BOOTSTRAP_CONTRACT.md §10.5](./BOOTSTRAP_CONTRACT.md)) with
+Steps 150,000,000, Calls 2,000,000 and Frames 256 (Bootstrap Contracts v2 and v3 declared Steps
+20,000,000 and Calls 50,000). This is not an authorization to widen ordinary application quotas,
+alter capability checks or execute unverified artifacts.

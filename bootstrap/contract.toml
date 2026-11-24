@@ -1,9 +1,9 @@
-# SHF-0 executable bootstrap contract (Bootstrap Contract v3).
+# SHF-0 executable bootstrap contract (Bootstrap Contract v4).
 # Normative prose: docs/BOOTSTRAP_CONTRACT.md. Validator: bootstrap/validate_contract.py.
 # Any change to a frozen value below is a contract revision (bump `protocol`), never an edit
 # made to fit a failed bootstrap run.
 
-protocol = "shf0-bootstrap-contract-v3"
+protocol = "shf0-bootstrap-contract-v4"
 status = "frozen"
 
 # ---------------------------------------------------------------- C0
@@ -64,9 +64,32 @@ forbidden = [
 [fixed_point]
 c1 = "C0(S)"
 c2 = "C1(S)"
-admission_required = ["C1", "C2"]   # both admitted by sm-verify
-executed = ["C1"]                   # only admitted C1 runs (on sm-vm) to produce C2
+admission_required = ["C1", "C2"]   # both admitted by the executor's sm-verify (and by C0's)
+executed = ["C1"]                   # only the stored, admitted C1 runs (through [executor]) to produce C2
 comparison_rule = "byte-equality-v1"
+
+# ---------------------------------------------------------------- stored-artifact execution
+# The admitted execution path for the stored C1 (BOOTSTRAP_CONTRACT.md §10.5). It is NOT C0: C0
+# compiles S into C1; this upstream revision admits the stored C1 bytes with its sm-verify and runs
+# them on its sm-vm. It never compiles: source is never reconstructed from S.
+[executor]
+repository = "skulmakov-oss/Semantic"
+sha = "421ea86a670fd251d4409d33a6b55ffe12be6cdb"
+component = "crates/smc-cli"
+command = "smc run-smc"                  # stored-artifact application mode
+spec = "docs/spec/cli.md"
+identity_binding = "expect-sha256"       # the bytes read must equal the declared C1 identity
+admission = "verify_semcode_token_with_quotas"
+profile = "cli-read-only"                # fs.read under --root, args, stdout; nothing else
+
+# The trusted-compiler VM envelope (owner-approved for v4). It applies only to [executor] runs of
+# C1 and C2 on S with --envelope trusted-compiler; VerifiedLocal application defaults are unchanged.
+# These are VM quotas (instructions, calls, frames). They are not a memory or wall-clock bound.
+[trusted_compiler_envelope]
+envelope = "trusted-compiler"
+max_steps = 150000000
+max_calls = 2000000
+max_frames = 256
 
 [comparison_rules.byte-equality-v1]
 definition = "C1.smc and C2.smc are equal as complete byte sequences"
@@ -93,12 +116,12 @@ upstream = "docs/spec/controlled_application_boundary_v0.md"
 
 [capabilities.verifier_execution]
 permitted = true
-available_at_c0 = true          # sm-verify admission of C1 and C2
+available_at_c0 = true          # sm-verify admission of C1 and C2 (at C0 and at [executor])
 upstream = "crates/sm-verify"
 
 [capabilities.vm_execution]
 permitted = true
-available_at_c0 = true          # sm-vm executes admitted C1 only
+available_at_c0 = true          # sm-vm executes admitted C1 only (the [executor] revision)
 upstream = "crates/sm-vm"
 
 [capabilities.environment_read]
@@ -177,6 +200,8 @@ required_fields = [
     # C0 checkout attestation: the producer MUST obtain it from verify_reference_checkout()
     # before the run; post-run validation checks the values, not that the check ran (§10.7)
     "c0_checkout_head", "c0_checkout_clean",
+    # v4: stored-artifact execution (BOOTSTRAP_CONTRACT.md §10.5, §10.7)
+    "executor_identity", "effective_quotas", "c1_execution", "determinism",
 ]
 # Values the qualification evidence must hold. input_corpus uses artifact_hash_format;
 # input_corpus_size is a positive integer; limitations is a non-empty list of non-empty strings.
@@ -185,12 +210,18 @@ required_fields = [
 qualification_results = { cases = "pass", mutation_proof = "detected", unexplained_deltas = 0 }
 # platform must be one of the C0 reference manifest's qualified platforms ([qualification].platform_scope).
 # verifier_contract / runtime_contract must name the pinned C0 components:
-verifier_contract = "skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2:crates/sm-verify"
-runtime_contract = "skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2:crates/sm-vm"
+# verifier_contract / runtime_contract name the components of [executor] (v4):
+verifier_contract = "skulmakov-oss/Semantic@421ea86a670fd251d4409d33a6b55ffe12be6cdb:crates/sm-verify"
+runtime_contract = "skulmakov-oss/Semantic@421ea86a670fd251d4409d33a6b55ffe12be6cdb:crates/sm-vm"
+# executor_identity = "<repository>@<sha>:<component>" of [executor]; effective_quotas must equal
+# [trusted_compiler_envelope] (max_steps, max_calls, max_frames); c1_execution = {outcome, counters}
+# of the run of C1 on S, each counter within the envelope; determinism = repeated runs identical.
+c1_execution_outcome = "ok"
+determinism_result = "identical"
 # remaining_rust_responsibilities: exactly these categories, each once (all remain in Rust at the first Seal).
 rust_responsibility_categories = ["oracle", "host_mechanics", "verifier_runtime_foundation"]
 # A record passes record validation only with these values. Seal acceptance additionally needs
-# independent reproduction (BOOTSTRAP_CONTRACT §10.7-§10.8).
+# independent reproduction and owner acceptance (BOOTSTRAP_CONTRACT §10.7-§10.9, [seal]).
 artifact_hash_format = "sha256:<64 lowercase hex>"   # c1/c2_artifact_hash, source_set_identity
 verifier_binding_admitted = "admitted"               # c1/c2_verifier_binding
 comparison_result_holds = "equal"                    # byte-equality-v1 also requires c1 hash == c2 hash
@@ -222,3 +253,17 @@ sha = "1d1e76c7509a03baa0133abaaa5819f5d32582b2"
 path = "docs/spec/compiler_u32_v0.md"
 contract_id = "semantic.compiler.u32/0.1"
 qualification = ["tests/shf3a_u32_qualification.rs"]
+
+# ---------------------------------------------------------------- Bootstrap Seal (§10.9)
+# States, in order. A state is reached only when every earlier one holds.
+#   validated  - the evidence record passes check_evidence (record structure and consistency)
+#   reproduced - an independent reproduction on a distinct host by a distinct operator, from the
+#                same C0 and S, reports identical C1 and C2 identities and an equal comparison
+#   accepted   - the owner accepted the reproduced Seal
+# Attestations (operator names, host ids, acceptance) are recorded, not cryptographically proven.
+[seal]
+protocol = "shf0-bootstrap-seal-v1"
+states = ["validated", "reproduced", "accepted"]
+reproduction_distinct = ["host_id", "operator"]
+reproduction_equal = ["c0_identity", "source_set_identity", "c1_artifact_hash", "c2_artifact_hash", "comparison_result"]
+acceptance_by = "owner"

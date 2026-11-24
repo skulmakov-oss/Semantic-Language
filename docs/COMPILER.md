@@ -176,8 +176,9 @@ Because `SIG0` is present, the verifier runs its definite-register-assignment pr
 
 ### Design constraint: Calls
 
-The VM meters cumulative **user-function calls**. Bootstrap Contract v2 authorizes the
-trusted-compiler path with 20,000,000 Steps, 50,000 Calls and 256 Frames. This does not change
+The VM meters cumulative **user-function calls**. Bootstrap Contract v4 authorizes the
+trusted-compiler execution of the stored compiler with 150,000,000 Steps, 2,000,000 Calls and 256
+Frames (earlier protocols declared 20,000,000 Steps and 50,000 Calls). This does not change
 the defaults for ordinary applications or release runtime borrows. Builtins such as
 `text_byte_at` and `map_get` are not counted as user calls. The compiler spends few calls per byte:
 - the lexer makes no calls per byte;
@@ -260,9 +261,10 @@ Historical result on 2026-10-14 (not fresh v2 qualification): **45/45 cases and 
 
 ### Resource measurements
 
-The following table is historical, not a current bound or fresh qualification result. Current
-runs use the approved `--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`
-with Frames 256. Actual per-case counters and effective quotas belong to each evidence record.
+The following table is historical, not a current bound or fresh qualification result. Self-compilation
+runs use the Bootstrap Contract v4 envelope `--envelope trusted-compiler --max-steps 150000000
+--max-calls 2000000 --max-frames 256`; corpus fixtures run with the envelopes in
+`tests/selfhost/pins.json`. Actual per-case counters and effective quotas belong to each evidence record.
 
 | Measure | Range |
 |---|---|
@@ -274,12 +276,12 @@ with Frames 256. Actual per-case counters and effective quotas belong to each ev
 
 ## 6. What is not demonstrated
 
-- **No Bootstrap Seal.** Self-compilation works and `C1 == C2` holds byte for byte (see
-  [selfhost/README.md](selfhost/README.md)). Normative qualification is still blocked by the empty
-  source-set manifest, the declared v3 envelope, the executor admission and independent reproduction.
-- **Self-compilation budget.** It needs 100,906,156 steps and 1,089,283 calls (36 frames), far above the
-  trusted-compiler envelope declared in Bootstrap Contract v3 §10.5 (20M / 50k). The engineering
-  workflow uses 150M / 2M / 256. No larger quota is normatively admitted.
+- **No accepted Bootstrap Seal.** Self-compilation works and `C1 == C2` holds byte for byte (see
+  [selfhost/README.md](selfhost/README.md)). Bootstrap Contract v4 binds the canonical source set, the
+  admitted stored-artifact executor and the envelope; a Seal is accepted only after an independent
+  reproduction and the owner's acceptance (BOOTSTRAP_CONTRACT §10.9).
+- **Self-compilation budget.** It needs 100,906,156 steps and 1,089,283 calls (36 frames): within the
+  Bootstrap Contract v4 envelope (150M / 2M / 256), above what v3 declared (20M / 50k).
 - **Byte identity with C0 is now an engineering property**, not only behavioural equivalence. For every
   accepted corpus program and for `S` the emitted SemCode equals the C0 compilation of the same source
   ([selfhost/C0_PARITY.md](selfhost/C0_PARITY.md)). Constructs outside the corpus are not covered by that evidence.

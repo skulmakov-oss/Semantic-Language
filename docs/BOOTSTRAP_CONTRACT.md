@@ -1,11 +1,11 @@
 # Bootstrap Contract
 
-Status: **BOOTSTRAP CONTRACT V3 — executable protocol `shf0-bootstrap-contract-v3` in §10**
+Status: **BOOTSTRAP CONTRACT V4 — executable protocol `shf0-bootstrap-contract-v4` in §10**
 
 This document fixes the vocabulary and invariants of the self-hosting proof. §1–§9 state them at
-architecture level; §10 records the executable protocol frozen by Bootstrap Contract v3, whose machine-readable
+architecture level; §10 records the executable protocol frozen by Bootstrap Contract v4, whose machine-readable
 form is [`bootstrap/contract.toml`](../bootstrap/contract.toml) and whose validator is
-[`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). A Semantic-written compiler implementation exists (advancing through frontend and aggregate phases), but full self-hosting fixed-point verification (C1/C2) is not yet completed.
+[`bootstrap/validate_contract.py`](../bootstrap/validate_contract.py). The Semantic-written compiler reaches the C1/C2 fixed point (see [selfhost/README.md](./selfhost/README.md)); a Bootstrap Seal is accepted only through §10.9.
 
 ## 1. Terms
 
@@ -101,9 +101,24 @@ Each qualification run records: reference repository and SHA, source-set identit
 corpus, comparison form, positive/negative/boundary results, mutation-check status, count of
 unexplained deltas (required to be 0), and explicit limitations.
 
-## 10. Executable Protocol (`shf0-bootstrap-contract-v3`)
+## 10. Executable Protocol (`shf0-bootstrap-contract-v4`)
 
-Protocol `shf0-bootstrap-contract-v3` succeeds `shf0-bootstrap-contract-v2`, which succeeded
+Protocol `shf0-bootstrap-contract-v4` succeeds `shf0-bootstrap-contract-v3`. It keeps C0, the
+source-set protocol, the fixed-point rule `byte-equality-v1` (`C1 = C0(S)`, `C2 = C1(S)`,
+`C1.smc == C2.smc`), the failure taxonomy and the host boundary, and changes four things:
+
+1. the canonical source set is populated (`bootstrap/source-set.toml`: the nine `compiler/*.sm` files);
+2. the stored C1 is executed through an admitted upstream execution path, `[executor]` (§10.5), and C1
+   and C2 are admitted by that revision's `sm-verify`;
+3. the trusted-compiler envelope for that execution is 150,000,000 steps, 2,000,000 calls and 256 frames
+   (§10.5); v3 declared 20,000,000 steps and 50,000 calls, which the measured self-compilation
+   (100,906,156 steps, 1,089,283 calls) exceeds;
+4. the evidence record binds the executor, the effective quotas, the C1 run and determinism (§10.7), and
+   the Bootstrap Seal has explicit states (§10.9).
+
+Historical v3 runs and records stay v3 facts; they are never re-read as v4 evidence.
+
+Protocol `shf0-bootstrap-contract-v3` succeeded `shf0-bootstrap-contract-v2`, which succeeded
 `shf0-bootstrap-contract-v1`. It keeps the qualified baseline C0
 (`skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`) and corrects three statements of v2:
 `BSF-101` (text inspection) and `BSF-103` (checked `u32` arithmetic and ordering) are bound to
@@ -145,13 +160,13 @@ framing makes path/content boundaries unambiguous.
 ### 10.3 Compiler interface
 
 `Compile(source_set, declared_config, declared_capability_results) -> (artifact, diagnostics, status)`
-with status `ok | rejected | failed`. Protocol v3 admits no configuration inputs. The artifact is
+with status `ok | rejected | failed`. Protocols v3 and v4 admit no configuration inputs. The artifact is
 SemCode under the upstream `sm-format` contract at C0. CLI spelling is not part of the contract.
 
 ### 10.4 Fixed point
 
-`C1 = C0(S)`, `C2 = C1(S)`. C1 and C2 are both admitted by `sm-verify`; only admitted C1 is
-executed (on `sm-vm`). Comparison rule: **`byte-equality-v1`** — `C1.smc` and `C2.smc` are equal
+`C1 = C0(S)`, `C2 = C1(S)`. C1 and C2 are both admitted by `sm-verify`; only the stored, admitted C1 is
+executed (on `sm-vm`, through `[executor]`, §10.5). Comparison rule: **`byte-equality-v1`** — `C1.smc` and `C2.smc` are equal
 as complete byte sequences. Basis: at C0 the SemCode format has canonical framing, its `DBG0`
 section holds only `(pc, line, col)`, no time/path/random field exists, and
 `tests/cli_artifact_lifecycle.rs` asserts byte-deterministic compile output.
@@ -163,10 +178,26 @@ See [HOST_BOUNDARY.md](./HOST_BOUNDARY.md) §9. Default environment inputs: none
 Execution quotas are defined upstream by `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2:docs/spec/quotas.md`:
 
 - VerifiedLocal defaults: Steps 100,000, Calls 16,384, Frames 256.
-- Declared trusted-compiler envelope: `--envelope trusted-compiler --max-calls 50000 --max-steps 20000000`, Frames 256. These are explicit selections for running the self-hosted compiler, not defaults.
+- Declared trusted-compiler envelope (v4): `--envelope trusted-compiler --max-steps 150000000 --max-calls 2000000 --max-frames 256`. These are explicit selections for running the self-hosted compiler through `[executor]`, not defaults; VerifiedLocal application defaults are unchanged.
 
-This protocol declares the envelope and adds no C0 capability. At C0, `quotas.md` lists the
-`--max-calls` override as a P3 candidate; that upstream status is an inherited limitation.
+**Stored-artifact execution (`[executor]`).** C1 is executed by `smc run-smc` (stored-artifact
+application mode, `docs/spec/cli.md`) built from `skulmakov-oss/Semantic@421ea86a670fd251d4409d33a6b55ffe12be6cdb`. It
+reads the stored bytes once, requires their SHA-256 to equal the declared C1 identity
+(`--expect-sha256`), admits exactly those bytes with `verify_semcode_token_with_quotas` under the one
+effective configuration, and runs the admitted token on `sm-vm` with the `cli-read-only` profile
+(`fs.read` under `--root`, `args`, `stdout`). It never compiles. This revision is the verifier and
+runtime authority of v4 (`verifier_contract` / `runtime_contract`, §10.7). It is not C0: C0 stays the
+compiler that produces C1, and its pin (`reference/semantic-reference.toml`) is unchanged.
+
+**What the limits are.** Steps, calls and frames are VM quotas enforced by `sm-vm` inside the executor;
+exceeding one stops the run (`quota_exceeded`) and no evidence is produced. They are not a memory or
+wall-clock bound. Host process memory, a watchdog and process containment are host settings of the run,
+not part of this protocol. The S2 harness settings used in engineering runs (job commit limit 2 GiB,
+watchdog 3,600 s, active-process limit 1) are recorded as engineering evidence only; declaring them here
+is not an S2 qualification. There is no unlimited execution and no automatic resource escalation.
+
+At C0, `quotas.md` lists the `--max-calls` override as a P3 candidate; that upstream status is an
+inherited limitation.
 
 ### 10.6 Failure taxonomy
 
@@ -192,7 +223,14 @@ An evidence record is a TOML/JSON mapping produced by a qualifying run. Required
   `positive_cases` / `negative_cases` / `boundary_cases` (each `{count > 0, result = pass}`,
   counts summing to `input_corpus_size`), `mutation_proof` = `detected`,
   `unexplained_deltas` = `0`, `limitations` (non-empty list of what the evidence does not prove);
-- C0 checkout attestation: `c0_checkout_head` (= C0 SHA) and `c0_checkout_clean` (= true).
+- C0 checkout attestation: `c0_checkout_head` (= C0 SHA) and `c0_checkout_clean` (= true);
+- stored execution (v4): `executor_identity` (`<repository>@<sha>:crates/smc-cli` of `[executor]`),
+  `effective_quotas` (exactly the declared envelope), `c1_execution` (`{outcome = ok, counters = {steps,
+  calls, peak_frames}}` of the run of C1 on `S`, each counter within the envelope) and `determinism`
+  (= `identical`: repeated compilations by the same generation gave identical output).
+
+In v4, `verifier_contract` / `runtime_contract` name `crates/sm-verify` / `crates/sm-vm` of the
+`[executor]` revision.
 
 **Record validation (what SHF-0 proves).** `check_evidence(repo, record)` is the only record
 gate. It loads the canonical contract files from the repository, requires them to validate,
@@ -225,3 +263,19 @@ stored attestation.
 | SHF-0 | freezes the provenance requirements; validates record structure and internal consistency |
 | SHF-15 | produces C1 from the verified exact C0 and canonical `S`; binds evidence to the actual producing run |
 | SHF-16 | produces C2; performs the fixed-point proof; independently reproduces the required evidence; gates the Bootstrap Seal |
+
+### 10.9 Bootstrap Seal states
+
+A Seal candidate (`shf0-bootstrap-seal-v1`) holds the evidence record, the producing run's `host_id` and
+`operator`, the reproductions and the acceptance. `check_seal` reports the furthest state reached; a
+state is reached only when every earlier one holds:
+
+| State | Condition |
+|---|---|
+| `validated` | the evidence record passes `check_evidence` |
+| `reproduced` | a reproduction by a distinct operator on a distinct host, from the same C0 and `S`, reports identical `c0_identity`, `source_set_identity`, C1 and C2 identities and comparison result |
+| `accepted` | the owner accepted the reproduced Seal |
+
+A reproduction that reports different identities invalidates the candidate (`FIXED_POINT_DELTA`). A second
+run on the same host or by the same operator is repeatability evidence, not a reproduction. Host ids,
+operator names and the acceptance are attestations; the gate checks their values, not who wrote them.
