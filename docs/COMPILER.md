@@ -211,6 +211,8 @@ Experimental WSL execution cannot inherit the Windows qualification status.
 
 **`bootstrap/source-set.toml` stays empty and protected.** The compiler's working module graph
 is not automatically canonical `S`; no C0(S) / C1(S) fixed-point claim follows from these tests.
+The engineering self-host workflow in `tests/selfhost/` uses its own declared nine-file list
+(`tests/selfhost/pins.json`); that list is not the normative manifest.
 
 ### Encoding boundaries
 
@@ -272,12 +274,15 @@ with Frames 256. Actual per-case counters and effective quotas belong to each ev
 
 ## 6. What is not demonstrated
 
-- **No C1/C2 fixed-point qualification or Bootstrap Seal.** Supported-subset differential
-  evidence and successful compilation of the implementation by C0 do not prove self-hosting.
-- **No self-compilation.** The compiler source (≈ 55 KB) uses records, tuples, `Sequence`, `Map`, `Option` match, text and `u32`. The subset doesn't cover all of these, and it needs the corresponding aggregate/text/u32 opcodes plus the remaining ownership paths used by the full compiler.
-- **Self-compilation budgets are not established.** The old per-byte extrapolation is not a
-  measurement under v2; no larger quota than the approved trusted-compiler envelope is admitted.
-- **The equivalence evidence is behavioural**, on a hand-written corpus: assertion outcomes and traps. Byte identity with C0 is not a goal; register numbering and branch layout differ.
+- **No Bootstrap Seal.** Self-compilation works and `C1 == C2` holds byte for byte (see
+  [selfhost/README.md](selfhost/README.md)). Normative qualification is still blocked by the empty
+  source-set manifest, the declared v3 envelope, the executor admission and independent reproduction.
+- **Self-compilation budget.** It needs about 100.8M steps and 1.09M calls (36 frames), far above the
+  trusted-compiler envelope declared in Bootstrap Contract v3 §10.5 (20M / 50k). The engineering
+  workflow uses 150M / 2M / 256. No larger quota is normatively admitted.
+- **Byte identity with C0 is now an engineering property**, not only behavioural equivalence. For every
+  accepted corpus program and for `S` the emitted SemCode equals the C0 compilation of the same source
+  ([selfhost/C0_PARITY.md](selfhost/C0_PARITY.md)). Constructs outside the corpus are not covered by that evidence.
 - **Platform:** historical tests were WSL2 experiments; current v2 qualification is explicitly
   platform-bound. C0's qualified platform is `x86_64-pc-windows-msvc`.
 
