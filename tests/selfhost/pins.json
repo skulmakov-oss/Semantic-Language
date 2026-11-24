@@ -1,0 +1,81 @@
+{
+ "schema": "semantic.selfhost.pins/1",
+ "note": "Declared inputs of the engineering self-host workflow (tests/selfhost). Identities only; machine-local paths are supplied at run time. This file is NOT the normative Bootstrap Contract v3 source-set manifest (bootstrap/source-set.toml).",
+ "c0": {
+  "repository": "skulmakov-oss/Semantic",
+  "sha": "1d1e76c7509a03baa0133abaaa5819f5d32582b2"
+ },
+ "tools": {
+  "smc": {
+   "sha256": "a612fc710c0961103aff6f0d078f442214815d8c6a49db2ea163c6bddf3b758e",
+   "role": "C0 compiler, sm-verify and sm-vm (smc-cli built from the C0 SHA)"
+  },
+  "driver": {
+   "sha256": "e9a96fcfe0ad0f5890c60387b237b35c512078b00493470ac454e8d585c35a71",
+   "role": "rev5 stored-exec-driver 0.3.2: executes an admitted stored SemCode artifact under the trusted-compiler envelope"
+  }
+ },
+ "s2_harness": {
+  "sha256_allowed": [
+   "929a2905a5bff3b7daac33483b81591f2163acb1c5cdab8897f2b032f74ab1d7"
+  ],
+  "note": "Production (no test-hooks) s2-harness built from the published head 7bdbe2a of skulmakov-oss/s2-harness Draft PR #1 (fresh default clone; recorded in evidence package S2_V02_PR_PUBLICATION_01, raw/build/F_7bdbe2a_default_crlf_t4.binary_hashes.txt). Builds embed their path, so any other build is a different identity and must be pinned explicitly."
+ },
+ "source_set": {
+  "protocol": "shf0-source-set-v1",
+  "root": "compiler",
+  "entry": "main.sm",
+  "files": [
+   "compiler/ast.sm",
+   "compiler/bytes.sm",
+   "compiler/driver.sm",
+   "compiler/lexer.sm",
+   "compiler/lower.sm",
+   "compiler/main.sm",
+   "compiler/parser.sm",
+   "compiler/sema.sm",
+   "compiler/semcode.sm"
+  ]
+ },
+ "envelopes": {
+  "compiler": {
+   "max_steps": 150000000,
+   "max_calls": 2000000,
+   "max_frames": 256,
+   "job_memory_bytes": 2147483648,
+   "timeout_secs": 3600
+  },
+  "fixture": {
+   "max_steps": 20000000,
+   "max_calls": 2000000,
+   "max_frames": 256,
+   "job_memory_bytes": 1073741824,
+   "timeout_secs": 600
+  },
+  "program": {
+   "max_steps": 20000000,
+   "max_calls": 2000000,
+   "max_frames": 256,
+   "job_memory_bytes": 268435456,
+   "timeout_secs": 120
+  },
+  "contract_v3_declared": {
+   "max_steps": 20000000,
+   "max_calls": 50000,
+   "max_frames": 256,
+   "authority": "docs/BOOTSTRAP_CONTRACT.md section 10.5"
+  }
+ },
+ "historical": {
+  "compiler_source_commit": "4c563b744e40ef3c5dda55855b5edcf61ddaafb6",
+  "source_set_identity": "sha256:f59b943d9fd4edc9dbab44e9938aa4d8db47a9886650db91c9b4997d4185be91",
+  "G1": {
+   "sha256": "b6b7cf38e7d3d430be88586ed69c6d3483d95af2e3d675401758b995fc55caba",
+   "bytes": 324114
+  },
+  "G2": {
+   "sha256": "120ed3c18d1d8d48cadc3f9597bafec87cb45d143e33c4f026e2a66dcdc4df03",
+   "bytes": 301087
+  }
+ }
+}

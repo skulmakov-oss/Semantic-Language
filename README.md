@@ -119,6 +119,16 @@ Every artifact passed the pinned Frozen C0 verifier. The differential corpus pas
 131/131 cases and 9/9 mutations; see the
 [exact-HEAD qualification report](https://github.com/skulmakov-oss/Semantic-Language/pull/63#issuecomment-6876851138).
 
+**Self-host engineering integration (SHF-15/16, this tree):** the compiler now emits SemCode
+byte-identical to the pinned C0 for every accepted corpus program and for its own source.
+`C1 = C0(S)`, `C2 = C1(S)` and `C3 = C2(S)` are byte-identical, so the protocol-v3 comparison
+`C1.smc == C2.smc` (`byte-equality-v1`) is measured as equal. Run it with
+[`tests/selfhost/selfhost.py`](tests/selfhost/selfhost.py); see
+[`docs/selfhost/README.md`](docs/selfhost/README.md) and [`docs/selfhost/C0_PARITY.md`](docs/selfhost/C0_PARITY.md).
+The Seal is still **not** established. The source-set manifest is empty, the execution
+envelope exceeds the declared v3 numbers, the stored-artifact executor is not upstream-admitted,
+and independent reproduction and owner acceptance are outstanding.
+
 **Proof boundary:** This C2/C3/C4 engineering fixed-point checkpoint is not an
 accepted **C1/C2 Bootstrap Seal** under the frozen
 [Bootstrap Contract v3](docs/BOOTSTRAP_CONTRACT.md). The protocol additionally requires

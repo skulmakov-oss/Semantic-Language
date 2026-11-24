@@ -272,7 +272,10 @@ fn encode_program(fns: Sequence(FnIr), u32arith: bool) -> (Sequence(text), text)
     for f in fns {
         let mut remapped: Sequence(OwnPath) = [];
         for ev in f.owns {
-            if ev.comp_kind == 1 {
+            if ev.comp_kind == 1 && ev.comp_b == 1 {
+                // Already a C0 arena symbol id (driver c0_symbol_ids); comp_b is not encoded for fields.
+                remapped = push(remapped, ev with { comp_b: 0 });
+            } else if ev.comp_kind == 1 {
                 if ev.comp_a < 0 || ev.comp_a >= len(f.strings) {
                     return ([], "ownership FieldSymbol local index out of bounds");
                 }
