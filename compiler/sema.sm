@@ -1477,12 +1477,11 @@ fn return_path_evidence(nodes: Sequence(Node), id: i32) -> quad {
         let mut state: quad = N;
         let mut has_default: bool = false;
         for aid in nd.kids {
-            // Match is first-fit: arms following '_' cannot execute.
-            if !has_default {
-                let arm: Node = nodes[aid];
-                state = state || return_path_evidence(nodes, arm.a);
-                if arm.v == 0 { has_default = true; }
-            }
+            // C0 dispatch (legacy_lowering): explicit arms are tested first and '_' is
+            // the fallback, so an arm written after '_' still executes. Every arm counts.
+            let arm: Node = nodes[aid];
+            state = state || return_path_evidence(nodes, arm.a);
+            if arm.v == 0 { has_default = true; }
         }
         if !has_default { return state || F; }
         return state;
