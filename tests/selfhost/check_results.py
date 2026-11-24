@@ -615,6 +615,7 @@ def selftest(src, scratch):
     first_ok = next(r for r in diff["rows"] if r["expect"] == "ok")["id"]
     trap_row = next(r for r in diff["rows"] if r["expect"].startswith("trap:"))
     trap_h = trap_row["c0"]["sha256"][:16]
+    ok_h = next(r for r in diff["rows"] if r["expect"] == "ok")["c0"]["sha256"][:16]
     s2 = (src / "s2").is_dir()
 
     def flip_byte(p):
@@ -650,10 +651,12 @@ def selftest(src, scratch):
         "import_expectation_rewritten": lambda r: mutate_json(r / "differential.json", lambda o: next(x for x in o["rows"] if x["id"] == "import.positive").__setitem__("expect", "reject:type:x")),
         "mutation_expectation_flipped": lambda r: mutate_json(r / "differential.json", lambda o: o["source_mutations"][0].__setitem__("expect", "different_artifact")),
         "mutation_source_altered": lambda r: (r / "mutations" / "diagnostic_text" / "src" / "lower.sm").write_bytes(b"// other\n" + (r / "mutations" / "diagnostic_text" / "src" / "lower.sm").read_bytes()),
-        "trap_log_altered": lambda r: rewrite_log(r, f"exec.{trap_h}.run_smc", "stdout", b"runtime trap: SomethingElse\n"),
+        # run-smc reports traps on stderr: replace both streams so the expected trap text is really gone
+        "trap_log_altered": lambda r: [rewrite_log(r, f"exec.{trap_h}.run_smc", s, b"runtime trap: SomethingElse\n") for s in ("stdout", "stderr")],
         "snapshot_mutated": lambda r: flip_byte(r / "snapshot" / "lexer.sm"),
         "status_forged": lambda r: mutate_json(r / "differential.json", lambda o: o["rows"][0].__setitem__("pass", False)),
-        "vm_run_failed": lambda r: edit_command(r, next(e["tag"] for e in map(json.loads, (r / "commands.jsonl").read_text().splitlines()) if e["tag"].endswith(".run_smc")), lambda e: e.__setitem__("exit", 3)),
+        # the run of an artifact that must execute cleanly (an ok fixture), not of a trap artifact
+        "vm_run_failed": lambda r: edit_command(r, f"exec.{ok_h}.run_smc", lambda e: e.__setitem__("exit", 3)),
         "differential_deleted": lambda r: (r / "differential.json").unlink(),
         "differential_null": lambda r: (r / "differential.json").write_text("null\n"),
         "differential_single_generation": lambda r: mutate_json(r / "differential.json", lambda o: o.__setitem__("generations", ["C2"])),
