@@ -38,16 +38,17 @@ programs. The driver calls `lower_function_with_symbols`, which carries the C0 s
 
 ## Measured result
 
-- **Compiler corpus:** for all 71 positive programs in `tests/compiler/cases.json` and the positive
-  import fixture, the bytes are equal to the C0 compilation of the same source.
+- **Compiler corpus:** for all 71 accepted programs in `tests/compiler/cases.json` (62 `ok`, 9 runtime
+  `trap`) and the positive import fixture, the bytes are equal to the C0 compilation of the same source.
   - `a14_match_and_loop_shapes` exercises the `quad` statement-match dispatch, value `match`, an
     Option `match` without `_`, and `while` with `break`/`continue` next to `for`.
   - `a15_for_iterable_record_literal` and `a16_for_iterable_value_if` pin rule P10 when the `for`
     iterable contains braces (a record literal, a value `if`). Both differed from C0 before the
     review fixes; a token heuristic had taken the first `{` as the body. Rejections keep their
   categories and messages.
-- **Compiler source:** for `S` itself, `C1 = C0(S)` and `C2 = C1(S)` are byte-identical. Exact
-  identities, counters and the pipeline that produces them are in [README.md](README.md).
+- **Compiler source:** for `S` itself, `C1 = C0(S)` and `C2 = C1(S)` are byte-identical. The pipeline
+  that produces them is described in [README.md](README.md); the identities and counters of each run
+  are in its evidence package.
 
 ## Limits
 
@@ -59,4 +60,4 @@ programs. The driver calls `lower_function_with_symbols`, which carries the C0 s
   and Option patterns. Module and import order follow the R1 textual expansion, which matched C0 on the
   probes and on `S`.
 - **Resource cost.** C0's shapes are less compact than the previous ones. Self-compilation now takes
-  about 100.8M steps and 1.09M calls, against 87.8M before.
+  100,906,156 steps and 1,089,283 calls (36 frames), against 87,834,964 steps and 1,030,747 calls before.
