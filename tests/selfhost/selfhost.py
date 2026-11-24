@@ -573,7 +573,8 @@ def main(argv=None):
     ap.add_argument("--s2")
     ap.add_argument("--c0-checkout", dest="c0_checkout")
     ap.add_argument("--source", help="compiler source root (default <repo>/compiler)")
-    ap.add_argument("--generations", type=int, default=3, choices=(2, 3, 4, 5))
+    ap.add_argument("--generations", type=int, default=3, choices=(3, 4, 5),
+                    help="C1..Cn; at least 3, because both fixed-point modes compare C2 with C3")
     ap.add_argument("--fixed-point", default="c1c2", choices=("c1c2", "c2c3"),
                     help="c1c2: Bootstrap Contract v3 rule C1 == C2 (and C2 == C3); c2c3: post-bootstrap stability only")
     ap.add_argument("--jobs", type=int, default=6)
