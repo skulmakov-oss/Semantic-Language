@@ -60,4 +60,4 @@ programs. The driver calls `lower_function_with_symbols`, which carries the C0 s
   and Option patterns. Module and import order follow the R1 textual expansion, which matched C0 on the
   probes and on `S`.
 - **Resource cost.** C0's shapes are less compact than the previous ones. Self-compilation now takes
-  101,032,508 steps and 1,090,696 calls (36 frames), against 87,834,964 steps and 1,030,747 calls before.
+  101,176,981 steps and 1,092,148 calls (36 frames), against 87,834,964 steps and 1,030,747 calls before.

@@ -277,7 +277,7 @@ with Frames 256. Actual per-case counters and effective quotas belong to each ev
 - **No Bootstrap Seal.** Self-compilation works and `C1 == C2` holds byte for byte (see
   [selfhost/README.md](selfhost/README.md)). Normative qualification is still blocked by the empty
   source-set manifest, the declared v3 envelope, the executor admission and independent reproduction.
-- **Self-compilation budget.** It needs 101,032,508 steps and 1,090,696 calls (36 frames), far above the
+- **Self-compilation budget.** It needs 101,176,981 steps and 1,092,148 calls (36 frames), far above the
   trusted-compiler envelope declared in Bootstrap Contract v3 §10.5 (20M / 50k). The engineering
   workflow uses 150M / 2M / 256. No larger quota is normatively admitted.
 - **Byte identity with C0 is now an engineering property**, not only behavioural equivalence. For every

@@ -142,7 +142,7 @@ These items are outside the authority of an ordinary engineering PR. [Bootstrap 
    - Until then, `check_evidence` cannot bind a record to the real `S`.
 2. **Execution envelope.**
    - §10.5 declares the trusted-compiler envelope as 20,000,000 steps and 50,000 calls.
-   - Producing C2 needs 101,032,508 steps and 1,090,696 calls; the workflow uses 150M / 2M / 256.
+   - Producing C2 needs 101,176,981 steps and 1,092,148 calls; the workflow uses 150M / 2M / 256.
    - Running `C1(S)` inside the declared envelope is impossible, so the contract's numbers need an owner decision.
 3. **Stored-artifact executor.**
    - C2 is produced by the rev5 `stored-exec-driver`, which pins C0's `sm-vm` and `sm-verify` crates.
