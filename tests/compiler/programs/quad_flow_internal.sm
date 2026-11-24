@@ -31,8 +31,10 @@ fn main() {
         node(15, -1, -1, -1, 0, [4, 2]),      // 20 mixed then returning block => T
         node(32, 3, 2, -1, 1, []),            // 21 non-default arm falling through
         node(25, -1, -1, -1, 0, [10, 21]),    // 22 incomplete match => S
-        node(25, -1, -1, -1, 0, [13, 21]),    // 23 default returning before unreachable fallthrough => T
-        node(25, -1, -1, -1, 0, [11, 10])     // 24 default falling through before unreachable return => F
+        // C0 dispatch: explicit arms are tested first and '_' is the fallback, so an
+        // arm written after '_' is reachable (C0 evaluates match 1 { _ => 10, 1 => 20 } to 20).
+        node(25, -1, -1, -1, 0, [13, 21]),    // 23 default returning, later arm falling through => S
+        node(25, -1, -1, -1, 0, [11, 10])     // 24 default falling through, later arm returning => S
     ];
     assert(return_path_evidence(nodes, 0) == T);
     assert(return_path_evidence(nodes, 1) == F);
@@ -53,8 +55,9 @@ fn main() {
     assert(return_path_evidence(nodes, 19) == F);
     assert(return_path_evidence(nodes, 20) == T);
     assert(return_path_evidence(nodes, 22) == S);
-    assert(return_path_evidence(nodes, 23) == T);
-    assert(return_path_evidence(nodes, 24) == F);
+    assert(return_path_evidence(nodes, 23) == S);
+    assert(return_path_evidence(nodes, 24) == S);
+    assert(!always_returns(nodes, 23));
     assert(always_returns(nodes, 5));
     assert(!always_returns(nodes, 4));
     assert(!always_returns(nodes, 8));
