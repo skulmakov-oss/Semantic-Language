@@ -289,9 +289,9 @@ def preflight(att, tools, args):
         except ValueError:
             sm["source_fingerprint"] = None
         sm["source_fingerprint_allowed"] = sm["source_fingerprint"] in PINS["tools"]["smc"]["source_fingerprints_allowed"]
+        # a pinned C0 must also report an admitted fingerprint; an unpinned (reproduction) build is admitted by it
+        ok &= sm["source_fingerprint_allowed"]
         if tools.reproduction_build:
-            # an unpinned C0 rebuild is admitted by its source fingerprint; C1 = C0(S) is then compared by identity
-            ok &= sm["source_fingerprint_allowed"]
             if sm["source_fingerprint_allowed"]:
                 tools.seen["smc"] = sm["sha256"]
     elif tools.reproduction_build:

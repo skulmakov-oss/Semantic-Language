@@ -435,7 +435,7 @@ def check(root, partial=False):
     # Seal, never a record. S2 and c2c3 attempts are narrower engineering claims: no record, no Seal identities.
     c.facts["v4_record"] = None
     if not c.violations and record_eligible(c.facts):
-        if (c.facts.get("executor") or {}).get("binary_pinned") and (c.facts.get("c0_smc") or {}).get("binary_pinned"):
+        if contract_record_allowed(c.facts, repro):
             record = bootstrap_record(c)
             c.facts["v4_record"] = record
             for e in contract_check(record):
@@ -641,6 +641,13 @@ LIMITATIONS = [
     "the --expect-sha256 binding proves which bytes ran, not who produced them; no signing",
     "VM quotas bound steps, calls and frames; memory and wall-clock are not bounded by the protocol",
 ]
+
+
+def contract_record_allowed(f, reproduction_mode):
+    """A v4 contract record needs a normal (non-reproduction) attempt whose C0 smc and executor binaries are both
+    hash-pinned. Every reproduction-mode attempt yields Seal reproduction identities only."""
+    return (not reproduction_mode and bool((f.get("executor") or {}).get("binary_pinned"))
+            and bool((f.get("c0_smc") or {}).get("binary_pinned")))
 
 
 def record_eligible(f):
