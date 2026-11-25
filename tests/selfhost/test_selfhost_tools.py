@@ -5,6 +5,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
 HERE = pathlib.Path(__file__).resolve().parent
@@ -66,6 +67,35 @@ class SelfhostToolTests(unittest.TestCase):
         for key, value in (("scope", "partial"), ("fixed_point_rule", "c2c3"), ("generation_runner", "s2")):
             self.assertFalse(check_results.record_eligible({**base, key: value}), key)
         self.assertFalse(check_results.record_eligible({}))
+
+    def test_only_normal_attempts_with_both_binaries_pinned_yield_a_contract_record(self):
+        def facts(c0, ex):
+            return {"c0_smc": {"binary_pinned": c0}, "executor": {"binary_pinned": ex}}
+        allowed = check_results.contract_record_allowed
+        self.assertTrue(allowed(facts(True, True), False))
+        for c0, ex in ((True, False), (False, True), (False, False)):
+            self.assertFalse(allowed(facts(c0, ex), False), (c0, ex))
+        for c0, ex in ((True, True), (True, False), (False, True), (False, False)):
+            self.assertFalse(allowed(facts(c0, ex), True), ("reproduction", c0, ex))
+        self.assertFalse(allowed({}, False))
+
+    def test_c0_fingerprints_are_pinned_for_both_checkout_line_endings(self):
+        fps = check_results.PINS["tools"]["smc"]["source_fingerprints_allowed"]
+        self.assertEqual(fps, ["605bf55cab818ec5", "1ba2e126545f26ce"])
+
+    def test_separate_phases_readmit_only_binaries_the_preflight_admitted(self):
+        tools = SimpleNamespace(reproduction_build=True, seen={})
+        pre = {"status": "pass", "tools": {"executor": {"ok": True, "sha256": "e" * 64},
+                                            "smc": {"source_fingerprint_allowed": True, "sha256": "c" * 64}}}
+        selfhost.restore_admitted(tools, pre)
+        self.assertEqual(tools.seen, {"executor": "e" * 64, "smc": "c" * 64})
+        for bad in ({**pre, "status": "fail"}, {"status": "pass", "tools": {"smc": {"source_fingerprint_allowed": False, "sha256": "c" * 64}}}):
+            t = SimpleNamespace(reproduction_build=True, seen={})
+            selfhost.restore_admitted(t, bad)
+            self.assertEqual(t.seen, {})
+        t = SimpleNamespace(reproduction_build=False, seen={})
+        selfhost.restore_admitted(t, pre)
+        self.assertEqual(t.seen, {})
 
     def test_checker_tables_match_the_pipeline(self):
         """The checker keeps its own copies of the import expectations and mutations; they must not drift."""

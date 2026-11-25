@@ -34,6 +34,14 @@ same revision on another host has a different SHA-256. `--reproduction-build` ac
 its self-reported source fingerprint matches (a consistency check, not proof); that attempt yields
 reproduction identities for a Seal candidate (`facts.seal_reproduction`), never a v4 qualification record.
 
+The same applies to the C0 `smc`.
+- **Admitted fingerprints:** `source_fingerprints_allowed` lists what `smc version --json` reports for builds of the C0 SHA. The value differs between a CRLF checkout (`605bf55cab818ec5`, the pinned binary) and an LF checkout (`1ba2e126545f26ce`).
+- **Reproduction builds:** with `--reproduction-build`, an operator's own C0 build is admitted by that fingerprint. C1 = C0(S) is then compared by identity like every generation, so a different C0 shows up as a different C1. An LF build (`d094134a…`) emits the same C1 (`2bfd56e1…`).
+- **Contract record:** a v4 record needs a normal attempt with both the C0 and the executor binaries hash-pinned. A reproduction-mode attempt never yields one, even with pinned binaries.
+- **What a fingerprint proves:** it is a consistency check, not authentication. A dishonest C0 could print an admitted fingerprint and emit a copy of a known C1.
+  - A reproduction therefore remains the operator's attestation.
+  - Agreement with the producer's identities is established when the owner records it: `check_seal` compares every reproduction entry with the evidence record.
+
 ## Generation chain
 
 ```text

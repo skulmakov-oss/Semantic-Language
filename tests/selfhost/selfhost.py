@@ -219,12 +219,25 @@ class Tools:
             sys.exit(f"selfhost: required tool '{name}' is not supplied or does not exist")
         got = sha256_file(p)
         allowed = pinned_identities(name)
-        if name == "executor" and self.reproduction_build:
+        if name in ("executor", "smc") and self.reproduction_build and name in self.seen:
             # an unpinned rebuild, admitted by its source fingerprint in preflight; it must not change afterwards
-            allowed = [self.seen.setdefault(name, got)]
+            allowed = [self.seen[name]]
         if got not in allowed:
             sys.exit(f"selfhost: tool identity mismatch for {name}: {got} not in pinned {allowed}")
         return p
+
+
+def restore_admitted(tools, pre):
+    """A phase run on its own (build, verify, ...) re-admits only the unpinned reproduction binaries that this
+    attempt's passing preflight admitted; need() then requires the supplied binary to hash to that identity."""
+    if not tools.reproduction_build or not isinstance(pre, dict) or pre.get("status") != "pass":
+        return
+    rows = pre.get("tools") or {}
+    ex, sm = rows.get("executor") or {}, rows.get("smc") or {}
+    if ex.get("ok") and ex.get("sha256"):
+        tools.seen["executor"] = ex["sha256"]
+    if sm.get("source_fingerprint_allowed") and sm.get("sha256"):
+        tools.seen["smc"] = sm["sha256"]
 
 
 def pinned_identities(name):
@@ -255,7 +268,7 @@ def preflight(att, tools, args):
         got = sha256_file(p) if p and p.is_file() else None
         pinned = pinned_identities(name)
         tool_rows[name] = {"path": str(p) if p else None, "sha256": got, "pinned": pinned, "match": got in pinned}
-        if name != "executor":
+        if name == "driver" or (name == "smc" and not tools.reproduction_build):
             ok &= tool_rows[name]["match"]
     ex = tool_rows["executor"]
     if ex["sha256"]:
@@ -281,8 +294,21 @@ def preflight(att, tools, args):
                            "match": got in PINS["s2_harness"]["sha256_allowed"]}
         ok &= ec == 0 and tool_rows["s2"]["match"]
     res["tools"] = tool_rows
-    if tool_rows["smc"]["match"]:
-        att.run("preflight.smc_version", [tools.smc, "version", "--json"])
+    sm = tool_rows["smc"]
+    if sm["sha256"] and (sm["match"] or tools.reproduction_build):
+        ec, so, _ = att.run("preflight.smc_version", [tools.smc, "version", "--json"])
+        try:
+            sm["source_fingerprint"] = json.loads(so).get("source_fingerprint") if ec == 0 else None
+        except ValueError:
+            sm["source_fingerprint"] = None
+        sm["source_fingerprint_allowed"] = sm["source_fingerprint"] in PINS["tools"]["smc"]["source_fingerprints_allowed"]
+        # a pinned C0 must also report an admitted fingerprint; an unpinned (reproduction) build is admitted by it
+        ok &= sm["source_fingerprint_allowed"]
+        if tools.reproduction_build:
+            if sm["source_fingerprint_allowed"]:
+                tools.seen["smc"] = sm["sha256"]
+    elif tools.reproduction_build:
+        ok = False
     c0 = {"path": str(tools.c0_checkout) if tools.c0_checkout else None, "pinned_sha": PINS["c0"]["sha"]}
     if tools.c0_checkout and tools.c0_checkout.is_dir():
         errors = v.verify_reference_checkout(tools.c0_checkout, PINS["c0"]["sha"])
@@ -637,7 +663,7 @@ def main(argv=None):
     ap.add_argument("--executor")
     ap.add_argument("--driver")
     ap.add_argument("--reproduction-build", dest="reproduction_build", action="store_true",
-                    help="accept an unpinned executor binary whose source fingerprint equals the pinned one")
+                    help="accept unpinned C0 smc / executor binaries whose source fingerprints are admitted (Seal reproduction only)")
     ap.add_argument("--s2")
     ap.add_argument("--c0-checkout", dest="c0_checkout")
     ap.add_argument("--source", help="compiler source root (default <repo>/compiler)")
@@ -651,6 +677,8 @@ def main(argv=None):
     args.gens = ["C1", "C2"]  # the differential phase always compiles the corpus with C1 and C2 (plus a C2 repeat)
     tools = Tools(args)
     att = Attempt(args.out, create=args.phase in ("preflight", "all"))
+    if args.phase not in ("preflight", "all"):
+        restore_admitted(tools, att.read_json("preflight.json"))
     steps = PHASES if args.phase == "all" else (args.phase,)
     fn = {"preflight": preflight, "build": build, "verify": verify, "differential": differential, "report": report}
     ok = True
