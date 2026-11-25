@@ -104,43 +104,49 @@ used, and the explicit list of remaining non-compiler Rust responsibilities. See
 Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 [`docs/FUTURE.md`](docs/FUTURE.md).
 
-## Current phase
+## Current status — Self-Hosting Milestone (2026-11-25)
 
-**Bootstrap Contract v4 is in force** (`shf0-bootstrap-contract-v4`, succeeding v3). The Semantic-written
-compiler in [`compiler/`](compiler/) includes the integrated Quad-native
-main-compatibility checkpoint from [PR #63](https://github.com/skulmakov-oss/Semantic-Language/pull/63).
+**Bootstrap Contract v4 is in force** (`shf0-bootstrap-contract-v4`). The compiler written in Semantic
+([`compiler/`](compiler/)) reproduces itself byte for byte:
 
-As of 2026-11-14, on `main` commit
-[`e296ada`](https://github.com/skulmakov-oss/Semantic-Language/commit/e296adac229df628108772520cd27e5e32244872),
-local qualification established **byte-identical `C2 = C3 = C4`** compiler artifacts
-(301,087 bytes each, SHA-256
-`120ed3c18d1d8d48cadc3f9597bafec87cb45d143e33c4f026e2a66dcdc4df03`).
-Every artifact passed the pinned Frozen C0 verifier. The differential corpus passed
-131/131 cases and 9/9 mutations; see the
-[exact-HEAD qualification report](https://github.com/skulmakov-oss/Semantic-Language/pull/63#issuecomment-6876851138).
+| Item | Value |
+| --- | --- |
+| Source set `S` | nine `compiler/*.sm` files, `sha256:c9e0cb333ac13fd76989a8db67928d8802e220284f8b5e4ca3b942235ac6148f` |
+| `C1 = C0(S)` | `2bfd56e161c40c8f746b6fd6530560f55aa026df29e50a81b99ea5ee3da4e939`, 339,746 bytes |
+| `C2 = C1(S)`, `C3 = C2(S)` | byte-identical to C1 (`byte-equality-v1`) |
+| C1 compiling `S` | `ok`, 101,176,981 steps / 1,092,148 calls / 36 frames (trusted-compiler envelope 150M / 2M / 256) |
+| Differential corpus | 140/140 fixtures; C1 and C2 emit SemCode byte-identical to C0 for every accepted program |
+| Normative run | fresh checkout of `8d71cc3` (the tree of `main` without the governance envelope), evidence record valid |
 
-**Self-host engineering integration (SHF-15/16, this tree):** the compiler now emits SemCode
-byte-identical to the pinned C0 for every accepted corpus program and for its own source.
-`C1 = C0(S)`, `C2 = C1(S)` and `C3 = C2(S)` are byte-identical, so the contract comparison
-`C1.smc == C2.smc` (`byte-equality-v1`) is measured as equal. Run it with
-[`tests/selfhost/selfhost.py`](tests/selfhost/selfhost.py); see
-[`docs/selfhost/README.md`](docs/selfhost/README.md) and [`docs/selfhost/C0_PARITY.md`](docs/selfhost/C0_PARITY.md).
-Bootstrap Contract v4 binds the canonical source set (`bootstrap/source-set.toml`), the
-stored-artifact executor (`smc run-smc` at an exact upstream revision) and the trusted-compiler
-envelope (150M steps / 2M calls / 256 frames). The Seal is **not accepted**: it needs an independent
-reproduction (distinct host and operator) and the owner's acceptance (BOOTSTRAP_CONTRACT §10.9).
+- **Contract bindings:** the canonical source set ([`bootstrap/source-set.toml`](bootstrap/source-set.toml)), the stored-artifact executor (`smc run-smc --expect-sha256` at `skulmakov-oss/Semantic@825deca4`) and the trusted-compiler envelope. Every generation is admitted by `sm-verify` before it runs.
+- **Reproduce it:** [`tests/selfhost/selfhost.py`](tests/selfhost/selfhost.py); see [`docs/selfhost/README.md`](docs/selfhost/README.md) and [`docs/selfhost/C0_PARITY.md`](docs/selfhost/C0_PARITY.md).
 
-**Proof boundary:** This C2/C3/C4 engineering fixed-point checkpoint is not an
-accepted **C1/C2 Bootstrap Seal** under
-[Bootstrap Contract v4](docs/BOOTSTRAP_CONTRACT.md). The protocol additionally requires
-its declared source-set and reference bindings, the prescribed C1/C2 comparison,
-independent reproduction and Seal acceptance evidence. Formal SHF-16 completion,
-SHF-17 cross-platform qualification and full language coverage are not claimed here.
+**Bootstrap Seal: `validated` — not reproduced, not accepted.** Under §10.9 of [Bootstrap Contract v4](docs/BOOTSTRAP_CONTRACT.md), the Seal still needs:
+- an independent reproduction on a distinct host by a distinct operator;
+- owner acceptance.
+
+All review so far has been automated. Not claimed: SHF-17 cross-platform qualification, full language coverage, or a self-hosted verifier or VM.
+
+**Known issue (upstream):** a VM liveness regression in `skulmakov-oss/Semantic` (`aff35531`) affects C0 and the pinned executor.
+- **Effect:** a verified artifact can fail closed at run time after a call without destination.
+- **Self-hosting runs:** not affected; every run completed `ok`.
+- **Fix:** [skulmakov-oss/Semantic#2087](https://github.com/skulmakov-oss/Semantic/pull/2087).
+
+Change history: [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
 
 C0 reference pin: `skulmakov-oss/Semantic@1d1e76c7509a03baa0133abaaa5819f5d32582b2`
-(Semantic 1.3.0-beta.1 Windows x64 Developer Preview, with explicit limits) —
-[`reference/semantic-reference.toml`](reference/semantic-reference.toml). Floating `main` of the
+([`reference/semantic-reference.toml`](reference/semantic-reference.toml)). Floating `main` of the
 reference repository is never a qualification oracle.
+
+### History: the 2026-11-14 C2 = C3 = C4 checkpoint (superseded)
+
+On 2026-11-14, before C0 code-generation parity, local qualification on
+[`e296ada`](https://github.com/skulmakov-oss/Semantic-Language/commit/e296adac229df628108772520cd27e5e32244872)
+showed byte-identical `C2 = C3 = C4` artifacts (301,087 bytes, SHA-256
+`120ed3c18d1d8d48cadc3f9597bafec87cb45d143e33c4f026e2a66dcdc4df03`;
+[report](https://github.com/skulmakov-oss/Semantic-Language/pull/63#issuecomment-6876851138)).
+That was an engineering checkpoint of an earlier source lineage, with `C1 != C2`.
+It is kept as history and is not the current status. Its identities are not interchangeable with the v4 identities above.
 
 ## Where the verifier and VM remain
 
@@ -164,6 +170,8 @@ contractual bootstrap proof.
 | [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md) | Who owns each surface now and after bootstrap |
 | [`docs/QUALIFICATION.md`](docs/QUALIFICATION.md) | Differential evidence discipline |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | SHF-0 … SHF-17 |
+| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Dated change history |
+| [`docs/selfhost/README.md`](docs/selfhost/README.md) | Self-host workflow and checker |
 | [`docs/FUTURE.md`](docs/FUTURE.md) | Post-Bootstrap work |
 | [`docs/LEGACY_PLAN_MIGRATION.md`](docs/LEGACY_PLAN_MIGRATION.md) | Mapping of earlier plans to SHF |
 | [`AGENTS.md`](AGENTS.md) | Operating contract for agents |
