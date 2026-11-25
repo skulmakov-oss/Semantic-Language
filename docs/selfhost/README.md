@@ -34,6 +34,11 @@ same revision on another host has a different SHA-256. `--reproduction-build` ac
 its self-reported source fingerprint matches (a consistency check, not proof); that attempt yields
 reproduction identities for a Seal candidate (`facts.seal_reproduction`), never a v4 qualification record.
 
+The same applies to the C0 `smc`.
+- **Admitted fingerprints:** `source_fingerprints_allowed` lists what `smc version --json` reports for builds of the C0 SHA. The value differs between a CRLF checkout (`605bf55cab818ec5`, the pinned binary) and an LF checkout (`1ba2e126545f26ce`).
+- **Reproduction builds:** with `--reproduction-build`, an operator's own C0 build is admitted by that fingerprint. C1 = C0(S) is then compared by identity like every generation, so a different C0 shows up as a different C1. An LF build (`d094134a…`) emits the same C1 (`2bfd56e1…`).
+- **Contract record:** a v4 record still needs both the C0 and the executor binaries to be hash-pinned.
+
 ## Generation chain
 
 ```text

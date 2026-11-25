@@ -8,7 +8,11 @@
  "tools": {
   "smc": {
    "sha256": "a612fc710c0961103aff6f0d078f442214815d8c6a49db2ea163c6bddf3b758e",
-   "role": "C0 compiler, sm-verify and sm-vm (smc-cli built from the C0 SHA)"
+   "role": "C0 compiler, sm-verify and sm-vm (smc-cli built from the C0 SHA). source_fingerprints_allowed: what `smc version --json` reports for builds of the C0 SHA (605bf55cab818ec5 from a CRLF checkout, the pinned binary; 1ba2e126545f26ce from an LF checkout). Other C0 binaries are accepted only with --reproduction-build, which never yields a contract record.",
+   "source_fingerprints_allowed": [
+    "605bf55cab818ec5",
+    "1ba2e126545f26ce"
+   ]
   },
   "executor": {
    "revision": "skulmakov-oss/Semantic@825deca47f7e415e27b1e5f845a1c3030ea92300",

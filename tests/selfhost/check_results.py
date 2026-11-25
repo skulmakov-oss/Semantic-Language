@@ -222,7 +222,7 @@ def check(root, partial=False):
     for name in ("smc", "executor") + (("driver",) if s2_configured else ()):
         t = tools.get(name) or {}
         allowed = pinned(name)
-        if name == "executor" and repro:
+        if name in ("executor", "smc") and repro:
             allowed = [t.get("sha256")] if t.get("sha256") else []  # admitted by fingerprint below
         if t.get("sha256") not in allowed:
             c.bad(f"preflight: {name} identity is not the pinned identity")
@@ -242,8 +242,19 @@ def check(root, partial=False):
     c.facts["executor"] = {"revision": pins_ex["revision"], "sha256": ext.get("sha256"), "source_fingerprint": fp,
                            "binary_pinned": ext.get("sha256") in pinned("executor"), "reproduction_build": repro}
     c0 = pre.get("c0_checkout") or {}
-    if tools.get("smc", {}).get("sha256") == PINS["tools"]["smc"]["sha256"]:
+    smc_pinned = tools.get("smc", {}).get("sha256") == PINS["tools"]["smc"]["sha256"]
+    if smc_pinned or repro:
         expect_cmd("preflight.smc_version", [tool("smc"), "version", "--json"])
+        try:
+            smc_fp = json.loads(log("preflight.smc_version")).get("source_fingerprint") if exit_of("preflight.smc_version") == 0 else None
+        except ValueError:
+            smc_fp = None
+        # A pinned C0 binary must also report an admitted fingerprint; an unpinned (reproduction) build is
+        # admitted only by it. C1 = C0(S) is then checked by identity like every other generation.
+        if smc_fp not in PINS["tools"]["smc"]["source_fingerprints_allowed"] or (
+                repro and (tools.get("smc") or {}).get("source_fingerprint") != smc_fp):
+            c.bad("preflight: the C0 smc's logged source fingerprint is not an admitted build of the C0 SHA")
+        c.facts["c0_smc"] = {"sha256": (tools.get("smc") or {}).get("sha256"), "source_fingerprint": smc_fp, "binary_pinned": smc_pinned}
     expect_cmd("preflight.c0_head", ["git", "-C", c0.get("path"), "rev-parse", "HEAD"])
     expect_cmd("preflight.c0_status", ["git", "-C", c0.get("path"), "status", "--porcelain", "--untracked-files=all"])
     head_log = log("preflight.c0_head").decode("utf-8", "replace").strip()
@@ -424,7 +435,7 @@ def check(root, partial=False):
     # Seal, never a record. S2 and c2c3 attempts are narrower engineering claims: no record, no Seal identities.
     c.facts["v4_record"] = None
     if not c.violations and record_eligible(c.facts):
-        if (c.facts.get("executor") or {}).get("binary_pinned"):
+        if (c.facts.get("executor") or {}).get("binary_pinned") and (c.facts.get("c0_smc") or {}).get("binary_pinned"):
             record = bootstrap_record(c)
             c.facts["v4_record"] = record
             for e in contract_check(record):
@@ -684,7 +695,9 @@ def seal_reproduction(c):
             "c1_artifact_hash": "sha256:" + f["generations"]["C1"]["sha256"],
             "c2_artifact_hash": "sha256:" + f["generations"]["C2"]["sha256"],
             "comparison_result": "equal" if f.get("c1_equals_c2") else "different",
-            "executor": f.get("executor"), "executor_binary": "operator-built from the pinned revision (not hash-pinned)"}
+            "executor": f.get("executor"), "c0_smc": f.get("c0_smc"),
+            "executor_binary": "operator-built from the pinned revision (not hash-pinned)" if not (f.get("executor") or {}).get("binary_pinned") else "pinned",
+            "c0_binary": "operator-built from the C0 SHA (admitted by source fingerprint)" if not (f.get("c0_smc") or {}).get("binary_pinned") else "pinned"}
 
 
 def contract_check(record):
@@ -820,6 +833,7 @@ def selftest(src, scratch):
         # the producing run of C2 used a smaller envelope than the declared one
         "executor_envelope_changed": lambda r: rewrite_log(r, "build.C2.execute", "stderr", (r / "logs" / "build.C2.execute.stderr").read_bytes().replace(b'"max_calls":2000000', b'"max_calls":1999999')),
         "executor_fingerprint_forged": lambda r: rewrite_log(r, "preflight.executor_version", "stdout", (r / "logs" / "preflight.executor_version.stdout").read_bytes().replace(b'"source_fingerprint": "', b'"source_fingerprint": "0')),
+        "c0_fingerprint_forged": lambda r: rewrite_log(r, "preflight.smc_version", "stdout", (r / "logs" / "preflight.smc_version.stdout").read_bytes().replace(b'"source_fingerprint": "', b'"source_fingerprint": "0')),
         "executor_admission_missing": lambda r: edit_command(r, "build.C2.executor_verify", lambda e: e.__setitem__("exit", 1)),
         # an otherwise clean attempt whose contract record the canonical gate rejects (platform outside C0's scope)
         "record_rejected_by_contract": lambda r: mutate_json(r / "preflight.json", lambda o: o["platform"].__setitem__("machine", "ARM64")),
