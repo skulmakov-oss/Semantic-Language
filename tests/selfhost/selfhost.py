@@ -227,6 +227,19 @@ class Tools:
         return p
 
 
+def restore_admitted(tools, pre):
+    """A phase run on its own (build, verify, ...) re-admits only the unpinned reproduction binaries that this
+    attempt's passing preflight admitted; need() then requires the supplied binary to hash to that identity."""
+    if not tools.reproduction_build or not isinstance(pre, dict) or pre.get("status") != "pass":
+        return
+    rows = pre.get("tools") or {}
+    ex, sm = rows.get("executor") or {}, rows.get("smc") or {}
+    if ex.get("ok") and ex.get("sha256"):
+        tools.seen["executor"] = ex["sha256"]
+    if sm.get("source_fingerprint_allowed") and sm.get("sha256"):
+        tools.seen["smc"] = sm["sha256"]
+
+
 def pinned_identities(name):
     t = PINS["tools"][name]
     return list(t.get("sha256_allowed") or [t["sha256"]])
@@ -650,7 +663,7 @@ def main(argv=None):
     ap.add_argument("--executor")
     ap.add_argument("--driver")
     ap.add_argument("--reproduction-build", dest="reproduction_build", action="store_true",
-                    help="accept an unpinned executor binary whose source fingerprint equals the pinned one")
+                    help="accept unpinned C0 smc / executor binaries whose source fingerprints are admitted (Seal reproduction only)")
     ap.add_argument("--s2")
     ap.add_argument("--c0-checkout", dest="c0_checkout")
     ap.add_argument("--source", help="compiler source root (default <repo>/compiler)")
@@ -664,6 +677,8 @@ def main(argv=None):
     args.gens = ["C1", "C2"]  # the differential phase always compiles the corpus with C1 and C2 (plus a C2 repeat)
     tools = Tools(args)
     att = Attempt(args.out, create=args.phase in ("preflight", "all"))
+    if args.phase not in ("preflight", "all"):
+        restore_admitted(tools, att.read_json("preflight.json"))
     steps = PHASES if args.phase == "all" else (args.phase,)
     fn = {"preflight": preflight, "build": build, "verify": verify, "differential": differential, "report": report}
     ok = True
