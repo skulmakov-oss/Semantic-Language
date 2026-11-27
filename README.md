@@ -127,6 +127,8 @@ Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 
 All review so far has been automated. Not claimed: SHF-17 cross-platform qualification, full language coverage, or a self-hosted verifier or VM.
 
+**Using Semantic:** start with the canonical [Getting Started](https://github.com/skulmakov-oss/Semantic-Dist/blob/main/docs/getting_started.md) and the [status glossary](https://github.com/skulmakov-oss/Semantic-Dist/blob/main/docs/status_glossary.md) in Semantic-Dist.
+
 **Published artifacts:** the frozen C1 (`semantic-selfhost-compiler-C1.smc`), the reproduction kit v2.1, the `S` source archive and the v4 evidence record are attached, byte-identical, to the [Semantic-Dist v1.3.0-rc.2 prerelease](https://github.com/skulmakov-oss/Semantic-Dist/releases/tag/v1.3.0-rc.2) together with `SHA256SUMS`. Publishing them does not change the Seal state.
 
 **Downstream evidence:** Semantic-Dist's strict qualification reproduced byte-identical C1 = C2 = C3 on macOS arm64, Linux x86_64, Linux arm64 and Windows x64 ([run 45807099979](https://github.com/skulmakov-oss/Semantic-Dist/actions/runs/45807099979)). This is integrator evidence. It is not SHF-17 qualification and not an independent Seal reproduction.
