@@ -127,6 +127,10 @@ Details: [`docs/ROADMAP.md`](docs/ROADMAP.md). Work that is not on this path:
 
 All review so far has been automated. Not claimed: SHF-17 cross-platform qualification, full language coverage, or a self-hosted verifier or VM.
 
+**Published artifacts:** the frozen C1 (`semantic-selfhost-compiler-C1.smc`), the reproduction kit v2.1, the `S` source archive and the v4 evidence record are attached, byte-identical, to the [Semantic-Dist v1.3.0-rc.2 prerelease](https://github.com/skulmakov-oss/Semantic-Dist/releases/tag/v1.3.0-rc.2) together with `SHA256SUMS`. Publishing them does not change the Seal state.
+
+**Downstream evidence:** Semantic-Dist's strict qualification reproduced byte-identical C1 = C2 = C3 on macOS arm64, Linux x86_64, Linux arm64 and Windows x64 ([run 45807099979](https://github.com/skulmakov-oss/Semantic-Dist/actions/runs/45807099979)). This is integrator evidence. It is not SHF-17 qualification and not an independent Seal reproduction.
+
 **Known issue (upstream):** a VM liveness regression in `skulmakov-oss/Semantic` (`aff35531`) affects C0 and the pinned executor.
 - **Effect:** a verified artifact can fail closed at run time after a call without destination.
 - **Self-hosting runs:** not affected; every run completed `ok`.
